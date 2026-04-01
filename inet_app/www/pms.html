@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>INET Project Portal</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/javascript">
+      fetch("/assets/inet_app/portal/index.html")
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          var parser = new DOMParser();
+          var doc = parser.parseFromString(html, "text/html");
+          doc.querySelectorAll("script[src]").forEach(function (s) {
+            var el = document.createElement("script");
+            el.type = "module";
+            el.src = s.getAttribute("src").replace(/^\/pms\//, "/assets/inet_app/portal/");
+            document.head.appendChild(el);
+          });
+          doc.querySelectorAll("link[rel='stylesheet']").forEach(function (l) {
+            var el = document.createElement("link");
+            el.rel = "stylesheet";
+            el.href = l.getAttribute("href").replace(/^\/pms\//, "/assets/inet_app/portal/");
+            document.head.appendChild(el);
+          });
+        });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,45 @@
+{
+ "actions": [],
+ "autoname": "format:WU-.YYYY.MM.-.#####",
+ "creation": "2026-04-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "project",
+  "team",
+  "update_date",
+  "work_description",
+  "tasks_completed",
+  "photos",
+  "gps_location",
+  "status",
+  "approval_status",
+  "remarks"
+ ],
+ "fields": [
+  {"fieldname": "project", "fieldtype": "Link", "in_list_view": 1, "in_standard_filter": 1, "label": "Project", "options": "Project Control Center", "reqd": 1},
+  {"fieldname": "team", "fieldtype": "Data", "in_list_view": 1, "label": "Team", "reqd": 1},
+  {"default": "Today", "fieldname": "update_date", "fieldtype": "Date", "in_list_view": 1, "label": "Update Date", "reqd": 1},
+  {"fieldname": "work_description", "fieldtype": "Text Editor", "label": "Work Description"},
+  {"fieldname": "tasks_completed", "fieldtype": "Table", "label": "Tasks Completed", "options": "Daily Work Update Task"},
+  {"fieldname": "photos", "fieldtype": "Attach Image", "label": "Photos"},
+  {"fieldname": "gps_location", "fieldtype": "Data", "label": "GPS Location"},
+  {"default": "Draft", "fieldname": "status", "fieldtype": "Select", "in_list_view": 1, "label": "Status", "options": "Draft\nSubmitted\nApproved"},
+  {"default": "Pending", "fieldname": "approval_status", "fieldtype": "Select", "in_list_view": 1, "label": "Approval Status", "options": "Pending\nApproved\nRejected"},
+  {"fieldname": "remarks", "fieldtype": "Small Text", "label": "Remarks"}
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Daily Work Update",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "email": 1, "export": 1, "print": 1, "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1},
+  {"create": 1, "email": 1, "export": 1, "print": 1, "read": 1, "report": 1, "role": "Projects User", "share": 1, "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

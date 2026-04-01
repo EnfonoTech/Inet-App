@@ -5,6 +5,19 @@ app_description = "custom app for inet"
 app_email = "ramees@enfono.com"
 app_license = "mit"
 
+website_route_rules = [
+	{"from_route": "/pms/<path:app_path>", "to_route": "pms"},
+]
+
+fixtures = [
+	{
+		"dt": "Custom Field",
+		"filters": [["module", "=", "Inet App"]],
+	}
+]
+
+after_migrate = "inet_app.setup.after_migrate"
+
 # Apps
 # ------------------
 
@@ -137,13 +150,11 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Purchase Order": {
+		"on_submit": "inet_app.api.project_management.on_purchase_order_submit"
+	}
+}
 
 # Scheduled Tasks
 # ---------------
