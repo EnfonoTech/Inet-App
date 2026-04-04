@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { pmApi } from "../../services/api";
 import FileUpload from "../../components/FileUpload";
 
@@ -58,12 +58,21 @@ function StatusBadge({ valid }) {
 
 export default function POUpload() {
   const [step, setStep] = useState(0);
+  const [customer, setCustomer] = useState("Huawei");
+  const [customers, setCustomers] = useState([]);
   const [parseResult, setParseResult] = useState(null); // { valid_rows, error_rows }
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState(null);
   const [confirming, setConfirming] = useState(false);
   const [successCount, setSuccessCount] = useState(null);
   const [confirmError, setConfirmError] = useState(null);
+
+  // Load customers on mount
+  useEffect(() => {
+    pmApi.listCustomers().then(res => {
+      setCustomers(res || []);
+    }).catch(() => {});
+  }, []);
 
   async function handleFileUploaded(file_url) {
     setParsing(true);
@@ -81,10 +90,16 @@ export default function POUpload() {
 
   async function handleConfirm() {
     if (!parseResult?.valid_rows?.length) return;
+    if (!customer) {
+      setConfirmError("Please select a customer before importing.");
+      return;
+    }
     setConfirming(true);
     setConfirmError(null);
     try {
-      const result = await pmApi.confirmPOUpload(parseResult.valid_rows);
+      // Attach customer to each row before sending
+      const rowsWithCustomer = parseResult.valid_rows.map(r => ({ ...r, customer }));
+      const result = await pmApi.confirmPOUpload(rowsWithCustomer);
       setSuccessCount(result?.created ?? parseResult.valid_rows.length);
       setStep(2);
     } catch (err) {
@@ -120,6 +135,56 @@ export default function POUpload() {
         {/* ── Step 0: Upload ─────────────────────────────────── */}
         {step === 0 && (
           <div style={{ maxWidth: 600 }}>
+            {/* Customer selector */}
+            <div style={{
+              background: "var(--bg-white, #fff)",
+              border: "1px solid var(--border, #e2e8f0)",
+              borderRadius: "var(--radius, 10px)",
+              padding: "20px 24px",
+              marginBottom: 20,
+              boxShadow: "var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06))",
+            }}>
+              <label style={{
+                display: "block",
+                fontSize: "0.8rem",
+                fontWeight: 700,
+                color: "var(--text-secondary, #64748b)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                marginBottom: 8,
+              }}>
+                Select Customer
+              </label>
+              <select
+                value={customer}
+                onChange={e => setCustomer(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  fontSize: "0.9rem",
+                  fontWeight: 600,
+                  border: "1px solid var(--border, #e2e8f0)",
+                  borderRadius: "var(--radius-sm, 6px)",
+                  background: "var(--bg, #f6f8fb)",
+                  color: "var(--text, #1e293b)",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">-- Choose Customer --</option>
+                <option value="Huawei">Huawei</option>
+                <option value="STC">STC</option>
+                <option value="Mobily">Mobily</option>
+                <option value="Zain">Zain</option>
+                <option value="TLS">TLS</option>
+                {customers.filter(c => !["Huawei","STC","Mobily","Zain","TLS"].includes(c.customer_name)).map(c => (
+                  <option key={c.name} value={c.customer_name}>{c.customer_name}</option>
+                ))}
+              </select>
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted, #94a3b8)", marginTop: 6, marginBottom: 0 }}>
+                All PO lines in this file will be assigned to this customer.
+              </p>
+            </div>
+
             {parsing ? (
               <div className="notice info">
                 <span>⏳</span> Parsing file, please wait…

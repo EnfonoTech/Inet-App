@@ -89,8 +89,8 @@ export default function CommandDashboard() {
 
   /* Fullscreen mode: hide sidebar when dashboard is active */
   useEffect(() => {
-    document.body.classList.add("dashboard-fullscreen");
-    return () => document.body.classList.remove("dashboard-fullscreen");
+    // Dashboard renders within the normal app shell (sidebar stays visible)
+    // No fullscreen mode — admin needs navigation access
   }, []);
 
   useEffect(() => {

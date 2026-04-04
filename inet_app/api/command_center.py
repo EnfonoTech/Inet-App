@@ -167,17 +167,21 @@ def confirm_po_upload(rows):
         doc.publish_date = first.get("publish_date")
         doc.center_area = first.get("center_area")
 
-        # Set a default customer if available via project_code
-        project_code = first.get("project_code")
-        if project_code:
-            customer_name = frappe.db.get_value(
-                "Project Control Center", project_code, "customer"
-            )
-            if customer_name:
-                doc.customer = customer_name
+        # Use customer from the uploaded row (selected by user in frontend)
+        row_customer = first.get("customer")
+        if row_customer:
+            doc.customer = row_customer
+        else:
+            # Fallback: try project_code lookup
+            project_code = first.get("project_code")
+            if project_code:
+                customer_name = frappe.db.get_value(
+                    "Project Control Center", project_code, "customer"
+                )
+                if customer_name:
+                    doc.customer = customer_name
 
         if not doc.customer:
-            # Frappe requires customer; default to a placeholder
             doc.customer = frappe.db.get_value("Customer", {}, "name") or "Unknown"
 
         for line in lines:
