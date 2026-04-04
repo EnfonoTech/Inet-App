@@ -95,6 +95,7 @@ export const pmApi = {
   reportDailyWorkProgressReport: (f) => call("inet_app.api.project_management.report_daily_work_progress_report", { filters: JSON.stringify(f || {}) }),
 
   // ── Command Center APIs ────────────────────────────────────
+  getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
   getCommandDashboard:  ()          => call("inet_app.api.command_center.get_command_dashboard"),
   getIMDashboard:       (im)        => call("inet_app.api.command_center.get_im_dashboard", { im }),
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -24,6 +25,7 @@ function StatusBadge({ status }) {
 }
 
 export default function Projects() {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -123,7 +125,7 @@ export default function Projects() {
             </thead>
             <tbody>
               {projects.map(p => (
-                <tr key={p.name}>
+                <tr key={p.name} onClick={() => navigate("/projects/" + p.project_code)} style={{ cursor: "pointer" }}>
                   <td style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: 12 }}>{p.project_code}</td>
                   <td style={{ fontWeight: 600, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.project_name}</td>
                   <td>{p.project_domain || "—"}</td>

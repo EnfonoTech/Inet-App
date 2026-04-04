@@ -1025,3 +1025,92 @@ def get_field_team_dashboard(team_id=None):
         "planned": enriched,
         "last_updated": frappe.utils.now(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Project Detail — Full project summary with related records
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def get_project_summary(project_code):
+    """Get complete project summary with all related records."""
+    if not project_code:
+        frappe.throw("project_code is required")
+
+    project = frappe.get_doc("Project Control Center", project_code).as_dict()
+
+    # PO Dispatches for this project
+    dispatches = frappe.get_all("PO Dispatch",
+        filters={"project_code": project_code},
+        fields=["name", "system_id", "po_no", "po_line_no", "item_code", "item_description",
+                "qty", "rate", "line_amount", "team", "im", "dispatch_status", "center_area"],
+        order_by="modified desc",
+        limit_page_length=500)
+
+    # Get dispatch names for downstream queries
+    dispatch_names = [d.name for d in dispatches]
+
+    # Rollout Plans
+    plans = []
+    if dispatch_names:
+        plans = frappe.get_all("Rollout Plan",
+            filters={"po_dispatch": ["in", dispatch_names]},
+            fields=["name", "system_id", "po_dispatch", "team", "plan_date", "visit_type",
+                    "visit_multiplier", "target_amount", "achieved_amount", "completion_pct", "plan_status"],
+            order_by="plan_date desc",
+            limit_page_length=500)
+
+    # Daily Executions
+    plan_names = [p.name for p in plans]
+    executions = []
+    if plan_names:
+        executions = frappe.get_all("Daily Execution",
+            filters={"rollout_plan": ["in", plan_names]},
+            fields=["name", "system_id", "rollout_plan", "team", "execution_date",
+                    "execution_status", "achieved_qty", "achieved_amount", "qc_status"],
+            order_by="execution_date desc",
+            limit_page_length=500)
+
+    # Work Done
+    execution_names = [e.name for e in executions]
+    work_done = []
+    if execution_names:
+        work_done = frappe.get_all("Work Done",
+            filters={"execution": ["in", execution_names]},
+            fields=["name", "system_id", "execution", "item_code", "executed_qty",
+                    "billing_rate_sar", "revenue_sar", "team_cost_sar", "subcontract_cost_sar",
+                    "total_cost_sar", "margin_sar", "billing_status"],
+            limit_page_length=500)
+
+    # Teams involved (unique from dispatches)
+    teams = list(set(d.team for d in dispatches if d.team))
+    team_details = []
+    if teams:
+        team_details = frappe.get_all("INET Team",
+            filters={"team_id": ["in", teams]},
+            fields=["team_id", "team_name", "im", "team_type", "status", "daily_cost"])
+
+    # Financial summary
+    total_po_value = sum(flt(d.line_amount) for d in dispatches)
+    total_revenue = sum(flt(w.revenue_sar) for w in work_done)
+    total_cost = sum(flt(w.total_cost_sar) for w in work_done)
+    total_margin = sum(flt(w.margin_sar) for w in work_done)
+
+    return {
+        "project": project,
+        "dispatches": dispatches,
+        "plans": plans,
+        "executions": executions,
+        "work_done": work_done,
+        "teams": team_details,
+        "financial_summary": {
+            "total_po_value": total_po_value,
+            "total_revenue": total_revenue,
+            "total_cost": total_cost,
+            "total_margin": total_margin,
+            "dispatch_count": len(dispatches),
+            "plan_count": len(plans),
+            "execution_count": len(executions),
+            "work_done_count": len(work_done),
+        }
+    }

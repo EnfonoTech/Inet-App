@@ -14,6 +14,7 @@ import WorkDone from "./pages/admin/WorkDone";
 import Reports from "./pages/admin/Reports";
 import Masters from "./pages/admin/Masters";
 import Projects from "./pages/admin/Projects";
+import ProjectDetail from "./pages/admin/ProjectDetail";
 
 /* ── IM pages ────────────────────────────────────────────────── */
 import IMDashboard from "./pages/im/IMDashboard";
@@ -64,6 +65,7 @@ function AppContent() {
           <>
             <Route path="/dashboard"  element={<CommandDashboard />} />
             <Route path="/projects"   element={<Projects />} />
+            <Route path="/projects/:projectCode" element={<ProjectDetail />} />
             <Route path="/po-upload"  element={<POUpload />} />
             <Route path="/dispatch"   element={<PODispatch />} />
             <Route path="/planning"   element={<RolloutPlanning />} />
