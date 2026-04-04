@@ -5,246 +5,429 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>INET Operations Command Center — User Guide</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap');
 
   :root {
-    --bg: #060d18;
-    --bg-card: #0c1a30;
-    --bg-section: rgba(15, 30, 55, 0.6);
-    --bg-code: rgba(20, 40, 70, 0.5);
-    --border: rgba(100, 160, 220, 0.12);
-    --border-accent: rgba(59, 130, 246, 0.3);
-    --text: #e8ecf4;
-    --text-secondary: #a0b8d0;
-    --text-muted: rgba(200, 215, 235, 0.5);
-    --text-label: #7db8e8;
-    --green: #4ade80;
-    --red: #f87171;
-    --amber: #fbbf24;
-    --blue: #60a5fa;
-    --blue-bright: #3b82f6;
+    --bg: #f6f8fb;
+    --bg-white: #ffffff;
+    --bg-sidebar: #1a2744;
+    --bg-sidebar-hover: rgba(255,255,255,0.08);
+    --bg-sidebar-active: rgba(59,130,246,0.2);
+    --bg-code: #f0f4f8;
+    --bg-accent: #eef3ff;
+    --border: #e2e8f0;
+    --border-light: #f1f5f9;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+    --text-muted: #94a3b8;
+    --text-sidebar: #cbd5e1;
+    --text-sidebar-active: #ffffff;
+    --green: #10b981;
+    --green-bg: #ecfdf5;
+    --green-border: #a7f3d0;
+    --red: #ef4444;
+    --red-bg: #fef2f2;
+    --red-border: #fecaca;
+    --amber: #f59e0b;
+    --amber-bg: #fffbeb;
+    --amber-border: #fde68a;
+    --blue: #3b82f6;
+    --blue-bg: #eff6ff;
+    --blue-border: #bfdbfe;
+    --blue-dark: #1e40af;
+    --radius: 10px;
+    --radius-sm: 6px;
+    --radius-lg: 14px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow: 0 4px 12px rgba(0,0,0,0.08);
+    --shadow-lg: 0 10px 30px rgba(0,0,0,0.1);
+    --sidebar-width: 280px;
+    --sidebar-collapsed: 64px;
+    --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
-    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-family: 'DM Sans', -apple-system, system-ui, sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.7;
     font-size: 15px;
+    display: flex;
+    min-height: 100vh;
   }
+
+  /* ── SIDEBAR ────────────────────────────────────── */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: var(--sidebar-width);
+    height: 100vh;
+    background: var(--bg-sidebar);
+    color: var(--text-sidebar);
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+    transition: width var(--transition);
+    overflow: hidden;
+    box-shadow: 2px 0 20px rgba(0,0,0,0.15);
+  }
+  .sidebar.collapsed { width: var(--sidebar-collapsed); }
+
+  .sidebar-header {
+    padding: 20px 16px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .sidebar-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(59,130,246,0.3);
+  }
+  .sidebar-logo svg { width: 20px; height: 20px; fill: white; }
+  .sidebar-brand {
+    overflow: hidden;
+    white-space: nowrap;
+    transition: opacity var(--transition);
+  }
+  .sidebar.collapsed .sidebar-brand { opacity: 0; width: 0; }
+  .sidebar-brand h2 {
+    font-size: 16px;
+    font-weight: 800;
+    color: #fff;
+    letter-spacing: -0.3px;
+    line-height: 1.2;
+  }
+  .sidebar-brand p {
+    font-size: 10px;
+    color: rgba(255,255,255,0.4);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .sidebar-toggle {
+    position: absolute;
+    top: 22px;
+    right: -14px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    transition: transform var(--transition);
+  }
+  .sidebar-toggle svg { width: 14px; height: 14px; color: var(--text-secondary); transition: transform var(--transition); }
+  .sidebar.collapsed .sidebar-toggle svg { transform: rotate(180deg); }
+
+  .sidebar-nav {
+    flex: 1;
+    padding: 12px 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .sidebar-nav::-webkit-scrollbar { width: 4px; }
+  .sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+  .nav-group-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: rgba(255,255,255,0.25);
+    padding: 16px 12px 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    transition: opacity var(--transition);
+  }
+  .sidebar.collapsed .nav-group-label { opacity: 0; }
+
+  .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    text-decoration: none;
+    color: var(--text-sidebar);
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+    cursor: pointer;
+    white-space: nowrap;
+    margin: 2px 0;
+    position: relative;
+  }
+  .nav-link:hover { background: var(--bg-sidebar-hover); color: #fff; }
+  .nav-link.active {
+    background: var(--bg-sidebar-active);
+    color: var(--text-sidebar-active);
+    font-weight: 700;
+  }
+  .nav-link.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--blue);
+  }
+
+  .nav-icon {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .nav-icon svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .nav-text {
+    overflow: hidden;
+    transition: opacity var(--transition), width var(--transition);
+  }
+  .sidebar.collapsed .nav-text { opacity: 0; width: 0; }
+
+  /* Tooltip for collapsed */
+  .sidebar.collapsed .nav-link:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: calc(100% + 12px);
+    top: 50%;
+    transform: translateY(-50%);
+    background: #1e293b;
+    color: #fff;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    z-index: 300;
+    box-shadow: var(--shadow);
+    pointer-events: none;
+  }
+
+  .sidebar-footer {
+    padding: 12px 16px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+  }
+  .sidebar-footer p {
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+    text-align: center;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    transition: opacity var(--transition);
+  }
+  .sidebar.collapsed .sidebar-footer p { opacity: 0; }
+
+  /* ── MAIN CONTENT ───────────────────────────────── */
+  .main {
+    margin-left: var(--sidebar-width);
+    flex: 1;
+    transition: margin-left var(--transition);
+    min-height: 100vh;
+  }
+  .sidebar.collapsed ~ .main { margin-left: var(--sidebar-collapsed); }
 
   /* Header */
   .guide-header {
-    background: linear-gradient(135deg, #0f2440 0%, #1a3a5c 50%, #0f2440 100%);
-    border-bottom: 1px solid var(--border);
-    padding: 48px 0 40px;
-    text-align: center;
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #6366f1 100%);
+    padding: 56px 48px 48px;
     position: relative;
     overflow: hidden;
   }
   .guide-header::before {
     content: '';
     position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, transparent, var(--blue-bright), var(--blue), var(--blue-bright), transparent);
+    top: -50%;
+    right: -20%;
+    width: 500px;
+    height: 500px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    pointer-events: none;
+  }
+  .guide-header::after {
+    content: '';
+    position: absolute;
+    bottom: -60%;
+    left: -10%;
+    width: 400px;
+    height: 400px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.04);
+    pointer-events: none;
   }
   .guide-header h1 {
-    font-size: 32px;
+    font-size: 36px;
     font-weight: 900;
+    color: #fff;
     letter-spacing: -0.5px;
     margin-bottom: 8px;
+    position: relative;
   }
   .guide-header .subtitle {
-    color: var(--text-muted);
-    font-size: 16px;
+    color: rgba(255,255,255,0.7);
+    font-size: 17px;
+    position: relative;
   }
-  .guide-header .badge {
+  .header-badge {
     display: inline-block;
-    margin-top: 16px;
-    padding: 4px 14px;
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    margin-top: 20px;
+    padding: 5px 16px;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.2);
     border-radius: 20px;
     font-size: 12px;
     font-weight: 700;
-    color: var(--blue);
+    color: #fff;
     letter-spacing: 0.5px;
+    position: relative;
   }
 
-  /* Layout */
-  .container {
-    max-width: 960px;
+  /* Container */
+  .content-area {
+    max-width: 880px;
     margin: 0 auto;
-    padding: 0 24px;
-  }
-
-  /* TOC */
-  .toc {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 28px 32px;
-    margin: 32px 0;
-  }
-  .toc h2 {
-    font-size: 14px;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: var(--text-label);
-    margin-bottom: 16px;
-  }
-  .toc-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px 32px;
-  }
-  .toc a {
-    color: var(--text-secondary);
-    text-decoration: none;
-    font-size: 14px;
-    padding: 4px 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    transition: color 0.15s;
-  }
-  .toc a:hover { color: var(--blue); }
-  .toc a .num {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text-muted);
-    min-width: 28px;
+    padding: 32px 40px 60px;
   }
 
   /* Sections */
-  .section {
-    margin: 48px 0;
-  }
+  .section { margin: 48px 0; scroll-margin-top: 24px; }
+
   .section-label {
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    color: var(--text-muted);
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .section-label::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--border);
+    color: var(--blue);
+    margin-bottom: 8px;
   }
 
   h2 {
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 800;
     letter-spacing: -0.3px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     color: var(--text);
   }
   h3 {
     font-size: 18px;
     font-weight: 700;
-    margin: 32px 0 12px;
+    margin: 28px 0 10px;
     color: var(--text);
   }
   h4 {
     font-size: 14px;
     font-weight: 700;
-    color: var(--text-label);
+    color: var(--text-secondary);
     margin: 20px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   p { margin-bottom: 12px; color: var(--text-secondary); }
-  strong { color: var(--text); font-weight: 700; }
+  strong { color: var(--text); }
 
-  /* Pipeline Flow */
+  /* Pipeline */
   .pipeline {
     display: flex;
     align-items: center;
     gap: 0;
     margin: 24px 0;
-    overflow-x: auto;
-    padding: 4px 0;
+    flex-wrap: wrap;
   }
   .pipeline-step {
-    background: linear-gradient(135deg, #132a47, #1a3d63);
-    border: 1px solid rgba(59, 130, 246, 0.15);
+    background: var(--bg-white);
+    border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 12px 18px;
-    text-align: center;
+    padding: 10px 18px;
     font-size: 13px;
     font-weight: 700;
-    color: var(--text);
-    white-space: nowrap;
-    flex-shrink: 0;
+    color: var(--blue-dark);
+    box-shadow: var(--shadow-sm);
   }
-  .pipeline-arrow {
-    color: var(--text-muted);
-    font-size: 18px;
-    padding: 0 4px;
-    flex-shrink: 0;
+  .pipeline-arrow { color: var(--text-muted); font-size: 18px; padding: 0 6px; }
+
+  /* Role Grid */
+  .role-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin: 20px 0;
   }
+  .role-card {
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px 20px;
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.15s, transform 0.15s;
+  }
+  .role-card:hover { box-shadow: var(--shadow); transform: translateY(-2px); }
+  .role-icon-wrap {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    margin: 0 auto 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .role-icon-wrap svg { width: 24px; height: 24px; }
+  .role-admin .role-icon-wrap { background: var(--blue-bg); border: 1px solid var(--blue-border); }
+  .role-admin .role-icon-wrap svg { stroke: var(--blue); fill: none; }
+  .role-im .role-icon-wrap { background: var(--green-bg); border: 1px solid var(--green-border); }
+  .role-im .role-icon-wrap svg { stroke: var(--green); fill: none; }
+  .role-field .role-icon-wrap { background: var(--amber-bg); border: 1px solid var(--amber-border); }
+  .role-field .role-icon-wrap svg { stroke: var(--amber); fill: none; }
+  .role-card h4 { color: var(--text); margin: 0 0 4px; font-size: 16px; text-transform: none; letter-spacing: 0; }
+  .role-card p { font-size: 13px; color: var(--text-muted); margin: 0; }
 
   /* Cards */
   .card {
-    background: var(--bg-section);
+    background: var(--bg-white);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius);
     padding: 20px 24px;
-    margin: 16px 0;
+    margin: 14px 0;
+    box-shadow: var(--shadow-sm);
   }
   .card-title {
     font-size: 15px;
     font-weight: 700;
     color: var(--text);
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .card p { font-size: 14px; margin-bottom: 8px; }
-
-  /* Role cards */
-  .role-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin: 16px 0;
-  }
-  .role-card {
-    background: var(--bg-section);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px;
-    text-align: center;
-  }
-  .role-icon {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    margin: 0 auto 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 22px;
-  }
-  .role-card h4 {
-    color: var(--text);
-    margin: 0 0 6px;
-    font-size: 16px;
-  }
-  .role-card p { font-size: 13px; color: var(--text-muted); margin: 0; }
-  .role-admin .role-icon { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.3); }
-  .role-im .role-icon { background: rgba(74,222,128,0.15); border: 1px solid rgba(74,222,128,0.3); }
-  .role-field .role-icon { background: rgba(251,191,36,0.15); border: 1px solid rgba(251,191,36,0.3); }
+  .card p { font-size: 14px; margin-bottom: 6px; }
 
   /* Tables */
   table {
@@ -252,49 +435,53 @@
     border-collapse: collapse;
     margin: 16px 0;
     font-size: 13px;
+    background: var(--bg-white);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
   }
   th {
     text-align: left;
-    color: var(--text-label);
+    color: var(--text-secondary);
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    padding: 10px 14px;
+    padding: 12px 16px;
     border-bottom: 2px solid var(--border);
     font-weight: 700;
-    background: rgba(15, 30, 55, 0.4);
+    background: var(--bg);
   }
   td {
-    padding: 10px 14px;
-    border-bottom: 1px solid rgba(100, 160, 220, 0.06);
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border-light);
     color: var(--text-secondary);
   }
-  tr:hover td { background: rgba(59, 130, 246, 0.04); }
-  td strong { color: var(--text); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f8fafc; }
   .mono { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 12px; }
 
   /* Steps */
-  .steps {
-    counter-reset: step;
-    margin: 16px 0;
-  }
+  .steps { counter-reset: step; margin: 20px 0; }
   .step {
     counter-increment: step;
     display: flex;
     gap: 16px;
-    margin-bottom: 16px;
-    padding: 16px 20px;
-    background: var(--bg-section);
+    margin-bottom: 14px;
+    padding: 18px 22px;
+    background: var(--bg-white);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.15s;
   }
-  .step::before {
-    content: counter(step);
-    width: 28px;
-    height: 28px;
+  .step:hover { box-shadow: var(--shadow); }
+  .step-num {
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    background: var(--blue-bg);
+    border: 2px solid var(--blue-border);
     color: var(--blue);
     font-size: 13px;
     font-weight: 800;
@@ -303,73 +490,80 @@
     justify-content: center;
     flex-shrink: 0;
   }
+  .step::before { content: none; }
   .step-content { flex: 1; }
-  .step-content p { margin: 0; }
-  .step-content .step-title { color: var(--text); font-weight: 700; margin-bottom: 4px; }
-  .step-content .step-desc { font-size: 13px; color: var(--text-secondary); }
+  .step-title { color: var(--text); font-weight: 700; margin-bottom: 2px; font-size: 15px; }
+  .step-desc { font-size: 13px; color: var(--text-secondary); margin: 0; }
 
-  /* Code blocks */
+  /* Code */
   code {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
+    font-size: 12px;
     background: var(--bg-code);
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 2px 6px;
-    color: var(--blue);
+    color: var(--blue-dark);
   }
   pre {
-    background: var(--bg-code);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px 20px;
-    margin: 12px 0;
+    background: #1e293b;
+    border-radius: var(--radius);
+    padding: 18px 22px;
+    margin: 14px 0;
     overflow-x: auto;
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
     line-height: 1.6;
-    color: var(--text-secondary);
+    color: #e2e8f0;
+    box-shadow: var(--shadow);
   }
-  pre code { background: none; border: none; padding: 0; color: inherit; }
+  pre code { background: none; border: none; padding: 0; color: inherit; font-size: 13px; }
 
-  /* Color indicators */
-  .color-dot {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    margin-right: 6px;
-    vertical-align: middle;
+  /* Alerts */
+  .alert {
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
   }
+  .alert-info { background: var(--blue-bg); border: 1px solid var(--blue-border); color: var(--blue-dark); }
+  .alert-warning { background: var(--amber-bg); border: 1px solid var(--amber-border); color: #92400e; }
+  .alert-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+  /* Color dots */
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
   .dot-green { background: var(--green); }
   .dot-red { background: var(--red); }
   .dot-amber { background: var(--amber); }
-  .dot-blue { background: var(--blue); }
 
-  /* KPI preview */
+  /* KPI Preview */
   .kpi-preview {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
-    gap: 8px;
-    margin: 16px 0;
+    gap: 10px;
+    margin: 20px 0;
   }
   .kpi-mini {
-    background: linear-gradient(135deg, #132a47, #1a3d63);
-    border: 1px solid rgba(59, 130, 246, 0.12);
-    border-radius: 6px;
-    padding: 10px;
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 12px;
     text-align: center;
+    box-shadow: var(--shadow-sm);
   }
   .kpi-mini-label {
     font-size: 9px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--text-label);
-    margin-bottom: 4px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
   }
   .kpi-mini-value {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 800;
     font-family: 'JetBrains Mono', monospace;
     color: var(--text);
@@ -378,86 +572,54 @@
   .kpi-mini-value.red { color: var(--red); }
   .kpi-mini-value.amber { color: var(--amber); }
 
-  /* Workflow diagram */
+  /* Workflow */
   .workflow {
-    background: var(--bg-card);
+    background: var(--bg-white);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px 28px;
+    border-radius: var(--radius-lg);
+    padding: 28px 32px;
     margin: 24px 0;
+    box-shadow: var(--shadow-sm);
   }
-  .workflow-row {
-    display: flex;
-    align-items: center;
-    margin: 8px 0;
-    font-size: 14px;
-  }
+  .workflow-row { display: flex; align-items: center; margin: 6px 0; font-size: 14px; }
   .workflow-num {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: rgba(59, 130, 246, 0.15);
-    color: var(--blue);
-    font-size: 11px;
-    font-weight: 800;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-right: 12px;
-    flex-shrink: 0;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--blue-bg); border: 2px solid var(--blue-border);
+    color: var(--blue); font-size: 11px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    margin-right: 14px; flex-shrink: 0;
   }
   .workflow-text { color: var(--text-secondary); flex: 1; }
   .workflow-text strong { color: var(--text); }
-  .workflow-connector {
-    width: 24px;
-    display: flex;
-    justify-content: center;
-    margin: 2px 0;
-    color: var(--text-muted);
-    font-size: 12px;
-  }
+  .workflow-connector { width: 26px; display: flex; justify-content: center; margin: 2px 0; color: var(--text-muted); font-size: 14px; }
 
-  /* Nav reference */
+  /* Nav Reference */
   .nav-ref {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 8px;
-    margin: 16px 0;
-  }
-  .nav-item {
-    background: var(--bg-section);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 14px;
-    display: flex;
-    align-items: center;
     gap: 10px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    transition: border-color 0.15s;
+    margin: 20px 0;
   }
-  .nav-item:hover { border-color: var(--border-accent); }
-  .nav-icon {
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    background: rgba(59, 130, 246, 0.1);
+  .nav-ref-item {
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
     display: flex;
     align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    flex-shrink: 0;
+    gap: 12px;
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.15s, box-shadow 0.15s;
   }
-  .nav-label { font-size: 12px; }
-  .nav-url { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
-
-  /* Formula table */
-  .formula-table td:nth-child(2) {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--green);
+  .nav-ref-item:hover { border-color: var(--blue-border); box-shadow: var(--shadow); }
+  .nav-ref-icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: var(--blue-bg); display: flex;
+    align-items: center; justify-content: center; flex-shrink: 0;
   }
+  .nav-ref-icon svg { width: 16px; height: 16px; stroke: var(--blue); fill: none; stroke-width: 2; }
+  .nav-ref-label { font-size: 13px; font-weight: 600; color: var(--text); }
+  .nav-ref-url { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
 
   /* Troubleshooting */
   .trouble-item {
@@ -465,33 +627,18 @@
     grid-template-columns: 1fr 1.5fr;
     gap: 16px;
     padding: 14px 0;
-    border-bottom: 1px solid rgba(100, 160, 220, 0.06);
+    border-bottom: 1px solid var(--border-light);
     font-size: 13px;
   }
   .trouble-issue { color: var(--red); font-weight: 600; }
   .trouble-fix { color: var(--text-secondary); }
 
-  /* Alert boxes */
-  .alert {
-    border-radius: 8px;
-    padding: 14px 18px;
-    margin: 16px 0;
-    font-size: 13px;
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
+  /* Formula table */
+  .formula-table td:nth-child(2) {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--green);
   }
-  .alert-info {
-    background: rgba(59, 130, 246, 0.08);
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    color: var(--blue);
-  }
-  .alert-warning {
-    background: rgba(251, 191, 36, 0.08);
-    border: 1px solid rgba(251, 191, 36, 0.2);
-    color: var(--amber);
-  }
-  .alert-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
 
   /* Footer */
   .guide-footer {
@@ -503,109 +650,164 @@
     color: var(--text-muted);
   }
 
-  /* Print styles */
+  /* Print */
   @media print {
-    body { background: #fff; color: #1a1a2e; }
-    .guide-header { background: #1a365d; }
-    .card, .role-card, .step, .nav-item { border-color: #ddd; background: #f8f9fa; }
-    table th { background: #f0f0f0; }
+    .sidebar { display: none; }
+    .main { margin-left: 0 !important; }
   }
 
-  @media (max-width: 768px) {
+  @media (max-width: 900px) {
+    .sidebar { width: var(--sidebar-collapsed); }
+    .sidebar .sidebar-brand, .sidebar .nav-text, .sidebar .nav-group-label, .sidebar .sidebar-footer p { opacity: 0; width: 0; }
+    .main { margin-left: var(--sidebar-collapsed); }
     .role-grid { grid-template-columns: 1fr; }
     .kpi-preview { grid-template-columns: repeat(3, 1fr); }
     .nav-ref { grid-template-columns: repeat(2, 1fr); }
-    .toc-grid { grid-template-columns: 1fr; }
-    .pipeline { flex-wrap: wrap; justify-content: center; }
+    .guide-header { padding: 40px 24px 36px; }
+    .guide-header h1 { font-size: 28px; }
+    .content-area { padding: 24px 20px 48px; }
   }
 </style>
 </head>
 <body>
 
-<!-- ============ HEADER ============ -->
+<!-- ── SIDEBAR ─────────────────────────────────── -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-logo">
+      <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="white"/></svg>
+    </div>
+    <div class="sidebar-brand">
+      <h2>INET PMS</h2>
+      <p>User Guide</p>
+    </div>
+  </div>
+  <button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+  </button>
+
+  <div class="sidebar-nav">
+    <div class="nav-group-label">Getting Started</div>
+    <a class="nav-link active" href="#overview" data-tooltip="Overview" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <span class="nav-text">Overview</span>
+    </a>
+    <a class="nav-link" href="#dashboard" data-tooltip="Dashboard" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+      <span class="nav-text">Command Dashboard</span>
+    </a>
+
+    <div class="nav-group-label">Pipeline Stages</div>
+    <a class="nav-link" href="#po-upload" data-tooltip="PO Upload" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+      <span class="nav-text">PO Upload</span>
+    </a>
+    <a class="nav-link" href="#dispatch" data-tooltip="Dispatch" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></span>
+      <span class="nav-text">PO Dispatch</span>
+    </a>
+    <a class="nav-link" href="#planning" data-tooltip="Planning" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+      <span class="nav-text">Rollout Planning</span>
+    </a>
+    <a class="nav-link" href="#execution" data-tooltip="Execution" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
+      <span class="nav-text">Execution Monitor</span>
+    </a>
+    <a class="nav-link" href="#workdone" data-tooltip="Work Done" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>
+      <span class="nav-text">Work Done</span>
+    </a>
+    <a class="nav-link" href="#reports" data-tooltip="Reports" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+      <span class="nav-text">Reports &amp; Masters</span>
+    </a>
+
+    <div class="nav-group-label">User Roles</div>
+    <a class="nav-link" href="#im-guide" data-tooltip="IM Guide" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+      <span class="nav-text">IM Dashboard</span>
+    </a>
+    <a class="nav-link" href="#field-guide" data-tooltip="Field Guide" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg></span>
+      <span class="nav-text">Field Team</span>
+    </a>
+
+    <div class="nav-group-label">Reference</div>
+    <a class="nav-link" href="#workflow" data-tooltip="Workflow" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+      <span class="nav-text">Workflow Example</span>
+    </a>
+    <a class="nav-link" href="#formulas" data-tooltip="Formulas" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></span>
+      <span class="nav-text">Financial Formulas</span>
+    </a>
+    <a class="nav-link" href="#setup" data-tooltip="Setup" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg></span>
+      <span class="nav-text">Setup Guide</span>
+    </a>
+    <a class="nav-link" href="#troubleshooting" data-tooltip="Troubleshoot" onclick="navClick(this)">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+      <span class="nav-text">Troubleshooting</span>
+    </a>
+  </div>
+
+  <div class="sidebar-footer">
+    <p>INET Telecom &middot; v1.0</p>
+  </div>
+</nav>
+
+<!-- ── MAIN ────────────────────────────────────── -->
+<div class="main">
+
 <div class="guide-header">
-  <div class="container">
-    <h1>INET Operations Command Center</h1>
-    <p class="subtitle">User Guide &amp; System Documentation</p>
-    <div class="badge">VERSION 1.0 &middot; APRIL 2026</div>
-  </div>
+  <h1>INET Operations Command Center</h1>
+  <p class="subtitle">User Guide &amp; System Documentation</p>
+  <div class="header-badge">VERSION 1.0 &middot; APRIL 2026</div>
 </div>
 
-<div class="container">
+<div class="content-area">
 
-<!-- ============ TOC ============ -->
-<div class="toc">
-  <h2>Contents</h2>
-  <div class="toc-grid">
-    <a href="#overview"><span class="num">01</span> System Overview</a>
-    <a href="#dashboard"><span class="num">02</span> Command Dashboard</a>
-    <a href="#po-upload"><span class="num">03</span> PO Upload</a>
-    <a href="#dispatch"><span class="num">04</span> PO Dispatch</a>
-    <a href="#planning"><span class="num">05</span> Rollout Planning</a>
-    <a href="#execution"><span class="num">06</span> Execution Monitor</a>
-    <a href="#workdone"><span class="num">07</span> Work Done</a>
-    <a href="#reports"><span class="num">08</span> Reports &amp; Masters</a>
-    <a href="#im-guide"><span class="num">09</span> IM Dashboard Guide</a>
-    <a href="#field-guide"><span class="num">10</span> Field Team Guide</a>
-    <a href="#workflow"><span class="num">11</span> Complete Workflow Example</a>
-    <a href="#formulas"><span class="num">12</span> Financial Formulas</a>
-    <a href="#setup"><span class="num">13</span> First-Time Setup</a>
-    <a href="#troubleshooting"><span class="num">14</span> Troubleshooting</a>
-  </div>
-</div>
-
-<!-- ============ 1. OVERVIEW ============ -->
+<!-- 1. OVERVIEW -->
 <div class="section" id="overview">
   <div class="section-label">Section 01</div>
   <h2>System Overview</h2>
   <p>The INET Operations Command Center replaces the Excel-based project management system. It manages the full lifecycle of telecom field operations through a <strong>6-stage pipeline</strong>:</p>
-
   <div class="pipeline">
-    <div class="pipeline-step">PO Upload</div>
-    <div class="pipeline-arrow">&rarr;</div>
-    <div class="pipeline-step">Dispatch</div>
-    <div class="pipeline-arrow">&rarr;</div>
-    <div class="pipeline-step">Planning</div>
-    <div class="pipeline-arrow">&rarr;</div>
-    <div class="pipeline-step">Execution</div>
-    <div class="pipeline-arrow">&rarr;</div>
-    <div class="pipeline-step">Work Done</div>
-    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">PO Upload</div><div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Dispatch</div><div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Planning</div><div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Execution</div><div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Work Done</div><div class="pipeline-arrow">&rarr;</div>
     <div class="pipeline-step">Dashboard KPIs</div>
   </div>
 
   <h3>Three User Roles</h3>
   <div class="role-grid">
     <div class="role-card role-admin">
-      <div class="role-icon">&#9670;</div>
+      <div class="role-icon-wrap"><svg viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
       <h4>Admin</h4>
       <p>Full Command Dashboard on wall screen. All pipeline stages, reports, master data.</p>
     </div>
     <div class="role-card role-im">
-      <div class="role-icon">&#9733;</div>
+      <div class="role-icon-wrap"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
       <h4>Implementation Manager</h4>
-      <p>Personal dashboard filtered to own teams and projects. Performance tracking.</p>
+      <p>Personal dashboard filtered to own teams and projects.</p>
     </div>
     <div class="role-card role-field">
-      <div class="role-icon">&#9881;</div>
+      <div class="role-icon-wrap"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg></div>
       <h4>Field Team</h4>
-      <p>Today's assigned work. Submit execution updates with GPS and photos.</p>
+      <p>Today's assigned work. Submit execution updates with GPS.</p>
     </div>
   </div>
-
-  <div class="alert alert-info">
-    <span class="alert-icon">&#8505;</span>
-    <span>The system auto-detects your role at login based on your Frappe user account. Admins = System Manager role. IMs = Full Name matches INET Team IM field. Everyone else = Field Team.</span>
-  </div>
+  <div class="alert alert-info"><span class="alert-icon">&#8505;</span><span>The system auto-detects your role at login. Admins = System Manager role. IMs = Full Name matches INET Team IM field. Everyone else = Field Team.</span></div>
 </div>
 
-<!-- ============ 2. COMMAND DASHBOARD ============ -->
+<!-- 2. DASHBOARD -->
 <div class="section" id="dashboard">
   <div class="section-label">Section 02</div>
   <h2>Command Dashboard</h2>
   <p>URL: <code>/pms/dashboard</code> &mdash; Designed for a wall-mounted 1920&times;1080 display. Auto-refreshes every 60 seconds.</p>
-
-  <h3>4 KPI Rows</h3>
 
   <h4>Row 1 &mdash; Operational Overview</h4>
   <div class="kpi-preview">
@@ -616,400 +818,257 @@
     <div class="kpi-mini"><div class="kpi-mini-label">Closed</div><div class="kpi-mini-value green">59</div></div>
     <div class="kpi-mini"><div class="kpi-mini-label">Re-Visits</div><div class="kpi-mini-value red">3</div></div>
   </div>
+  <p><strong>Row 2</strong> &mdash; INET Teams: Cost, Target, Achieved, Gap &nbsp;&bull;&nbsp; <strong>Row 3</strong> &mdash; Subcontractor Performance &nbsp;&bull;&nbsp; <strong>Row 4</strong> &mdash; Company P&amp;L Summary</p>
 
-  <h4>Row 2 &mdash; INET Teams Performance</h4>
-  <p>Active INET Teams, Monthly Cost, Monthly Target, Target Today (prorated), Achieved, Gap Today</p>
-
-  <h4>Row 3 &mdash; Subcontractor Performance</h4>
-  <p>Active Sub Teams, Sub-Con Target, Revenue, Expense, INET Margin, Sub-Con Gap</p>
-
-  <h4>Row 4 &mdash; Company Financial Summary</h4>
-  <p>Company Target, Total Achieved, Company Gap, Total Cost, Profit/Loss, Coverage %</p>
-
-  <h3>4 Bottom Panels</h3>
+  <h3>Bottom Panels</h3>
   <table>
     <thead><tr><th>Panel</th><th>Content</th></tr></thead>
     <tbody>
       <tr><td><strong>Top 5 Teams</strong></td><td>Best performing teams by revenue this month</td></tr>
       <tr><td><strong>IM Performance</strong></td><td>Revenue, cost, and profit per Implementation Manager</td></tr>
-      <tr><td><strong>Team Status</strong></td><td>Bar chart (Active/Idle/Planned/In Progress) + completion donut</td></tr>
-      <tr><td><strong>Action Watchlist</strong></td><td>Alerts: idle teams, missed activities, forecast gap, P&amp;L, re-visits</td></tr>
+      <tr><td><strong>Team Status</strong></td><td>Bar chart + completion donut</td></tr>
+      <tr><td><strong>Action Watchlist</strong></td><td>Alerts with status indicators</td></tr>
     </tbody>
   </table>
 
-  <h3>Color Coding</h3>
-  <p><span class="color-dot dot-green"></span><strong>Green</strong> = good (achievements, active, on target)</p>
-  <p><span class="color-dot dot-red"></span><strong>Red</strong> = critical (gaps, losses, overdue) &mdash; negative values shown in parentheses</p>
-  <p><span class="color-dot dot-amber"></span><strong>Amber</strong> = warning (idle teams, behind schedule)</p>
+  <h4>Color Coding</h4>
+  <p><span class="dot dot-green"></span><strong>Green</strong> = on target &nbsp;&nbsp; <span class="dot dot-red"></span><strong>Red</strong> = critical &nbsp;&nbsp; <span class="dot dot-amber"></span><strong>Amber</strong> = warning</p>
 </div>
 
-<!-- ============ 3. PO UPLOAD ============ -->
+<!-- 3. PO UPLOAD -->
 <div class="section" id="po-upload">
   <div class="section-label">Section 03</div>
   <h2>PO Upload</h2>
-  <p>URL: <code>/pms/po-upload</code> &mdash; Import Huawei PO export files into the system.</p>
-
+  <p>URL: <code>/pms/po-upload</code> &mdash; Import Huawei PO export files.</p>
   <div class="steps">
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Get the PO file</div>
-        <div class="step-desc">Download the <code>.xlsx</code> export from Huawei's procurement system (e.g., <code>PURCHASE_ORDER_20260325003415.xlsx</code>)</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Drag &amp; drop the file</div>
-        <div class="step-desc">Drop onto the upload zone or click to browse. System uploads to Frappe and parses the file.</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Review validation results</div>
-        <div class="step-desc"><span class="color-dot dot-green"></span>Green rows = valid (Item Code found, Project Code exists, Qty &gt; 0). <span class="color-dot dot-red"></span>Red rows = errors with details shown.</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Click "Confirm Import"</div>
-        <div class="step-desc">Creates PO Intake records grouped by PO number. Each PO becomes one record with line items. Status starts as "New".</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="alert alert-info">
-    <span class="alert-icon">&#8505;</span>
-    <span><strong>Columns parsed:</strong> PO No, PO Line No, Shipment No, Site Name, Site Code, Item Code, Item Description, Unit, Qty, Unit Price, Line Amount, Project Code, Project Name, Center Area, Publish Date</span>
+    <div class="step"><div class="step-num">1</div><div class="step-content"><div class="step-title">Get the PO file</div><div class="step-desc">Download <code>.xlsx</code> from Huawei's procurement system</div></div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-content"><div class="step-title">Drag &amp; drop the file</div><div class="step-desc">Drop onto upload zone or click to browse. System uploads and parses automatically.</div></div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-content"><div class="step-title">Review validation</div><div class="step-desc"><span class="dot dot-green"></span>Valid rows (Item Code found, Project exists, Qty &gt; 0). <span class="dot dot-red"></span>Error rows with details.</div></div></div>
+    <div class="step"><div class="step-num">4</div><div class="step-content"><div class="step-title">Confirm Import</div><div class="step-desc">Creates PO Intake records grouped by PO number. Status starts as "New".</div></div></div>
   </div>
 </div>
 
-<!-- ============ 4. DISPATCH ============ -->
+<!-- 4. DISPATCH -->
 <div class="section" id="dispatch">
   <div class="section-label">Section 04</div>
   <h2>PO Dispatch</h2>
-  <p>URL: <code>/pms/dispatch</code> &mdash; Assign imported PO lines to field teams.</p>
-
+  <p>URL: <code>/pms/dispatch</code> &mdash; Assign PO lines to field teams.</p>
   <div class="steps">
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Select PO lines</div>
-        <div class="step-desc">Table shows imported lines with status "New". Use checkboxes to select lines for dispatch.</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Choose assignment</div>
-        <div class="step-desc"><strong>Team:</strong> Select from dropdown (Team-01 through Team-60). <strong>Target Month:</strong> When this work should be done.</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Click "Dispatch Selected"</div>
-        <div class="step-desc">Creates PO Dispatch records with unique <strong>System ID</strong> (e.g., <code>SYS-2026-00001</code>). Auto-maps IM from Team Master and Customer from Project Master.</div>
-      </div>
-    </div>
+    <div class="step"><div class="step-num">1</div><div class="step-content"><div class="step-title">Select PO lines</div><div class="step-desc">Table shows imported lines (status "New"). Use checkboxes to select.</div></div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-content"><div class="step-title">Choose Team &amp; Target Month</div><div class="step-desc">Select team from dropdown (Team-01 to Team-60). Pick target month.</div></div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-content"><div class="step-title">Dispatch Selected</div><div class="step-desc">Creates PO Dispatch records with unique <strong>System ID</strong>. Auto-maps IM and Customer.</div></div></div>
   </div>
-
-  <div class="alert alert-warning">
-    <span class="alert-icon">&#9888;</span>
-    <span>The <strong>System ID</strong> is the primary tracking key &mdash; it follows the work through planning, execution, and completion.</span>
-  </div>
+  <div class="alert alert-warning"><span class="alert-icon">&#9888;</span><span>The <strong>System ID</strong> is the primary tracking key &mdash; it follows the work through planning, execution, and completion.</span></div>
 </div>
 
-<!-- ============ 5. PLANNING ============ -->
+<!-- 5. PLANNING -->
 <div class="section" id="planning">
   <div class="section-label">Section 05</div>
   <h2>Rollout Planning</h2>
-  <p>URL: <code>/pms/planning</code> &mdash; Schedule dispatched work for specific dates.</p>
-
+  <p>URL: <code>/pms/planning</code> &mdash; Schedule dispatched work.</p>
   <div class="steps">
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Select dispatched lines</div>
-        <div class="step-desc">Table shows PO Dispatch records with status "Dispatched".</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Set plan date &amp; visit type</div>
-        <div class="step-desc"><strong>Plan Date:</strong> When the team should execute. <strong>Visit Type:</strong> Work Done (1.0x), Re-Visit (0.5x), or Extra Visit (1.5x).</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Click "Create Plans"</div>
-        <div class="step-desc">Creates Rollout Plan records. Target Amount = PO Line Amount &times; Visit Multiplier. Status becomes "Planned".</div>
-      </div>
-    </div>
+    <div class="step"><div class="step-num">1</div><div class="step-content"><div class="step-title">Select dispatched lines</div><div class="step-desc">Shows PO Dispatch records with status "Dispatched".</div></div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-content"><div class="step-title">Set plan date &amp; visit type</div><div class="step-desc">Work Done (1.0x), Re-Visit (0.5x), or Extra Visit (1.5x).</div></div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-content"><div class="step-title">Create Plans</div><div class="step-desc">Target Amount = PO Line Amount &times; Visit Multiplier. Status becomes "Planned".</div></div></div>
   </div>
-
-  <h4>Visit Multipliers</h4>
   <table>
-    <thead><tr><th>Type</th><th>Multiplier</th><th>When Used</th></tr></thead>
+    <thead><tr><th>Visit Type</th><th>Multiplier</th><th>When Used</th></tr></thead>
     <tbody>
       <tr><td><strong>Work Done</strong></td><td class="mono">1.0x</td><td>Standard first visit</td></tr>
       <tr><td><strong>Re-Visit</strong></td><td class="mono">0.5x</td><td>Return visit for rework</td></tr>
-      <tr><td><strong>Extra Visit</strong></td><td class="mono">1.5x</td><td>Additional mobilization needed</td></tr>
-      <tr><td><strong>Plan</strong></td><td class="mono">0x</td><td>Planning only, no cost</td></tr>
+      <tr><td><strong>Extra Visit</strong></td><td class="mono">1.5x</td><td>Additional mobilization</td></tr>
     </tbody>
   </table>
 </div>
 
-<!-- ============ 6. EXECUTION MONITOR ============ -->
+<!-- 6. EXECUTION -->
 <div class="section" id="execution">
   <div class="section-label">Section 06</div>
   <h2>Execution Monitor</h2>
-  <p>URL: <code>/pms/execution</code> &mdash; Watch field team progress in real-time (read-only for admin). Auto-refreshes every 30 seconds.</p>
-  <p>Shows all Rollout Plans in "Planned" or "In Execution" status with System ID, Team, Plan Date, Visit Type, Target Amount, Achieved Amount, Completion %, and Status with color coding.</p>
+  <p>URL: <code>/pms/execution</code> &mdash; Real-time view of field progress (read-only for admin). Auto-refreshes every 30 seconds. Shows System ID, Team, Plan Date, Target, Achieved, Completion %, Status.</p>
 </div>
 
-<!-- ============ 7. WORK DONE ============ -->
+<!-- 7. WORK DONE -->
 <div class="section" id="workdone">
   <div class="section-label">Section 07</div>
   <h2>Work Done</h2>
-  <p>URL: <code>/pms/work-done</code> &mdash; View completed, billable work with auto-calculated financials.</p>
-
+  <p>URL: <code>/pms/work-done</code> &mdash; Completed, billable work with auto-calculated financials.</p>
   <table>
     <thead><tr><th>Column</th><th>Source</th></tr></thead>
     <tbody>
-      <tr><td><strong>Revenue (SAR)</strong></td><td>Billing Rate &times; Executed Qty &mdash; rate from Customer Item Master</td></tr>
+      <tr><td><strong>Revenue (SAR)</strong></td><td>Billing Rate &times; Qty from Customer Item Master</td></tr>
       <tr><td><strong>Cost (SAR)</strong></td><td>Team Daily Cost + Subcontract Cost</td></tr>
       <tr><td><strong>Margin (SAR)</strong></td><td>Revenue &minus; Cost</td></tr>
-      <tr><td><strong>Billing Status</strong></td><td>Pending / Invoiced / Closed</td></tr>
     </tbody>
   </table>
-
-  <div class="alert alert-info">
-    <span class="alert-icon">&#8505;</span>
-    <span><strong>Rate logic:</strong> Standard Region &rarr; <code>Standard_Rate_SAR</code>. Hard Region (center_area contains "Hard") &rarr; <code>Hard_Rate_SAR</code>.</span>
-  </div>
+  <div class="alert alert-info"><span class="alert-icon">&#8505;</span><span><strong>Rate logic:</strong> Standard Region &rarr; Standard_Rate. Hard Region &rarr; Hard_Rate.</span></div>
 </div>
 
-<!-- ============ 8. REPORTS & MASTERS ============ -->
+<!-- 8. REPORTS -->
 <div class="section" id="reports">
   <div class="section-label">Section 08</div>
   <h2>Reports &amp; Masters</h2>
-
-  <h3>Reports <span style="font-weight:400;color:var(--text-muted);font-size:14px;">/pms/reports</span></h3>
   <table>
-    <thead><tr><th>Report</th><th>What it shows</th></tr></thead>
+    <thead><tr><th>Report</th><th>Content</th></tr></thead>
     <tbody>
-      <tr><td><strong>Project Status Summary</strong></td><td>All projects with status, budget, actual cost</td></tr>
-      <tr><td><strong>Budget vs Actual</strong></td><td>Budget vs actual cost comparison per project</td></tr>
-      <tr><td><strong>Team Utilization</strong></td><td>Team assignments and utilization percentages</td></tr>
-      <tr><td><strong>Daily Work Progress</strong></td><td>Daily execution progress by team and date</td></tr>
+      <tr><td><strong>Project Status</strong></td><td>All projects with status, budget, actual cost</td></tr>
+      <tr><td><strong>Budget vs Actual</strong></td><td>Per-project comparison</td></tr>
+      <tr><td><strong>Team Utilization</strong></td><td>Assignments and utilization %</td></tr>
+      <tr><td><strong>Daily Progress</strong></td><td>Execution progress by team and date</td></tr>
     </tbody>
   </table>
-
-  <h3>Masters <span style="font-weight:400;color:var(--text-muted);font-size:14px;">/pms/masters</span></h3>
-  <table>
-    <thead><tr><th>Master</th><th>Records</th><th>Description</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Area Master</strong></td><td class="mono">7</td><td>Saudi regions: Riyadh, Jeddah, Dammam, Abha, Qassim, Makkah, Madinah</td></tr>
-      <tr><td><strong>INET Team</strong></td><td class="mono">60</td><td>Field teams with IM, type (INET/SUB), daily cost</td></tr>
-      <tr><td><strong>Subcontractor Master</strong></td><td class="mono">7</td><td>Subcontractors with INET margin % and payout %</td></tr>
-      <tr><td><strong>Project Control Center</strong></td><td class="mono">74</td><td>All projects with domain, customer, IM</td></tr>
-      <tr><td><strong>Visit Multiplier Master</strong></td><td class="mono">4</td><td>Work Done=1.0x, Re-Visit=0.5x, Extra=1.5x, Plan=0x</td></tr>
-    </tbody>
-  </table>
+  <p><strong>Masters</strong> (<code>/pms/masters</code>): View record counts for Area (7), INET Team (60), Subcontractor (7), Project (74), Visit Multiplier (4). Click to open in Frappe Desk.</p>
 </div>
 
-<!-- ============ 9. IM GUIDE ============ -->
+<!-- 9. IM GUIDE -->
 <div class="section" id="im-guide">
   <div class="section-label">Section 09</div>
   <h2>IM Dashboard Guide</h2>
   <p>URL: <code>/pms/im-dashboard</code> &mdash; Auto-shown when an IM logs in.</p>
-
-  <div class="card">
-    <div class="card-title">&#9733; Personal KPIs (4 cards)</div>
-    <p>Total Revenue this month, Total Cost, Profit/Loss, Team Count &mdash; all filtered to your teams only.</p>
-  </div>
-  <div class="card">
-    <div class="card-title">&#128101; My Teams Table</div>
-    <p>Your teams with name, type (INET/SUB), status (Active/Idle today), daily cost.</p>
-  </div>
-  <div class="card">
-    <div class="card-title">&#128196; My Projects Table</div>
-    <p>Projects where you are the Implementation Manager with code, name, status, completion %, budget.</p>
-  </div>
+  <div class="card"><div class="card-title">&#9733; Personal KPIs</div><p>Revenue, Cost, Profit/Loss, Team Count &mdash; filtered to your teams.</p></div>
+  <div class="card"><div class="card-title">&#128101; My Teams</div><p>Your teams with name, type, status (Active/Idle), daily cost.</p></div>
+  <div class="card"><div class="card-title">&#128196; My Projects</div><p>Projects where you are IM. Code, name, status, completion %, budget.</p></div>
 </div>
 
-<!-- ============ 10. FIELD GUIDE ============ -->
+<!-- 10. FIELD GUIDE -->
 <div class="section" id="field-guide">
   <div class="section-label">Section 10</div>
   <h2>Field Team Guide</h2>
-
-  <h3>Today's Work <span style="font-weight:400;color:var(--text-muted);font-size:14px;">/pms/today</span></h3>
-  <p>Cards showing today's planned activities: item description, site name, project code, target amount, status. Click a card to open the execution form.</p>
-
-  <h3>Execution Form <span style="font-weight:400;color:var(--text-muted);font-size:14px;">/pms/execute/:id</span></h3>
-
+  <h3>Today's Work <code>/pms/today</code></h3>
+  <p>Cards showing today's planned activities. Click a card to open the execution form.</p>
+  <h3>Execution Form <code>/pms/execute/:id</code></h3>
   <div class="steps">
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Select Execution Status</div>
-        <div class="step-desc">In Progress, Completed, Hold, Cancelled, or Postponed</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Enter Achieved Qty</div>
-        <div class="step-desc">How many units were completed</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Capture GPS Location</div>
-        <div class="step-desc">Click "Capture GPS" to auto-fill from your device</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Submit</div>
-        <div class="step-desc">When marked "Completed": system auto-creates Work Done record with revenue/cost/margin and updates the Command Dashboard KPIs.</div>
-      </div>
-    </div>
+    <div class="step"><div class="step-num">1</div><div class="step-content"><div class="step-title">Select Status</div><div class="step-desc">In Progress, Completed, Hold, Cancelled, or Postponed</div></div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-content"><div class="step-title">Enter Achieved Qty</div><div class="step-desc">Units completed</div></div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-content"><div class="step-title">Capture GPS &amp; Submit</div><div class="step-desc">Auto-fill GPS from device. On "Completed": system creates Work Done record automatically.</div></div></div>
   </div>
 </div>
 
-<!-- ============ 11. WORKFLOW EXAMPLE ============ -->
+<!-- 11. WORKFLOW -->
 <div class="section" id="workflow">
   <div class="section-label">Section 11</div>
   <h2>Complete Workflow Example</h2>
-
   <div class="workflow">
-    <div class="workflow-row"><div class="workflow-num">1</div><div class="workflow-text"><strong>Huawei sends PO export file</strong> (17 line items worth SAR 25,000)</div></div>
+    <div class="workflow-row"><div class="workflow-num">1</div><div class="workflow-text"><strong>Huawei sends PO export</strong> (17 line items, SAR 25,000)</div></div>
     <div class="workflow-connector">&darr;</div>
     <div class="workflow-row"><div class="workflow-num">2</div><div class="workflow-text">Admin uploads at <code>/pms/po-upload</code> &rarr; <strong>17 PO Intake lines</strong> created</div></div>
     <div class="workflow-connector">&darr;</div>
-    <div class="workflow-row"><div class="workflow-num">3</div><div class="workflow-text">Admin at <code>/pms/dispatch</code> &rarr; assigns <strong>10 lines to Team-01</strong>, <strong>7 lines to Team-05</strong></div></div>
+    <div class="workflow-row"><div class="workflow-num">3</div><div class="workflow-text">Admin dispatches &rarr; <strong>10 lines to Team-01</strong>, <strong>7 to Team-05</strong></div></div>
     <div class="workflow-connector">&darr;</div>
-    <div class="workflow-row"><div class="workflow-num">4</div><div class="workflow-text">Admin at <code>/pms/planning</code> &rarr; sets <strong>plan date = today</strong>, visit type "Work Done"</div></div>
+    <div class="workflow-row"><div class="workflow-num">4</div><div class="workflow-text">Admin plans &rarr; <strong>plan date = today</strong>, visit type "Work Done"</div></div>
     <div class="workflow-connector">&darr;</div>
     <div class="workflow-row"><div class="workflow-num">5</div><div class="workflow-text">Team-01 lead logs in &rarr; sees <strong>10 items</strong> at <code>/pms/today</code></div></div>
     <div class="workflow-connector">&darr;</div>
-    <div class="workflow-row"><div class="workflow-num">6</div><div class="workflow-text">Team-01 marks items <strong>"Completed"</strong>, enters achieved qty</div></div>
+    <div class="workflow-row"><div class="workflow-num">6</div><div class="workflow-text">Team marks items <strong>"Completed"</strong> with achieved qty</div></div>
     <div class="workflow-connector">&darr;</div>
-    <div class="workflow-row"><div class="workflow-num">7</div><div class="workflow-text">System auto-creates <strong>Work Done</strong>: Revenue = SAR 706, Cost = SAR 100, Margin = SAR 606</div></div>
+    <div class="workflow-row"><div class="workflow-num">7</div><div class="workflow-text">System auto-creates <strong>Work Done</strong>: Revenue SAR 706, Cost SAR 100, Margin SAR 606</div></div>
     <div class="workflow-connector">&darr;</div>
-    <div class="workflow-row"><div class="workflow-num">8</div><div class="workflow-text"><strong>Command Dashboard updates</strong> within 60 seconds: INET Achieved +SAR 706, Gap decreases</div></div>
+    <div class="workflow-row"><div class="workflow-num">8</div><div class="workflow-text"><strong>Dashboard updates</strong> within 60s: Achieved +706, Gap decreases</div></div>
   </div>
 </div>
 
-<!-- ============ 12. FORMULAS ============ -->
+<!-- 12. FORMULAS -->
 <div class="section" id="formulas">
   <div class="section-label">Section 12</div>
   <h2>Financial Formulas</h2>
-
   <table class="formula-table">
     <thead><tr><th>Calculation</th><th>Formula</th><th>Source</th></tr></thead>
     <tbody>
       <tr><td><strong>Revenue</strong></td><td>Billing_Rate &times; Executed_Qty</td><td>Customer Item Master</td></tr>
-      <tr><td><strong>Team Cost</strong></td><td>Daily_Cost from Team Master</td><td>INET Team (SAR 1,000/day)</td></tr>
+      <tr><td><strong>Team Cost</strong></td><td>Daily_Cost</td><td>INET Team (SAR 1,000/day)</td></tr>
       <tr><td><strong>Sub Cost</strong></td><td>Expected_Cost &times; Visit_Multiplier</td><td>Subcontract Cost Master</td></tr>
-      <tr><td><strong>Total Cost</strong></td><td>Team_Cost + Sub_Cost</td><td>Calculated</td></tr>
       <tr><td><strong>Margin</strong></td><td>Revenue &minus; Total_Cost</td><td>Calculated</td></tr>
       <tr><td><strong>INET Margin (subs)</strong></td><td>Revenue &times; INet_Margin_%</td><td>Subcontractor Master</td></tr>
-      <tr><td><strong>Coverage %</strong></td><td>Achieved / Target &times; 100</td><td>Dashboard calc</td></tr>
+      <tr><td><strong>Coverage %</strong></td><td>Achieved / Target &times; 100</td><td>Dashboard</td></tr>
     </tbody>
   </table>
 </div>
 
-<!-- ============ 13. SETUP ============ -->
+<!-- 13. SETUP -->
 <div class="section" id="setup">
   <div class="section-label">Section 13</div>
   <h2>First-Time Setup</h2>
-
   <h3>Import Master Data</h3>
   <div class="steps">
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Upload CONTROL_CENTER.xlsx to Frappe</div>
-        <div class="step-desc">Go to Frappe Desk &rarr; File Manager &rarr; Upload the file</div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Run the import script</div>
-        <div class="step-desc">
-          <pre><code>cd ~/frappe-bench
+    <div class="step"><div class="step-num">1</div><div class="step-content"><div class="step-title">Upload CONTROL_CENTER.xlsx</div><div class="step-desc">Frappe Desk &rarr; File Manager &rarr; Upload</div></div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-content"><div class="step-title">Run import script</div><div class="step-desc"><pre><code>cd ~/frappe-bench
 bench --site mysite.local console
 
 from inet_app.api.data_import import import_control_center_xlsx
 result = import_control_center_xlsx("/files/CONTROL_CENTER.xlsx")
 print(result)
-frappe.db.commit()</code></pre>
-        </div>
-      </div>
-    </div>
-    <div class="step">
-      <div class="step-content">
-        <div class="step-title">Verify at /pms/masters</div>
-        <div class="step-desc">Check record counts match: 7 areas, 60 teams, 7 subcontractors, 74 projects, 4 multipliers</div>
-      </div>
-    </div>
+frappe.db.commit()</code></pre></div></div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-content"><div class="step-title">Verify at /pms/masters</div><div class="step-desc">7 areas, 60 teams, 7 subcontractors, 74 projects, 4 multipliers</div></div></div>
   </div>
-
-  <h3>Set Up IM Users</h3>
-  <p>Create Frappe users for each IM. Set their <strong>Full Name</strong> to match the <code>im</code> field in INET Team master (e.g., "Majid Ali", "Ajmal Muhammed"). They'll automatically get the IM Dashboard on login.</p>
-
-  <h3>Set Up Field Team Users</h3>
-  <p>Create Frappe users for team leads. They default to "Field" role and see Today's Work filtered to planned items.</p>
+  <h3>Set Up Users</h3>
+  <p><strong>IMs:</strong> Create users with Full Name matching INET Team <code>im</code> field (e.g., "Majid Ali"). They auto-get the IM Dashboard.</p>
+  <p><strong>Field Teams:</strong> Create users for team leads. They default to Field role.</p>
 </div>
 
-<!-- ============ NAVIGATION REF ============ -->
+<!-- NAV REFERENCE -->
 <div class="section">
   <div class="section-label">Navigation Reference</div>
   <h2>Admin Sidebar Pages</h2>
   <div class="nav-ref">
-    <div class="nav-item"><div class="nav-icon">&#9670;</div><div><div class="nav-label">Dashboard</div><div class="nav-url">/pms/dashboard</div></div></div>
-    <div class="nav-item"><div class="nav-icon">&uarr;</div><div><div class="nav-label">PO Upload</div><div class="nav-url">/pms/po-upload</div></div></div>
-    <div class="nav-item"><div class="nav-icon">&rarr;</div><div><div class="nav-label">Dispatch</div><div class="nav-url">/pms/dispatch</div></div></div>
-    <div class="nav-item"><div class="nav-icon">&#9776;</div><div><div class="nav-label">Planning</div><div class="nav-url">/pms/planning</div></div></div>
-    <div class="nav-item"><div class="nav-icon">&#9678;</div><div><div class="nav-label">Execution</div><div class="nav-url">/pms/execution</div></div></div>
-    <div class="nav-item"><div class="nav-icon">&#10003;</div><div><div class="nav-label">Work Done</div><div class="nav-url">/pms/work-done</div></div></div>
-    <div class="nav-item"><div class="nav-icon">&#9707;</div><div><div class="nav-label">Reports</div><div class="nav-url">/pms/reports</div></div></div>
-    <div class="nav-item"><div class="nav-icon">&#9881;</div><div><div class="nav-label">Masters</div><div class="nav-url">/pms/masters</div></div></div>
+    <div class="nav-ref-item"><div class="nav-ref-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div><div><div class="nav-ref-label">Dashboard</div><div class="nav-ref-url">/pms/dashboard</div></div></div>
+    <div class="nav-ref-item"><div class="nav-ref-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div><div><div class="nav-ref-label">PO Upload</div><div class="nav-ref-url">/pms/po-upload</div></div></div>
+    <div class="nav-ref-item"><div class="nav-ref-icon"><svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></div><div><div class="nav-ref-label">Dispatch</div><div class="nav-ref-url">/pms/dispatch</div></div></div>
+    <div class="nav-ref-item"><div class="nav-ref-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div><div class="nav-ref-label">Planning</div><div class="nav-ref-url">/pms/planning</div></div></div>
+    <div class="nav-ref-item"><div class="nav-ref-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div><div class="nav-ref-label">Execution</div><div class="nav-ref-url">/pms/execution</div></div></div>
+    <div class="nav-ref-item"><div class="nav-ref-icon"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div><div class="nav-ref-label">Work Done</div><div class="nav-ref-url">/pms/work-done</div></div></div>
+    <div class="nav-ref-item"><div class="nav-ref-icon"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div><div><div class="nav-ref-label">Reports</div><div class="nav-ref-url">/pms/reports</div></div></div>
+    <div class="nav-ref-item"><div class="nav-ref-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></div><div><div class="nav-ref-label">Masters</div><div class="nav-ref-url">/pms/masters</div></div></div>
   </div>
 </div>
 
-<!-- ============ 14. TROUBLESHOOTING ============ -->
+<!-- 14. TROUBLESHOOTING -->
 <div class="section" id="troubleshooting">
   <div class="section-label">Section 14</div>
   <h2>Troubleshooting</h2>
-
-  <div class="trouble-item">
-    <div class="trouble-issue">Dashboard shows old white theme</div>
-    <div class="trouble-fix">Hard refresh: <strong>Cmd+Shift+R</strong> or open in incognito window</div>
-  </div>
-  <div class="trouble-item">
-    <div class="trouble-issue">"Loading..." stuck forever</div>
-    <div class="trouble-fix">Check bench server: <code>cd ~/frappe-bench && bench serve --port 8001</code></div>
-  </div>
-  <div class="trouble-item">
-    <div class="trouble-issue">PO Upload validation errors</div>
-    <div class="trouble-fix">Verify Item Codes match Customer Item Master and Project Codes match Project Control Center</div>
-  </div>
-  <div class="trouble-item">
-    <div class="trouble-issue">Dashboard KPIs all zero</div>
-    <div class="trouble-fix">No Work Done records yet &mdash; complete the full pipeline: upload &rarr; dispatch &rarr; plan &rarr; execute &rarr; complete</div>
-  </div>
-  <div class="trouble-item">
-    <div class="trouble-issue">Login fails</div>
-    <div class="trouble-fix">Use Frappe credentials. Default admin: <code>Administrator</code> / <code>admin</code></div>
-  </div>
-  <div class="trouble-item">
-    <div class="trouble-issue">IM Dashboard shows wrong data</div>
-    <div class="trouble-fix">User's Full Name must match the <code>im</code> field in INET Team master exactly</div>
+  <div class="card" style="padding:0;overflow:hidden;">
+    <div class="trouble-item" style="padding:14px 20px;"><div class="trouble-issue">Dashboard shows old white theme</div><div class="trouble-fix">Hard refresh: <strong>Cmd+Shift+R</strong> or incognito window</div></div>
+    <div class="trouble-item" style="padding:14px 20px;"><div class="trouble-issue">"Loading..." stuck forever</div><div class="trouble-fix">Check server: <code>cd ~/frappe-bench && bench serve --port 8001</code></div></div>
+    <div class="trouble-item" style="padding:14px 20px;"><div class="trouble-issue">PO Upload validation errors</div><div class="trouble-fix">Verify Item Codes and Project Codes match master data</div></div>
+    <div class="trouble-item" style="padding:14px 20px;"><div class="trouble-issue">Dashboard KPIs all zero</div><div class="trouble-fix">Complete the full pipeline: upload &rarr; dispatch &rarr; plan &rarr; execute</div></div>
+    <div class="trouble-item" style="padding:14px 20px;"><div class="trouble-issue">Login fails</div><div class="trouble-fix">Use Frappe credentials. Default: <code>Administrator / admin</code></div></div>
+    <div class="trouble-item" style="padding:14px 20px;border-bottom:none;"><div class="trouble-issue">IM Dashboard wrong data</div><div class="trouble-fix">User's Full Name must match <code>im</code> field in INET Team exactly</div></div>
   </div>
 </div>
 
-<!-- ============ FOOTER ============ -->
+<!-- FOOTER -->
 <div class="guide-footer">
   <p><strong>INET Operations Command Center</strong> v1.0</p>
   <p>Frappe 15 &middot; ERPNext 15 &middot; React 19 &middot; April 2026</p>
   <p style="margin-top:8px;">Built for INET Telecom &middot; Powered by Enfono</p>
 </div>
 
-</div><!-- /container -->
+</div><!-- /content-area -->
+</div><!-- /main -->
+
+<script>
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+function navClick(el) {
+  document.querySelectorAll('.nav-link').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// Highlight active section on scroll
+const sections = document.querySelectorAll('.section[id]');
+const navLinks = document.querySelectorAll('.nav-link[href^="#"]');
+window.addEventListener('scroll', () => {
+  let current = '';
+  sections.forEach(s => {
+    if (window.scrollY >= s.offsetTop - 100) current = s.id;
+  });
+  navLinks.forEach(link => {
+    link.classList.remove('active');
+    if (link.getAttribute('href') === '#' + current) link.classList.add('active');
+  });
+});
+</script>
+
 </body>
 </html>
