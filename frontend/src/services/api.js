@@ -93,4 +93,25 @@ export const pmApi = {
   reportBudgetVsActualByProject: (f) => call("inet_app.api.project_management.report_budget_vs_actual_by_project", { filters: JSON.stringify(f || {}) }),
   reportTeamUtilizationReport:   (f) => call("inet_app.api.project_management.report_team_utilization_report",   { filters: JSON.stringify(f || {}) }),
   reportDailyWorkProgressReport: (f) => call("inet_app.api.project_management.report_daily_work_progress_report", { filters: JSON.stringify(f || {}) }),
+
+  // ── Command Center APIs ────────────────────────────────────
+  getCommandDashboard:  ()          => call("inet_app.api.command_center.get_command_dashboard"),
+  getIMDashboard:       (im)        => call("inet_app.api.command_center.get_im_dashboard", { im }),
+  getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
+  uploadPOFile:         (file_url)  => call("inet_app.api.command_center.upload_po_file", { file_url }),
+  confirmPOUpload:      (rows)      => call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(rows) }),
+  dispatchPOLines:      (payload)   => call("inet_app.api.command_center.dispatch_po_lines", { payload: JSON.stringify(payload) }),
+  createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
+  updateExecution:      (payload)   => call("inet_app.api.command_center.update_execution", { payload: JSON.stringify(payload) }),
+  generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),
+
+  // ── List APIs (Command Center doctypes) ────────────────────
+  listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost"], limit_page_length: 100 }),
+  listPODispatches:  (filters) => call("frappe.client.get_list", { doctype: "PO Dispatch", filters: filters || {}, fields: ["*"], order_by: "modified desc", limit_page_length: 100 }),
+  listRolloutPlans:  (filters) => call("frappe.client.get_list", { doctype: "Rollout Plan", filters: filters || {}, fields: ["*"], order_by: "plan_date desc", limit_page_length: 100 }),
+
+  // ── Role Detection helpers ─────────────────────────────────
+  getUserRoles:      (user)    => call("frappe.client.get_list", { doctype: "Has Role", filters: { parent: user, role: "System Manager" }, fields: ["role"], limit_page_length: 1 }),
+  getTeamByIM:       (im)      => call("frappe.client.get_list", { doctype: "INET Team", filters: { im }, fields: ["team_id", "team_name", "im"], limit_page_length: 1 }),
+  getTeamByMember:   (user)    => call("frappe.client.get_list", { doctype: "INET Team", filters: { status: "Active" }, fields: ["team_id", "team_name"], limit_page_length: 100 }),
 };
