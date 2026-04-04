@@ -1,0 +1,86 @@
+{
+  "actions": [],
+  "autoname": "format:SCC-.#####",
+  "creation": "2026-04-04 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "subcontractor",
+    "activity_code",
+    "region_type",
+    "expected_cost_sar",
+    "effective_from",
+    "effective_to",
+    "active_flag"
+  ],
+  "fields": [
+    {
+      "fieldname": "subcontractor",
+      "fieldtype": "Data",
+      "label": "Subcontractor",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "activity_code",
+      "fieldtype": "Data",
+      "label": "Activity Code",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "default": "Standard",
+      "fieldname": "region_type",
+      "fieldtype": "Select",
+      "label": "Region Type",
+      "options": "Standard\nHard"
+    },
+    {
+      "fieldname": "expected_cost_sar",
+      "fieldtype": "Currency",
+      "label": "Expected Cost (SAR)"
+    },
+    {
+      "fieldname": "effective_from",
+      "fieldtype": "Date",
+      "label": "Effective From"
+    },
+    {
+      "fieldname": "effective_to",
+      "fieldtype": "Date",
+      "label": "Effective To"
+    },
+    {
+      "default": "1",
+      "fieldname": "active_flag",
+      "fieldtype": "Check",
+      "label": "Active"
+    }
+  ],
+  "index_web_pages_for_search": 0,
+  "istable": 0,
+  "links": [],
+  "modified": "2026-04-04 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Inet App",
+  "name": "Subcontract Cost Master",
+  "naming_rule": "Expression (old style)",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "track_changes": 1
+}

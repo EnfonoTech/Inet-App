@@ -1,0 +1,88 @@
+{
+  "actions": [],
+  "autoname": "field:activity_code",
+  "creation": "2026-04-04 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "activity_code",
+    "standard_activity",
+    "category",
+    "base_cost_sar",
+    "cost_type",
+    "billing_type",
+    "active_flag"
+  ],
+  "fields": [
+    {
+      "fieldname": "activity_code",
+      "fieldtype": "Data",
+      "label": "Activity Code",
+      "reqd": 1,
+      "unique": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "standard_activity",
+      "fieldtype": "Data",
+      "label": "Standard Activity",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "category",
+      "fieldtype": "Data",
+      "label": "Category"
+    },
+    {
+      "fieldname": "base_cost_sar",
+      "fieldtype": "Currency",
+      "label": "Base Cost (SAR)"
+    },
+    {
+      "default": "Fixed",
+      "fieldname": "cost_type",
+      "fieldtype": "Select",
+      "label": "Cost Type",
+      "options": "Fixed\nVariable"
+    },
+    {
+      "default": "Billable",
+      "fieldname": "billing_type",
+      "fieldtype": "Select",
+      "label": "Billing Type",
+      "options": "Billable\nNon-Billable"
+    },
+    {
+      "default": "1",
+      "fieldname": "active_flag",
+      "fieldtype": "Check",
+      "label": "Active"
+    }
+  ],
+  "index_web_pages_for_search": 0,
+  "istable": 0,
+  "links": [],
+  "modified": "2026-04-04 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Inet App",
+  "name": "Activity Cost Master",
+  "naming_rule": "By fieldname",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "track_changes": 1
+}
