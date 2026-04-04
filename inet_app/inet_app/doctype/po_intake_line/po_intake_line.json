@@ -8,6 +8,8 @@
     "po_line_no",
     "shipment_number",
     "site_code",
+    "site_name",
+    "po_line_status",
     "item_code",
     "item_description",
     "qty",
@@ -44,6 +46,18 @@
       "fieldtype": "Data",
       "label": "Site Code / DUID",
       "in_list_view": 1
+    },
+    {
+      "fieldname": "site_name",
+      "fieldtype": "Data",
+      "label": "Site Name"
+    },
+    {
+      "default": "New",
+      "fieldname": "po_line_status",
+      "fieldtype": "Select",
+      "label": "Line Status",
+      "options": "New\nDispatched\nCompleted"
     },
     {
       "fieldname": "item_code",

@@ -8,11 +8,15 @@
   "project_code",
   "project_name",
   "project_domain",
+  "customer",
   "customer_type",
   "huawei_im",
+  "division",
   "implementation_manager",
   "column_break_mmrq",
   "center_area",
+  "monthly_target",
+  "active_flag",
   "project_status",
   "budget_amount",
   "actual_cost",
@@ -53,6 +57,12 @@
    "options": "Project"
   },
   {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
    "fieldname": "customer_type",
    "fieldtype": "Select",
    "label": "Customer Type",
@@ -63,6 +73,11 @@
    "fieldtype": "Link",
    "label": "Huawei IM",
    "options": "Employee"
+  },
+  {
+   "fieldname": "division",
+   "fieldtype": "Data",
+   "label": "Division"
   },
   {
    "fieldname": "implementation_manager",
@@ -76,6 +91,18 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Center Area"
+  },
+  {
+   "fieldname": "monthly_target",
+   "fieldtype": "Currency",
+   "label": "Monthly Target (SAR)"
+  },
+  {
+   "default": "Yes",
+   "fieldname": "active_flag",
+   "fieldtype": "Select",
+   "label": "Active",
+   "options": "Yes\nNo"
   },
   {
    "default": "Active",

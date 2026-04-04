@@ -10,6 +10,10 @@
     "transaction_date",
     "schedule_date",
     "status",
+    "division",
+    "contract",
+    "center_area",
+    "publish_date",
     "po_lines",
     "grand_total"
   ],
@@ -48,6 +52,26 @@
       "label": "PO Status",
       "in_list_view": 1,
       "options": "Active\nArchive"
+    },
+    {
+      "fieldname": "division",
+      "fieldtype": "Data",
+      "label": "Division"
+    },
+    {
+      "fieldname": "contract",
+      "fieldtype": "Data",
+      "label": "Contract"
+    },
+    {
+      "fieldname": "center_area",
+      "fieldtype": "Data",
+      "label": "Center Area"
+    },
+    {
+      "fieldname": "publish_date",
+      "fieldtype": "Date",
+      "label": "Publish Date"
     },
     {
       "fieldname": "po_lines",
