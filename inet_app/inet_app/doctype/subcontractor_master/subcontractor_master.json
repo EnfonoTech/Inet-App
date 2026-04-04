@@ -1,0 +1,90 @@
+{
+  "actions": [],
+  "autoname": "field:subcontractor_name",
+  "creation": "2026-04-04 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "subcontractor_name",
+    "type",
+    "inet_margin_pct",
+    "sub_payout_pct",
+    "contract_model",
+    "status",
+    "approved_flag"
+  ],
+  "fields": [
+    {
+      "fieldname": "subcontractor_name",
+      "fieldtype": "Data",
+      "label": "Subcontractor Name",
+      "reqd": 1,
+      "unique": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "type",
+      "fieldtype": "Select",
+      "label": "Type",
+      "options": "INET\nSUB",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "inet_margin_pct",
+      "fieldtype": "Percent",
+      "label": "INET Margin %",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "sub_payout_pct",
+      "fieldtype": "Percent",
+      "label": "Sub Payout %",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "contract_model",
+      "fieldtype": "Data",
+      "label": "Contract Model"
+    },
+    {
+      "default": "Active",
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Active\nInactive"
+    },
+    {
+      "default": "0",
+      "fieldname": "approved_flag",
+      "fieldtype": "Check",
+      "label": "Approved"
+    }
+  ],
+  "index_web_pages_for_search": 0,
+  "istable": 0,
+  "links": [],
+  "modified": "2026-04-04 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Inet App",
+  "name": "Subcontractor Master",
+  "naming_rule": "By fieldname",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "track_changes": 1
+}
