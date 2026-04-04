@@ -87,6 +87,12 @@ export default function CommandDashboard() {
     }
   }
 
+  /* Fullscreen mode: hide sidebar when dashboard is active */
+  useEffect(() => {
+    document.body.classList.add("dashboard-fullscreen");
+    return () => document.body.classList.remove("dashboard-fullscreen");
+  }, []);
+
   useEffect(() => {
     fetchData();
     intervalRef.current = setInterval(fetchData, 60_000);
