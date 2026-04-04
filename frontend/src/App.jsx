@@ -4,15 +4,6 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
 
-/* ── Existing module imports (kept for backward compat) ────── */
-// These will be replaced as new pages are built
-// import Dashboard from "./modules/Dashboard";
-// import POIntakePortal from "./modules/POIntakePortal";
-// import Projects from "./modules/Projects";
-// import DailyUpdates from "./modules/DailyUpdates";
-// import TeamAssignments from "./modules/TeamAssignments";
-// import Reports from "./modules/Reports";
-
 /* ── Placeholder for pages not yet built ────────────────────── */
 function Placeholder({ title }) {
   return (
@@ -58,8 +49,8 @@ function AppContent() {
   if (!user) return null;
 
   return (
-    <AppShell>
-      <Routes>
+    <Routes>
+      <Route element={<AppShell />}>
         {/* ── Admin routes ──────────────────────────────────── */}
         {role === "admin" && (
           <>
@@ -89,8 +80,8 @@ function AppContent() {
 
         {/* ── Default redirect based on role ────────────────── */}
         <Route path="*" element={<DefaultRedirect />} />
-      </Routes>
-    </AppShell>
+      </Route>
+    </Routes>
   );
 }
 

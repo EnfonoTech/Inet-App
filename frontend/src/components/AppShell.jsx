@@ -1,49 +1,65 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-const nav = [
-  { to: "/dashboard", label: "Dashboard", icon: "grid" },
-  { to: "/po-intake", label: "PO Intake", icon: "box" },
-  { to: "/projects", label: "Projects", icon: "target" },
-  { to: "/daily-updates", label: "Daily Updates", icon: "calendar" },
-  { to: "/team-assignments", label: "Team Assignments", icon: "users" },
-  { to: "/reports", label: "Reports", icon: "chart" },
+/* ── Navigation definitions per role ────────────────────────── */
+const adminNav = [
+  { to: "/dashboard",  label: "Dashboard",        icon: "\u25C6" },
+  { to: "/po-upload",  label: "PO Upload",         icon: "\u2191" },
+  { to: "/dispatch",   label: "Dispatch",           icon: "\u2192" },
+  { to: "/planning",   label: "Planning",           icon: "\u2630" },
+  { to: "/execution",  label: "Execution",          icon: "\u25CE" },
+  { to: "/work-done",  label: "Work Done",          icon: "\u2713" },
+  { to: "/reports",    label: "Reports",            icon: "\u25EB" },
+  { to: "/masters",    label: "Masters",            icon: "\u2699" },
 ];
 
-const SV = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" };
+const imNav = [
+  { to: "/im-dashboard", label: "My Dashboard", icon: "\u25C6" },
+];
 
-function NavIcon({ name }) {
-  switch (name) {
-    case "grid":    return <svg {...SV}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>;
-    case "box":     return <svg {...SV}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.73z"/><path d="M3.3 7l8.7 5 8.7-5"/><path d="M12 22V12"/></svg>;
-    case "target":  return <svg {...SV}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>;
-    case "calendar":return <svg {...SV}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
-    case "users":   return <svg {...SV}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
-    case "chart":   return <svg {...SV}><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 3-3"/></svg>;
-    default: return null;
-  }
-}
+const fieldNav = [
+  { to: "/today", label: "Today's Work", icon: "\u25C6" },
+];
 
-export default function AppShell({ children }) {
+export default function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, role, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
-  /* close dropdown when clicking outside */
+  /* Close dropdown when clicking outside */
   useEffect(() => {
-    const handler = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const current = useMemo(() => nav.find((n) => n.to === location.pathname)?.label || "INET PMS", [location.pathname]);
+  /* Pick nav items based on role */
+  const navItems = useMemo(() => {
+    if (role === "im") return imNav;
+    if (role === "field") return fieldNav;
+    return adminNav;
+  }, [role]);
 
+  /* Current page title for topbar */
+  const current = useMemo(
+    () => navItems.find((n) => location.pathname.startsWith(n.to))?.label || "INET PMS",
+    [location.pathname, navItems]
+  );
+
+  /* User initials */
   const initials = useMemo(() => {
     const src = user?.full_name || user?.email || "";
-    return src.split(/[\s@._-]/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() || "").join("") || "?";
+    return src
+      .split(/[\s@._-]/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() || "")
+      .join("") || "?";
   }, [user]);
 
   const handleLogout = async () => {
@@ -54,34 +70,35 @@ export default function AppShell({ children }) {
 
   return (
     <div className="app-layout">
+      {/* ── Sidebar ─────────────────────────────────────────── */}
       <aside className="sidebar">
-        {/* ── Brand ── */}
+        {/* Brand */}
         <div className="sidebar-logo">
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div className="brand-mark" aria-hidden="true" />
             <div>
               <h2>INET PMS</h2>
-              <div className="sidebar-tagline">Project Management</div>
+              <div className="sidebar-tagline">Operations Command</div>
             </div>
           </div>
         </div>
 
-        {/* ── Navigation ── */}
+        {/* Navigation */}
         <nav className="sidebar-nav">
           <span className="nav-section-label">Menu</span>
-          {nav.map((item) => (
-            <Link
+          {navItems.map((item) => (
+            <NavLink
               key={item.to}
-              className={`nav-item ${location.pathname === item.to ? "active" : ""}`}
+              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
               to={item.to}
             >
-              <span className="nav-icon"><NavIcon name={item.icon} /></span>
+              <span className="nav-icon">{item.icon}</span>
               <span className="nav-label">{item.label}</span>
-            </Link>
+            </NavLink>
           ))}
         </nav>
 
-        {/* ── User footer (next_pms style) ── */}
+        {/* User footer */}
         <div className="sidebar-footer" ref={menuRef}>
           <div
             className={`sidebar-user${menuOpen ? " open" : ""}`}
@@ -95,7 +112,17 @@ export default function AppShell({ children }) {
               <span className="sidebar-user-name">{user?.full_name || user?.email || "Guest"}</span>
               <span className="sidebar-user-email">{user?.email || ""}</span>
             </div>
-            <svg className="sidebar-user-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              className="sidebar-user-chevron"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <polyline points="6 9 12 15 18 9" />
             </svg>
 
@@ -111,13 +138,20 @@ export default function AppShell({ children }) {
                 </div>
                 <div className="user-menu-divider" />
                 <a href="/app" className="user-menu-item">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="7" height="7" />
+                    <rect x="14" y="3" width="7" height="7" />
+                    <rect x="3" y="14" width="7" height="7" />
+                    <rect x="14" y="14" width="7" height="7" />
+                  </svg>
                   <span>Switch to Desk</span>
                 </a>
                 <div className="user-menu-divider" />
                 <button type="button" className="user-menu-item user-menu-logout" onClick={handleLogout}>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
                   </svg>
                   <span>Log Out</span>
                 </button>
@@ -127,11 +161,12 @@ export default function AppShell({ children }) {
         </div>
       </aside>
 
+      {/* ── Main Content ────────────────────────────────────── */}
       <main className="content">
         <div className="topbar">
           <span className="topbar-route">{current}</span>
         </div>
-        {children}
+        <Outlet />
       </main>
     </div>
   );
