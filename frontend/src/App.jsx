@@ -3,26 +3,49 @@ import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
-import Dashboard from "./modules/Dashboard";
-import POIntakePortal from "./modules/POIntakePortal";
-import Projects from "./modules/Projects";
-import DailyUpdates from "./modules/DailyUpdates";
-import TeamAssignments from "./modules/TeamAssignments";
-import Reports from "./modules/Reports";
 
+/* ── Existing module imports (kept for backward compat) ────── */
+// These will be replaced as new pages are built
+// import Dashboard from "./modules/Dashboard";
+// import POIntakePortal from "./modules/POIntakePortal";
+// import Projects from "./modules/Projects";
+// import DailyUpdates from "./modules/DailyUpdates";
+// import TeamAssignments from "./modules/TeamAssignments";
+// import Reports from "./modules/Reports";
+
+/* ── Placeholder for pages not yet built ────────────────────── */
+function Placeholder({ title }) {
+  return (
+    <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+      <h2 style={{ color: "var(--text-primary)", marginBottom: "8px" }}>{title}</h2>
+      <p>Coming soon</p>
+    </div>
+  );
+}
+
+/* ── Loading Screen ─────────────────────────────────────────── */
 function LoadingScreen() {
   return (
-    <div className="login-screen">
+    <div className="loading-screen">
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-        <div className="login-brand-mark" style={{ width: 48, height: 48, borderRadius: 14 }} />
-        <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 14, letterSpacing: "0.05em" }}>Loading…</p>
+        <div className="brand-mark" style={{ width: 48, height: 48, borderRadius: 14 }} />
+        <p style={{ color: "var(--text-muted)", fontSize: 14, letterSpacing: "0.05em" }}>Loading...</p>
       </div>
     </div>
   );
 }
 
+/* ── Role-based default redirect ────────────────────────────── */
+function DefaultRedirect() {
+  const { role } = useAuth();
+  if (role === "im") return <Navigate to="/im-dashboard" replace />;
+  if (role === "field") return <Navigate to="/today" replace />;
+  return <Navigate to="/dashboard" replace />;
+}
+
+/* ── Authenticated App Content ──────────────────────────────── */
 function AppContent() {
-  const { user, loading } = useAuth();
+  const { user, loading, role } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -37,18 +60,41 @@ function AppContent() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/po-intake" element={<POIntakePortal />} />
-        <Route path="/projects" element={<Projects />} />
-        <Route path="/daily-updates" element={<DailyUpdates />} />
-        <Route path="/team-assignments" element={<TeamAssignments />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        {/* ── Admin routes ──────────────────────────────────── */}
+        {role === "admin" && (
+          <>
+            <Route path="/dashboard"  element={<Placeholder title="Command Dashboard" />} />
+            <Route path="/po-upload"  element={<Placeholder title="PO Upload" />} />
+            <Route path="/dispatch"   element={<Placeholder title="PO Dispatch" />} />
+            <Route path="/planning"   element={<Placeholder title="Rollout Planning" />} />
+            <Route path="/execution"  element={<Placeholder title="Execution Monitor" />} />
+            <Route path="/work-done"  element={<Placeholder title="Work Done" />} />
+            <Route path="/reports"    element={<Placeholder title="Reports" />} />
+            <Route path="/masters"    element={<Placeholder title="Masters" />} />
+          </>
+        )}
+
+        {/* ── IM routes ─────────────────────────────────────── */}
+        {role === "im" && (
+          <Route path="/im-dashboard" element={<Placeholder title="IM Dashboard" />} />
+        )}
+
+        {/* ── Field team routes ─────────────────────────────── */}
+        {role === "field" && (
+          <>
+            <Route path="/today"        element={<Placeholder title="Today's Work" />} />
+            <Route path="/execute/:id"  element={<Placeholder title="Execution Form" />} />
+          </>
+        )}
+
+        {/* ── Default redirect based on role ────────────────── */}
+        <Route path="*" element={<DefaultRedirect />} />
       </Routes>
     </AppShell>
   );
 }
 
+/* ── Root App ───────────────────────────────────────────────── */
 export default function App() {
   return (
     <AuthProvider>
