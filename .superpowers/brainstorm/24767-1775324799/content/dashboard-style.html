@@ -1,0 +1,265 @@
+<h2>Command Dashboard — Visual Direction</h2>
+<p class="subtitle">The dashboard will be displayed on a dedicated office screen. Which aesthetic matches the operations room feel?</p>
+
+<div class="cards">
+  <!-- Option A: Dark Command Center -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0;overflow:hidden;">
+      <div style="background:linear-gradient(135deg,#0a1628,#132743);padding:20px;min-height:320px;font-family:'Inter',system-ui,sans-serif;">
+        <!-- Header -->
+        <div style="text-align:center;padding:12px 0 16px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:16px;">
+          <div style="font-size:18px;font-weight:800;color:#e8ecf4;letter-spacing:0.5px;">INet Telecom Operations Command Dashboard</div>
+        </div>
+        <!-- Top KPI Row -->
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px;">
+          <div style="background:linear-gradient(135deg,#1a3a5c,#1e4d7a);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:8px;color:#7db8e8;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Total Open PO</div>
+            <div style="font-size:16px;font-weight:800;color:#ffffff;margin-top:4px;">3,604,929</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#1a3a5c,#1e4d7a);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:8px;color:#7db8e8;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Active Teams</div>
+            <div style="font-size:16px;font-weight:800;color:#4ade80;margin-top:4px;">17</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#1a3a5c,#1e4d7a);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:8px;color:#7db8e8;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Idle Teams</div>
+            <div style="font-size:16px;font-weight:800;color:#fbbf24;margin-top:4px;">17</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#1a3a5c,#1e4d7a);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:8px;color:#7db8e8;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Planned</div>
+            <div style="font-size:16px;font-weight:800;color:#ffffff;margin-top:4px;">168</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#1a3a5c,#1e4d7a);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:8px;color:#7db8e8;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Closed</div>
+            <div style="font-size:16px;font-weight:800;color:#4ade80;margin-top:4px;">59</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#1a3a5c,#1e4d7a);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:8px;color:#7db8e8;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Re-Visits</div>
+            <div style="font-size:16px;font-weight:800;color:#f87171;margin-top:4px;">3</div>
+          </div>
+        </div>
+        <!-- INET Performance Row -->
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px;">
+          <div style="background:rgba(34,85,136,0.35);border:1px solid rgba(100,160,220,0.15);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:7px;color:#8bb8d8;text-transform:uppercase;font-weight:700;">INET Teams</div>
+            <div style="font-size:14px;font-weight:800;color:#fff;margin-top:3px;">12</div>
+          </div>
+          <div style="background:rgba(34,85,136,0.35);border:1px solid rgba(100,160,220,0.15);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:7px;color:#8bb8d8;text-transform:uppercase;font-weight:700;">Monthly Cost</div>
+            <div style="font-size:14px;font-weight:800;color:#fff;margin-top:3px;">372,000</div>
+          </div>
+          <div style="background:rgba(34,85,136,0.35);border:1px solid rgba(100,160,220,0.15);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:7px;color:#8bb8d8;text-transform:uppercase;font-weight:700;">Monthly Target</div>
+            <div style="font-size:14px;font-weight:800;color:#fff;margin-top:3px;">465,000</div>
+          </div>
+          <div style="background:rgba(34,85,136,0.35);border:1px solid rgba(100,160,220,0.15);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:7px;color:#8bb8d8;text-transform:uppercase;font-weight:700;">Target Today</div>
+            <div style="font-size:14px;font-weight:800;color:#fff;margin-top:3px;">255,000</div>
+          </div>
+          <div style="background:rgba(34,85,136,0.35);border:1px solid rgba(100,160,220,0.15);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:7px;color:#8bb8d8;text-transform:uppercase;font-weight:700;">Achieved</div>
+            <div style="font-size:14px;font-weight:800;color:#4ade80;margin-top:3px;">61,425</div>
+          </div>
+          <div style="background:rgba(34,85,136,0.35);border:1px solid rgba(100,160,220,0.15);border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:7px;color:#8bb8d8;text-transform:uppercase;font-weight:700;">Gap Today</div>
+            <div style="font-size:14px;font-weight:800;color:#f87171;margin-top:3px;">373,575</div>
+          </div>
+        </div>
+        <!-- Bottom: Company Summary + Charts area -->
+        <div style="display:grid;grid-template-columns:3fr 1fr;gap:10px;">
+          <div>
+            <!-- Sub-Con Row -->
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:8px;">
+              <div style="background:rgba(20,60,100,0.4);border:1px solid rgba(80,140,200,0.1);border-radius:4px;padding:6px 8px;text-align:center;">
+                <div style="font-size:7px;color:#6aaa99;text-transform:uppercase;font-weight:700;">Sub Teams</div>
+                <div style="font-size:12px;font-weight:800;color:#fff;margin-top:2px;">5</div>
+              </div>
+              <div style="background:rgba(20,60,100,0.4);border:1px solid rgba(80,140,200,0.1);border-radius:4px;padding:6px 8px;text-align:center;">
+                <div style="font-size:7px;color:#6aaa99;text-transform:uppercase;font-weight:700;">Sub Target</div>
+                <div style="font-size:12px;font-weight:800;color:#fff;margin-top:2px;">354,000</div>
+              </div>
+              <div style="background:rgba(20,60,100,0.4);border:1px solid rgba(80,140,200,0.1);border-radius:4px;padding:6px 8px;text-align:center;">
+                <div style="font-size:7px;color:#6aaa99;text-transform:uppercase;font-weight:700;">Sub Revenue</div>
+                <div style="font-size:12px;font-weight:800;color:#fff;margin-top:2px;">29,111</div>
+              </div>
+              <div style="background:rgba(20,60,100,0.4);border:1px solid rgba(80,140,200,0.1);border-radius:4px;padding:6px 8px;text-align:center;">
+                <div style="font-size:7px;color:#6aaa99;text-transform:uppercase;font-weight:700;">Sub Expense</div>
+                <div style="font-size:12px;font-weight:800;color:#fff;margin-top:2px;">23,289</div>
+              </div>
+              <div style="background:rgba(20,60,100,0.4);border:1px solid rgba(80,140,200,0.1);border-radius:4px;padding:6px 8px;text-align:center;">
+                <div style="font-size:7px;color:#6aaa99;text-transform:uppercase;font-weight:700;">Sub Gap</div>
+                <div style="font-size:12px;font-weight:800;color:#f87171;margin-top:2px;">325,989</div>
+              </div>
+            </div>
+            <!-- Company Summary -->
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;background:rgba(15,40,70,0.5);border:1px solid rgba(100,160,220,0.12);border-radius:6px;padding:8px;">
+              <div style="text-align:center;">
+                <div style="font-size:7px;color:#a0b8d0;text-transform:uppercase;font-weight:700;">Company Target</div>
+                <div style="font-size:13px;font-weight:800;color:#fff;margin-top:3px;">819,000</div>
+              </div>
+              <div style="text-align:center;">
+                <div style="font-size:7px;color:#a0b8d0;text-transform:uppercase;font-weight:700;">Total Achieved</div>
+                <div style="font-size:13px;font-weight:800;color:#4ade80;margin-top:3px;">67,247</div>
+              </div>
+              <div style="text-align:center;">
+                <div style="font-size:7px;color:#a0b8d0;text-transform:uppercase;font-weight:700;">Company Gap</div>
+                <div style="font-size:13px;font-weight:800;color:#fbbf24;margin-top:3px;">751,753</div>
+              </div>
+              <div style="text-align:center;">
+                <div style="font-size:7px;color:#a0b8d0;text-transform:uppercase;font-weight:700;">Total Cost</div>
+                <div style="font-size:13px;font-weight:800;color:#fff;margin-top:3px;">370,409</div>
+              </div>
+              <div style="text-align:center;">
+                <div style="font-size:7px;color:#a0b8d0;text-transform:uppercase;font-weight:700;">Profit / Loss</div>
+                <div style="font-size:13px;font-weight:800;color:#f87171;margin-top:3px;">(303,382)</div>
+              </div>
+            </div>
+          </div>
+          <!-- Right: Charts placeholder -->
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="background:rgba(20,45,80,0.5);border:1px solid rgba(80,140,200,0.1);border-radius:6px;padding:8px;text-align:center;flex:1;">
+              <div style="font-size:8px;color:#7db8e8;font-weight:700;margin-bottom:6px;">TEAM STATUS</div>
+              <div style="display:flex;gap:4px;justify-content:center;align-items:flex-end;height:40px;">
+                <div style="width:16px;background:#4ade80;border-radius:2px;height:30px;"></div>
+                <div style="width:16px;background:#fbbf24;border-radius:2px;height:30px;"></div>
+                <div style="width:16px;background:#60a5fa;border-radius:2px;height:20px;"></div>
+                <div style="width:16px;background:#c084fc;border-radius:2px;height:40px;"></div>
+              </div>
+            </div>
+            <div style="background:rgba(20,45,80,0.5);border:1px solid rgba(80,140,200,0.1);border-radius:6px;padding:8px;text-align:center;flex:1;">
+              <div style="font-size:8px;color:#7db8e8;font-weight:700;margin-bottom:4px;">COMPLETION</div>
+              <div style="width:40px;height:40px;border-radius:50%;border:4px solid #4ade80;margin:0 auto;display:flex;align-items:center;justify-content:center;">
+                <span style="font-size:10px;font-weight:800;color:#fff;">82%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Dark Operations Center</h3>
+      <p>Military/NOC-inspired dark theme. High contrast for readability on wall-mounted screens. Colored indicators pop against dark backgrounds. Matches the "command center" identity.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Faithful Excel Replica -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0;overflow:hidden;">
+      <div style="background:#f0f4f8;padding:20px;min-height:320px;font-family:'Inter',system-ui,sans-serif;">
+        <!-- Header -->
+        <div style="background:linear-gradient(135deg,#1a365d,#2c5282);text-align:center;padding:12px;border-radius:6px 6px 0 0;margin-bottom:0;">
+          <div style="font-size:16px;font-weight:800;color:#fff;letter-spacing:0.3px;">INet Telecom Operations Command Dashboard</div>
+        </div>
+        <!-- Top KPI Row - Excel style -->
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);border:1px solid #cbd5e0;border-top:none;">
+          <div style="background:#d4e6f1;padding:6px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:8px;color:#2c5282;font-weight:700;text-transform:uppercase;">Total Open PO</div>
+          </div>
+          <div style="background:#d4e6f1;padding:6px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:8px;color:#2c5282;font-weight:700;text-transform:uppercase;">Active Teams</div>
+          </div>
+          <div style="background:#d4e6f1;padding:6px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:8px;color:#2c5282;font-weight:700;text-transform:uppercase;">Idle Teams</div>
+          </div>
+          <div style="background:#d4e6f1;padding:6px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:8px;color:#2c5282;font-weight:700;text-transform:uppercase;">Planned</div>
+          </div>
+          <div style="background:#d4e6f1;padding:6px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:8px;color:#2c5282;font-weight:700;text-transform:uppercase;">Closed</div>
+          </div>
+          <div style="background:#d4e6f1;padding:6px 8px;text-align:center;">
+            <div style="font-size:8px;color:#2c5282;font-weight:700;text-transform:uppercase;">Re-Visits</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);border:1px solid #cbd5e0;border-top:none;">
+          <div style="background:#fff;padding:8px;text-align:center;border-right:1px solid #cbd5e0;font-size:16px;font-weight:800;color:#1a365d;">3,604,929</div>
+          <div style="background:#fff;padding:8px;text-align:center;border-right:1px solid #cbd5e0;font-size:16px;font-weight:800;color:#1a365d;">17</div>
+          <div style="background:#fff;padding:8px;text-align:center;border-right:1px solid #cbd5e0;font-size:16px;font-weight:800;color:#1a365d;">17</div>
+          <div style="background:#fff;padding:8px;text-align:center;border-right:1px solid #cbd5e0;font-size:16px;font-weight:800;color:#1a365d;">168</div>
+          <div style="background:#fff;padding:8px;text-align:center;border-right:1px solid #cbd5e0;font-size:16px;font-weight:800;color:#1a365d;">59</div>
+          <div style="background:#fff;padding:8px;text-align:center;font-size:16px;font-weight:800;color:#1a365d;">3</div>
+        </div>
+        <!-- INET Row -->
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);border:1px solid #cbd5e0;border-top:none;margin-top:8px;">
+          <div style="background:#bee3f8;padding:5px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:7px;color:#2b6cb0;font-weight:700;text-transform:uppercase;">INET Teams</div>
+          </div>
+          <div style="background:#bee3f8;padding:5px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:7px;color:#2b6cb0;font-weight:700;text-transform:uppercase;">Monthly Cost</div>
+          </div>
+          <div style="background:#bee3f8;padding:5px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:7px;color:#2b6cb0;font-weight:700;text-transform:uppercase;">Monthly Target</div>
+          </div>
+          <div style="background:#bee3f8;padding:5px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:7px;color:#2b6cb0;font-weight:700;text-transform:uppercase;">Target Today</div>
+          </div>
+          <div style="background:#bee3f8;padding:5px 8px;text-align:center;border-right:1px solid #cbd5e0;">
+            <div style="font-size:7px;color:#2b6cb0;font-weight:700;text-transform:uppercase;">Achieved</div>
+          </div>
+          <div style="background:#bee3f8;padding:5px 8px;text-align:center;">
+            <div style="font-size:7px;color:#2b6cb0;font-weight:700;text-transform:uppercase;">Gap Today</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);border:1px solid #cbd5e0;border-top:none;">
+          <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:14px;font-weight:800;color:#2d3748;">12</div>
+          <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:14px;font-weight:800;color:#2d3748;">372,000</div>
+          <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:14px;font-weight:800;color:#2d3748;">465,000</div>
+          <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:14px;font-weight:800;color:#2d3748;">255,000</div>
+          <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:14px;font-weight:800;color:#2d3748;">61,425</div>
+          <div style="background:#fff;padding:6px;text-align:center;font-size:14px;font-weight:800;color:#2d3748;">373,575</div>
+        </div>
+        <!-- Bottom summary -->
+        <div style="display:grid;grid-template-columns:3fr 1fr;gap:8px;margin-top:8px;">
+          <div>
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);border:1px solid #cbd5e0;">
+              <div style="background:#e8f0e8;padding:5px 6px;text-align:center;border-right:1px solid #cbd5e0;font-size:7px;color:#2f6b2f;font-weight:700;">Company Target</div>
+              <div style="background:#e8f0e8;padding:5px 6px;text-align:center;border-right:1px solid #cbd5e0;font-size:7px;color:#2f6b2f;font-weight:700;">Total Achieved</div>
+              <div style="background:#e8f0e8;padding:5px 6px;text-align:center;border-right:1px solid #cbd5e0;font-size:7px;color:#2f6b2f;font-weight:700;">Company Gap</div>
+              <div style="background:#e8f0e8;padding:5px 6px;text-align:center;border-right:1px solid #cbd5e0;font-size:7px;color:#2f6b2f;font-weight:700;">Total Cost</div>
+              <div style="background:#e8f0e8;padding:5px 6px;text-align:center;font-size:7px;color:#2f6b2f;font-weight:700;">P&L</div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);border:1px solid #cbd5e0;border-top:none;">
+              <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:13px;font-weight:800;">819,000</div>
+              <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:13px;font-weight:800;">67,247</div>
+              <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:13px;font-weight:800;">751,753</div>
+              <div style="background:#fff;padding:6px;text-align:center;border-right:1px solid #cbd5e0;font-size:13px;font-weight:800;">370,409</div>
+              <div style="background:#fff;padding:6px;text-align:center;font-size:13px;font-weight:800;color:#c53030;">(303,382)</div>
+            </div>
+          </div>
+          <div style="background:#fff;border:1px solid #cbd5e0;border-radius:4px;padding:8px;text-align:center;">
+            <div style="font-size:8px;color:#2c5282;font-weight:700;margin-bottom:4px;">IM PERFORMANCE</div>
+            <div style="display:flex;gap:4px;justify-content:center;align-items:flex-end;height:50px;">
+              <div style="width:20px;background:#3182ce;border-radius:2px;height:35px;"></div>
+              <div style="width:20px;background:#e53e3e;border-radius:2px;height:25px;"></div>
+              <div style="width:20px;background:#3182ce;border-radius:2px;height:20px;"></div>
+              <div style="width:20px;background:#e53e3e;border-radius:2px;height:15px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Excel-Faithful (Blue & White)</h3>
+      <p>Closely mirrors the customer's existing Excel dashboard. Blue headers on white cells. Familiar grid layout. Lower learning curve — the team already knows this format. Clean, professional, corporate.</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:20px;">
+  <div class="pros">
+    <h4>My Recommendation: Option A</h4>
+    <ul>
+      <li>Built for wall-mounted screens — dark theme reduces glare and eye strain</li>
+      <li>Color-coded values (green/yellow/red) pop against dark backgrounds</li>
+      <li>Looks like a proper operations center, not a spreadsheet</li>
+      <li>Professional upgrade from Excel that justifies the investment</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Option B is also strong if...</h4>
+    <ul>
+      <li>The team is resistant to change and wants "just like Excel but online"</li>
+      <li>They print dashboards or view on low-quality monitors</li>
+      <li>Familiarity matters more than aesthetics</li>
+    </ul>
+  </div>
+</div>

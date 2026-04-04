@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Command Dashboard Layout</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: #060d18;
+    color: #e8ecf4;
+    overflow-x: hidden;
+  }
+
+  .dashboard {
+    padding: 16px 20px;
+    max-width: 1920px;
+    margin: 0 auto;
+  }
+
+  /* Header */
+  .dash-header {
+    background: linear-gradient(135deg, #0f2440 0%, #1a3a5c 50%, #0f2440 100%);
+    border: 1px solid rgba(100,160,220,0.12);
+    border-radius: 8px;
+    text-align: center;
+    padding: 14px 20px;
+    margin-bottom: 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .dash-header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #3b82f6, #60a5fa, #3b82f6, transparent);
+  }
+  .dash-header h1 {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: #e8ecf4;
+  }
+  .dash-header .live-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    background: #4ade80;
+    border-radius: 50%;
+    margin-right: 8px;
+    animation: pulse 2s infinite;
+    vertical-align: middle;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(74,222,128,0.4); }
+    50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(74,222,128,0); }
+  }
+  .dash-header .timestamp {
+    font-size: 11px;
+    color: rgba(200,215,235,0.5);
+    margin-top: 4px;
+  }
+
+  /* KPI Row */
+  .kpi-row {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .kpi-row.top { grid-template-columns: repeat(6, 1fr); }
+  .kpi-row.inet { grid-template-columns: repeat(6, 1fr); }
+  .kpi-row.subcon { grid-template-columns: repeat(6, 1fr); }
+  .kpi-row.company { grid-template-columns: repeat(6, 1fr); }
+
+  .kpi-card {
+    border-radius: 6px;
+    padding: 10px 12px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: transform 0.15s ease;
+  }
+  .kpi-card:hover { transform: translateY(-1px); }
+  .kpi-label {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+  }
+  .kpi-value {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+  }
+
+  /* Row themes */
+  .kpi-row.top .kpi-card {
+    background: linear-gradient(135deg, #132a47, #1a3d63);
+    border-color: rgba(59,130,246,0.15);
+  }
+  .kpi-row.top .kpi-label { color: #7db8e8; }
+  .kpi-row.top .kpi-value { color: #ffffff; }
+
+  .kpi-row.inet .kpi-card {
+    background: linear-gradient(135deg, #0f2a45, #163a5a);
+    border-color: rgba(59,130,246,0.1);
+  }
+  .kpi-row.inet .kpi-label { color: #6ba8d8; }
+  .kpi-row.inet .kpi-value { color: #e0ecf8; }
+
+  .kpi-row.subcon .kpi-card {
+    background: linear-gradient(135deg, #0f2520, #153830);
+    border-color: rgba(52,211,153,0.1);
+  }
+  .kpi-row.subcon .kpi-label { color: #5cb89a; }
+  .kpi-row.subcon .kpi-value { color: #d0ebe0; }
+
+  .kpi-row.company .kpi-card {
+    background: linear-gradient(135deg, #15203a, #1a2a4a);
+    border-color: rgba(148,163,184,0.1);
+  }
+  .kpi-row.company .kpi-label { color: #94a3b8; }
+  .kpi-row.company .kpi-value { color: #ffffff; }
+
+  /* Section labels */
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: rgba(200,215,235,0.35);
+    margin: 6px 0 6px 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(200,215,235,0.08);
+  }
+
+  /* Color helpers */
+  .text-green { color: #4ade80 !important; }
+  .text-red { color: #f87171 !important; }
+  .text-amber { color: #fbbf24 !important; }
+
+  /* Bottom grid: tables + charts */
+  .bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .panel {
+    background: rgba(15,30,55,0.6);
+    border: 1px solid rgba(100,160,220,0.08);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(100,160,220,0.08);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #7db8e8;
+    background: rgba(15,35,65,0.5);
+  }
+  .panel-body { padding: 10px 12px; }
+
+  /* Mini table */
+  .mini-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .mini-table th {
+    text-align: left;
+    color: rgba(200,215,235,0.4);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 6px;
+    border-bottom: 1px solid rgba(100,160,220,0.08);
+    font-weight: 700;
+  }
+  .mini-table td {
+    padding: 5px 6px;
+    border-bottom: 1px solid rgba(100,160,220,0.04);
+    color: #c8d7e8;
+  }
+  .mini-table td.mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+  }
+
+  /* Chart placeholders */
+  .chart-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    height: 80px;
+    padding: 8px 0;
+  }
+  .chart-bar {
+    flex: 1;
+    border-radius: 3px 3px 0 0;
+    position: relative;
+    min-width: 20px;
+  }
+  .chart-bar .bar-label {
+    position: absolute;
+    bottom: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 8px;
+    color: rgba(200,215,235,0.4);
+    white-space: nowrap;
+  }
+
+  .donut-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+  }
+  .donut {
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    background: conic-gradient(#4ade80 0deg 78deg, #fbbf24 78deg 150deg, #f87171 150deg 220deg, #60a5fa 220deg 360deg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .donut-inner {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #0c1a30;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .donut-value { font-size: 18px; font-weight: 800; color: #fff; }
+  .donut-label { font-size: 8px; color: rgba(200,215,235,0.5); text-transform: uppercase; }
+
+  /* Action watchlist */
+  .watchlist-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(100,160,220,0.06);
+    font-size: 11px;
+  }
+  .watchlist-item:last-child { border-bottom: none; }
+  .watchlist-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #c8d7e8;
+  }
+  .watchlist-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .watchlist-value {
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .watchlist-status {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .status-optimized { background: rgba(74,222,128,0.15); color: #4ade80; }
+  .status-recover { background: rgba(248,113,113,0.15); color: #f87171; }
+  .status-behind { background: rgba(251,191,36,0.15); color: #fbbf24; }
+  .status-ahead { background: rgba(96,165,250,0.15); color: #60a5fa; }
+  .status-normal { background: rgba(148,163,184,0.15); color: #94a3b8; }
+</style>
+</head>
+<body>
+<div class="dashboard">
+  <!-- Header -->
+  <div class="dash-header">
+    <h1><span class="live-dot"></span>INet Telecom Operations Command Dashboard</h1>
+    <div class="timestamp">Last updated: 04 Apr 2026 · 20:45 · Auto-refresh: 60s</div>
+  </div>
+
+  <!-- Row 1: Operational KPIs -->
+  <div class="section-label">Operational Overview</div>
+  <div class="kpi-row top">
+    <div class="kpi-card">
+      <div class="kpi-label">Total Open PO Value</div>
+      <div class="kpi-value">3,604,930</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Active Teams</div>
+      <div class="kpi-value text-green">17</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Idle Teams Today</div>
+      <div class="kpi-value text-amber">17</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Planned Activities</div>
+      <div class="kpi-value">168</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Closed Activities</div>
+      <div class="kpi-value text-green">59</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Re-Visits</div>
+      <div class="kpi-value text-red">3</div>
+    </div>
+  </div>
+
+  <!-- Row 2: INET Performance -->
+  <div class="section-label">INET Teams Performance</div>
+  <div class="kpi-row inet">
+    <div class="kpi-card">
+      <div class="kpi-label">Active INET Teams</div>
+      <div class="kpi-value">12</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">INET Monthly Cost</div>
+      <div class="kpi-value">372,000</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">INET Monthly Target</div>
+      <div class="kpi-value">465,000</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">INET Target Today</div>
+      <div class="kpi-value">255,000</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">INET Achieved</div>
+      <div class="kpi-value text-green">61,425</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">INET Gap Today</div>
+      <div class="kpi-value text-red">373,575</div>
+    </div>
+  </div>
+
+  <!-- Row 3: Subcontractor Performance -->
+  <div class="section-label">Subcontractor Performance</div>
+  <div class="kpi-row subcon">
+    <div class="kpi-card">
+      <div class="kpi-label">Active Sub Teams</div>
+      <div class="kpi-value">5</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sub-Con Target</div>
+      <div class="kpi-value">354,000</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sub-Con Revenue</div>
+      <div class="kpi-value">29,111</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sub-Con Expense</div>
+      <div class="kpi-value">23,289</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">INET Margin (Sub)</div>
+      <div class="kpi-value text-green">5,822</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sub-Con Gap</div>
+      <div class="kpi-value text-red">325,989</div>
+    </div>
+  </div>
+
+  <!-- Row 4: Company Summary -->
+  <div class="section-label">Company Financial Summary</div>
+  <div class="kpi-row company">
+    <div class="kpi-card">
+      <div class="kpi-label">Company Target</div>
+      <div class="kpi-value">819,000</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Achieved</div>
+      <div class="kpi-value text-green">67,247</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Company Gap</div>
+      <div class="kpi-value text-amber">751,753</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Cost</div>
+      <div class="kpi-value">370,409</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Company Profit / Loss</div>
+      <div class="kpi-value text-red">(303,382)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Coverage %</div>
+      <div class="kpi-value text-amber">8.2%</div>
+    </div>
+  </div>
+
+  <!-- Bottom panels -->
+  <div class="bottom-grid">
+    <!-- Panel 1: Top 5 Team Snapshot -->
+    <div class="panel">
+      <div class="panel-header">Top 5 Team Snapshot</div>
+      <div class="panel-body">
+        <table class="mini-table">
+          <thead>
+            <tr><th>Team</th><th>Target</th><th>Achieved</th><th>%</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Irfan/Rafeeq</td><td class="mono">1,625</td><td class="mono text-green">1,625</td><td class="mono text-green">100%</td></tr>
+            <tr><td>Jenish/Akhil</td><td class="mono">7,376</td><td class="mono text-green">7,376</td><td class="mono text-green">100%</td></tr>
+            <tr><td>Sher Azam/Fida</td><td class="mono">2,363</td><td class="mono text-green">2,363</td><td class="mono text-green">100%</td></tr>
+            <tr><td>Tariq/Abu Bakar</td><td class="mono">7,579</td><td class="mono text-green">7,579</td><td class="mono text-green">100%</td></tr>
+            <tr><td>Sharban/Iqbal</td><td class="mono">12,386</td><td class="mono text-green">12,386</td><td class="mono text-green">100%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Panel 2: IM Performance -->
+    <div class="panel">
+      <div class="panel-header">IM Performance Snapshot</div>
+      <div class="panel-body">
+        <table class="mini-table">
+          <thead>
+            <tr><th>IM</th><th>Teams</th><th>Revenue</th><th>Profit</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Majid</td><td class="mono">8</td><td class="mono">41,647</td><td class="mono text-red">-170,594</td></tr>
+            <tr><td>Ajmal</td><td class="mono">6</td><td class="mono">47,789</td><td class="mono text-red">-110,379</td></tr>
+            <tr style="border-top:1px solid rgba(100,160,220,0.12);">
+              <td style="font-weight:800;color:#fff;">Totals</td>
+              <td class="mono" style="font-weight:800;color:#fff;">14</td>
+              <td class="mono" style="font-weight:800;color:#fff;">89,436</td>
+              <td class="mono text-red" style="font-weight:800;">-280,973</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Panel 3: Team Status + Completion -->
+    <div class="panel">
+      <div class="panel-header">Team Status</div>
+      <div class="panel-body" style="display:flex;gap:16px;align-items:center;">
+        <div class="chart-bars" style="flex:1;">
+          <div class="chart-bar" style="background:linear-gradient(to top,#22c55e,#4ade80);height:45%;">
+            <div class="bar-label">Active</div>
+          </div>
+          <div class="chart-bar" style="background:linear-gradient(to top,#d97706,#fbbf24);height:45%;">
+            <div class="bar-label">Idle</div>
+          </div>
+          <div class="chart-bar" style="background:linear-gradient(to top,#2563eb,#60a5fa);height:30%;">
+            <div class="bar-label">Planned</div>
+          </div>
+          <div class="chart-bar" style="background:linear-gradient(to top,#7c3aed,#c084fc);height:60%;">
+            <div class="bar-label">Progress</div>
+          </div>
+        </div>
+        <div class="donut-container">
+          <div class="donut">
+            <div class="donut-inner">
+              <div class="donut-value">82%</div>
+              <div class="donut-label">Complete</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 4: Action Watchlist -->
+    <div class="panel">
+      <div class="panel-header">Action Watchlist</div>
+      <div class="panel-body">
+        <div class="watchlist-item">
+          <div class="watchlist-indicator">
+            <div class="watchlist-dot" style="background:#4ade80;"></div>
+            <span>Idle Teams Today</span>
+          </div>
+          <div class="watchlist-value">17</div>
+          <div class="watchlist-status status-optimized">Optimized</div>
+        </div>
+        <div class="watchlist-item">
+          <div class="watchlist-indicator">
+            <div class="watchlist-dot" style="background:#f87171;"></div>
+            <span>Missed Activities</span>
+          </div>
+          <div class="watchlist-value text-red">109</div>
+          <div class="watchlist-status status-recover">Recover</div>
+        </div>
+        <div class="watchlist-item">
+          <div class="watchlist-indicator">
+            <div class="watchlist-dot" style="background:#fbbf24;"></div>
+            <span>Schedule Gap</span>
+          </div>
+          <div class="watchlist-value text-amber">109</div>
+          <div class="watchlist-status status-behind">Behind</div>
+        </div>
+        <div class="watchlist-item">
+          <div class="watchlist-indicator">
+            <div class="watchlist-dot" style="background:#60a5fa;"></div>
+            <span>Forecast Gap</span>
+          </div>
+          <div class="watchlist-value text-red">(723,396)</div>
+          <div class="watchlist-status status-ahead">Ahead</div>
+        </div>
+        <div class="watchlist-item">
+          <div class="watchlist-indicator">
+            <div class="watchlist-dot" style="background:#f87171;"></div>
+            <span>Real-Time P/L</span>
+          </div>
+          <div class="watchlist-value text-red">(303,382)</div>
+          <div class="watchlist-status status-recover">Monitor</div>
+        </div>
+        <div class="watchlist-item">
+          <div class="watchlist-indicator">
+            <div class="watchlist-dot" style="background:#4ade80;"></div>
+            <span>Re-Visits</span>
+          </div>
+          <div class="watchlist-value">3</div>
+          <div class="watchlist-status status-normal">Normal</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
