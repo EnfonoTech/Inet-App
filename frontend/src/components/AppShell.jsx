@@ -65,18 +65,24 @@ const icons = {
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
     </svg>
   ),
+  folder: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
 };
 
 /* ── Navigation definitions per role ────────────────────────── */
 const adminNav = [
   { to: "/dashboard",  label: "Dashboard",   icon: "dashboard" },
-  { to: "/po-upload",  label: "PO Upload",    icon: "upload" },
-  { to: "/dispatch",   label: "Dispatch",     icon: "send" },
-  { to: "/planning",   label: "Planning",     icon: "calendar" },
-  { to: "/execution",  label: "Execution",    icon: "eye" },
-  { to: "/work-done",  label: "Work Done",    icon: "checkCircle" },
-  { to: "/reports",    label: "Reports",      icon: "barChart" },
-  { to: "/masters",    label: "Masters",      icon: "settings" },
+  { to: "/projects",   label: "Projects",    icon: "folder" },
+  { to: "/po-upload",  label: "PO Upload",   icon: "upload" },
+  { to: "/dispatch",   label: "Dispatch",    icon: "send" },
+  { to: "/planning",   label: "Planning",    icon: "calendar" },
+  { to: "/execution",  label: "Execution",   icon: "eye" },
+  { to: "/work-done",  label: "Work Done",   icon: "checkCircle" },
+  { to: "/reports",    label: "Reports",     icon: "barChart" },
+  { to: "/masters",    label: "Masters",     icon: "settings" },
 ];
 
 const imNav = [
