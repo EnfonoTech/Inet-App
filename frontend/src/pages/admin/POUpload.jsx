@@ -8,37 +8,38 @@ const STEPS = ["Upload", "Review", "Confirm"];
 
 function StepIndicator({ current }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 28 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 32 }}>
       {STEPS.map((step, idx) => (
         <div key={step} style={{ display: "flex", alignItems: "center" }}>
           <div style={{
-            width: 28,
-            height: 28,
+            width: 32,
+            height: 32,
             borderRadius: "50%",
             background: idx < current ? "var(--green)" : idx === current ? "var(--blue-bright)" : "rgba(100,160,220,0.15)",
             color: idx <= current ? "white" : "var(--text-muted)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "0.75rem",
+            fontSize: "0.8rem",
             fontWeight: 700,
           }}>
-            {idx < current ? "✓" : idx + 1}
+            {idx < current ? "\u2713" : idx + 1}
           </div>
           <span style={{
-            marginLeft: 8,
-            fontSize: "0.8rem",
-            fontWeight: idx === current ? 700 : 400,
-            color: idx === current ? "var(--text-primary)" : "var(--text-muted)",
+            marginLeft: 10,
+            fontSize: "0.88rem",
+            fontWeight: idx === current ? 700 : 500,
+            color: idx === current ? "var(--text)" : "var(--text-muted)",
           }}>
             {step}
           </span>
           {idx < STEPS.length - 1 && (
             <div style={{
-              width: 40,
-              height: 1,
+              width: 48,
+              height: 2,
+              borderRadius: 1,
               background: idx < current ? "var(--green)" : "var(--border-medium)",
-              margin: "0 12px",
+              margin: "0 16px",
             }} />
           )}
         </div>

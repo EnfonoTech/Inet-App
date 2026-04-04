@@ -7,12 +7,10 @@
 /* ── Page Header ────────────────────────────────────────────── */
 .page-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 24px 28px;
-  background: var(--bg-white);
-  border-bottom: 1px solid var(--border-light);
+  margin-bottom: 28px;
 }
 
 .page-title {
@@ -37,7 +35,7 @@
 
 /* ── Page Content Wrapper ───────────────────────────────────── */
 .page-content {
-  padding: 0 28px 40px;
+  padding: 0;
 }
 
 /* ── Data Table (full-width operational table) ──────────────── */
@@ -57,11 +55,11 @@
 .data-table th {
   text-align: left;
   color: var(--text-muted);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-weight: 700;
-  padding: 12px 16px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   position: sticky;
@@ -70,8 +68,8 @@
 }
 
 .data-table td {
-  padding: 10px 16px;
-  font-size: 0.82rem;
+  padding: 12px 18px;
+  font-size: 0.85rem;
   border-bottom: 1px solid var(--border-light);
   color: var(--text);
   vertical-align: middle;
@@ -360,8 +358,8 @@
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 0 28px;
-  margin-bottom: 16px;
+  padding: 0;
+  margin-bottom: 20px;
 }
 
 .toolbar .search-input {
@@ -417,8 +415,8 @@
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 14px;
-  padding: 0 28px;
+  gap: 16px;
+  padding: 0;
 }
 
 .work-card {
@@ -503,14 +501,14 @@
   display: flex;
   gap: 0;
   border-bottom: 1px solid var(--border);
-  padding: 0 28px;
-  margin-bottom: 20px;
-  background: var(--bg-white);
+  padding: 0;
+  margin-bottom: 24px;
+  background: transparent;
 }
 
 .tab {
-  padding: 10px 18px;
-  font-size: 0.82rem;
+  padding: 12px 24px;
+  font-size: 0.86rem;
   font-weight: 600;
   color: var(--text-muted);
   cursor: pointer;
@@ -531,19 +529,71 @@
   border-bottom-color: var(--blue);
 }
 
+/* ── Project Tabs (used in ProjectDetail) ──────────────────── */
+.project-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 28px;
+}
+
+.project-tabs .project-tab {
+  padding: 12px 24px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-tabs .project-tab:hover {
+  color: var(--text);
+}
+
+.project-tabs .project-tab.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+}
+
+.project-tab .tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 11px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.project-tab.active .tab-count {
+  background: #dbeafe;
+  color: var(--blue);
+}
+
 /* ── Detail Panel ───────────────────────────────────────────── */
 .detail-panel {
   background: var(--bg-white);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px;
+  padding: 24px;
   box-shadow: var(--shadow-sm);
 }
 
 .detail-row {
   display: flex;
-  gap: 8px;
-  padding: 8px 0;
+  gap: 12px;
+  padding: 12px 0;
   border-bottom: 1px solid var(--border-light);
 }
 
@@ -552,17 +602,17 @@
 }
 
 .detail-label {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-label);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  width: 140px;
+  width: 160px;
   flex-shrink: 0;
 }
 
 .detail-value {
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   color: var(--text);
 }
 
@@ -608,6 +658,161 @@
 .text-blue  { color: var(--blue); }
 .text-muted { color: var(--text-muted); }
 
+/* ── Project Detail Page ───────────────────────────────────── */
+.project-detail {
+  max-width: 1400px;
+}
+
+.project-detail .back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+  transition: all var(--transition);
+}
+
+.project-detail .back-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: var(--blue-bg);
+}
+
+.project-detail .project-header {
+  margin-bottom: 32px;
+}
+
+.project-detail .project-code {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -0.5px;
+}
+
+.project-detail .project-name {
+  font-size: 16px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+}
+
+.project-detail .badges-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.project-detail .domain-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+/* Summary cards row */
+.project-detail .summary-cards {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+}
+
+.project-detail .summary-card {
+  flex: 1 1 220px;
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  overflow: hidden;
+}
+
+.project-detail .summary-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--border);
+}
+
+.project-detail .summary-card.accent-blue::before { background: var(--blue); }
+.project-detail .summary-card.accent-green::before { background: var(--green); }
+.project-detail .summary-card.accent-amber::before { background: var(--amber); }
+.project-detail .summary-card.accent-red::before { background: var(--red); }
+
+.project-detail .summary-card .card-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.project-detail .summary-card .card-value {
+  font-size: 26px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.project-detail .summary-card .card-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+/* Detail grid */
+.project-detail .detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.project-detail .detail-grid .detail-cell {
+  padding: 16px 24px;
+}
+
+.project-detail .detail-grid .detail-cell .cell-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.project-detail .detail-grid .detail-cell .cell-value {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Table wrapper in project detail */
+.project-detail .table-section {
+  margin-top: 4px;
+}
+
 /* ── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 1000px) {
   .form-grid { grid-template-columns: repeat(2, 1fr); }
@@ -615,9 +820,11 @@
 }
 
 @media (max-width: 768px) {
-  .page-header { flex-direction: column; align-items: flex-start; padding: 16px; }
-  .toolbar { padding: 0 16px; }
-  .page-content { padding: 0 16px 24px; }
-  .card-grid { padding: 0 16px; }
+  .page-header { flex-direction: column; align-items: flex-start; }
+  .toolbar { padding: 0; }
+  .page-content { padding: 0; }
+  .card-grid { padding: 0; }
   .form-grid { grid-template-columns: 1fr; }
+  .project-detail .summary-cards { flex-direction: column; }
+  .project-detail .detail-grid { grid-template-columns: 1fr; }
 }

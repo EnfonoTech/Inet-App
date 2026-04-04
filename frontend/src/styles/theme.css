@@ -481,7 +481,7 @@ a:hover { color: var(--blue-dark); }
   margin-left: var(--sidebar-width);
   width: calc(100% - var(--sidebar-width));
   min-height: 100vh;
-  padding: 0;
+  padding: 32px 40px;
   overflow-x: hidden;
   background: var(--bg);
   transition: margin-left var(--transition), width var(--transition);

@@ -22,7 +22,7 @@ function Badge({ value }) {
   const s = STATUS_COLORS[value] || { bg: "#f1f5f9", color: "#64748b", border: "#e2e8f0" };
   return (
     <span style={{
-      display: "inline-block", padding: "3px 10px", borderRadius: 12,
+      display: "inline-block", padding: "4px 12px", borderRadius: 12,
       fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3,
       background: s.bg, color: s.color, border: `1px solid ${s.border}`,
     }}>
@@ -40,34 +40,30 @@ const TABS = [
   { key: "teams", label: "Teams", countKey: null },
 ];
 
-function SummaryCard({ label, value, sub, color }) {
+function SummaryCard({ label, value, sub, color, accent }) {
   return (
-    <div style={{
-      flex: "1 1 200px", background: "var(--bg-white)", border: "1px solid var(--border)",
-      borderRadius: "var(--radius)", padding: "18px 20px", boxShadow: "var(--shadow-sm)",
-    }}>
-      <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: color || "var(--text)" }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>{sub}</div>}
+    <div className={`summary-card ${accent ? `accent-${accent}` : ''}`}>
+      <div className="card-label">{label}</div>
+      <div className="card-value" style={color ? { color } : undefined}>{value}</div>
+      {sub && <div className="card-sub">{sub}</div>}
     </div>
   );
 }
 
 function DetailGrid({ items }) {
   return (
-    <div style={{
-      display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0,
-      background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)",
-      overflow: "hidden",
-    }}>
+    <div className="detail-grid">
       {items.map(([label, value], i) => (
-        <div key={i} style={{
-          padding: "12px 18px",
-          borderBottom: i < items.length - 2 ? "1px solid var(--border)" : "none",
-          borderRight: i % 2 === 0 ? "1px solid var(--border)" : "none",
-        }}>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
-          <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{value || "\u2014"}</div>
+        <div
+          key={i}
+          className="detail-cell"
+          style={{
+            borderBottom: i < items.length - 2 ? "1px solid var(--border)" : "none",
+            borderRight: i % 2 === 0 ? "1px solid var(--border)" : "none",
+          }}
+        >
+          <div className="cell-label">{label}</div>
+          <div className="cell-value">{value || "\u2014"}</div>
         </div>
       ))}
     </div>
@@ -76,7 +72,7 @@ function DetailGrid({ items }) {
 
 function EmptyState({ message }) {
   return (
-    <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)", background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
+    <div className="empty-state" style={{ background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
       {message}
     </div>
   );
@@ -85,30 +81,32 @@ function EmptyState({ message }) {
 function DataTable({ columns, rows, emptyMsg }) {
   if (!rows || rows.length === 0) return <EmptyState message={emptyMsg} />;
   return (
-    <div style={{ background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "auto", boxShadow: "var(--shadow-sm)" }}>
-      <table className="data-table">
-        <thead>
-          <tr>
-            {columns.map(c => (
-              <th key={c.key} style={c.align === "right" ? { textAlign: "right" } : {}}>{c.label}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={row.name || i}>
+    <div className="table-section">
+      <div className="data-table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
               {columns.map(c => (
-                <td key={c.key} style={{
-                  ...(c.align === "right" ? { textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 } : {}),
-                  ...(c.mono ? { fontFamily: "'JetBrains Mono', monospace", fontSize: 12 } : {}),
-                }}>
-                  {c.render ? c.render(row[c.key], row) : (row[c.key] ?? "\u2014")}
-                </td>
+                <th key={c.key} style={c.align === "right" ? { textAlign: "right" } : {}}>{c.label}</th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={row.name || i}>
+                {columns.map(c => (
+                  <td key={c.key} style={{
+                    ...(c.align === "right" ? { textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 13 } : {}),
+                    ...(c.mono ? { fontFamily: "'JetBrains Mono', monospace", fontSize: 13 } : {}),
+                  }}>
+                    {c.render ? c.render(row[c.key], row) : (row[c.key] ?? "\u2014")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -131,15 +129,15 @@ export default function ProjectDetail() {
 
   if (loading) {
     return (
-      <div style={{ padding: 60, textAlign: "center", color: "var(--text-muted)" }}>Loading project details...</div>
+      <div style={{ padding: 80, textAlign: "center", color: "var(--text-muted)", fontSize: 15 }}>Loading project details...</div>
     );
   }
 
   if (error) {
     return (
-      <div style={{ padding: 60, textAlign: "center" }}>
-        <div style={{ color: "#991b1b", marginBottom: 16 }}>Failed to load project: {error}</div>
-        <button onClick={() => navigate("/projects")} style={{ padding: "8px 20px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--bg-white)", cursor: "pointer", fontSize: 13 }}>
+      <div style={{ padding: 80, textAlign: "center" }}>
+        <div style={{ color: "#991b1b", marginBottom: 20, fontSize: 15 }}>Failed to load project: {error}</div>
+        <button className="btn-secondary" onClick={() => navigate("/projects")}>
           Back to Projects
         </button>
       </div>
@@ -208,56 +206,57 @@ export default function ProjectDetail() {
   ];
 
   const teamCount = teams ? teams.length : 0;
+  const marginColor = fin.total_margin >= 0 ? "#065f46" : "#991b1b";
+  const marginAccent = fin.total_margin >= 0 ? "green" : "red";
 
   return (
-    <div>
+    <div className="project-detail">
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <button
-          onClick={() => navigate("/projects")}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px",
-            border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-            background: "var(--bg-white)", cursor: "pointer", fontSize: 13, color: "var(--text-muted)",
-            marginBottom: 16,
-          }}
-        >
-          <span style={{ fontSize: 16 }}>&larr;</span> Back to Projects
+      <div className="project-header">
+        <button className="back-btn" onClick={() => navigate("/projects")}>
+          <span style={{ fontSize: 16, lineHeight: 1 }}>&larr;</span> Back to Projects
         </button>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
-            {project.project_code}
-          </h1>
+        <div className="badges-row">
+          <h1 className="project-code">{project.project_code}</h1>
           <Badge value={project.project_status} />
           {project.project_domain && (
-            <span style={{
-              display: "inline-block", padding: "3px 10px", borderRadius: 12,
-              fontSize: 11, fontWeight: 600, background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0",
-            }}>
-              {project.project_domain}
-            </span>
+            <span className="domain-badge">{project.project_domain}</span>
           )}
         </div>
-        <div style={{ fontSize: 15, color: "var(--text-muted)", marginTop: 6 }}>{project.project_name}</div>
+        <div className="project-name">{project.project_name}</div>
       </div>
 
       {/* Financial Summary Cards */}
-      <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
-        <SummaryCard label="Total PO Value" value={`SAR ${fmt.format(fin.total_po_value)}`} sub={`${fin.dispatch_count} dispatch lines`} />
-        <SummaryCard label="Revenue" value={`SAR ${fmt.format(fin.total_revenue)}`} sub={`${fin.work_done_count} work done records`} />
-        <SummaryCard label="Cost" value={`SAR ${fmt.format(fin.total_cost)}`} sub={`${fin.execution_count} executions`} />
+      <div className="summary-cards">
+        <SummaryCard
+          label="Total PO Value"
+          value={`SAR ${fmt.format(fin.total_po_value)}`}
+          sub={`${fin.dispatch_count} dispatch lines`}
+          accent="blue"
+        />
+        <SummaryCard
+          label="Revenue"
+          value={`SAR ${fmt.format(fin.total_revenue)}`}
+          sub={`${fin.work_done_count} work done records`}
+          accent="green"
+        />
+        <SummaryCard
+          label="Cost"
+          value={`SAR ${fmt.format(fin.total_cost)}`}
+          sub={`${fin.execution_count} executions`}
+          accent="amber"
+        />
         <SummaryCard
           label="Margin"
           value={`SAR ${fmt.format(fin.total_margin)}`}
-          color={fin.total_margin >= 0 ? "#065f46" : "#991b1b"}
+          color={marginColor}
+          accent={marginAccent}
           sub={fin.total_revenue > 0 ? `${((fin.total_margin / fin.total_revenue) * 100).toFixed(1)}% margin` : "No revenue yet"}
         />
       </div>
 
       {/* Tabs */}
-      <div style={{
-        display: "flex", gap: 0, borderBottom: "2px solid var(--border)", marginBottom: 20,
-      }}>
+      <div className="project-tabs">
         {TABS.map(tab => {
           const count = tab.countKey ? fin[tab.countKey] : (tab.key === "teams" ? teamCount : null);
           const isActive = activeTab === tab.key;
@@ -265,25 +264,11 @@ export default function ProjectDetail() {
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              style={{
-                padding: "10px 20px", border: "none", background: "none", cursor: "pointer",
-                fontSize: 13, fontWeight: 600, color: isActive ? "#2563eb" : "var(--text-muted)",
-                borderBottom: isActive ? "2px solid #2563eb" : "2px solid transparent",
-                marginBottom: -2, transition: "all 0.15s",
-                display: "flex", alignItems: "center", gap: 6,
-              }}
+              className={`project-tab${isActive ? ' active' : ''}`}
             >
               {tab.label}
               {count != null && (
-                <span style={{
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  minWidth: 20, height: 20, padding: "0 6px", borderRadius: 10,
-                  fontSize: 11, fontWeight: 700,
-                  background: isActive ? "#dbeafe" : "#f1f5f9",
-                  color: isActive ? "#2563eb" : "#64748b",
-                }}>
-                  {count}
-                </span>
+                <span className="tab-count">{count}</span>
               )}
             </button>
           );
