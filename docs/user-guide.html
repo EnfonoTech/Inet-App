@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INET Operations Command Center — User Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+  :root {
+    --bg: #060d18;
+    --bg-card: #0c1a30;
+    --bg-section: rgba(15, 30, 55, 0.6);
+    --bg-code: rgba(20, 40, 70, 0.5);
+    --border: rgba(100, 160, 220, 0.12);
+    --border-accent: rgba(59, 130, 246, 0.3);
+    --text: #e8ecf4;
+    --text-secondary: #a0b8d0;
+    --text-muted: rgba(200, 215, 235, 0.5);
+    --text-label: #7db8e8;
+    --green: #4ade80;
+    --red: #f87171;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --blue-bright: #3b82f6;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+
+  /* Header */
+  .guide-header {
+    background: linear-gradient(135deg, #0f2440 0%, #1a3a5c 50%, #0f2440 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 48px 0 40px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .guide-header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, var(--blue-bright), var(--blue), var(--blue-bright), transparent);
+  }
+  .guide-header h1 {
+    font-size: 32px;
+    font-weight: 900;
+    letter-spacing: -0.5px;
+    margin-bottom: 8px;
+  }
+  .guide-header .subtitle {
+    color: var(--text-muted);
+    font-size: 16px;
+  }
+  .guide-header .badge {
+    display: inline-block;
+    margin-top: 16px;
+    padding: 4px 14px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--blue);
+    letter-spacing: 0.5px;
+  }
+
+  /* Layout */
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    margin: 32px 0;
+  }
+  .toc h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-label);
+    margin-bottom: 16px;
+  }
+  .toc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 32px;
+  }
+  .toc a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 14px;
+    padding: 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: color 0.15s;
+  }
+  .toc a:hover { color: var(--blue); }
+  .toc a .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    min-width: 28px;
+  }
+
+  /* Sections */
+  .section {
+    margin: 48px 0;
+  }
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  h2 {
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+  h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 32px 0 12px;
+    color: var(--text);
+  }
+  h4 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-label);
+    margin: 20px 0 8px;
+  }
+
+  p { margin-bottom: 12px; color: var(--text-secondary); }
+  strong { color: var(--text); font-weight: 700; }
+
+  /* Pipeline Flow */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 24px 0;
+    overflow-x: auto;
+    padding: 4px 0;
+  }
+  .pipeline-step {
+    background: linear-gradient(135deg, #132a47, #1a3d63);
+    border: 1px solid rgba(59, 130, 246, 0.15);
+    border-radius: 8px;
+    padding: 12px 18px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .pipeline-arrow {
+    color: var(--text-muted);
+    font-size: 18px;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--bg-section);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin: 16px 0;
+  }
+  .card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card p { font-size: 14px; margin-bottom: 8px; }
+
+  /* Role cards */
+  .role-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .role-card {
+    background: var(--bg-section);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+  .role-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    margin: 0 auto 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+  }
+  .role-card h4 {
+    color: var(--text);
+    margin: 0 0 6px;
+    font-size: 16px;
+  }
+  .role-card p { font-size: 13px; color: var(--text-muted); margin: 0; }
+  .role-admin .role-icon { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.3); }
+  .role-im .role-icon { background: rgba(74,222,128,0.15); border: 1px solid rgba(74,222,128,0.3); }
+  .role-field .role-icon { background: rgba(251,191,36,0.15); border: 1px solid rgba(251,191,36,0.3); }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  th {
+    text-align: left;
+    color: var(--text-label);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    font-weight: 700;
+    background: rgba(15, 30, 55, 0.4);
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(100, 160, 220, 0.06);
+    color: var(--text-secondary);
+  }
+  tr:hover td { background: rgba(59, 130, 246, 0.04); }
+  td strong { color: var(--text); }
+  .mono { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 12px; }
+
+  /* Steps */
+  .steps {
+    counter-reset: step;
+    margin: 16px 0;
+  }
+  .step {
+    counter-increment: step;
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+    padding: 16px 20px;
+    background: var(--bg-section);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .step::before {
+    content: counter(step);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: var(--blue);
+    font-size: 13px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .step-content { flex: 1; }
+  .step-content p { margin: 0; }
+  .step-content .step-title { color: var(--text); font-weight: 700; margin-bottom: 4px; }
+  .step-content .step-desc { font-size: 13px; color: var(--text-secondary); }
+
+  /* Code blocks */
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: var(--blue);
+  }
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+
+  /* Color indicators */
+  .color-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .dot-green { background: var(--green); }
+  .dot-red { background: var(--red); }
+  .dot-amber { background: var(--amber); }
+  .dot-blue { background: var(--blue); }
+
+  /* KPI preview */
+  .kpi-preview {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .kpi-mini {
+    background: linear-gradient(135deg, #132a47, #1a3d63);
+    border: 1px solid rgba(59, 130, 246, 0.12);
+    border-radius: 6px;
+    padding: 10px;
+    text-align: center;
+  }
+  .kpi-mini-label {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-label);
+    margin-bottom: 4px;
+  }
+  .kpi-mini-value {
+    font-size: 16px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+  }
+  .kpi-mini-value.green { color: var(--green); }
+  .kpi-mini-value.red { color: var(--red); }
+  .kpi-mini-value.amber { color: var(--amber); }
+
+  /* Workflow diagram */
+  .workflow {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin: 24px 0;
+  }
+  .workflow-row {
+    display: flex;
+    align-items: center;
+    margin: 8px 0;
+    font-size: 14px;
+  }
+  .workflow-num {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--blue);
+    font-size: 11px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+  .workflow-text { color: var(--text-secondary); flex: 1; }
+  .workflow-text strong { color: var(--text); }
+  .workflow-connector {
+    width: 24px;
+    display: flex;
+    justify-content: center;
+    margin: 2px 0;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  /* Nav reference */
+  .nav-ref {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .nav-item {
+    background: var(--bg-section);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition: border-color 0.15s;
+  }
+  .nav-item:hover { border-color: var(--border-accent); }
+  .nav-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .nav-label { font-size: 12px; }
+  .nav-url { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+
+  /* Formula table */
+  .formula-table td:nth-child(2) {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--green);
+  }
+
+  /* Troubleshooting */
+  .trouble-item {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid rgba(100, 160, 220, 0.06);
+    font-size: 13px;
+  }
+  .trouble-issue { color: var(--red); font-weight: 600; }
+  .trouble-fix { color: var(--text-secondary); }
+
+  /* Alert boxes */
+  .alert {
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .alert-info {
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    color: var(--blue);
+  }
+  .alert-warning {
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    color: var(--amber);
+  }
+  .alert-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+  /* Footer */
+  .guide-footer {
+    text-align: center;
+    padding: 40px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 60px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* Print styles */
+  @media print {
+    body { background: #fff; color: #1a1a2e; }
+    .guide-header { background: #1a365d; }
+    .card, .role-card, .step, .nav-item { border-color: #ddd; background: #f8f9fa; }
+    table th { background: #f0f0f0; }
+  }
+
+  @media (max-width: 768px) {
+    .role-grid { grid-template-columns: 1fr; }
+    .kpi-preview { grid-template-columns: repeat(3, 1fr); }
+    .nav-ref { grid-template-columns: repeat(2, 1fr); }
+    .toc-grid { grid-template-columns: 1fr; }
+    .pipeline { flex-wrap: wrap; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HEADER ============ -->
+<div class="guide-header">
+  <div class="container">
+    <h1>INET Operations Command Center</h1>
+    <p class="subtitle">User Guide &amp; System Documentation</p>
+    <div class="badge">VERSION 1.0 &middot; APRIL 2026</div>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ============ TOC ============ -->
+<div class="toc">
+  <h2>Contents</h2>
+  <div class="toc-grid">
+    <a href="#overview"><span class="num">01</span> System Overview</a>
+    <a href="#dashboard"><span class="num">02</span> Command Dashboard</a>
+    <a href="#po-upload"><span class="num">03</span> PO Upload</a>
+    <a href="#dispatch"><span class="num">04</span> PO Dispatch</a>
+    <a href="#planning"><span class="num">05</span> Rollout Planning</a>
+    <a href="#execution"><span class="num">06</span> Execution Monitor</a>
+    <a href="#workdone"><span class="num">07</span> Work Done</a>
+    <a href="#reports"><span class="num">08</span> Reports &amp; Masters</a>
+    <a href="#im-guide"><span class="num">09</span> IM Dashboard Guide</a>
+    <a href="#field-guide"><span class="num">10</span> Field Team Guide</a>
+    <a href="#workflow"><span class="num">11</span> Complete Workflow Example</a>
+    <a href="#formulas"><span class="num">12</span> Financial Formulas</a>
+    <a href="#setup"><span class="num">13</span> First-Time Setup</a>
+    <a href="#troubleshooting"><span class="num">14</span> Troubleshooting</a>
+  </div>
+</div>
+
+<!-- ============ 1. OVERVIEW ============ -->
+<div class="section" id="overview">
+  <div class="section-label">Section 01</div>
+  <h2>System Overview</h2>
+  <p>The INET Operations Command Center replaces the Excel-based project management system. It manages the full lifecycle of telecom field operations through a <strong>6-stage pipeline</strong>:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">PO Upload</div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Dispatch</div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Planning</div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Execution</div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Work Done</div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">Dashboard KPIs</div>
+  </div>
+
+  <h3>Three User Roles</h3>
+  <div class="role-grid">
+    <div class="role-card role-admin">
+      <div class="role-icon">&#9670;</div>
+      <h4>Admin</h4>
+      <p>Full Command Dashboard on wall screen. All pipeline stages, reports, master data.</p>
+    </div>
+    <div class="role-card role-im">
+      <div class="role-icon">&#9733;</div>
+      <h4>Implementation Manager</h4>
+      <p>Personal dashboard filtered to own teams and projects. Performance tracking.</p>
+    </div>
+    <div class="role-card role-field">
+      <div class="role-icon">&#9881;</div>
+      <h4>Field Team</h4>
+      <p>Today's assigned work. Submit execution updates with GPS and photos.</p>
+    </div>
+  </div>
+
+  <div class="alert alert-info">
+    <span class="alert-icon">&#8505;</span>
+    <span>The system auto-detects your role at login based on your Frappe user account. Admins = System Manager role. IMs = Full Name matches INET Team IM field. Everyone else = Field Team.</span>
+  </div>
+</div>
+
+<!-- ============ 2. COMMAND DASHBOARD ============ -->
+<div class="section" id="dashboard">
+  <div class="section-label">Section 02</div>
+  <h2>Command Dashboard</h2>
+  <p>URL: <code>/pms/dashboard</code> &mdash; Designed for a wall-mounted 1920&times;1080 display. Auto-refreshes every 60 seconds.</p>
+
+  <h3>4 KPI Rows</h3>
+
+  <h4>Row 1 &mdash; Operational Overview</h4>
+  <div class="kpi-preview">
+    <div class="kpi-mini"><div class="kpi-mini-label">Total Open PO</div><div class="kpi-mini-value">3,604,930</div></div>
+    <div class="kpi-mini"><div class="kpi-mini-label">Active Teams</div><div class="kpi-mini-value green">17</div></div>
+    <div class="kpi-mini"><div class="kpi-mini-label">Idle Teams</div><div class="kpi-mini-value amber">17</div></div>
+    <div class="kpi-mini"><div class="kpi-mini-label">Planned</div><div class="kpi-mini-value">168</div></div>
+    <div class="kpi-mini"><div class="kpi-mini-label">Closed</div><div class="kpi-mini-value green">59</div></div>
+    <div class="kpi-mini"><div class="kpi-mini-label">Re-Visits</div><div class="kpi-mini-value red">3</div></div>
+  </div>
+
+  <h4>Row 2 &mdash; INET Teams Performance</h4>
+  <p>Active INET Teams, Monthly Cost, Monthly Target, Target Today (prorated), Achieved, Gap Today</p>
+
+  <h4>Row 3 &mdash; Subcontractor Performance</h4>
+  <p>Active Sub Teams, Sub-Con Target, Revenue, Expense, INET Margin, Sub-Con Gap</p>
+
+  <h4>Row 4 &mdash; Company Financial Summary</h4>
+  <p>Company Target, Total Achieved, Company Gap, Total Cost, Profit/Loss, Coverage %</p>
+
+  <h3>4 Bottom Panels</h3>
+  <table>
+    <thead><tr><th>Panel</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Top 5 Teams</strong></td><td>Best performing teams by revenue this month</td></tr>
+      <tr><td><strong>IM Performance</strong></td><td>Revenue, cost, and profit per Implementation Manager</td></tr>
+      <tr><td><strong>Team Status</strong></td><td>Bar chart (Active/Idle/Planned/In Progress) + completion donut</td></tr>
+      <tr><td><strong>Action Watchlist</strong></td><td>Alerts: idle teams, missed activities, forecast gap, P&amp;L, re-visits</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Color Coding</h3>
+  <p><span class="color-dot dot-green"></span><strong>Green</strong> = good (achievements, active, on target)</p>
+  <p><span class="color-dot dot-red"></span><strong>Red</strong> = critical (gaps, losses, overdue) &mdash; negative values shown in parentheses</p>
+  <p><span class="color-dot dot-amber"></span><strong>Amber</strong> = warning (idle teams, behind schedule)</p>
+</div>
+
+<!-- ============ 3. PO UPLOAD ============ -->
+<div class="section" id="po-upload">
+  <div class="section-label">Section 03</div>
+  <h2>PO Upload</h2>
+  <p>URL: <code>/pms/po-upload</code> &mdash; Import Huawei PO export files into the system.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Get the PO file</div>
+        <div class="step-desc">Download the <code>.xlsx</code> export from Huawei's procurement system (e.g., <code>PURCHASE_ORDER_20260325003415.xlsx</code>)</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Drag &amp; drop the file</div>
+        <div class="step-desc">Drop onto the upload zone or click to browse. System uploads to Frappe and parses the file.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Review validation results</div>
+        <div class="step-desc"><span class="color-dot dot-green"></span>Green rows = valid (Item Code found, Project Code exists, Qty &gt; 0). <span class="color-dot dot-red"></span>Red rows = errors with details shown.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Click "Confirm Import"</div>
+        <div class="step-desc">Creates PO Intake records grouped by PO number. Each PO becomes one record with line items. Status starts as "New".</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert alert-info">
+    <span class="alert-icon">&#8505;</span>
+    <span><strong>Columns parsed:</strong> PO No, PO Line No, Shipment No, Site Name, Site Code, Item Code, Item Description, Unit, Qty, Unit Price, Line Amount, Project Code, Project Name, Center Area, Publish Date</span>
+  </div>
+</div>
+
+<!-- ============ 4. DISPATCH ============ -->
+<div class="section" id="dispatch">
+  <div class="section-label">Section 04</div>
+  <h2>PO Dispatch</h2>
+  <p>URL: <code>/pms/dispatch</code> &mdash; Assign imported PO lines to field teams.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Select PO lines</div>
+        <div class="step-desc">Table shows imported lines with status "New". Use checkboxes to select lines for dispatch.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Choose assignment</div>
+        <div class="step-desc"><strong>Team:</strong> Select from dropdown (Team-01 through Team-60). <strong>Target Month:</strong> When this work should be done.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Click "Dispatch Selected"</div>
+        <div class="step-desc">Creates PO Dispatch records with unique <strong>System ID</strong> (e.g., <code>SYS-2026-00001</code>). Auto-maps IM from Team Master and Customer from Project Master.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert alert-warning">
+    <span class="alert-icon">&#9888;</span>
+    <span>The <strong>System ID</strong> is the primary tracking key &mdash; it follows the work through planning, execution, and completion.</span>
+  </div>
+</div>
+
+<!-- ============ 5. PLANNING ============ -->
+<div class="section" id="planning">
+  <div class="section-label">Section 05</div>
+  <h2>Rollout Planning</h2>
+  <p>URL: <code>/pms/planning</code> &mdash; Schedule dispatched work for specific dates.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Select dispatched lines</div>
+        <div class="step-desc">Table shows PO Dispatch records with status "Dispatched".</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Set plan date &amp; visit type</div>
+        <div class="step-desc"><strong>Plan Date:</strong> When the team should execute. <strong>Visit Type:</strong> Work Done (1.0x), Re-Visit (0.5x), or Extra Visit (1.5x).</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Click "Create Plans"</div>
+        <div class="step-desc">Creates Rollout Plan records. Target Amount = PO Line Amount &times; Visit Multiplier. Status becomes "Planned".</div>
+      </div>
+    </div>
+  </div>
+
+  <h4>Visit Multipliers</h4>
+  <table>
+    <thead><tr><th>Type</th><th>Multiplier</th><th>When Used</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Work Done</strong></td><td class="mono">1.0x</td><td>Standard first visit</td></tr>
+      <tr><td><strong>Re-Visit</strong></td><td class="mono">0.5x</td><td>Return visit for rework</td></tr>
+      <tr><td><strong>Extra Visit</strong></td><td class="mono">1.5x</td><td>Additional mobilization needed</td></tr>
+      <tr><td><strong>Plan</strong></td><td class="mono">0x</td><td>Planning only, no cost</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============ 6. EXECUTION MONITOR ============ -->
+<div class="section" id="execution">
+  <div class="section-label">Section 06</div>
+  <h2>Execution Monitor</h2>
+  <p>URL: <code>/pms/execution</code> &mdash; Watch field team progress in real-time (read-only for admin). Auto-refreshes every 30 seconds.</p>
+  <p>Shows all Rollout Plans in "Planned" or "In Execution" status with System ID, Team, Plan Date, Visit Type, Target Amount, Achieved Amount, Completion %, and Status with color coding.</p>
+</div>
+
+<!-- ============ 7. WORK DONE ============ -->
+<div class="section" id="workdone">
+  <div class="section-label">Section 07</div>
+  <h2>Work Done</h2>
+  <p>URL: <code>/pms/work-done</code> &mdash; View completed, billable work with auto-calculated financials.</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Revenue (SAR)</strong></td><td>Billing Rate &times; Executed Qty &mdash; rate from Customer Item Master</td></tr>
+      <tr><td><strong>Cost (SAR)</strong></td><td>Team Daily Cost + Subcontract Cost</td></tr>
+      <tr><td><strong>Margin (SAR)</strong></td><td>Revenue &minus; Cost</td></tr>
+      <tr><td><strong>Billing Status</strong></td><td>Pending / Invoiced / Closed</td></tr>
+    </tbody>
+  </table>
+
+  <div class="alert alert-info">
+    <span class="alert-icon">&#8505;</span>
+    <span><strong>Rate logic:</strong> Standard Region &rarr; <code>Standard_Rate_SAR</code>. Hard Region (center_area contains "Hard") &rarr; <code>Hard_Rate_SAR</code>.</span>
+  </div>
+</div>
+
+<!-- ============ 8. REPORTS & MASTERS ============ -->
+<div class="section" id="reports">
+  <div class="section-label">Section 08</div>
+  <h2>Reports &amp; Masters</h2>
+
+  <h3>Reports <span style="font-weight:400;color:var(--text-muted);font-size:14px;">/pms/reports</span></h3>
+  <table>
+    <thead><tr><th>Report</th><th>What it shows</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Project Status Summary</strong></td><td>All projects with status, budget, actual cost</td></tr>
+      <tr><td><strong>Budget vs Actual</strong></td><td>Budget vs actual cost comparison per project</td></tr>
+      <tr><td><strong>Team Utilization</strong></td><td>Team assignments and utilization percentages</td></tr>
+      <tr><td><strong>Daily Work Progress</strong></td><td>Daily execution progress by team and date</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Masters <span style="font-weight:400;color:var(--text-muted);font-size:14px;">/pms/masters</span></h3>
+  <table>
+    <thead><tr><th>Master</th><th>Records</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Area Master</strong></td><td class="mono">7</td><td>Saudi regions: Riyadh, Jeddah, Dammam, Abha, Qassim, Makkah, Madinah</td></tr>
+      <tr><td><strong>INET Team</strong></td><td class="mono">60</td><td>Field teams with IM, type (INET/SUB), daily cost</td></tr>
+      <tr><td><strong>Subcontractor Master</strong></td><td class="mono">7</td><td>Subcontractors with INET margin % and payout %</td></tr>
+      <tr><td><strong>Project Control Center</strong></td><td class="mono">74</td><td>All projects with domain, customer, IM</td></tr>
+      <tr><td><strong>Visit Multiplier Master</strong></td><td class="mono">4</td><td>Work Done=1.0x, Re-Visit=0.5x, Extra=1.5x, Plan=0x</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============ 9. IM GUIDE ============ -->
+<div class="section" id="im-guide">
+  <div class="section-label">Section 09</div>
+  <h2>IM Dashboard Guide</h2>
+  <p>URL: <code>/pms/im-dashboard</code> &mdash; Auto-shown when an IM logs in.</p>
+
+  <div class="card">
+    <div class="card-title">&#9733; Personal KPIs (4 cards)</div>
+    <p>Total Revenue this month, Total Cost, Profit/Loss, Team Count &mdash; all filtered to your teams only.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">&#128101; My Teams Table</div>
+    <p>Your teams with name, type (INET/SUB), status (Active/Idle today), daily cost.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">&#128196; My Projects Table</div>
+    <p>Projects where you are the Implementation Manager with code, name, status, completion %, budget.</p>
+  </div>
+</div>
+
+<!-- ============ 10. FIELD GUIDE ============ -->
+<div class="section" id="field-guide">
+  <div class="section-label">Section 10</div>
+  <h2>Field Team Guide</h2>
+
+  <h3>Today's Work <span style="font-weight:400;color:var(--text-muted);font-size:14px;">/pms/today</span></h3>
+  <p>Cards showing today's planned activities: item description, site name, project code, target amount, status. Click a card to open the execution form.</p>
+
+  <h3>Execution Form <span style="font-weight:400;color:var(--text-muted);font-size:14px;">/pms/execute/:id</span></h3>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Select Execution Status</div>
+        <div class="step-desc">In Progress, Completed, Hold, Cancelled, or Postponed</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Enter Achieved Qty</div>
+        <div class="step-desc">How many units were completed</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Capture GPS Location</div>
+        <div class="step-desc">Click "Capture GPS" to auto-fill from your device</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Submit</div>
+        <div class="step-desc">When marked "Completed": system auto-creates Work Done record with revenue/cost/margin and updates the Command Dashboard KPIs.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 11. WORKFLOW EXAMPLE ============ -->
+<div class="section" id="workflow">
+  <div class="section-label">Section 11</div>
+  <h2>Complete Workflow Example</h2>
+
+  <div class="workflow">
+    <div class="workflow-row"><div class="workflow-num">1</div><div class="workflow-text"><strong>Huawei sends PO export file</strong> (17 line items worth SAR 25,000)</div></div>
+    <div class="workflow-connector">&darr;</div>
+    <div class="workflow-row"><div class="workflow-num">2</div><div class="workflow-text">Admin uploads at <code>/pms/po-upload</code> &rarr; <strong>17 PO Intake lines</strong> created</div></div>
+    <div class="workflow-connector">&darr;</div>
+    <div class="workflow-row"><div class="workflow-num">3</div><div class="workflow-text">Admin at <code>/pms/dispatch</code> &rarr; assigns <strong>10 lines to Team-01</strong>, <strong>7 lines to Team-05</strong></div></div>
+    <div class="workflow-connector">&darr;</div>
+    <div class="workflow-row"><div class="workflow-num">4</div><div class="workflow-text">Admin at <code>/pms/planning</code> &rarr; sets <strong>plan date = today</strong>, visit type "Work Done"</div></div>
+    <div class="workflow-connector">&darr;</div>
+    <div class="workflow-row"><div class="workflow-num">5</div><div class="workflow-text">Team-01 lead logs in &rarr; sees <strong>10 items</strong> at <code>/pms/today</code></div></div>
+    <div class="workflow-connector">&darr;</div>
+    <div class="workflow-row"><div class="workflow-num">6</div><div class="workflow-text">Team-01 marks items <strong>"Completed"</strong>, enters achieved qty</div></div>
+    <div class="workflow-connector">&darr;</div>
+    <div class="workflow-row"><div class="workflow-num">7</div><div class="workflow-text">System auto-creates <strong>Work Done</strong>: Revenue = SAR 706, Cost = SAR 100, Margin = SAR 606</div></div>
+    <div class="workflow-connector">&darr;</div>
+    <div class="workflow-row"><div class="workflow-num">8</div><div class="workflow-text"><strong>Command Dashboard updates</strong> within 60 seconds: INET Achieved +SAR 706, Gap decreases</div></div>
+  </div>
+</div>
+
+<!-- ============ 12. FORMULAS ============ -->
+<div class="section" id="formulas">
+  <div class="section-label">Section 12</div>
+  <h2>Financial Formulas</h2>
+
+  <table class="formula-table">
+    <thead><tr><th>Calculation</th><th>Formula</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Revenue</strong></td><td>Billing_Rate &times; Executed_Qty</td><td>Customer Item Master</td></tr>
+      <tr><td><strong>Team Cost</strong></td><td>Daily_Cost from Team Master</td><td>INET Team (SAR 1,000/day)</td></tr>
+      <tr><td><strong>Sub Cost</strong></td><td>Expected_Cost &times; Visit_Multiplier</td><td>Subcontract Cost Master</td></tr>
+      <tr><td><strong>Total Cost</strong></td><td>Team_Cost + Sub_Cost</td><td>Calculated</td></tr>
+      <tr><td><strong>Margin</strong></td><td>Revenue &minus; Total_Cost</td><td>Calculated</td></tr>
+      <tr><td><strong>INET Margin (subs)</strong></td><td>Revenue &times; INet_Margin_%</td><td>Subcontractor Master</td></tr>
+      <tr><td><strong>Coverage %</strong></td><td>Achieved / Target &times; 100</td><td>Dashboard calc</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============ 13. SETUP ============ -->
+<div class="section" id="setup">
+  <div class="section-label">Section 13</div>
+  <h2>First-Time Setup</h2>
+
+  <h3>Import Master Data</h3>
+  <div class="steps">
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Upload CONTROL_CENTER.xlsx to Frappe</div>
+        <div class="step-desc">Go to Frappe Desk &rarr; File Manager &rarr; Upload the file</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Run the import script</div>
+        <div class="step-desc">
+          <pre><code>cd ~/frappe-bench
+bench --site mysite.local console
+
+from inet_app.api.data_import import import_control_center_xlsx
+result = import_control_center_xlsx("/files/CONTROL_CENTER.xlsx")
+print(result)
+frappe.db.commit()</code></pre>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <div class="step-title">Verify at /pms/masters</div>
+        <div class="step-desc">Check record counts match: 7 areas, 60 teams, 7 subcontractors, 74 projects, 4 multipliers</div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Set Up IM Users</h3>
+  <p>Create Frappe users for each IM. Set their <strong>Full Name</strong> to match the <code>im</code> field in INET Team master (e.g., "Majid Ali", "Ajmal Muhammed"). They'll automatically get the IM Dashboard on login.</p>
+
+  <h3>Set Up Field Team Users</h3>
+  <p>Create Frappe users for team leads. They default to "Field" role and see Today's Work filtered to planned items.</p>
+</div>
+
+<!-- ============ NAVIGATION REF ============ -->
+<div class="section">
+  <div class="section-label">Navigation Reference</div>
+  <h2>Admin Sidebar Pages</h2>
+  <div class="nav-ref">
+    <div class="nav-item"><div class="nav-icon">&#9670;</div><div><div class="nav-label">Dashboard</div><div class="nav-url">/pms/dashboard</div></div></div>
+    <div class="nav-item"><div class="nav-icon">&uarr;</div><div><div class="nav-label">PO Upload</div><div class="nav-url">/pms/po-upload</div></div></div>
+    <div class="nav-item"><div class="nav-icon">&rarr;</div><div><div class="nav-label">Dispatch</div><div class="nav-url">/pms/dispatch</div></div></div>
+    <div class="nav-item"><div class="nav-icon">&#9776;</div><div><div class="nav-label">Planning</div><div class="nav-url">/pms/planning</div></div></div>
+    <div class="nav-item"><div class="nav-icon">&#9678;</div><div><div class="nav-label">Execution</div><div class="nav-url">/pms/execution</div></div></div>
+    <div class="nav-item"><div class="nav-icon">&#10003;</div><div><div class="nav-label">Work Done</div><div class="nav-url">/pms/work-done</div></div></div>
+    <div class="nav-item"><div class="nav-icon">&#9707;</div><div><div class="nav-label">Reports</div><div class="nav-url">/pms/reports</div></div></div>
+    <div class="nav-item"><div class="nav-icon">&#9881;</div><div><div class="nav-label">Masters</div><div class="nav-url">/pms/masters</div></div></div>
+  </div>
+</div>
+
+<!-- ============ 14. TROUBLESHOOTING ============ -->
+<div class="section" id="troubleshooting">
+  <div class="section-label">Section 14</div>
+  <h2>Troubleshooting</h2>
+
+  <div class="trouble-item">
+    <div class="trouble-issue">Dashboard shows old white theme</div>
+    <div class="trouble-fix">Hard refresh: <strong>Cmd+Shift+R</strong> or open in incognito window</div>
+  </div>
+  <div class="trouble-item">
+    <div class="trouble-issue">"Loading..." stuck forever</div>
+    <div class="trouble-fix">Check bench server: <code>cd ~/frappe-bench && bench serve --port 8001</code></div>
+  </div>
+  <div class="trouble-item">
+    <div class="trouble-issue">PO Upload validation errors</div>
+    <div class="trouble-fix">Verify Item Codes match Customer Item Master and Project Codes match Project Control Center</div>
+  </div>
+  <div class="trouble-item">
+    <div class="trouble-issue">Dashboard KPIs all zero</div>
+    <div class="trouble-fix">No Work Done records yet &mdash; complete the full pipeline: upload &rarr; dispatch &rarr; plan &rarr; execute &rarr; complete</div>
+  </div>
+  <div class="trouble-item">
+    <div class="trouble-issue">Login fails</div>
+    <div class="trouble-fix">Use Frappe credentials. Default admin: <code>Administrator</code> / <code>admin</code></div>
+  </div>
+  <div class="trouble-item">
+    <div class="trouble-issue">IM Dashboard shows wrong data</div>
+    <div class="trouble-fix">User's Full Name must match the <code>im</code> field in INET Team master exactly</div>
+  </div>
+</div>
+
+<!-- ============ FOOTER ============ -->
+<div class="guide-footer">
+  <p><strong>INET Operations Command Center</strong> v1.0</p>
+  <p>Frappe 15 &middot; ERPNext 15 &middot; React 19 &middot; April 2026</p>
+  <p style="margin-top:8px;">Built for INET Telecom &middot; Powered by Enfono</p>
+</div>
+
+</div><!-- /container -->
+</body>
+</html>
