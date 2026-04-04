@@ -185,6 +185,21 @@ def confirm_po_upload(rows):
             doc.customer = frappe.db.get_value("Customer", {}, "name") or "Unknown"
 
         for line in lines:
+            item_code = line.get("item_code")
+            # Auto-create item if it doesn't exist in Item master
+            if item_code and not frappe.db.exists("Item", str(item_code)):
+                if not frappe.db.exists("Item Group", "Telecom Services"):
+                    frappe.get_doc({"doctype": "Item Group", "item_group_name": "Telecom Services", "parent_item_group": "All Item Groups"}).insert(ignore_permissions=True)
+                frappe.get_doc({
+                    "doctype": "Item",
+                    "item_code": str(item_code),
+                    "item_name": str(line.get("item_description") or item_code)[:140],
+                    "item_group": "Telecom Services",
+                    "stock_uom": "Nos",
+                    "is_stock_item": 0,
+                    "description": str(line.get("item_description") or ""),
+                }).insert(ignore_permissions=True)
+
             doc.append(
                 "po_lines",
                 {
@@ -193,7 +208,7 @@ def confirm_po_upload(rows):
                     "shipment_number": line.get("shipment_no"),
                     "site_code": line.get("site_code"),
                     "site_name": line.get("site_name"),
-                    "item_code": line.get("item_code"),
+                    "item_code": item_code,
                     "item_description": line.get("item_description"),
                     "qty": flt(line.get("qty", 0)),
                     "rate": flt(line.get("rate", 0)),
@@ -202,7 +217,11 @@ def confirm_po_upload(rows):
                 },
             )
 
-        doc.insert(ignore_permissions=True)
+        # Auto-create customer if it doesn't exist
+        if doc.customer and not frappe.db.exists("Customer", {"customer_name": doc.customer}):
+            frappe.get_doc({"doctype": "Customer", "customer_name": doc.customer, "customer_type": "Company"}).insert(ignore_permissions=True)
+
+        doc.insert(ignore_permissions=True, ignore_links=True)
         frappe.db.commit()
         created += 1
         names.append(doc.name)

@@ -1,6 +1,6 @@
 {
   "actions": [],
-  "autoname": "format:PIP-.YYYY.-.####",
+  "autoname": "format:PIP-{YYYY}-{####}",
   "creation": "2026-04-01 00:00:00.000000",
   "doctype": "DocType",
   "engine": "InnoDB",
