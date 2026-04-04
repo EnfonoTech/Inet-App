@@ -1,0 +1,121 @@
+{
+  "actions": [],
+  "autoname": "format:EXE-.YYYY.MM.-.#####",
+  "naming_rule": "Expression (old style)",
+  "creation": "2026-04-04 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "system_id",
+    "rollout_plan",
+    "team",
+    "execution_date",
+    "execution_status",
+    "achieved_qty",
+    "achieved_amount",
+    "gps_location",
+    "photos",
+    "qc_status",
+    "revisit_flag",
+    "remarks"
+  ],
+  "fields": [
+    {
+      "fieldname": "system_id",
+      "fieldtype": "Data",
+      "label": "System ID"
+    },
+    {
+      "fieldname": "rollout_plan",
+      "fieldtype": "Link",
+      "label": "Rollout Plan",
+      "options": "Rollout Plan"
+    },
+    {
+      "fieldname": "team",
+      "fieldtype": "Data",
+      "label": "Team",
+      "in_list_view": 1
+    },
+    {
+      "default": "Today",
+      "fieldname": "execution_date",
+      "fieldtype": "Date",
+      "label": "Execution Date",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "default": "In Progress",
+      "fieldname": "execution_status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "achieved_qty",
+      "fieldtype": "Float",
+      "label": "Achieved Qty"
+    },
+    {
+      "fieldname": "achieved_amount",
+      "fieldtype": "Currency",
+      "label": "Achieved Amount (SAR)",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "gps_location",
+      "fieldtype": "Data",
+      "label": "GPS Location"
+    },
+    {
+      "fieldname": "photos",
+      "fieldtype": "Attach Image",
+      "label": "Photos"
+    },
+    {
+      "default": "Pending",
+      "fieldname": "qc_status",
+      "fieldtype": "Select",
+      "label": "QC Status",
+      "options": "Pending\nPass\nFail"
+    },
+    {
+      "default": "0",
+      "fieldname": "revisit_flag",
+      "fieldtype": "Check",
+      "label": "Revisit Required"
+    },
+    {
+      "fieldname": "remarks",
+      "fieldtype": "Small Text",
+      "label": "Remarks"
+    }
+  ],
+  "index_web_pages_for_search": 1,
+  "istable": 0,
+  "links": [],
+  "modified": "2026-04-04 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Inet App",
+  "name": "Daily Execution",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "track_changes": 1
+}
