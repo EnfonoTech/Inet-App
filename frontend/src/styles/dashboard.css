@@ -1,0 +1,495 @@
+/* ================================================================
+   INET Operations Command Center — Dashboard Styles
+   ================================================================
+   KPI rows, panels, mini-charts, and the command-center layout.
+   ================================================================ */
+
+/* ── Dashboard Container ────────────────────────────────────── */
+.dashboard {
+  padding: 24px 28px 40px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+/* ── Dashboard Header ───────────────────────────────────────── */
+.dash-header {
+  text-align: center;
+  padding: 28px 20px 24px;
+  margin-bottom: 28px;
+  background: linear-gradient(135deg, rgba(15, 30, 55, 0.4), rgba(10, 22, 40, 0.3));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  position: relative;
+}
+
+.dash-header h1 {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.3px;
+  margin-bottom: 6px;
+}
+
+.dash-header .subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  display: inline-block;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); }
+  50%      { opacity: 0.7; box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
+}
+
+.dash-timestamp {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Section Labels ─────────────────────────────────────────── */
+.section-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin: 28px 0 12px;
+  padding-left: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+/* ── KPI Row (shared) ───────────────────────────────────────── */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+/* ── KPI Card ───────────────────────────────────────────────── */
+.kpi-card {
+  padding: 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-subtle);
+  transition: all var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+
+.kpi-card:hover {
+  border-color: var(--border-medium);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+
+.kpi-card .kpi-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+  opacity: 0.9;
+}
+
+.kpi-card .kpi-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.1;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.kpi-card .kpi-sub {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* Row theme: Topline */
+.kpi-row-top .kpi-card {
+  background: var(--kpi-top-bg);
+  border-color: var(--kpi-top-border);
+}
+.kpi-row-top .kpi-label { color: var(--kpi-top-label); }
+
+/* Row theme: INET Teams */
+.kpi-row-inet .kpi-card {
+  background: var(--kpi-inet-bg);
+  border-color: var(--kpi-inet-border);
+}
+.kpi-row-inet .kpi-label { color: var(--kpi-inet-label); }
+
+/* Row theme: Subcontractors */
+.kpi-row-sub .kpi-card {
+  background: var(--kpi-sub-bg);
+  border-color: var(--kpi-sub-border);
+}
+.kpi-row-sub .kpi-label { color: var(--kpi-sub-label); }
+
+/* Row theme: Company */
+.kpi-row-company .kpi-card {
+  background: var(--kpi-company-bg);
+  border-color: var(--kpi-company-border);
+}
+.kpi-row-company .kpi-label { color: var(--kpi-company-label); }
+
+/* ── Bottom Grid (4 panels) ─────────────────────────────────── */
+.bottom-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-top: 8px;
+}
+
+/* ── Panel ──────────────────────────────────────────────────── */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.panel-header h3 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.panel-header .panel-action {
+  font-size: 0.68rem;
+  color: var(--blue);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.panel-header .panel-action:hover {
+  color: var(--blue-bright);
+}
+
+.panel-body {
+  padding: 12px 16px 16px;
+  flex: 1;
+}
+
+/* ── Mini Table (for panels) ────────────────────────────────── */
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mini-table th {
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+}
+
+.mini-table td {
+  padding: 7px 0;
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.mini-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.mini-table tbody tr:hover td {
+  background: rgba(96, 165, 250, 0.04);
+}
+
+/* ── Bar Chart (CSS) ────────────────────────────────────────── */
+.chart-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chart-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chart-bar-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  width: 60px;
+  flex-shrink: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chart-bar-track {
+  flex: 1;
+  height: 20px;
+  background: rgba(10, 22, 40, 0.5);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.chart-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+  background: linear-gradient(90deg, var(--blue-bright), var(--blue));
+}
+
+.chart-bar-fill.green { background: linear-gradient(90deg, #059669, var(--green)); }
+.chart-bar-fill.amber { background: linear-gradient(90deg, #d97706, var(--amber)); }
+.chart-bar-fill.red   { background: linear-gradient(90deg, #dc2626, var(--red)); }
+
+.chart-bar-value {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  width: 40px;
+  text-align: right;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Donut Chart (CSS-only) ─────────────────────────────────── */
+.donut {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 8px auto;
+}
+
+.donut-inner {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  position: absolute;
+}
+
+.donut-inner .donut-value {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.donut-inner .donut-label {
+  font-size: 0.58rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+.donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.donut-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ── Watchlist ──────────────────────────────────────────────── */
+.watchlist-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.watchlist-item:last-child {
+  border-bottom: none;
+}
+
+.watchlist-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.watchlist-indicator.green { background: var(--green); }
+.watchlist-indicator.amber { background: var(--amber); }
+.watchlist-indicator.red   { background: var(--red); }
+.watchlist-indicator.blue  { background: var(--blue); }
+
+.watchlist-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.watchlist-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.watchlist-detail {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.watchlist-status {
+  flex-shrink: 0;
+}
+
+/* ── Color helpers ──────────────────────────────────────────── */
+.text-green { color: var(--green); }
+.text-red   { color: var(--red); }
+.text-amber { color: var(--amber); }
+.text-blue  { color: var(--blue); }
+.text-muted { color: var(--text-muted); }
+
+/* ── Monospace numbers ──────────────────────────────────────── */
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Shimmer / Loading State ────────────────────────────────── */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(96, 165, 250, 0.04) 40%,
+    rgba(96, 165, 250, 0.08) 50%,
+    rgba(96, 165, 250, 0.04) 60%,
+    transparent 100%
+  );
+  animation: shimmer-move 1.8s ease-in-out infinite;
+}
+
+@keyframes shimmer-move {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.shimmer-block {
+  background: rgba(15, 30, 55, 0.6);
+  border-radius: var(--radius-sm);
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer-block::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(96, 165, 250, 0.06) 50%,
+    transparent 100%
+  );
+  animation: shimmer-move 1.8s ease-in-out infinite;
+}
+
+/* ── Auto-refresh indicator ─────────────────────────────────── */
+.refresh-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  padding: 3px 10px;
+  background: rgba(96, 165, 250, 0.06);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+}
+
+.refresh-indicator .spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 1400px) {
+  .kpi-row { grid-template-columns: repeat(3, 1fr); }
+  .bottom-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 1000px) {
+  .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .bottom-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  .dashboard { padding: 16px; }
+  .kpi-row { grid-template-columns: 1fr; }
+}
