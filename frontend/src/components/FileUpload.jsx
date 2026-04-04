@@ -14,8 +14,15 @@ export default function FileUpload({ onFileUploaded, accept = ".xlsx,.csv" }) {
   const inputRef = useRef(null);
 
   function getCsrf() {
-    const match = document.cookie.match(/frappe_csrf_token=([^;]+)/);
-    return match ? decodeURIComponent(match[1]) : "fetch";
+    // Try frappe_csrf_token first, then csrf_token, then fall back to "fetch"
+    const m1 = document.cookie.match(/frappe_csrf_token=([^;]+)/);
+    if (m1) return decodeURIComponent(m1[1]);
+    const m2 = document.cookie.match(/csrf_token=([^;]+)/);
+    if (m2) return decodeURIComponent(m2[1]);
+    // Try meta tag as last resort
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) return meta.getAttribute("content");
+    return "fetch";
   }
 
   async function uploadFile(file) {
@@ -27,6 +34,7 @@ export default function FileUpload({ onFileUploaded, accept = ".xlsx,.csv" }) {
     form.append("file", file, file.name);
     form.append("is_private", "1");
     form.append("folder", "Home");
+    // Do NOT set Content-Type — let browser set multipart boundary automatically
 
     try {
       const res = await fetch("/api/method/upload_file", {
@@ -37,9 +45,16 @@ export default function FileUpload({ onFileUploaded, accept = ".xlsx,.csv" }) {
       });
       const json = await res.json();
       if (!res.ok || json.exc) {
-        throw new Error(json.message || "Upload failed");
+        let errMsg = "Upload failed";
+        if (json._server_messages) {
+          try { errMsg = JSON.parse(JSON.parse(json._server_messages)[0]).message; } catch { /* ignore */ }
+        } else if (typeof json.message === "string") {
+          errMsg = json.message;
+        }
+        throw new Error(errMsg);
       }
-      const file_url = json.message?.file_url || json.message;
+      // Frappe returns { message: { file_url: "..." } }
+      const file_url = json.message?.file_url;
       if (!file_url) throw new Error("No file URL returned from server");
       onFileUploaded(file_url);
     } catch (err) {

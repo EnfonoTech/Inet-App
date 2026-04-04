@@ -617,7 +617,7 @@ def get_logged_user():
 
 @frappe.whitelist()
 def report_project_status_summary(filters=None):
-    from inet_app.report.project_status_summary.project_status_summary import execute
+    from inet_app.inet_app.report.project_status_summary.project_status_summary import execute
 
     columns, data = execute(_as_dict(filters or {}))
     return {"columns": columns, "data": data}
@@ -625,7 +625,7 @@ def report_project_status_summary(filters=None):
 
 @frappe.whitelist()
 def report_budget_vs_actual_by_project(filters=None):
-    from inet_app.report.budget_vs_actual_by_project.budget_vs_actual_by_project import execute
+    from inet_app.inet_app.report.budget_vs_actual_by_project.budget_vs_actual_by_project import execute
 
     columns, data = execute(_as_dict(filters or {}))
     return {"columns": columns, "data": data}
@@ -633,7 +633,7 @@ def report_budget_vs_actual_by_project(filters=None):
 
 @frappe.whitelist()
 def report_team_utilization_report(filters=None):
-    from inet_app.report.team_utilization_report.team_utilization_report import execute
+    from inet_app.inet_app.report.team_utilization_report.team_utilization_report import execute
 
     columns, data = execute(_as_dict(filters or {}))
     return {"columns": columns, "data": data}
@@ -641,7 +641,7 @@ def report_team_utilization_report(filters=None):
 
 @frappe.whitelist()
 def report_daily_work_progress_report(filters=None):
-    from inet_app.report.daily_work_progress_report.daily_work_progress_report import execute
+    from inet_app.inet_app.report.daily_work_progress_report.daily_work_progress_report import execute
 
     columns, data = execute(_as_dict(filters or {}))
     return {"columns": columns, "data": data}
