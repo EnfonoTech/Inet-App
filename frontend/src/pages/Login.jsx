@@ -25,6 +25,13 @@ function SpinnerIcon() {
   );
 }
 
+const FEATURES = [
+  "Real-time KPI Dashboard",
+  "6-Stage Pipeline Tracking",
+  "Team Performance Analytics",
+  "Financial P&L Monitoring",
+];
+
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -54,21 +61,28 @@ export default function Login() {
 
   return (
     <div className="login-screen">
-      {/* Left branding panel */}
+      {/* ── Left branding panel ─────────────────────────────── */}
       <div className="login-brand-panel">
         <div className="login-brand-inner">
+          {/* Logo mark + name */}
           <div className="login-brand-logo">
             <div className="login-brand-mark" />
             <span className="login-brand-name">INET PMS</span>
           </div>
+
+          {/* Headline */}
           <h2 className="login-brand-headline">
-            Project Management<br />Portal
+            Operations Command Center
           </h2>
+
+          {/* Subtitle */}
           <p className="login-brand-sub">
-            Track projects, manage PO intake, monitor budgets and KPIs — all in one place.
+            Centralized telecom project management, field operations, and financial monitoring.
           </p>
+
+          {/* Feature bullets */}
           <div className="login-brand-features">
-            {["PO Intake & Tracking", "Project Control Center", "Budget vs Actual Reports", "Daily Work Updates"].map((f) => (
+            {FEATURES.map((f) => (
               <div key={f} className="login-brand-feature">
                 <span className="login-brand-feature-dot" />
                 {f}
@@ -78,16 +92,17 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Right login form */}
+      {/* ── Right login form ────────────────────────────────── */}
       <div className="login-form-panel">
         <div className="login-card">
+          {/* Small logo at top of card */}
           <div className="login-logo-sm">
             <div className="login-mark-sm" />
             <span className="login-mark-text">INET PMS</span>
           </div>
 
-          <h1 className="login-title">Welcome back</h1>
-          <p className="login-subtitle">Sign in to your account to continue</p>
+          <h1 className="login-title">Sign In</h1>
+          <p className="login-subtitle">Access your command center</p>
 
           {error && <div className="login-error">{error}</div>}
 
@@ -131,7 +146,11 @@ export default function Login() {
               </div>
             </div>
 
-            <button type="submit" className="btn-primary login-submit-btn" disabled={loading}>
+            <button
+              type="submit"
+              className="login-submit-btn"
+              disabled={loading}
+            >
               {loading ? (
                 <span style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
                   <SpinnerIcon /> Signing in…
@@ -143,7 +162,7 @@ export default function Login() {
           </form>
 
           <p className="login-footer-note">
-            <a href="/app" className="auth-link">Go to Frappe Desk</a>
+            Powered by INET Telecom ERP
           </p>
         </div>
       </div>
