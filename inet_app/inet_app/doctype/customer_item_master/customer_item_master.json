@@ -1,0 +1,98 @@
+{
+  "actions": [],
+  "autoname": "format:CIM-.#####",
+  "creation": "2026-04-04 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "customer",
+    "item_code",
+    "customer_activity_type",
+    "domain",
+    "item_description",
+    "unit_type",
+    "standard_rate_sar",
+    "hard_rate_sar",
+    "active_flag"
+  ],
+  "fields": [
+    {
+      "fieldname": "customer",
+      "fieldtype": "Data",
+      "label": "Customer",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "item_code",
+      "fieldtype": "Data",
+      "label": "Item Code",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "customer_activity_type",
+      "fieldtype": "Data",
+      "label": "Customer Activity Type"
+    },
+    {
+      "fieldname": "domain",
+      "fieldtype": "Data",
+      "label": "Domain"
+    },
+    {
+      "fieldname": "item_description",
+      "fieldtype": "Small Text",
+      "label": "Item Description"
+    },
+    {
+      "fieldname": "unit_type",
+      "fieldtype": "Data",
+      "label": "Unit Type"
+    },
+    {
+      "fieldname": "standard_rate_sar",
+      "fieldtype": "Currency",
+      "label": "Standard Rate (SAR)",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "hard_rate_sar",
+      "fieldtype": "Currency",
+      "label": "Hard Rate (SAR)",
+      "in_list_view": 1
+    },
+    {
+      "default": "1",
+      "fieldname": "active_flag",
+      "fieldtype": "Check",
+      "label": "Active"
+    }
+  ],
+  "index_web_pages_for_search": 0,
+  "istable": 0,
+  "links": [],
+  "modified": "2026-04-04 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Inet App",
+  "name": "Customer Item Master",
+  "naming_rule": "Expression (old style)",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "track_changes": 1
+}
