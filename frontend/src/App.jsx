@@ -3,17 +3,23 @@ import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
-import CommandDashboard from "./pages/admin/CommandDashboard";
 
-/* ── Placeholder for pages not yet built ────────────────────── */
-function Placeholder({ title }) {
-  return (
-    <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-      <h2 style={{ color: "var(--text-primary)", marginBottom: "8px" }}>{title}</h2>
-      <p>Coming soon</p>
-    </div>
-  );
-}
+/* ── Admin pages ─────────────────────────────────────────────── */
+import CommandDashboard from "./pages/admin/CommandDashboard";
+import POUpload from "./pages/admin/POUpload";
+import PODispatch from "./pages/admin/PODispatch";
+import RolloutPlanning from "./pages/admin/RolloutPlanning";
+import ExecutionMonitor from "./pages/admin/ExecutionMonitor";
+import WorkDone from "./pages/admin/WorkDone";
+import Reports from "./pages/admin/Reports";
+import Masters from "./pages/admin/Masters";
+
+/* ── IM pages ────────────────────────────────────────────────── */
+import IMDashboard from "./pages/im/IMDashboard";
+
+/* ── Field pages ─────────────────────────────────────────────── */
+import TodaysWork from "./pages/field/TodaysWork";
+import ExecutionForm from "./pages/field/ExecutionForm";
 
 /* ── Loading Screen ─────────────────────────────────────────── */
 function LoadingScreen() {
@@ -56,26 +62,26 @@ function AppContent() {
         {role === "admin" && (
           <>
             <Route path="/dashboard"  element={<CommandDashboard />} />
-            <Route path="/po-upload"  element={<Placeholder title="PO Upload" />} />
-            <Route path="/dispatch"   element={<Placeholder title="PO Dispatch" />} />
-            <Route path="/planning"   element={<Placeholder title="Rollout Planning" />} />
-            <Route path="/execution"  element={<Placeholder title="Execution Monitor" />} />
-            <Route path="/work-done"  element={<Placeholder title="Work Done" />} />
-            <Route path="/reports"    element={<Placeholder title="Reports" />} />
-            <Route path="/masters"    element={<Placeholder title="Masters" />} />
+            <Route path="/po-upload"  element={<POUpload />} />
+            <Route path="/dispatch"   element={<PODispatch />} />
+            <Route path="/planning"   element={<RolloutPlanning />} />
+            <Route path="/execution"  element={<ExecutionMonitor />} />
+            <Route path="/work-done"  element={<WorkDone />} />
+            <Route path="/reports"    element={<Reports />} />
+            <Route path="/masters"    element={<Masters />} />
           </>
         )}
 
         {/* ── IM routes ─────────────────────────────────────── */}
         {role === "im" && (
-          <Route path="/im-dashboard" element={<Placeholder title="IM Dashboard" />} />
+          <Route path="/im-dashboard" element={<IMDashboard />} />
         )}
 
         {/* ── Field team routes ─────────────────────────────── */}
         {role === "field" && (
           <>
-            <Route path="/today"        element={<Placeholder title="Today's Work" />} />
-            <Route path="/execute/:id"  element={<Placeholder title="Execution Form" />} />
+            <Route path="/today"        element={<TodaysWork />} />
+            <Route path="/execute/:id"  element={<ExecutionForm />} />
           </>
         )}
 
