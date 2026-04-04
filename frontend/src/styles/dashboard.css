@@ -1,9 +1,9 @@
 /* ================================================================
-   INET PMS — Command Dashboard Styles (Dark fullscreen)
+   INET PMS — Command Dashboard Styles (White theme)
    ================================================================
-   The Command Dashboard keeps its dark navy theme and runs
-   fullscreen (sidebar is hidden via body.dashboard-fullscreen).
-   All styles are scoped under .dashboard so they don't leak.
+   The Command Dashboard uses the same white theme as the rest of
+   the app. All styles are scoped under .dashboard so they don't
+   leak to other pages.
    ================================================================ */
 
 /* ── Dashboard Container ────────────────────────────────────── */
@@ -11,9 +11,8 @@
   padding: 24px 28px 40px;
   max-width: 1600px;
   margin: 0 auto;
-  background: #060d18;
-  min-height: 100vh;
-  color: #e8ecf4;
+  background: var(--bg);
+  color: var(--text);
 }
 
 /* ── Dashboard Header ───────────────────────────────────────── */
@@ -21,23 +20,24 @@
   text-align: center;
   padding: 28px 20px 24px;
   margin-bottom: 28px;
-  background: linear-gradient(135deg, rgba(15, 30, 55, 0.4), rgba(10, 22, 40, 0.3));
-  border: 1px solid rgba(100, 160, 220, 0.08);
+  background: var(--bg-white);
+  border: 1px solid var(--border);
   border-radius: 12px;
+  box-shadow: var(--shadow-sm);
   position: relative;
 }
 
 .dashboard .dash-header h1 {
   font-size: 1.35rem;
   font-weight: 800;
-  color: #e8ecf4;
+  color: var(--text);
   letter-spacing: -0.3px;
   margin-bottom: 6px;
 }
 
 .dashboard .dash-header .subtitle {
   font-size: 0.78rem;
-  color: rgba(200, 215, 235, 0.5);
+  color: var(--text-muted);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -48,19 +48,19 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #4ade80;
+  background: var(--green);
   display: inline-block;
   animation: dash-pulse 2s ease-in-out infinite;
 }
 
 @keyframes dash-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); }
-  50%      { opacity: 0.7; box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  50%      { opacity: 0.7; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
 }
 
 .dashboard .dash-timestamp {
   font-size: 0.72rem;
-  color: rgba(200, 215, 235, 0.5);
+  color: var(--text-muted);
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -70,7 +70,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: rgba(200, 215, 235, 0.5);
+  color: var(--text-muted);
   margin: 28px 0 12px;
   padding-left: 2px;
   display: flex;
@@ -82,7 +82,7 @@
   content: "";
   flex: 1;
   height: 1px;
-  background: rgba(100, 160, 220, 0.08);
+  background: var(--border);
 }
 
 /* ── KPI Row (shared) ───────────────────────────────────────── */
@@ -97,16 +97,18 @@
 .dashboard .kpi-card {
   padding: 16px;
   border-radius: 8px;
-  border: 1px solid rgba(100, 160, 220, 0.08);
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
   transition: all 0.15s ease;
   position: relative;
   overflow: hidden;
 }
 
 .dashboard .kpi-card:hover {
-  border-color: rgba(100, 160, 220, 0.15);
+  border-color: var(--border-medium);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow);
 }
 
 .dashboard .kpi-card .kpi-label {
@@ -121,44 +123,40 @@
 .dashboard .kpi-card .kpi-value {
   font-size: 1.5rem;
   font-weight: 800;
-  color: #e8ecf4;
+  color: var(--text);
   line-height: 1.1;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .dashboard .kpi-card .kpi-sub {
   font-size: 0.7rem;
-  color: rgba(200, 215, 235, 0.5);
+  color: var(--text-muted);
   margin-top: 4px;
 }
 
-/* Row theme: Topline */
+/* Row theme: Topline — blue left accent */
 .dashboard .kpi-row-top .kpi-card {
-  background: linear-gradient(135deg, #132a47, #1a3d63);
-  border-color: rgba(59, 130, 246, 0.15);
+  border-left: 3px solid var(--blue);
 }
-.dashboard .kpi-row-top .kpi-label { color: #7db8e8; }
+.dashboard .kpi-row-top .kpi-label { color: var(--blue); }
 
-/* Row theme: INET Teams */
+/* Row theme: INET Teams — blue-dark left accent */
 .dashboard .kpi-row-inet .kpi-card {
-  background: linear-gradient(135deg, #0f2a45, #163a5a);
-  border-color: rgba(59, 130, 246, 0.1);
+  border-left: 3px solid var(--blue-dark);
 }
-.dashboard .kpi-row-inet .kpi-label { color: #6ba8d8; }
+.dashboard .kpi-row-inet .kpi-label { color: var(--blue-dark); }
 
-/* Row theme: Subcontractors */
+/* Row theme: Subcontractors — green left accent */
 .dashboard .kpi-row-sub .kpi-card {
-  background: linear-gradient(135deg, #0f2520, #153830);
-  border-color: rgba(52, 211, 153, 0.1);
+  border-left: 3px solid var(--green);
 }
-.dashboard .kpi-row-sub .kpi-label { color: #5cb89a; }
+.dashboard .kpi-row-sub .kpi-label { color: var(--green); }
 
-/* Row theme: Company */
+/* Row theme: Company — slate/gray left accent */
 .dashboard .kpi-row-company .kpi-card {
-  background: linear-gradient(135deg, #15203a, #1a2a4a);
-  border-color: rgba(148, 163, 184, 0.1);
+  border-left: 3px solid var(--text-muted);
 }
-.dashboard .kpi-row-company .kpi-label { color: #94a3b8; }
+.dashboard .kpi-row-company .kpi-label { color: var(--text-secondary); }
 
 /* ── Bottom Grid (4 panels) ─────────────────────────────────── */
 .dashboard .bottom-grid {
@@ -170,9 +168,10 @@
 
 /* ── Panel ──────────────────────────────────────────────────── */
 .dashboard .panel {
-  background: rgba(15, 30, 55, 0.6);
-  border: 1px solid rgba(100, 160, 220, 0.08);
+  background: var(--bg-white);
+  border: 1px solid var(--border);
   border-radius: 8px;
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -183,25 +182,25 @@
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px 10px;
-  border-bottom: 1px solid rgba(100, 160, 220, 0.08);
+  border-bottom: 1px solid var(--border);
 }
 
 .dashboard .panel-header h3 {
   font-size: 0.78rem;
   font-weight: 700;
-  color: #e8ecf4;
+  color: var(--text);
   margin: 0;
 }
 
 .dashboard .panel-header .panel-action {
   font-size: 0.68rem;
-  color: #60a5fa;
+  color: var(--blue);
   cursor: pointer;
   font-weight: 600;
 }
 
 .dashboard .panel-header .panel-action:hover {
-  color: #3b82f6;
+  color: var(--blue-dark);
 }
 
 .dashboard .panel-body {
@@ -217,21 +216,21 @@
 
 .dashboard .mini-table th {
   text-align: left;
-  color: rgba(200, 215, 235, 0.5);
+  color: var(--text-muted);
   font-size: 0.62rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-weight: 700;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(100, 160, 220, 0.08);
+  border-bottom: 1px solid var(--border);
   background: transparent;
 }
 
 .dashboard .mini-table td {
   padding: 7px 0;
   font-size: 0.78rem;
-  border-bottom: 1px solid rgba(100, 160, 220, 0.08);
-  color: #e8ecf4;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text);
 }
 
 .dashboard .mini-table tbody tr:last-child td {
@@ -239,7 +238,7 @@
 }
 
 .dashboard .mini-table tbody tr:hover td {
-  background: rgba(96, 165, 250, 0.04);
+  background: var(--blue-bg);
 }
 
 /* ── Bar Chart (CSS) ────────────────────────────────────────── */
@@ -257,7 +256,7 @@
 
 .dashboard .chart-bar-label {
   font-size: 0.72rem;
-  color: #a0b8d0;
+  color: var(--text-secondary);
   width: 60px;
   flex-shrink: 0;
   text-align: right;
@@ -269,7 +268,8 @@
 .dashboard .chart-bar-track {
   flex: 1;
   height: 20px;
-  background: rgba(10, 22, 40, 0.5);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
   position: relative;
@@ -279,17 +279,17 @@
   height: 100%;
   border-radius: 4px;
   transition: width 0.6s ease;
-  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  background: linear-gradient(90deg, var(--blue-dark), var(--blue));
 }
 
-.dashboard .chart-bar-fill.green { background: linear-gradient(90deg, #059669, #4ade80); }
-.dashboard .chart-bar-fill.amber { background: linear-gradient(90deg, #d97706, #fbbf24); }
-.dashboard .chart-bar-fill.red   { background: linear-gradient(90deg, #dc2626, #f87171); }
+.dashboard .chart-bar-fill.green { background: linear-gradient(90deg, #059669, var(--green)); }
+.dashboard .chart-bar-fill.amber { background: linear-gradient(90deg, #d97706, var(--amber)); }
+.dashboard .chart-bar-fill.red   { background: linear-gradient(90deg, #dc2626, var(--red)); }
 
 .dashboard .chart-bar-value {
   font-size: 0.72rem;
   font-weight: 700;
-  color: #e8ecf4;
+  color: var(--text);
   width: 40px;
   text-align: right;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -311,7 +311,8 @@
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background: rgba(15, 30, 55, 0.6);
+  background: var(--bg-white);
+  border: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -322,14 +323,14 @@
 .dashboard .donut-inner .donut-value {
   font-size: 1.2rem;
   font-weight: 800;
-  color: #e8ecf4;
+  color: var(--text);
   line-height: 1;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .dashboard .donut-inner .donut-label {
   font-size: 0.58rem;
-  color: rgba(200, 215, 235, 0.5);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-top: 2px;
@@ -347,7 +348,7 @@
   align-items: center;
   gap: 6px;
   font-size: 0.7rem;
-  color: #a0b8d0;
+  color: var(--text-secondary);
 }
 
 .dashboard .donut-legend-dot {
@@ -363,7 +364,7 @@
   align-items: center;
   gap: 10px;
   padding: 8px 0;
-  border-bottom: 1px solid rgba(100, 160, 220, 0.08);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .dashboard .watchlist-item:last-child {
@@ -377,10 +378,10 @@
   flex-shrink: 0;
 }
 
-.dashboard .watchlist-indicator.green { background: #4ade80; }
-.dashboard .watchlist-indicator.amber { background: #fbbf24; }
-.dashboard .watchlist-indicator.red   { background: #f87171; }
-.dashboard .watchlist-indicator.blue  { background: #60a5fa; }
+.dashboard .watchlist-indicator.green { background: var(--green); }
+.dashboard .watchlist-indicator.amber { background: var(--amber); }
+.dashboard .watchlist-indicator.red   { background: var(--red); }
+.dashboard .watchlist-indicator.blue  { background: var(--blue); }
 
 .dashboard .watchlist-info {
   flex: 1;
@@ -390,7 +391,7 @@
 .dashboard .watchlist-name {
   font-size: 0.78rem;
   font-weight: 600;
-  color: #e8ecf4;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -398,7 +399,7 @@
 
 .dashboard .watchlist-detail {
   font-size: 0.68rem;
-  color: rgba(200, 215, 235, 0.5);
+  color: var(--text-muted);
   margin-top: 1px;
 }
 
@@ -414,37 +415,42 @@
 }
 
 .dashboard .status-optimized {
-  background: rgba(74, 222, 128, 0.12);
-  color: #4ade80;
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid var(--green-border);
 }
 
 .dashboard .status-recover,
 .dashboard .status-monitor {
-  background: rgba(248, 113, 113, 0.12);
-  color: #f87171;
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid var(--red-border);
 }
 
 .dashboard .status-behind {
-  background: rgba(251, 191, 36, 0.12);
-  color: #fbbf24;
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
 }
 
 .dashboard .status-ahead {
-  background: rgba(96, 165, 250, 0.12);
-  color: #60a5fa;
+  background: var(--blue-bg);
+  color: var(--blue);
+  border: 1px solid var(--blue-border);
 }
 
 .dashboard .status-normal {
-  background: rgba(148, 163, 184, 0.1);
-  color: #94a3b8;
+  background: var(--bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
 }
 
 /* ── Color helpers (dashboard scoped) ──────────────────────── */
-.dashboard .text-green { color: #4ade80; }
-.dashboard .text-red   { color: #f87171; }
-.dashboard .text-amber { color: #fbbf24; }
-.dashboard .text-blue  { color: #60a5fa; }
-.dashboard .text-muted { color: rgba(200, 215, 235, 0.5); }
+.dashboard .text-green { color: var(--green); }
+.dashboard .text-red   { color: var(--red); }
+.dashboard .text-amber { color: var(--amber); }
+.dashboard .text-blue  { color: var(--blue); }
+.dashboard .text-muted { color: var(--text-muted); }
 
 /* ── Monospace numbers ──────────────────────────────────────── */
 .mono {
@@ -464,9 +470,9 @@
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(96, 165, 250, 0.04) 40%,
-    rgba(96, 165, 250, 0.08) 50%,
-    rgba(96, 165, 250, 0.04) 60%,
+    rgba(59, 130, 246, 0.04) 40%,
+    rgba(59, 130, 246, 0.08) 50%,
+    rgba(59, 130, 246, 0.04) 60%,
     transparent 100%
   );
   animation: shimmer-move 1.8s ease-in-out infinite;
@@ -478,7 +484,8 @@
 }
 
 .dashboard .shimmer-block {
-  background: rgba(15, 30, 55, 0.6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   position: relative;
   overflow: hidden;
@@ -491,7 +498,7 @@
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(96, 165, 250, 0.06) 50%,
+    rgba(59, 130, 246, 0.06) 50%,
     transparent 100%
   );
   animation: shimmer-move 1.8s ease-in-out infinite;
@@ -503,10 +510,10 @@
   align-items: center;
   gap: 6px;
   font-size: 0.68rem;
-  color: rgba(200, 215, 235, 0.5);
+  color: var(--text-muted);
   padding: 3px 10px;
-  background: rgba(96, 165, 250, 0.06);
-  border: 1px solid rgba(100, 160, 220, 0.08);
+  background: var(--blue-bg);
+  border: 1px solid var(--blue-border);
   border-radius: 999px;
 }
 
