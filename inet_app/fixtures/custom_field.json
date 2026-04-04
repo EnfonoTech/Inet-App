@@ -1,155 +1,80 @@
 [
   {
-    "name": "Sales Order-inet_import_section",
+    "name": "Purchase Order-project_code-inet",
     "doctype": "Custom Field",
     "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "INET Import Mapping",
-    "fieldname": "inet_import_section",
-    "fieldtype": "Section Break",
-    "insert_after": "order_type"
-  },
-  {
-    "name": "Sales Order-inet_po_number",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "PO Number",
-    "fieldname": "inet_po_number",
-    "fieldtype": "Data",
-    "insert_after": "inet_import_section",
-    "in_list_view": 1
-  },
-  {
-    "name": "Sales Order-inet_po_modification",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "PO Modification",
-    "fieldname": "inet_po_modification",
-    "fieldtype": "Data",
-    "insert_after": "inet_po_number"
-  },
-  {
-    "name": "Sales Order-inet_shipment_number",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "Shipment Number",
-    "fieldname": "inet_shipment_number",
-    "fieldtype": "Data",
-    "insert_after": "inet_po_modification"
-  },
-  {
-    "name": "Sales Order-inet_end_customer",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "End Customer",
-    "fieldname": "inet_end_customer",
-    "fieldtype": "Data",
-    "insert_after": "inet_shipment_number"
-  },
-  {
-    "name": "Sales Order-inet_city",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "City",
-    "fieldname": "inet_city",
-    "fieldtype": "Data",
-    "insert_after": "inet_end_customer"
-  },
-  {
-    "name": "Sales Order-inet_project",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "INET Project",
-    "fieldname": "inet_project",
+    "dt": "Purchase Order",
+    "label": "Project Code",
+    "fieldname": "project_code",
     "fieldtype": "Link",
     "options": "Project Control Center",
-    "insert_after": "inet_city"
-  },
-  {
-    "name": "Sales Order-inet_currency_code",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "Currency Code",
-    "fieldname": "inet_currency_code",
-    "fieldtype": "Data",
-    "insert_after": "inet_project"
-  },
-  {
-    "name": "Sales Order-inet_summary_qty",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order",
-    "label": "Summary Quantity",
-    "fieldname": "inet_summary_qty",
-    "fieldtype": "Float",
-    "insert_after": "inet_currency_code"
-  },
-  {
-    "name": "Sales Order Item-inet_so_line_no",
-    "doctype": "Custom Field",
-    "module": "Inet App",
-    "dt": "Sales Order Item",
-    "label": "SO Line No",
-    "fieldname": "inet_so_line_no",
-    "fieldtype": "Data",
-    "insert_after": "item_code",
     "in_list_view": 1
   },
   {
-    "name": "Sales Order Item-inet_material_description",
+    "name": "Purchase Order-activity_code-inet",
     "doctype": "Custom Field",
     "module": "Inet App",
-    "dt": "Sales Order Item",
-    "label": "Material Description",
-    "fieldname": "inet_material_description",
-    "fieldtype": "Small Text",
-    "insert_after": "description"
+    "dt": "Purchase Order",
+    "label": "Activity Code",
+    "fieldname": "activity_code",
+    "fieldtype": "Data"
   },
   {
-    "name": "Sales Order Item-inet_requested_qty",
+    "name": "Purchase Order-area-inet",
     "doctype": "Custom Field",
     "module": "Inet App",
-    "dt": "Sales Order Item",
-    "label": "Requested Qty",
-    "fieldname": "inet_requested_qty",
-    "fieldtype": "Float",
-    "insert_after": "qty"
+    "dt": "Purchase Order",
+    "label": "Area",
+    "fieldname": "area",
+    "fieldtype": "Data"
   },
   {
-    "name": "Sales Order Item-inet_billing_qty",
+    "name": "Purchase Order-inet_cost_center-inet",
     "doctype": "Custom Field",
     "module": "Inet App",
-    "dt": "Sales Order Item",
-    "label": "Billing Quantity",
-    "fieldname": "inet_billing_qty",
-    "fieldtype": "Float",
-    "insert_after": "inet_requested_qty"
+    "dt": "Purchase Order",
+    "label": "Cost Center",
+    "fieldname": "inet_cost_center",
+    "fieldtype": "Link",
+    "options": "Cost Center"
   },
   {
-    "name": "Sales Order Item-inet_unit_cost",
+    "name": "Purchase Order Item-project_code-inet",
     "doctype": "Custom Field",
     "module": "Inet App",
-    "dt": "Sales Order Item",
-    "label": "Unit Cost",
-    "fieldname": "inet_unit_cost",
-    "fieldtype": "Currency",
-    "insert_after": "rate"
+    "dt": "Purchase Order Item",
+    "label": "Project Code",
+    "fieldname": "project_code",
+    "fieldtype": "Link",
+    "options": "Project Control Center",
+    "in_list_view": 1
   },
   {
-    "name": "Sales Order Item-inet_project_item",
+    "name": "Purchase Order Item-activity_code-inet",
     "doctype": "Custom Field",
     "module": "Inet App",
-    "dt": "Sales Order Item",
-    "label": "Project Item",
-    "fieldname": "inet_project_item",
-    "fieldtype": "Data",
-    "insert_after": "inet_unit_cost"
+    "dt": "Purchase Order Item",
+    "label": "Activity Code",
+    "fieldname": "activity_code",
+    "fieldtype": "Data"
+  },
+  {
+    "name": "Purchase Order Item-area-inet",
+    "doctype": "Custom Field",
+    "module": "Inet App",
+    "dt": "Purchase Order Item",
+    "label": "Area",
+    "fieldname": "area",
+    "fieldtype": "Data"
+  },
+  {
+    "name": "Purchase Order Item-inet_cost_center-inet",
+    "doctype": "Custom Field",
+    "module": "Inet App",
+    "dt": "Purchase Order Item",
+    "label": "Cost Center",
+    "fieldname": "inet_cost_center",
+    "fieldtype": "Link",
+    "options": "Cost Center"
   }
 ]

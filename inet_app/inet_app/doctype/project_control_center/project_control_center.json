@@ -1,7 +1,7 @@
 {
  "actions": [],
- "autoname": "format:PRJ-.YYYY.-.####",
- "creation": "2026-04-01 00:00:00.000000",
+ "autoname": "field:project_code",
+ "creation": "2026-04-01 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -11,6 +11,7 @@
   "customer_type",
   "huawei_im",
   "implementation_manager",
+  "column_break_mmrq",
   "center_area",
   "project_status",
   "budget_amount",
@@ -28,40 +29,177 @@
   "kpi_slab_master"
  ],
  "fields": [
-  {"fieldname": "project_code", "fieldtype": "Data", "in_list_view": 1, "in_standard_filter": 1, "label": "Project Code", "reqd": 1, "unique": 1},
-  {"fieldname": "project_name", "fieldtype": "Data", "in_list_view": 1, "label": "Project Name", "reqd": 1},
-  {"fieldname": "project_domain", "fieldtype": "Link", "in_list_view": 1, "label": "Project Domain", "options": "Project"},
-  {"fieldname": "customer_type", "fieldtype": "Select", "label": "Customer Type", "options": "STC\nMobily\nZain\nHuawei\nOther"},
-  {"fieldname": "huawei_im", "fieldtype": "Link", "label": "Huawei IM", "options": "Employee"},
-  {"fieldname": "implementation_manager", "fieldtype": "Link", "in_list_view": 1, "label": "Implementation Manager", "options": "Employee"},
-  {"fieldname": "center_area", "fieldtype": "Data", "in_list_view": 1, "label": "Center Area"},
-  {"default": "Active", "fieldname": "project_status", "fieldtype": "Select", "in_list_view": 1, "in_standard_filter": 1, "label": "Project Status", "options": "Draft\nActive\nAt Risk\nOn Hold\nCompleted\nCancelled"},
-  {"fieldname": "budget_amount", "fieldtype": "Currency", "in_list_view": 1, "label": "Budget Amount"},
-  {"fieldname": "actual_cost", "fieldtype": "Currency", "in_list_view": 1, "label": "Actual Cost"},
-  {"default": "0", "fieldname": "completion_percentage", "fieldtype": "Percent", "in_list_view": 1, "label": "Completion Percentage"},
-  {"fieldname": "section_project_tasks", "fieldtype": "Section Break", "label": "Project Tasks"},
-  {"fieldname": "project_tasks", "fieldtype": "Table", "label": "Project Tasks", "options": "Project Control Center Task"},
-  {"fieldname": "section_project_materials", "fieldtype": "Section Break", "label": "Project Materials"},
-  {"fieldname": "project_materials", "fieldtype": "Table", "label": "Project Materials", "options": "Project Control Center Material"},
-  {"fieldname": "section_project_teams", "fieldtype": "Section Break", "label": "Project Teams"},
-  {"fieldname": "project_teams", "fieldtype": "Table", "label": "Project Teams", "options": "Project Control Center Team"},
-  {"fieldname": "section_project_documents", "fieldtype": "Section Break", "label": "Project Documents"},
-  {"fieldname": "project_documents", "fieldtype": "Table", "label": "Project Documents", "options": "Project Control Center Document"},
-  {"fieldname": "section_kpi_slab_master", "fieldtype": "Section Break", "label": "KPI Slab Master"},
-  {"fieldname": "kpi_slab_master", "fieldtype": "Table", "label": "KPI Slab Master", "options": "Project KPI Slab"}
+  {
+   "fieldname": "project_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project Code",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "project_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Project Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "project_domain",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Project Domain",
+   "options": "Project"
+  },
+  {
+   "fieldname": "customer_type",
+   "fieldtype": "Select",
+   "label": "Customer Type",
+   "options": "STC\nMobily\nZain\nHuawei\nOther"
+  },
+  {
+   "fieldname": "huawei_im",
+   "fieldtype": "Link",
+   "label": "Huawei IM",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "implementation_manager",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Implementation Manager",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "center_area",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Center Area"
+  },
+  {
+   "default": "Active",
+   "fieldname": "project_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project Status",
+   "options": "Draft\nActive\nAt Risk\nOn Hold\nCompleted\nCancelled"
+  },
+  {
+   "fieldname": "budget_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Budget Amount"
+  },
+  {
+   "fieldname": "actual_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Actual Cost"
+  },
+  {
+   "default": "0",
+   "fieldname": "completion_percentage",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Completion Percentage"
+  },
+  {
+   "fieldname": "section_project_tasks",
+   "fieldtype": "Section Break",
+   "label": "Project Tasks"
+  },
+  {
+   "fieldname": "project_tasks",
+   "fieldtype": "Table",
+   "label": "Project Tasks",
+   "options": "Project Control Center Task"
+  },
+  {
+   "fieldname": "section_project_materials",
+   "fieldtype": "Section Break",
+   "label": "Project Materials"
+  },
+  {
+   "fieldname": "project_materials",
+   "fieldtype": "Table",
+   "label": "Project Materials",
+   "options": "Project Control Center Material"
+  },
+  {
+   "fieldname": "section_project_teams",
+   "fieldtype": "Section Break",
+   "label": "Project Teams"
+  },
+  {
+   "fieldname": "project_teams",
+   "fieldtype": "Table",
+   "label": "Project Teams",
+   "options": "Project Control Center Team"
+  },
+  {
+   "fieldname": "section_project_documents",
+   "fieldtype": "Section Break",
+   "label": "Project Documents"
+  },
+  {
+   "fieldname": "project_documents",
+   "fieldtype": "Table",
+   "label": "Project Documents",
+   "options": "Project Control Center Document"
+  },
+  {
+   "fieldname": "section_kpi_slab_master",
+   "fieldtype": "Section Break",
+   "label": "KPI Slab Master"
+  },
+  {
+   "fieldname": "kpi_slab_master",
+   "fieldtype": "Table",
+   "label": "KPI Slab Master",
+   "options": "Project KPI Slab"
+  },
+  {
+   "fieldname": "column_break_mmrq",
+   "fieldtype": "Column Break"
+  }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-01 00:00:00.000000",
+ "modified": "2026-04-02 16:28:28.922066",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "Project Control Center",
  "owner": "Administrator",
  "permissions": [
-  {"create": 1, "delete": 1, "email": 1, "export": 1, "print": 1, "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1},
-  {"create": 1, "email": 1, "export": 1, "print": 1, "read": 1, "report": 1, "role": "Projects User", "share": 1, "write": 1}
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects User",
+   "share": 1,
+   "write": 1
+  }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
+ "states": [],
  "track_changes": 1
 }

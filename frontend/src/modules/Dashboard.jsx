@@ -12,8 +12,8 @@ export default function Dashboard() {
   return (
     <div className="page-wrap">
       <div className="page-head">
-        <h1>Project Dashboard</h1>
-        <p>Control center view for planning, execution, and closure.</p>
+        <h1 className="page-title">Project Dashboard</h1>
+        <p className="page-subtitle">Control center view for planning, execution, and closure.</p>
       </div>
       <div className="grid">
         {Object.entries(kpis || {}).map(([key, value]) => (

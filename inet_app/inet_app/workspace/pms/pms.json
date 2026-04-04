@@ -1,0 +1,46 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"AV_pouvtqI\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">PMS</span>\",\"col\":12}},{\"id\":\"pi8c9xRgFf\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Control Center\",\"col\":3}},{\"id\":\"LmtiLXkBTY\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Work Update\",\"col\":3}}]",
+ "creation": "2026-04-01 15:23:02.377164",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "project-2",
+ "idx": 0,
+ "indicator_color": "green",
+ "is_hidden": 0,
+ "label": "PMS",
+ "links": [],
+ "modified": "2026-04-01 15:24:49.407908",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PMS",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 34.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Project Control Center",
+   "link_to": "Project Control Center",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Daily Work Update",
+   "link_to": "Daily Work Update",
+   "stats_filter": "[]",
+   "type": "DocType"
+  }
+ ],
+ "title": "PMS"
+}

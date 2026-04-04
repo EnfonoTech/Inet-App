@@ -1,0 +1,22 @@
+import frappe
+from frappe.model.document import Document
+from frappe.utils import flt
+
+
+class POIntake(Document):
+    def validate(self):
+        # Always derive totals from line qty/rate to match "avoid manual edits" rule.
+        grand_total = 0
+        for row in (self.po_lines or []):
+            row.line_amount = flt(row.qty) * flt(row.rate)
+            row.line_status = self.status
+            grand_total += flt(row.line_amount)
+
+        self.grand_total = grand_total
+
+    def on_update(self):
+        # Keep line status synchronized if header status changes.
+        if self.po_lines:
+            for row in self.po_lines:
+                row.line_status = self.status
+

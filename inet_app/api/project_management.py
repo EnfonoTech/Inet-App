@@ -160,6 +160,20 @@ def list_daily_work_updates(limit=20, offset=0, project=None, team=None, status=
 
 
 @frappe.whitelist()
+def upsert_daily_work_update(payload):
+    data = _as_dict(payload)
+    name = data.get("name")
+    if name:
+        doc = frappe.get_doc("Daily Work Update", name)
+        doc.update(data)
+        doc.save()
+    else:
+        doc = frappe.get_doc({"doctype": "Daily Work Update", **data})
+        doc.insert()
+    return {"name": doc.name}
+
+
+@frappe.whitelist()
 def submit_work_update(work_update_id):
     doc = frappe.get_doc("Daily Work Update", work_update_id)
     doc.status = "Submitted"
@@ -277,11 +291,538 @@ def dashboard_charts():
     }
 
 
+def _get_item_amount(item):
+    # ERPNext item amount field name differs by doctype/version.
+    # Prefer `amount` and fallback to `line_amount` when present.
+    return flt(getattr(item, "amount", None) or getattr(item, "line_amount", None) or 0)
+
+
 def on_purchase_order_submit(doc, method=None):
-    if not getattr(doc, "project", None):
+    """
+    PM-006 linkage system:
+    On PO submission -> update Project Control Center actual_cost.
+    Budget alerts are shown when actual_cost exceeds budget_amount.
+    """
+
+    project_totals = {}
+    missing_project_lines = []
+
+    # Prefer project_code from each PO item line for accurate allocation.
+    for it in getattr(doc, "items", []) or []:
+        pc = getattr(it, "project_code", None)
+        if not pc:
+            missing_project_lines.append(getattr(it, "item_code", None) or "line")
+            continue
+        project_totals[pc] = flt(project_totals.get(pc, 0)) + _get_item_amount(it)
+
+    header_project_code = getattr(doc, "project_code", None) or getattr(doc, "project", None)
+
+    if missing_project_lines:
+        if not header_project_code:
+            frappe.throw(
+                _(
+                    "Purchase Order submission requires `project_code` on all items (missing: {0})."
+                ).format(", ".join(missing_project_lines[:20]))
+            )
+        # Fallback: use header project_code for lines missing it.
+        project_totals[header_project_code] = flt(project_totals.get(header_project_code, 0)) + flt(getattr(doc, "grand_total", 0))
+
+    if not project_totals and header_project_code:
+        project_totals[header_project_code] = flt(getattr(doc, "grand_total", 0))
+
+    if not project_totals:
         return
-    if not frappe.db.exists("Project Control Center", doc.project):
-        return
-    project = frappe.get_doc("Project Control Center", doc.project)
-    project.actual_cost = flt(project.actual_cost) + flt(doc.grand_total)
-    project.save(ignore_permissions=True)
+
+    exceeded = []
+    for project_code, total in project_totals.items():
+        if not frappe.db.exists("Project Control Center", project_code):
+            continue
+        project = frappe.get_doc("Project Control Center", project_code)
+        project.actual_cost = flt(project.actual_cost) + flt(total)
+        project.save(ignore_permissions=True)
+        if flt(project.budget_amount) and flt(project.actual_cost) > flt(project.budget_amount):
+            exceeded.append(project_code)
+
+    if exceeded:
+        frappe.msgprint(
+            _("Budget exceeded for project(s): {0}").format(", ".join(exceeded[:10]))
+        )
+
+
+@frappe.whitelist()
+def list_purchase_orders(limit=20, offset=0, search=None):
+    filters = {}
+    or_filters = []
+    if search:
+        like = f"%{search}%"
+        # Use common header fields; custom `project_code` is included after fixtures apply.
+        or_filters = [
+            ["name", "like", like],
+            ["supplier", "like", like],
+            ["project_code", "like", like],
+            ["grand_total", "like", like],
+        ]
+
+    return frappe.get_list(
+        "Purchase Order",
+        filters=filters,
+        or_filters=or_filters,
+        fields=[
+            "name",
+            "supplier",
+            "transaction_date",
+            "schedule_date",
+            "grand_total",
+            "docstatus",
+            "status",
+            "project_code",
+        ],
+        order_by="modified desc",
+        start=cint(offset),
+        page_length=min(cint(limit) or 20, 100),
+    )
+
+
+def _item_meta_for_uom(item_code):
+    return frappe.db.get_value(
+        "Item",
+        item_code,
+        ["item_name", "stock_uom", "description"],
+        as_dict=True,
+    )
+
+
+@frappe.whitelist()
+def create_purchase_order(payload):
+    data = _as_dict(payload)
+    items = data.get("items") or []
+    if not items:
+        frappe.throw(_("At least one item is required to create Purchase Order."))
+
+    supplier = data.get("supplier")
+    if not supplier:
+        frappe.throw(_("Supplier is required for Purchase Order."))
+
+    # Prepare items with at least item_code/qty/rate + uom (from Item master).
+    prepared_items = []
+    for it in items:
+        item_code = it.get("item_code") or it.get("item")
+        if not item_code:
+            frappe.throw(_("Each PO item must have item_code."))
+        qty = flt(it.get("qty") or 0)
+        if qty <= 0:
+            frappe.throw(_("PO item qty must be > 0 for item {0}.").format(item_code))
+        rate = flt(it.get("rate") or 0)
+        uom = it.get("uom")
+        if not uom:
+            meta = _item_meta_for_uom(item_code) or {}
+            uom = meta.get("stock_uom")
+        if not uom:
+            frappe.throw(_("UOM not found for item {0}.").format(item_code))
+        prepared_items.append(
+            {
+                "item_code": item_code,
+                "qty": qty,
+                "rate": rate,
+                "uom": uom,
+                "description": it.get("description") or it.get("item_name") or "",
+                # INET linkage fields (header + item allocation).
+                "project_code": it.get("project_code") or data.get("project_code"),
+                "activity_code": it.get("activity_code") or data.get("activity_code"),
+                "area": it.get("area") or data.get("area"),
+                "inet_cost_center": it.get("cost_center") or data.get("cost_center"),
+            }
+        )
+
+    doc = frappe.get_doc(
+        {
+            "doctype": "Purchase Order",
+            "supplier": supplier,
+            "transaction_date": data.get("transaction_date"),
+            "schedule_date": data.get("schedule_date") or data.get("delivery_date"),
+            "project_code": data.get("project_code"),
+            "activity_code": data.get("activity_code"),
+            "area": data.get("area"),
+            "inet_cost_center": data.get("cost_center"),
+            "items": prepared_items,
+        }
+    )
+    doc.insert()
+    if cint(data.get("submit")):
+        doc.submit()
+    return {"name": doc.name}
+
+
+@frappe.whitelist()
+def import_purchase_orders(rows):
+    """
+    PO import (PO Intake).
+    Expected row keys from frontend CSV parser:
+      - po_no, supplier, transaction_date, schedule_date, project_code, activity_code, area, cost_center
+      - item_code, qty, rate
+    """
+
+    parsed = frappe.parse_json(rows) if isinstance(rows, str) else rows
+    if not parsed:
+        frappe.throw(_("No rows provided for import."))
+
+    # Group by PO No.
+    grouped = {}
+    validation_errors = []
+    for idx, row in enumerate(parsed):
+        po_no = row.get("po_no") if isinstance(row, dict) else None
+        supplier = row.get("supplier") if isinstance(row, dict) else None
+        item_code = row.get("item_code") if isinstance(row, dict) else None
+
+        if not po_no:
+            validation_errors.append({"row": idx, "error": "Missing po_no"})
+            continue
+        if not supplier:
+            validation_errors.append({"row": idx, "po_no": po_no, "error": "Missing supplier"})
+            continue
+        if not item_code:
+            validation_errors.append({"row": idx, "po_no": po_no, "error": "Missing item_code"})
+            continue
+
+        group = grouped.setdefault(
+            po_no,
+            {
+                "po_no": po_no,
+                "supplier": supplier,
+                "transaction_date": row.get("transaction_date"),
+                "schedule_date": row.get("schedule_date"),
+                "project_code": row.get("project_code"),
+                "activity_code": row.get("activity_code"),
+                "area": row.get("area"),
+                "cost_center": row.get("cost_center"),
+                "items": [],
+            },
+        )
+
+        group["items"].append(
+            {
+                "item_code": item_code,
+                "qty": row.get("qty"),
+                "rate": row.get("rate"),
+                "project_code": row.get("project_code"),
+                "activity_code": row.get("activity_code"),
+                "area": row.get("area"),
+                "cost_center": row.get("cost_center"),
+            }
+        )
+
+    created = []
+    for _, payload_base in grouped.items():
+        if not payload_base["items"]:
+            continue
+        payload = payload_base
+        # Keep import as Draft by default.
+        payload["submit"] = payload_base.get("submit") or 0
+        payload["transaction_date"] = payload["transaction_date"] or frappe.utils.nowdate()
+        payload["schedule_date"] = payload["schedule_date"] or payload["transaction_date"]
+        result = create_purchase_order(payload)
+        created.append(result["name"])
+
+    return {
+        "created_count": len(created),
+        "names": created,
+        "validation_errors": validation_errors[:200],
+    }
+
+
+@frappe.whitelist()
+def list_customers(limit=200, search=None):
+    filters = {}
+    or_filters = []
+    if search:
+        like = f"%{search}%"
+        or_filters = [["name", "like", like], ["customer_name", "like", like]]
+    return frappe.get_list(
+        "Customer",
+        filters=filters,
+        or_filters=or_filters,
+        fields=["name", "customer_name"],
+        order_by="modified desc",
+        page_length=min(cint(limit) or 200, 500),
+    )
+
+
+@frappe.whitelist()
+def list_item_catalog(limit=500, search=None):
+    filters = {"disabled": 0}
+    or_filters = []
+    if search:
+        like = f"%{search}%"
+        or_filters = [["item_code", "like", like], ["item_name", "like", like]]
+    items = frappe.get_list(
+        "Item",
+        filters=filters,
+        or_filters=or_filters,
+        fields=["name", "item_code", "item_name", "stock_uom", "description"],
+        order_by="modified desc",
+        page_length=min(cint(limit) or 500, 1000),
+    )
+    item_codes = [d.item_code for d in items if d.item_code]
+    prices = {}
+    if item_codes:
+        rows = frappe.get_all(
+            "Item Price",
+            filters={"item_code": ["in", item_codes], "selling": 1},
+            fields=["item_code", "price_list_rate"],
+            order_by="valid_from desc, modified desc",
+            limit_page_length=5000,
+        )
+        for row in rows:
+            if row.item_code not in prices:
+                prices[row.item_code] = flt(row.price_list_rate)
+
+    return [
+        {
+            "item_code": d.item_code,
+            "item_name": d.item_name,
+            "uom": d.stock_uom,
+            "description": d.description,
+            "rate": prices.get(d.item_code, 0),
+        }
+        for d in items
+    ]
+
+
+@frappe.whitelist()
+def create_customer(payload):
+    data = _as_dict(payload)
+    customer_name = data.get("customer_name") or data.get("customer") or data.get("name")
+    if not customer_name:
+        frappe.throw(_("customer_name is required"))
+
+    customer_type = data.get("customer_type") or data.get("type") or ""
+
+    fields = {"customer_name": customer_name}
+    if customer_type:
+        fields["customer_type"] = customer_type
+
+    doc = frappe.get_doc({"doctype": "Customer", **fields})
+    doc.insert(ignore_permissions=True)
+    return {"name": doc.name, "customer_name": doc.customer_name}
+
+
+@frappe.whitelist(allow_guest=True)
+def get_logged_user():
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return {"user": "Guest", "full_name": "", "authenticated": False}
+    full_name = frappe.db.get_value("User", user, "full_name") or user.split("@")[0]
+    return {"user": user, "full_name": full_name, "authenticated": True}
+
+
+@frappe.whitelist()
+def report_project_status_summary(filters=None):
+    from inet_app.report.project_status_summary.project_status_summary import execute
+
+    columns, data = execute(_as_dict(filters or {}))
+    return {"columns": columns, "data": data}
+
+
+@frappe.whitelist()
+def report_budget_vs_actual_by_project(filters=None):
+    from inet_app.report.budget_vs_actual_by_project.budget_vs_actual_by_project import execute
+
+    columns, data = execute(_as_dict(filters or {}))
+    return {"columns": columns, "data": data}
+
+
+@frappe.whitelist()
+def report_team_utilization_report(filters=None):
+    from inet_app.report.team_utilization_report.team_utilization_report import execute
+
+    columns, data = execute(_as_dict(filters or {}))
+    return {"columns": columns, "data": data}
+
+
+@frappe.whitelist()
+def report_daily_work_progress_report(filters=None):
+    from inet_app.report.daily_work_progress_report.daily_work_progress_report import execute
+
+    columns, data = execute(_as_dict(filters or {}))
+    return {"columns": columns, "data": data}
+
+
+def _item_meta(item_code):
+    meta = frappe.db.get_value(
+        "Item",
+        item_code,
+        ["item_name", "stock_uom", "description"],
+        as_dict=True,
+    )
+    return meta or {}
+
+
+@frappe.whitelist()
+def list_po_intake(limit=20, offset=0, search=None, status=None):
+    filters = {}
+    if status:
+        filters["status"] = status
+
+    or_filters = []
+    if search:
+        like = f"%{search}%"
+        or_filters = [["po_no", "like", like], ["customer", "like", like]]
+
+    return frappe.get_list(
+        "PO Intake",
+        filters=filters,
+        or_filters=or_filters,
+        fields=["name", "po_no", "customer", "transaction_date", "schedule_date", "status", "grand_total"],
+        order_by="modified desc",
+        start=cint(offset),
+        page_length=min(cint(limit) or 20, 100),
+    )
+
+
+@frappe.whitelist()
+def create_po_intake(payload):
+    data = _as_dict(payload)
+    po_lines = data.get("po_lines") or data.get("items") or []
+    if not po_lines:
+        frappe.throw(_("At least one PO line is required to create PO Intake."))
+
+    if not data.get("po_no"):
+        frappe.throw(_("PO No is required."))
+    if not data.get("customer"):
+        frappe.throw(_("Customer is required."))
+
+    doc = frappe.get_doc(
+        {
+            "doctype": "PO Intake",
+            "po_no": data.get("po_no"),
+            "customer": data.get("customer"),
+            "transaction_date": data.get("transaction_date"),
+            "schedule_date": data.get("schedule_date"),
+            "status": data.get("status") or "Active",
+        }
+    )
+
+    # Build child rows.
+    for i, row in enumerate(po_lines, start=1):
+        item_code = row.get("item_code") or row.get("item")
+        if not item_code:
+            frappe.throw(_("PO line item_code is required (row {0}).").format(i))
+
+        qty = flt(row.get("qty") or 0)
+        if qty <= 0:
+            frappe.throw(_("PO line qty must be > 0 for item {0}.").format(item_code))
+
+        rate = flt(row.get("rate") or 0)
+        line_amount = flt(row.get("line_amount") or 0)
+        if rate <= 0 and line_amount > 0:
+            rate = line_amount / qty
+
+        meta = _item_meta(item_code)
+        uom = row.get("uom") or meta.get("stock_uom")
+        item_description = row.get("item_description") or meta.get("description") or meta.get("item_name")
+
+        doc.append(
+            "po_lines",
+            {
+                "poid": row.get("poid") or f"{data.get('po_no')}-{i}",
+                "po_line_no": row.get("po_line_no") or i,
+                "shipment_number": row.get("shipment_number") or row.get("shipment_no") or "",
+                "site_code": row.get("site_code") or row.get("site") or "",
+                "item_code": item_code,
+                "item_description": item_description,
+                "qty": qty,
+                "uom": uom,
+                "rate": rate,
+                "project_code": row.get("project_code") or data.get("project_code"),
+                "activity_code": row.get("activity_code") or data.get("activity_code"),
+                "area": row.get("area") or data.get("area"),
+                "line_status": data.get("status") or "Active",
+            },
+        )
+
+    # Ensure required linkage fields exist for every line (Project is required by DocType).
+    for row in doc.po_lines:
+        if not row.project_code:
+            frappe.throw(_("PO line project_code is required (PO {0}, line {1}).").format(data.get("po_no"), row.po_line_no))
+
+    doc.insert()
+    if cint(data.get("submit")):
+        doc.submit()
+    return {"name": doc.name}
+
+
+@frappe.whitelist()
+def import_po_intake(rows):
+    parsed = frappe.parse_json(rows) if isinstance(rows, str) else rows
+    if not parsed:
+        frappe.throw(_("No rows provided for import."))
+
+    grouped = {}
+    validation_errors = []
+    for idx, row in enumerate(parsed):
+        po_no = row.get("po_no") if isinstance(row, dict) else None
+        customer = row.get("customer") if isinstance(row, dict) else None
+
+        item_code = row.get("item_code") if isinstance(row, dict) else None
+        qty = flt(row.get("qty") or 0)
+        project_code = row.get("project_code") if isinstance(row, dict) else None
+
+        if not po_no:
+            validation_errors.append({"row": idx, "error": "Missing po_no"})
+            continue
+        if not customer:
+            validation_errors.append({"row": idx, "po_no": po_no, "error": "Missing customer"})
+            continue
+        if not item_code:
+            validation_errors.append({"row": idx, "po_no": po_no, "error": "Missing item_code"})
+            continue
+        if qty <= 0:
+            validation_errors.append({"row": idx, "po_no": po_no, "item_code": item_code, "error": "qty must be > 0"})
+            continue
+        if not project_code:
+            validation_errors.append({"row": idx, "po_no": po_no, "item_code": item_code, "error": "Missing project_code"})
+            continue
+
+        key = f"{po_no}|{customer}"
+        group = grouped.setdefault(
+            key,
+            {
+                "po_no": po_no,
+                "customer": customer,
+                "transaction_date": row.get("transaction_date"),
+                "schedule_date": row.get("schedule_date"),
+                "status": row.get("status") or "Active",
+                "po_lines": [],
+            },
+        )
+
+        group["po_lines"].append(
+            {
+                "poid": row.get("poid") or row.get("po_id") or f"{po_no}-{len(group['po_lines']) + 1}",
+                "po_line_no": row.get("po_line_no") or row.get("line_no") or len(group["po_lines"]) + 1,
+                "shipment_number": row.get("shipment_number") or row.get("shipment_no") or "",
+                "site_code": row.get("site_code") or row.get("site") or "",
+                "item_code": item_code,
+                "item_description": row.get("item_description") or row.get("item_name") or "",
+                "qty": qty,
+                "rate": row.get("rate") or 0,
+                "line_amount": row.get("line_amount") or row.get("amount") or 0,
+                "uom": row.get("uom") or "",
+                "project_code": project_code,
+                "activity_code": row.get("activity_code") or "",
+                "area": row.get("area") or "",
+            }
+        )
+
+    created = []
+    for _, payload in grouped.items():
+        payload["transaction_date"] = payload.get("transaction_date") or frappe.utils.nowdate()
+        payload["schedule_date"] = payload.get("schedule_date") or payload["transaction_date"]
+        result = create_po_intake(payload)
+        created.append(result["name"])
+
+    return {
+        "created_count": len(created),
+        "names": created,
+        "validation_errors": validation_errors[:200],
+    }

@@ -1,5 +1,6 @@
 from frappe.model.document import Document
 
 
-class ProjectKPISlab(Document):
+class POIntakeLine(Document):
     pass
+
