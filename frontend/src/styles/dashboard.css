@@ -493,3 +493,40 @@
   .dashboard { padding: 16px; }
   .kpi-row { grid-template-columns: 1fr; }
 }
+
+/* ── Watchlist Status Pills ────────────────────────────────── */
+.watchlist-status {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.status-optimized {
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--green);
+}
+
+.status-recover,
+.status-monitor {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--red);
+}
+
+.status-behind {
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--amber);
+}
+
+.status-ahead {
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--blue);
+}
+
+.status-normal {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-muted);
+}

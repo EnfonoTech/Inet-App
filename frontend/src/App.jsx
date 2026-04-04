@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
+import CommandDashboard from "./pages/admin/CommandDashboard";
 
 /* ── Placeholder for pages not yet built ────────────────────── */
 function Placeholder({ title }) {
@@ -54,7 +55,7 @@ function AppContent() {
         {/* ── Admin routes ──────────────────────────────────── */}
         {role === "admin" && (
           <>
-            <Route path="/dashboard"  element={<Placeholder title="Command Dashboard" />} />
+            <Route path="/dashboard"  element={<CommandDashboard />} />
             <Route path="/po-upload"  element={<Placeholder title="PO Upload" />} />
             <Route path="/dispatch"   element={<Placeholder title="PO Dispatch" />} />
             <Route path="/planning"   element={<Placeholder title="Rollout Planning" />} />
