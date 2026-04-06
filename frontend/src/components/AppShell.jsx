@@ -123,6 +123,7 @@ export default function AppShell() {
   const navigate = useNavigate();
   const { user, role, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
   /* Pick nav items based on role */
@@ -176,12 +177,7 @@ export default function AppShell() {
             <img
               src={inetLogo}
               alt="INET Telecom"
-              style={{
-                width: collapsed ? 28 : 32,
-                height: "auto",
-                objectFit: "contain",
-                transition: "width 0.2s ease",
-              }}
+              style={{ width: collapsed ? 28 : 32, height: "auto", objectFit: "contain", transition: "width 0.2s ease" }}
             />
           </div>
           {!collapsed && (

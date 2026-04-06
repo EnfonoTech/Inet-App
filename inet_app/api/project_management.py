@@ -9,6 +9,14 @@ def _as_dict(doc):
     return frappe._dict(doc or {})
 
 
+def _make_poid(po_no, po_line_no, shipment_number):
+    """Build POID: PO No - PO Line No - Shipment No (omits shipment part if blank)."""
+    parts = [str(po_no or "").strip(), str(cint(po_line_no) if po_line_no else 0)]
+    if shipment_number:
+        parts.append(str(shipment_number).strip())
+    return "-".join(parts)
+
+
 @frappe.whitelist()
 def list_projects(limit=20, offset=0, search=None, status=None, domain=None, area=None):
     filters = {}
@@ -769,9 +777,9 @@ def create_po_intake(payload):
         doc.append(
             "po_lines",
             {
-                "poid": row.get("poid") or f"{data.get('po_no')}-{i}",
                 "po_line_no": row.get("po_line_no") or i,
                 "shipment_number": row.get("shipment_number") or row.get("shipment_no") or "",
+                "poid": _make_poid(data.get("po_no"), row.get("po_line_no") or i, row.get("shipment_number") or row.get("shipment_no")),
                 "site_code": row.get("site_code") or row.get("site") or "",
                 "item_code": item_code,
                 "item_description": item_description,
@@ -843,9 +851,9 @@ def import_po_intake(rows):
 
         group["po_lines"].append(
             {
-                "poid": row.get("poid") or row.get("po_id") or f"{po_no}-{len(group['po_lines']) + 1}",
                 "po_line_no": row.get("po_line_no") or row.get("line_no") or len(group["po_lines"]) + 1,
                 "shipment_number": row.get("shipment_number") or row.get("shipment_no") or "",
+                "poid": _make_poid(po_no, row.get("po_line_no") or row.get("line_no") or len(group["po_lines"]) + 1, row.get("shipment_number") or row.get("shipment_no")),
                 "site_code": row.get("site_code") or row.get("site") or "",
                 "item_code": item_code,
                 "item_description": row.get("item_description") or row.get("item_name") or "",

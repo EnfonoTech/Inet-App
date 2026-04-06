@@ -25,9 +25,10 @@
     {
       "fieldname": "poid",
       "fieldtype": "Data",
-      "label": "POID (Line Unique)",
+      "label": "POID",
       "in_list_view": 1,
-      "reqd": 1
+      "read_only": 1,
+      "description": "Auto: PO No + PO Line No + Shipment No"
     },
     {
       "fieldname": "po_line_no",
@@ -116,7 +117,7 @@
       "fieldname": "area",
       "fieldtype": "Link",
       "label": "Area",
-      "options": "Area"
+      "options": "Area Master"
     },
     {
       "default": "Active",

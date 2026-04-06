@@ -29,6 +29,14 @@ def _parse_rows(rows):
     return rows or []
 
 
+def _make_poid(po_no, po_line_no, shipment_number):
+    """Build POID: PO No - PO Line No - Shipment No."""
+    parts = [str(po_no or "").strip(), str(cint(po_line_no) if po_line_no else 0)]
+    if shipment_number:
+        parts.append(str(shipment_number).strip())
+    return "-".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Task 12 — Pipeline Operations
 # ---------------------------------------------------------------------------
@@ -203,9 +211,9 @@ def confirm_po_upload(rows):
             doc.append(
                 "po_lines",
                 {
-                    "poid": f"{line.get('po_no')}-{line.get('po_line_no', '')}",
                     "po_line_no": cint(line.get("po_line_no") or 0),
                     "shipment_number": line.get("shipment_no"),
+                    "poid": _make_poid(po_no, line.get("po_line_no"), line.get("shipment_no")),
                     "site_code": line.get("site_code"),
                     "site_name": line.get("site_name"),
                     "item_code": item_code,

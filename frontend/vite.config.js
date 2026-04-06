@@ -7,5 +7,13 @@ export default defineConfig({
   build: {
     outDir: "../inet_app/public/portal",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Stable filenames — no content hash — so pms.html never goes stale
+        entryFileNames: "assets/index.js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name][extname]",
+      },
+    },
   },
 });
