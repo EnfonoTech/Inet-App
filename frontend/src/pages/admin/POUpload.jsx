@@ -6,6 +6,38 @@ const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 const STEPS = ["Upload", "Review", "Confirm"];
 
+function ItemBadge({ exists }) {
+  return exists ? (
+    <span style={{
+      display: "inline-block", padding: "2px 9px", borderRadius: 10,
+      fontSize: "0.7rem", fontWeight: 700,
+      background: "rgba(16,185,129,0.12)", color: "#059669",
+    }}>
+      ✓ Exists
+    </span>
+  ) : (
+    <span style={{
+      display: "inline-block", padding: "2px 9px", borderRadius: 10,
+      fontSize: "0.7rem", fontWeight: 700,
+      background: "rgba(245,158,11,0.13)", color: "#b45309",
+    }}>
+      ⚠ New
+    </span>
+  );
+}
+
+function ProjectBadge({ exists }) {
+  return exists ? null : (
+    <span style={{
+      display: "inline-block", padding: "2px 9px", borderRadius: 10,
+      fontSize: "0.7rem", fontWeight: 700,
+      background: "rgba(239,68,68,0.1)", color: "#dc2626",
+    }}>
+      ✕ Not Found
+    </span>
+  );
+}
+
 function StepIndicator({ current }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 32 }}>
@@ -120,6 +152,8 @@ export default function POUpload() {
 
   const validRows = parseResult?.valid_rows || [];
   const errorRows = parseResult?.error_rows || [];
+  const newItems = [...new Set(validRows.filter(r => !r.item_exists).map(r => r.item_code).filter(Boolean))];
+  const missingProjects = [...new Set(validRows.filter(r => !r.project_exists).map(r => r.project_code).filter(Boolean))];
 
   return (
     <div>
@@ -220,7 +254,82 @@ export default function POUpload() {
                 <span className="stat-label">Total rows</span>
                 <span className="stat-value">{validRows.length + errorRows.length}</span>
               </div>
+              {newItems.length > 0 && (
+                <div className="validation-stat">
+                  <div className="stat-dot" style={{ background: "#f59e0b" }} />
+                  <span className="stat-label">New products</span>
+                  <span className="stat-value" style={{ color: "#b45309" }}>{newItems.length}</span>
+                </div>
+              )}
+              {missingProjects.length > 0 && (
+                <div className="validation-stat">
+                  <div className="stat-dot" style={{ background: "#ef4444" }} />
+                  <span className="stat-label">Missing projects</span>
+                  <span className="stat-value" style={{ color: "#dc2626" }}>{missingProjects.length}</span>
+                </div>
+              )}
             </div>
+
+            {/* Advisory: New Items */}
+            {newItems.length > 0 && (
+              <div style={{
+                background: "rgba(245,158,11,0.08)",
+                border: "1.5px solid rgba(245,158,11,0.35)",
+                borderRadius: 10,
+                padding: "14px 20px",
+                marginBottom: 16,
+              }}>
+                <div style={{ fontWeight: 700, color: "#b45309", marginBottom: 6, fontSize: "0.9rem" }}>
+                  ⚠ {newItems.length} Product{newItems.length !== 1 ? "s" : ""} Not Found in Catalog
+                </div>
+                <p style={{ margin: "0 0 8px", color: "#92400e", fontSize: "0.84rem" }}>
+                  The following item codes do not exist in the ERPNext Item master. They will be
+                  <strong> auto-created</strong> on import with a generic setup. To use existing
+                  pricing and full details, please create them in ERPNext first.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {newItems.map(code => (
+                    <span key={code} style={{
+                      padding: "3px 12px", background: "rgba(245,158,11,0.18)",
+                      borderRadius: 6, fontSize: "0.8rem", fontWeight: 600, color: "#78350f",
+                      fontFamily: "monospace",
+                    }}>
+                      {code}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Advisory: Missing Projects */}
+            {missingProjects.length > 0 && (
+              <div style={{
+                background: "rgba(239,68,68,0.06)",
+                border: "1.5px solid rgba(239,68,68,0.3)",
+                borderRadius: 10,
+                padding: "14px 20px",
+                marginBottom: 16,
+              }}>
+                <div style={{ fontWeight: 700, color: "#dc2626", marginBottom: 6, fontSize: "0.9rem" }}>
+                  ✕ {missingProjects.length} Project Code{missingProjects.length !== 1 ? "s" : ""} Not Found
+                </div>
+                <p style={{ margin: "0 0 8px", color: "#991b1b", fontSize: "0.84rem" }}>
+                  These project codes do not exist in the Project Control Center.
+                  Please create the projects before importing, or the lines will have no project linkage.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {missingProjects.map(code => (
+                    <span key={code} style={{
+                      padding: "3px 12px", background: "rgba(239,68,68,0.12)",
+                      borderRadius: 6, fontSize: "0.8rem", fontWeight: 600, color: "#7f1d1d",
+                      fontFamily: "monospace",
+                    }}>
+                      {code}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Valid rows table */}
             {validRows.length > 0 && (
@@ -234,6 +343,11 @@ export default function POUpload() {
                   marginBottom: 8,
                 }}>
                   Valid Rows ({validRows.length})
+                  {newItems.length > 0 && (
+                    <span style={{ marginLeft: 12, color: "#b45309", textTransform: "none", fontWeight: 600 }}>
+                      — ⚠ badge = item will be auto-created
+                    </span>
+                  )}
                 </div>
                 <div className="data-table-wrapper">
                   <table className="data-table">
@@ -241,21 +355,34 @@ export default function POUpload() {
                       <tr>
                         <th>#</th>
                         <th>Item Code</th>
+                        <th>Item</th>
                         <th>PO No</th>
                         <th>Project Code</th>
+                        <th>Project</th>
                         <th style={{ textAlign: "right" }}>Qty</th>
                         <th style={{ textAlign: "right" }}>Rate</th>
                         <th style={{ textAlign: "right" }}>Line Amount</th>
-                        <th>Status</th>
+                        <th>Row Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {validRows.map((row, i) => (
-                        <tr key={i}>
+                        <tr
+                          key={i}
+                          style={{
+                            background: !row.item_exists
+                              ? "rgba(245,158,11,0.05)"
+                              : !row.project_exists
+                              ? "rgba(239,68,68,0.04)"
+                              : undefined,
+                          }}
+                        >
                           <td style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{i + 1}</td>
-                          <td>{row.item_code}</td>
+                          <td style={{ fontFamily: "monospace", fontSize: "0.82rem" }}>{row.item_code}</td>
+                          <td><ItemBadge exists={row.item_exists} /></td>
                           <td>{row.po_no}</td>
-                          <td>{row.project_code}</td>
+                          <td style={{ fontFamily: "monospace", fontSize: "0.82rem" }}>{row.project_code}</td>
+                          <td><ProjectBadge exists={row.project_exists} /></td>
                           <td style={{ textAlign: "right" }}>{row.qty}</td>
                           <td style={{ textAlign: "right" }}>{fmt.format(row.rate || 0)}</td>
                           <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>

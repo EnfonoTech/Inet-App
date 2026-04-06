@@ -202,6 +202,16 @@ def upload_po_file(file_url):
             row_dict["qty"] = qty
             row_dict["rate"] = flt(row_dict.get("rate", 0))
             row_dict["line_amount"] = flt(row_dict.get("line_amount", 0))
+            # Check if item exists in the Item master
+            item_code = str(row_dict.get("item_code") or "").strip()
+            row_dict["item_exists"] = bool(
+                item_code and frappe.db.exists("Item", item_code)
+            )
+            # Check if project exists in Project Control Center
+            project_code = str(row_dict.get("project_code") or "").strip()
+            row_dict["project_exists"] = bool(
+                project_code and frappe.db.exists("Project Control Center", project_code)
+            )
             valid_rows.append(row_dict)
 
     return {
