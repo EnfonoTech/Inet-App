@@ -54,7 +54,7 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Project Domain",
-   "options": "Project"
+   "options": "Project Domain"
   },
   {
    "fieldname": "customer",
@@ -72,7 +72,7 @@
    "fieldname": "huawei_im",
    "fieldtype": "Link",
    "label": "Huawei IM",
-   "options": "Employee"
+   "options": "Huawei IM"
   },
   {
    "fieldname": "division",
