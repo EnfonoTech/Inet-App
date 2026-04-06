@@ -32,8 +32,9 @@
     },
     {
       "fieldname": "im",
-      "fieldtype": "Data",
+      "fieldtype": "Link",
       "label": "Implementation Manager",
+      "options": "IM Master",
       "in_list_view": 1
     },
     {

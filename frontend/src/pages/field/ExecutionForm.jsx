@@ -33,6 +33,9 @@ export default function ExecutionForm() {
   const [achievedQty, setAchievedQty] = useState("");
   const [gpsLocation, setGpsLocation] = useState("");
   const [remarks, setRemarks] = useState("");
+  const [activityCode, setActivityCode] = useState("");
+  const [activityCost, setActivityCost] = useState(null);
+  const [activities, setActivities] = useState([]);
   const [capturingGps, setCapturingGps] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
@@ -43,7 +46,6 @@ export default function ExecutionForm() {
     async function loadPlan() {
       setPlanError(null);
       try {
-        // Load from rollout plans list filtered by name
         const list = await pmApi.listRolloutPlans({ name: id });
         const found = Array.isArray(list) && list.length > 0 ? list[0] : null;
         if (!found) throw new Error("Plan not found");
@@ -57,6 +59,23 @@ export default function ExecutionForm() {
     if (id) loadPlan();
   }, [id]);
 
+  // Load activity costs
+  useEffect(() => {
+    pmApi.listActivityCosts().then(res => {
+      setActivities(res || []);
+    }).catch(() => {});
+  }, []);
+
+  function handleActivityChange(code) {
+    setActivityCode(code);
+    if (code) {
+      const found = activities.find(a => a.name === code);
+      setActivityCost(found ? found.base_cost_sar : null);
+    } else {
+      setActivityCost(null);
+    }
+  }
+
   function captureGPS() {
     if (!navigator.geolocation) {
       setGpsLocation("GPS not supported on this device");
@@ -66,7 +85,7 @@ export default function ExecutionForm() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
-        setGpsLocation(`${latitude.toFixed(6)}, ${longitude.toFixed(6)} (±${Math.round(accuracy)}m)`);
+        setGpsLocation(`${latitude.toFixed(6)}, ${longitude.toFixed(6)} (\u00B1${Math.round(accuracy)}m)`);
         setCapturingGps(false);
       },
       (err) => {
@@ -89,6 +108,7 @@ export default function ExecutionForm() {
         achieved_qty: parseFloat(achievedQty) || 0,
         gps_location: gpsLocation,
         remarks,
+        activity_code: activityCode || undefined,
       };
 
       const execResult = await pmApi.updateExecution(payload);
@@ -100,7 +120,6 @@ export default function ExecutionForm() {
           await pmApi.generateWorkDone(executionName);
         } catch (wdErr) {
           console.warn("Work Done generation failed:", wdErr);
-          // Don't fail the whole submission for this
         }
       }
 
@@ -119,7 +138,7 @@ export default function ExecutionForm() {
           <h1 className="page-title">Execution Form</h1>
         </div>
         <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-          Loading plan details…
+          Loading plan details...
         </div>
       </div>
     );
@@ -133,10 +152,10 @@ export default function ExecutionForm() {
         </div>
         <div className="page-content">
           <div className="notice success" style={{ marginBottom: 20 }}>
-            <span>✅</span> Execution update submitted successfully!
+            <span>&#x2705;</span> Execution update submitted successfully!
             {execStatus === "Completed" && " Work Done record has been generated."}
           </div>
-          <button className="btn-primary" onClick={() => navigate("/today")}>
+          <button className="btn-primary" onClick={() => navigate(-1)}>
             Back to Today's Work
           </button>
         </div>
@@ -154,8 +173,8 @@ export default function ExecutionForm() {
           </div>
         </div>
         <div className="page-actions">
-          <button className="btn-secondary" onClick={() => navigate("/today")}>
-            ← Back
+          <button className="btn-secondary" onClick={() => navigate(-1)}>
+            &larr; Back
           </button>
         </div>
       </div>
@@ -163,7 +182,7 @@ export default function ExecutionForm() {
       <div className="page-content" style={{ maxWidth: 720 }}>
         {planError && (
           <div className="notice error" style={{ marginBottom: 16 }}>
-            <span>⚠</span> {planError}
+            <span>&oplus;</span> {planError}
           </div>
         )}
 
@@ -219,6 +238,33 @@ export default function ExecutionForm() {
               />
             </div>
 
+            {/* Activity Code */}
+            <div className="form-group">
+              <label>Activity Code</label>
+              <select
+                value={activityCode}
+                onChange={(e) => handleActivityChange(e.target.value)}
+              >
+                <option value="">-- No Activity --</option>
+                {activities.map((a) => (
+                  <option key={a.name} value={a.name}>
+                    {a.activity_code} - {a.standard_activity}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Activity Cost Display */}
+            <div className="form-group">
+              <label>Activity Cost (SAR)</label>
+              <input
+                type="text"
+                value={activityCost != null ? `SAR ${Number(activityCost).toLocaleString()}` : "N/A"}
+                readOnly
+                style={{ background: "var(--bg)", color: "var(--text-muted)" }}
+              />
+            </div>
+
             {/* GPS Location */}
             <div className="form-group" style={{ gridColumn: "1 / -1" }}>
               <label>GPS Location</label>
@@ -227,7 +273,7 @@ export default function ExecutionForm() {
                   type="text"
                   value={gpsLocation}
                   onChange={(e) => setGpsLocation(e.target.value)}
-                  placeholder="lat, lng — or click Capture GPS"
+                  placeholder="lat, lng \u2014 or click Capture GPS"
                   style={{ flex: 1 }}
                 />
                 <button
@@ -237,7 +283,7 @@ export default function ExecutionForm() {
                   disabled={capturingGps}
                   style={{ whiteSpace: "nowrap" }}
                 >
-                  {capturingGps ? "Getting GPS…" : "Capture GPS"}
+                  {capturingGps ? "Getting GPS..." : "Capture GPS"}
                 </button>
               </div>
             </div>
@@ -248,7 +294,7 @@ export default function ExecutionForm() {
               <textarea
                 value={remarks}
                 onChange={(e) => setRemarks(e.target.value)}
-                placeholder="Any notes about this execution…"
+                placeholder="Any notes about this execution..."
                 rows={3}
               />
             </div>
@@ -256,13 +302,13 @@ export default function ExecutionForm() {
 
           {submitError && (
             <div className="notice error" style={{ marginBottom: 12 }}>
-              <span>⚠</span> {submitError}
+              <span>&oplus;</span> {submitError}
             </div>
           )}
 
           {execStatus === "Completed" && (
             <div className="notice info" style={{ marginBottom: 12 }}>
-              <span>ℹ</span> Submitting as Completed will automatically generate a Work Done record.
+              <span>&#x2139;</span> Submitting as Completed will automatically generate a Work Done record.
             </div>
           )}
 
@@ -270,7 +316,7 @@ export default function ExecutionForm() {
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => navigate("/today")}
+              onClick={() => navigate(-1)}
             >
               Cancel
             </button>
@@ -279,7 +325,7 @@ export default function ExecutionForm() {
               className="btn-primary"
               disabled={submitting}
             >
-              {submitting ? "Submitting…" : "Submit Execution"}
+              {submitting ? "Submitting..." : "Submit Execution"}
             </button>
           </div>
         </form>

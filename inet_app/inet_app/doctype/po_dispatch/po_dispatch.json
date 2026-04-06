@@ -1,7 +1,6 @@
 {
   "actions": [],
-  "autoname": "format:SYS-.YYYY.-.#####",
-  "naming_rule": "Expression (old style)",
+  "autoname": "format:SYS-{YYYY}-{#####}",
   "creation": "2026-04-04 00:00:00.000000",
   "doctype": "DocType",
   "engine": "InnoDB",
@@ -99,8 +98,9 @@
     },
     {
       "fieldname": "im",
-      "fieldtype": "Data",
+      "fieldtype": "Link",
       "label": "Implementation Manager",
+      "options": "IM Master",
       "in_list_view": 1
     },
     {

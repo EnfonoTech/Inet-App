@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import inetLogo from "../assets/inet-logo.png";
 
 /* ── SVG Icon Components (Feather-style) ───────────────────── */
 const icons = {
@@ -70,6 +71,11 @@ const icons = {
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   ),
+  clock: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+    </svg>
+  ),
 };
 
 /* ── Navigation definitions per role ────────────────────────── */
@@ -82,16 +88,25 @@ const adminNav = [
   { to: "/execution",  label: "Execution",   icon: "eye" },
   { to: "/work-done",  label: "Work Done",   icon: "checkCircle" },
   { to: "/reports",    label: "Reports",     icon: "barChart" },
+  { to: "/timesheets", label: "Timesheets",  icon: "clock" },
   { to: "/masters",    label: "Masters",     icon: "settings" },
 ];
 
 const imNav = [
-  { to: "/im-dashboard", label: "My Dashboard", icon: "user" },
+  { to: "/im-dashboard", label: "My Dashboard", icon: "dashboard" },
+  { to: "/im-projects",  label: "My Projects",  icon: "folder" },
+  { to: "/im-teams",     label: "My Teams",     icon: "user" },
+  { to: "/im-planning",  label: "Planning",     icon: "calendar" },
+  { to: "/im-execution", label: "Execution",    icon: "eye" },
+  { to: "/im-reports",     label: "Reports",      icon: "barChart" },
+  { to: "/im-timesheets", label: "Timesheets",   icon: "clock" },
 ];
 
 const fieldNav = [
-  { to: "/today",   label: "Today's Work", icon: "clipboard" },
-  { to: "/execute", label: "Execute",      icon: "tool" },
+  { to: "/today",        label: "Today's Work", icon: "clipboard" },
+  { to: "/field-execute", label: "Execute",     icon: "tool" },
+  { to: "/field-history",    label: "History",     icon: "checkCircle" },
+  { to: "/field-timesheet", label: "Timesheet",   icon: "clock" },
 ];
 
 /* ── Chevron SVG ───────────────────────────────────────────── */
@@ -107,18 +122,8 @@ export default function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, role, logout } = useAuth();
-  const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const menuRef = useRef(null);
-
-  /* Close dropdown when clicking outside */
-  useEffect(() => {
-    const handler = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
 
   /* Pick nav items based on role */
   const navItems = useMemo(() => {
@@ -167,11 +172,24 @@ export default function AppShell() {
 
         {/* Brand */}
         <div className="sidebar-logo">
-          <div className="brand-mark" aria-hidden="true" />
-          <div className="sidebar-logo-text">
-            <h2>INET PMS</h2>
-            <div className="sidebar-tagline">Operations Command</div>
+          <div className="sidebar-logo-icon">
+            <img
+              src={inetLogo}
+              alt="INET Telecom"
+              style={{
+                width: collapsed ? 28 : 32,
+                height: "auto",
+                objectFit: "contain",
+                transition: "width 0.2s ease",
+              }}
+            />
           </div>
+          {!collapsed && (
+            <div className="sidebar-logo-text">
+              <h2>INET PMS</h2>
+              <div className="sidebar-tagline">OPERATIONS COMMAND</div>
+            </div>
+          )}
         </div>
 
         {/* Navigation */}
@@ -190,64 +208,42 @@ export default function AppShell() {
           ))}
         </nav>
 
+        {/* Bottom actions */}
+        {!collapsed && (
+          <div className="sidebar-actions">
+            <a href="/app" className="sidebar-action-link">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+              </svg>
+              <span>Switch to Desk</span>
+            </a>
+          </div>
+        )}
+
         {/* User footer */}
         <div className="sidebar-footer" ref={menuRef}>
-          <div
-            className={`sidebar-user${menuOpen ? " open" : ""}`}
-            onClick={() => setMenuOpen((v) => !v)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => e.key === "Enter" && setMenuOpen((v) => !v)}
-          >
+          <div className="sidebar-user">
             <span className="sidebar-user-avatar">{initials}</span>
-            <div className="sidebar-user-info">
-              <span className="sidebar-user-name">{user?.full_name || user?.email || "Guest"}</span>
-              <span className="sidebar-user-email">{user?.email || ""}</span>
-            </div>
-            <svg
-              className="sidebar-user-chevron"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-
-            {/* Dropdown */}
-            {menuOpen && (
-              <div className="user-menu-dropdown" onClick={(e) => e.stopPropagation()}>
-                <div className="user-menu-profile">
-                  <div className="user-menu-avatar">{initials}</div>
-                  <div>
-                    <div className="user-menu-fullname">{user?.full_name || user?.email}</div>
-                    <div className="user-menu-email">{user?.email}</div>
-                  </div>
+            {!collapsed && (
+              <>
+                <div className="sidebar-user-info">
+                  <span className="sidebar-user-name">{user?.full_name || user?.email || "Guest"}</span>
+                  <span className="sidebar-user-email">{user?.email || ""}</span>
                 </div>
-                <div className="user-menu-divider" />
-                <a href="/app" className="user-menu-item">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="3" width="7" height="7" />
-                    <rect x="14" y="3" width="7" height="7" />
-                    <rect x="3" y="14" width="7" height="7" />
-                    <rect x="14" y="14" width="7" height="7" />
-                  </svg>
-                  <span>Switch to Desk</span>
-                </a>
-                <div className="user-menu-divider" />
-                <button type="button" className="user-menu-item user-menu-logout" onClick={handleLogout}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <button
+                  type="button"
+                  className="sidebar-logout-btn"
+                  onClick={handleLogout}
+                  title="Log Out"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                     <polyline points="16 17 21 12 16 7" />
                     <line x1="21" y1="12" x2="9" y2="12" />
                   </svg>
-                  <span>Log Out</span>
                 </button>
-              </div>
+              </>
             )}
           </div>
         </div>

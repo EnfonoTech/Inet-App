@@ -1,7 +1,6 @@
 {
   "actions": [],
-  "autoname": "format:WD-.YYYY.-.#####",
-  "naming_rule": "Expression (old style)",
+  "autoname": "format:WD-{YYYY}-{#####}",
   "creation": "2026-04-04 00:00:00.000000",
   "doctype": "DocType",
   "engine": "InnoDB",

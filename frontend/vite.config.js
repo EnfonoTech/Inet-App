@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/pms/",
+  base: "/assets/inet_app/portal/",
   build: {
     outDir: "../inet_app/public/portal",
     emptyOutDir: true,

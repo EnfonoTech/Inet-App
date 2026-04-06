@@ -81,6 +81,7 @@ export const pmApi = {
   importPoIntake:  (rows)    => call("inet_app.api.project_management.import_po_intake", { rows: JSON.stringify(rows) }),
 
   // Masters
+  listIMMasters:   (args)    => call("inet_app.api.project_management.list_im_masters", args),
   listCustomers:   (args)    => call("inet_app.api.project_management.list_customers", args),
   createCustomer:  (payload) => call("inet_app.api.project_management.create_customer", { payload: JSON.stringify(payload) }),
   listItemCatalog: (args)    => call("inet_app.api.project_management.list_item_catalog", args),
@@ -101,10 +102,20 @@ export const pmApi = {
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
   uploadPOFile:         (file_url)  => call("inet_app.api.command_center.upload_po_file", { file_url }),
   confirmPOUpload:      (rows)      => call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(rows) }),
+  listPOIntakeLines:    (status)    => call("inet_app.api.command_center.list_po_intake_lines", { status: status || "New" }),
   dispatchPOLines:      (payload)   => call("inet_app.api.command_center.dispatch_po_lines", { payload: JSON.stringify(payload) }),
   createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
   updateExecution:      (payload)   => call("inet_app.api.command_center.update_execution", { payload: JSON.stringify(payload) }),
   generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),
+
+  // ── Activity Cost Master ───────────────────────────────────
+  listActivityCosts:    ()              => call("inet_app.api.command_center.list_activity_costs"),
+
+  // ── Timesheet APIs ─────────────────────────────────────────
+  createTimesheet:      (payload) => call("inet_app.api.command_center.create_timesheet", { payload: JSON.stringify(payload) }),
+  listTimesheets:       (filters) => call("inet_app.api.command_center.list_timesheets", { filters: JSON.stringify(filters || {}) }),
+  approveTimesheet:     (name)    => call("inet_app.api.command_center.approve_timesheet", { name }),
+  getTimesheetDetail:   (name)    => call("inet_app.api.command_center.get_timesheet_detail", { name }),
 
   // ── List APIs (Command Center doctypes) ────────────────────
   listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost"], limit_page_length: 100 }),

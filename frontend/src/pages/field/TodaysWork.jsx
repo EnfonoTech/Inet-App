@@ -164,7 +164,7 @@ export default function TodaysWork() {
             <WorkCard
               key={plan.name}
               plan={plan}
-              onClick={() => navigate(`/execute/${plan.name}`)}
+              onClick={() => navigate(`/field-execute/${plan.name}`)}
             />
           ))}
         </div>

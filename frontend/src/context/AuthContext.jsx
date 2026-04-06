@@ -3,52 +3,6 @@ import { frappe_login, frappe_logout, pmApi } from "../services/api";
 
 const AuthContext = createContext(null);
 
-/**
- * Determine user role after authentication:
- *   1. Administrator or System Manager → "admin"
- *   2. User matches an INET Team IM field → "im"
- *   3. Fallback → "field"
- */
-async function detectRole(email, fullName) {
-  // Administrator is always admin
-  if (email === "Administrator") {
-    return { role: "admin", imName: null, teamId: null };
-  }
-
-  try {
-    // Check for System Manager role
-    const roles = await pmApi.getUserRoles(email);
-    if (roles && roles.length > 0) {
-      return { role: "admin", imName: null, teamId: null };
-    }
-  } catch {
-    // If Has Role query fails, continue to next check
-  }
-
-  try {
-    // Check if user is an Installation Manager
-    const imTeams = await pmApi.getTeamByIM(fullName);
-    if (imTeams && imTeams.length > 0) {
-      return { role: "im", imName: fullName, teamId: null };
-    }
-  } catch {
-    // continue
-  }
-
-  try {
-    // Check if user is part of a field team
-    const teams = await pmApi.getTeamByMember(email);
-    if (teams && teams.length > 0) {
-      return { role: "field", imName: null, teamId: teams[0].team_id };
-    }
-  } catch {
-    // continue
-  }
-
-  // Fallback: treat as field user with no specific team
-  return { role: "field", imName: null, teamId: null };
-}
-
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);      // { email, full_name } or null
   const [loading, setLoading] = useState(true);
@@ -61,20 +15,15 @@ export function AuthProvider({ children }) {
     try {
       const res = await pmApi.getLoggedUser();
       if (res && res.authenticated === true && res.user && res.user !== "Guest") {
-        const userData = { email: res.user, full_name: res.full_name || "" };
-        setUser(userData);
-
-        // Detect role
-        const detected = await detectRole(res.user, res.full_name || "");
-        setRole(detected.role);
-        setImName(detected.imName);
-        setTeamId(detected.teamId);
-
+        setUser({ email: res.user, full_name: res.full_name || "" });
+        setRole(res.app_role || "field");
+        setImName(res.im_name || null);
+        setTeamId(res.team_id || null);
         setLoading(false);
         return true;
       }
     } catch {
-      // network error or unexpected response — treat as logged out
+      // treat as logged out
     }
     setUser(null);
     setRole(null);
@@ -91,7 +40,6 @@ export function AuthProvider({ children }) {
   const login = useCallback(
     async (usr, pwd) => {
       const data = await frappe_login(usr, pwd);
-      // Frappe returns message "Logged In" on success
       if (data.message !== "Logged In") {
         throw new Error(data.message || "Login failed");
       }

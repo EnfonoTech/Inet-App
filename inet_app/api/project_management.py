@@ -610,9 +610,54 @@ def create_customer(payload):
 def get_logged_user():
     user = frappe.session.user
     if not user or user == "Guest":
-        return {"user": "Guest", "full_name": "", "authenticated": False}
+        return {"user": "Guest", "full_name": "", "authenticated": False, "app_role": "field"}
+
     full_name = frappe.db.get_value("User", user, "full_name") or user.split("@")[0]
-    return {"user": user, "full_name": full_name, "authenticated": True}
+    user_roles = frappe.get_roles(user)
+
+    app_role = "field"
+    im_name = None
+    team_id = None
+
+    if user == "Administrator" or "System Manager" in user_roles or "INET Admin" in user_roles:
+        app_role = "admin"
+    elif "INET IM" in user_roles:
+        app_role = "im"
+        # Resolve IM from IM Master by user account first, then fallback to full_name
+        im_rec = frappe.get_all(
+            "IM Master", filters={"user": user, "status": "Active"},
+            fields=["name", "full_name"], limit=1
+        ) if frappe.db.table_exists("tabIM Master") else []
+        if im_rec:
+            im_name = im_rec[0].name
+        else:
+            im_name = full_name
+        im_teams = frappe.get_all(
+            "INET Team", filters={"im": im_name}, fields=["team_id"], limit=100
+        )
+        if im_teams:
+            team_id = im_teams[0].team_id
+    elif "INET Field Team" in user_roles:
+        app_role = "field"
+        first = (full_name or "").split()[0] if full_name else ""
+        if first:
+            ft = frappe.get_all(
+                "INET Team",
+                filters={"team_name": ["like", f"%{first}%"]},
+                fields=["team_id"],
+                limit=1,
+            )
+            if ft:
+                team_id = ft[0].team_id
+
+    return {
+        "user": user,
+        "full_name": full_name,
+        "authenticated": True,
+        "app_role": app_role,
+        "im_name": im_name,
+        "team_id": team_id,
+    }
 
 
 @frappe.whitelist()
@@ -826,3 +871,24 @@ def import_po_intake(rows):
         "names": created,
         "validation_errors": validation_errors[:200],
     }
+
+
+@frappe.whitelist()
+def list_im_masters(status=None, search=None):
+    """List IM Master records with optional filters."""
+    filters = {}
+    if status:
+        filters["status"] = status
+    or_filters = []
+    if search:
+        like = f"%{search}%"
+        or_filters = [["im_id", "like", like], ["full_name", "like", like], ["email", "like", like]]
+    return frappe.get_list(
+        "IM Master",
+        filters=filters,
+        or_filters=or_filters if or_filters else None,
+        fields=["name", "im_id", "full_name", "email", "phone",
+                "monthly_cost_sar", "daily_cost_sar", "status"],
+        order_by="full_name asc",
+        page_length=200,
+    )

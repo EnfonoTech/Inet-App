@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import inetLogo from "../assets/inet-logo.png";
 
 function EyeIcon({ off }) {
   return off ? (
@@ -66,8 +67,8 @@ export default function Login() {
         <div className="login-brand-inner">
           {/* Logo mark + name */}
           <div className="login-brand-logo">
-            <div className="login-brand-mark" />
-            <span className="login-brand-name">INET PMS</span>
+            <img src={inetLogo} alt="INET Telecom" style={{ height: 52, width: "auto", objectFit: "contain" }} />
+            <span className="login-brand-name">PMS</span>
           </div>
 
           {/* Headline */}
@@ -97,8 +98,8 @@ export default function Login() {
         <div className="login-card">
           {/* Small logo at top of card */}
           <div className="login-logo-sm">
-            <div className="login-mark-sm" />
-            <span className="login-mark-text">INET PMS</span>
+            <img src={inetLogo} alt="INET Telecom" style={{ height: 36, width: "auto", objectFit: "contain" }} />
+            <span className="login-mark-text">PMS</span>
           </div>
 
           <h1 className="login-title">Sign In</h1>

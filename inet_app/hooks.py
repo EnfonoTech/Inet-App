@@ -6,6 +6,7 @@ app_email = "ramees@enfono.com"
 app_license = "mit"
 
 website_route_rules = [
+	{"from_route": "/pms", "to_route": "pms"},
 	{"from_route": "/pms/<path:app_path>", "to_route": "pms"},
 ]
 

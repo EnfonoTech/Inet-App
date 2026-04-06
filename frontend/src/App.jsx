@@ -3,8 +3,9 @@ import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
+import inetLogo from "./assets/inet-logo.png";
 
-/* ── Admin pages ─────────────────────────────────────────────── */
+/* -- Admin pages ------------------------------------------------ */
 import CommandDashboard from "./pages/admin/CommandDashboard";
 import POUpload from "./pages/admin/POUpload";
 import PODispatch from "./pages/admin/PODispatch";
@@ -15,27 +16,36 @@ import Reports from "./pages/admin/Reports";
 import Masters from "./pages/admin/Masters";
 import Projects from "./pages/admin/Projects";
 import ProjectDetail from "./pages/admin/ProjectDetail";
+import AdminTimesheets from "./pages/admin/Timesheets";
 
-/* ── IM pages ────────────────────────────────────────────────── */
+/* -- IM pages --------------------------------------------------- */
 import IMDashboard from "./pages/im/IMDashboard";
+import IMProjects from "./pages/im/IMProjects";
+import IMTeams from "./pages/im/IMTeams";
+import IMPlanning from "./pages/im/IMPlanning";
+import IMExecution from "./pages/im/IMExecution";
+import IMReports from "./pages/im/IMReports";
+import IMTimesheets from "./pages/im/IMTimesheets";
 
-/* ── Field pages ─────────────────────────────────────────────── */
+/* -- Field pages ------------------------------------------------ */
 import TodaysWork from "./pages/field/TodaysWork";
 import ExecutionForm from "./pages/field/ExecutionForm";
+import FieldHistory from "./pages/field/FieldHistory";
+import FieldTimesheet from "./pages/field/Timesheet";
 
-/* ── Loading Screen ─────────────────────────────────────────── */
+/* -- Loading Screen --------------------------------------------- */
 function LoadingScreen() {
   return (
     <div className="loading-screen">
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-        <div className="brand-mark" style={{ width: 48, height: 48, borderRadius: 14 }} />
-        <p style={{ color: "var(--text-muted)", fontSize: 14, letterSpacing: "0.05em" }}>Loading...</p>
+        <img src={inetLogo} alt="INET Telecom" style={{ height: 56, width: "auto", objectFit: "contain" }} />
+        <p style={{ color: "#94a3b8", fontSize: 14, letterSpacing: "0.05em" }}>Loading...</p>
       </div>
     </div>
   );
 }
 
-/* ── Role-based default redirect ────────────────────────────── */
+/* -- Role-based default redirect -------------------------------- */
 function DefaultRedirect() {
   const { role } = useAuth();
   if (role === "im") return <Navigate to="/im-dashboard" replace />;
@@ -43,7 +53,7 @@ function DefaultRedirect() {
   return <Navigate to="/dashboard" replace />;
 }
 
-/* ── Authenticated App Content ──────────────────────────────── */
+/* -- Authenticated App Content ---------------------------------- */
 function AppContent() {
   const { user, loading, role } = useAuth();
   const navigate = useNavigate();
@@ -60,43 +70,55 @@ function AppContent() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        {/* ── Admin routes ──────────────────────────────────── */}
+        {/* -- Admin routes -------------------------------------- */}
         {role === "admin" && (
           <>
-            <Route path="/dashboard"  element={<CommandDashboard />} />
-            <Route path="/projects"   element={<Projects />} />
+            <Route path="/dashboard" element={<CommandDashboard />} />
+            <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:projectCode" element={<ProjectDetail />} />
-            <Route path="/po-upload"  element={<POUpload />} />
-            <Route path="/dispatch"   element={<PODispatch />} />
-            <Route path="/planning"   element={<RolloutPlanning />} />
-            <Route path="/execution"  element={<ExecutionMonitor />} />
-            <Route path="/work-done"  element={<WorkDone />} />
-            <Route path="/reports"    element={<Reports />} />
-            <Route path="/masters"    element={<Masters />} />
+            <Route path="/po-upload" element={<POUpload />} />
+            <Route path="/dispatch" element={<PODispatch />} />
+            <Route path="/planning" element={<RolloutPlanning />} />
+            <Route path="/execution" element={<ExecutionMonitor />} />
+            <Route path="/work-done" element={<WorkDone />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/timesheets" element={<AdminTimesheets />} />
+            <Route path="/masters" element={<Masters />} />
           </>
         )}
 
-        {/* ── IM routes ─────────────────────────────────────── */}
+        {/* -- IM routes ----------------------------------------- */}
         {role === "im" && (
-          <Route path="/im-dashboard" element={<IMDashboard />} />
+          <>
+            <Route path="/im-dashboard" element={<IMDashboard />} />
+            <Route path="/im-projects" element={<IMProjects />} />
+            <Route path="/im-teams" element={<IMTeams />} />
+            <Route path="/im-planning" element={<IMPlanning />} />
+            <Route path="/im-execution" element={<IMExecution />} />
+            <Route path="/im-reports" element={<IMReports />} />
+            <Route path="/im-timesheets" element={<IMTimesheets />} />
+          </>
         )}
 
-        {/* ── Field team routes ─────────────────────────────── */}
+        {/* -- Field team routes --------------------------------- */}
         {role === "field" && (
           <>
-            <Route path="/today"        element={<TodaysWork />} />
-            <Route path="/execute/:id"  element={<ExecutionForm />} />
+            <Route path="/today" element={<TodaysWork />} />
+            <Route path="/field-execute" element={<ExecutionForm />} />
+            <Route path="/field-execute/:id" element={<ExecutionForm />} />
+            <Route path="/field-history" element={<FieldHistory />} />
+            <Route path="/field-timesheet" element={<FieldTimesheet />} />
           </>
         )}
 
-        {/* ── Default redirect based on role ────────────────── */}
+        {/* -- Default redirect based on role -------------------- */}
         <Route path="*" element={<DefaultRedirect />} />
       </Route>
     </Routes>
   );
 }
 
-/* ── Root App ───────────────────────────────────────────────── */
+/* -- Root App --------------------------------------------------- */
 export default function App() {
   return (
     <AuthProvider>

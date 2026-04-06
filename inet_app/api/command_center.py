@@ -230,14 +230,53 @@ def confirm_po_upload(rows):
 
 
 @frappe.whitelist()
+def list_po_intake_lines(status="New"):
+    """
+    Return PO Intake child lines (not parents) that match given po_line_status.
+    Each row includes parent PO Intake fields (po_no, customer).
+    """
+    filters = {}
+    if status:
+        filters["po_line_status"] = status
+
+    lines = frappe.get_all(
+        "PO Intake Line",
+        filters=filters,
+        fields=[
+            "name", "parent", "po_line_no", "poid", "item_code",
+            "item_description", "qty", "rate", "line_amount",
+            "project_code", "site_code", "site_name", "area",
+            "po_line_status", "activity_code",
+        ],
+        order_by="parent desc, idx asc",
+        limit_page_length=500,
+    )
+
+    # Enrich each line with PO-level info
+    parent_cache = {}
+    for line in lines:
+        parent_name = line.get("parent")
+        if parent_name not in parent_cache:
+            parent_cache[parent_name] = frappe.db.get_value(
+                "PO Intake", parent_name, ["po_no", "customer"], as_dict=True
+            ) or {}
+        pdata = parent_cache[parent_name]
+        line["po_no"] = pdata.get("po_no", "")
+        line["customer"] = pdata.get("customer", "")
+        line["po_intake"] = parent_name
+
+    return lines
+
+
+@frappe.whitelist()
 def dispatch_po_lines(payload):
     """
     Dispatch PO lines to a team for a target month.
 
     payload = {
-        "lines": [{"po_intake": "PIP-...", "po_line_idx": 0, ...}],
+        "lines": [{"po_intake": "PIP-...", "item_code": "...", ...}],
         "team": "Team-01",
-        "target_month": "2026-04-01",
+        "target_month": "2026-04",
         "planning_mode": "Plan",
     }
 
@@ -250,7 +289,12 @@ def dispatch_po_lines(payload):
 
     lines = payload.get("lines") or []
     team_id = payload.get("team")
-    target_month = payload.get("target_month")
+    raw_month = payload.get("target_month") or ""
+    # Handle "2026-04" from HTML month input -> "2026-04-01"
+    if raw_month and len(raw_month) == 7:
+        target_month = raw_month + "-01"
+    else:
+        target_month = raw_month
     planning_mode = payload.get("planning_mode", "Plan")
 
     # Resolve IM from INET Team master
@@ -268,7 +312,7 @@ def dispatch_po_lines(payload):
     system_ids = []
 
     for line in lines:
-        po_intake_name = line.get("po_intake")
+        po_intake_name = line.get("po_intake") or line.get("parent")
         po_line_no = cint(line.get("po_line_no") or 0)
         item_code = line.get("item_code")
         item_description = line.get("item_description")
@@ -276,17 +320,22 @@ def dispatch_po_lines(payload):
         rate = flt(line.get("rate", 0))
         line_amount = flt(line.get("line_amount", 0))
         project_code = line.get("project_code")
-        center_area = line.get("center_area")
+        center_area = line.get("center_area") or line.get("area")
         site_code = line.get("site_code")
         site_name = line.get("site_name")
         po_no = line.get("po_no")
+        line_child_name = line.get("name")  # child table row name
 
-        # Resolve customer from Project Control Center
-        customer = None
-        if project_code:
+        # Resolve customer from PO Intake parent
+        customer = line.get("customer")
+        if not customer and project_code:
             customer = frappe.db.get_value(
                 "Project Control Center", project_code, "customer"
             )
+
+        # Validate project_code link exists — skip if not found
+        if project_code and not frappe.db.exists("Project Control Center", project_code):
+            project_code = None
 
         doc = frappe.new_doc("PO Dispatch")
         doc.po_intake = po_intake_name
@@ -297,7 +346,8 @@ def dispatch_po_lines(payload):
         doc.qty = qty
         doc.rate = rate
         doc.line_amount = line_amount
-        doc.project_code = project_code
+        if project_code:
+            doc.project_code = project_code
         doc.customer = customer
         doc.im = im
         doc.team = team_id
@@ -309,8 +359,16 @@ def dispatch_po_lines(payload):
         doc.site_name = site_name
 
         doc.insert(ignore_permissions=True)
-        # system_id mirrors the autoname
         doc.db_set("system_id", doc.name, update_modified=False)
+
+        # Mark the PO Intake Line as "Dispatched"
+        if line_child_name:
+            frappe.db.set_value(
+                "PO Intake Line", line_child_name,
+                "po_line_status", "Dispatched",
+                update_modified=False,
+            )
+
         frappe.db.commit()
         created += 1
         system_ids.append(doc.name)
@@ -434,9 +492,17 @@ def update_execution(payload):
         "qc_status",
         "revisit_flag",
         "remarks",
+        "activity_code",
     ]:
         if field in payload:
             setattr(doc, field, payload[field])
+
+    # Auto-fetch activity cost when activity_code is set
+    if payload.get("activity_code"):
+        acm_cost = frappe.db.get_value(
+            "Activity Cost Master", payload["activity_code"], "base_cost_sar"
+        )
+        doc.activity_cost_sar = flt(acm_cost or 0)
 
     if doc.is_new():
         doc.insert(ignore_permissions=True)
@@ -540,7 +606,15 @@ def generate_work_done(execution_name):
         )
         inet_margin_pct = flt(margin_pct or 0)
 
-    total_cost = team_cost + subcontract_cost
+    # Activity cost from Activity Cost Master (linked via execution)
+    activity_cost = 0.0
+    if getattr(exec_doc, "activity_code", None):
+        acm_cost = frappe.db.get_value(
+            "Activity Cost Master", exec_doc.activity_code, "base_cost_sar"
+        )
+        activity_cost = flt(acm_cost or 0)
+
+    total_cost = team_cost + subcontract_cost + activity_cost
     margin = revenue - total_cost
 
     wd = frappe.new_doc("Work Done")
@@ -552,6 +626,7 @@ def generate_work_done(execution_name):
     wd.revenue_sar = revenue
     wd.team_cost_sar = team_cost
     wd.subcontract_cost_sar = subcontract_cost
+    wd.activity_cost_sar = activity_cost
     wd.total_cost_sar = total_cost
     wd.margin_sar = margin
     wd.inet_margin_pct = inet_margin_pct
@@ -848,7 +923,16 @@ def get_im_dashboard(im=None):
     Returns a dashboard dict scoped to that IM.
     """
     if not im:
-        im = frappe.db.get_value("User", frappe.session.user, "full_name")
+        # Try resolving from IM Master by user account first
+        if frappe.db.table_exists("tabIM Master"):
+            im_rec = frappe.get_all(
+                "IM Master", filters={"user": frappe.session.user, "status": "Active"},
+                fields=["name"], limit=1
+            )
+            if im_rec:
+                im = im_rec[0].name
+        if not im:
+            im = frappe.db.get_value("User", frappe.session.user, "full_name")
     if not im:
         frappe.throw("Could not resolve IM. Please pass im parameter.")
 
@@ -1101,13 +1185,35 @@ def get_project_summary(project_code):
                     "total_cost_sar", "margin_sar", "billing_status"],
             limit_page_length=500)
 
-    # Teams involved (unique from dispatches)
-    teams = list(set(d.team for d in dispatches if d.team))
+    # Teams involved — merge from dispatches + Team Assignment doctype
+    dispatch_teams = set(d.team for d in dispatches if d.team)
+
+    # Team Assignments for this project
+    team_assignments = frappe.get_all("Team Assignment",
+        filters={"project": project_code},
+        fields=["name", "team_id", "assignment_date", "end_date", "role_in_project",
+                "daily_cost", "utilization_percentage", "status"],
+        order_by="assignment_date desc",
+        limit_page_length=200)
+    assigned_teams = set(ta.team_id for ta in team_assignments if ta.team_id)
+
+    all_team_ids = list(dispatch_teams | assigned_teams)
     team_details = []
-    if teams:
+    if all_team_ids:
         team_details = frappe.get_all("INET Team",
-            filters={"team_id": ["in", teams]},
+            filters={"team_id": ["in", all_team_ids]},
             fields=["team_id", "team_name", "im", "team_type", "status", "daily_cost"])
+        # Enrich with assignment info
+        assignment_map = {ta.team_id: ta for ta in team_assignments}
+        for t in team_details:
+            ta = assignment_map.get(t.team_id)
+            if ta:
+                t["assignment_name"] = ta.name
+                t["role_in_project"] = ta.role_in_project
+                t["assignment_date"] = str(ta.assignment_date) if ta.assignment_date else None
+                t["end_date"] = str(ta.end_date) if ta.end_date else None
+                t["assignment_status"] = ta.status
+                t["utilization_percentage"] = ta.utilization_percentage
 
     # Financial summary
     total_po_value = sum(flt(d.line_amount) for d in dispatches)
@@ -1122,6 +1228,7 @@ def get_project_summary(project_code):
         "executions": executions,
         "work_done": work_done,
         "teams": team_details,
+        "team_assignments": team_assignments,
         "financial_summary": {
             "total_po_value": total_po_value,
             "total_revenue": total_revenue,
@@ -1133,3 +1240,180 @@ def get_project_summary(project_code):
             "work_done_count": len(work_done),
         }
     }
+
+
+# ---------------------------------------------------------------------------
+# Activity Cost Master — List API
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def list_activity_costs():
+    """Return all active Activity Cost Master records."""
+    return frappe.get_all(
+        "Activity Cost Master",
+        filters={"active_flag": 1},
+        fields=["name", "activity_code", "standard_activity", "category", "base_cost_sar"],
+        order_by="activity_code asc",
+        limit_page_length=500,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Timesheet APIs — leveraging ERPNext Timesheet module
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def create_timesheet(payload):
+    """
+    Create an ERPNext Timesheet with time_logs.
+
+    payload = {
+        "employee": "HR-EMP-00001" or team name,
+        "team": "Team-01",
+        "time_logs": [
+            {
+                "activity_type": "...",
+                "from_time": "2026-04-05 08:00:00",
+                "to_time": "2026-04-05 17:00:00",
+                "hours": 9,
+                "project": "PRJ-001",
+                "description": "..."
+            }
+        ]
+    }
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload)
+
+    team = payload.get("team")
+    time_logs = payload.get("time_logs") or []
+
+    if not time_logs:
+        frappe.throw("At least one time log is required.")
+
+    doc = frappe.new_doc("Timesheet")
+    doc.company = frappe.defaults.get_global_default("company") or "INET"
+
+    # Try to resolve employee from team
+    employee = payload.get("employee")
+    if not employee and team:
+        # Look up employee linked to this team (if any)
+        emp = frappe.db.get_value("Employee", {"employee_name": ["like", f"%{team}%"]}, "name")
+        if emp:
+            employee = emp
+
+    if employee:
+        doc.employee = employee
+
+    # Custom field to track which INET team submitted
+    if hasattr(doc, "custom_inet_team"):
+        doc.custom_inet_team = team
+
+    for log in time_logs:
+        doc.append("time_logs", {
+            "activity_type": log.get("activity_type", "Execution"),
+            "from_time": log.get("from_time"),
+            "to_time": log.get("to_time"),
+            "hours": flt(log.get("hours", 0)),
+            "project": log.get("project"),
+            "description": log.get("description", ""),
+        })
+
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+
+    return {"name": doc.name, "status": doc.status}
+
+
+@frappe.whitelist()
+def list_timesheets(filters=None):
+    """
+    List timesheets with optional filters.
+
+    filters = {
+        "team": "Team-01",
+        "im": "Ajmal",
+        "from_date": "2026-04-01",
+        "to_date": "2026-04-30",
+        "status": "Draft",
+    }
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters)
+    if not filters:
+        filters = {}
+
+    db_filters = {}
+    if filters.get("status"):
+        db_filters["docstatus"] = 1 if filters["status"] == "Submitted" else 0
+
+    timesheets = frappe.get_all(
+        "Timesheet",
+        filters=db_filters,
+        fields=[
+            "name", "employee", "employee_name", "company",
+            "total_hours", "total_billable_hours", "total_billed_hours",
+            "status", "start_date", "end_date", "creation", "modified",
+        ],
+        order_by="modified desc",
+        limit_page_length=200,
+    )
+
+    # Filter by date range if provided
+    from_date = filters.get("from_date")
+    to_date = filters.get("to_date")
+
+    if from_date or to_date:
+        filtered = []
+        for ts in timesheets:
+            sd = str(ts.start_date) if ts.start_date else ""
+            if from_date and sd < from_date:
+                continue
+            if to_date and sd > to_date:
+                continue
+            filtered.append(ts)
+        timesheets = filtered
+
+    # If team filter, fetch time_logs for each and check project/team link
+    team_filter = filters.get("team")
+    im_filter = filters.get("im")
+
+    if team_filter or im_filter:
+        # Get team IDs for the IM
+        team_ids = set()
+        if im_filter:
+            im_teams = frappe.get_all(
+                "INET Team", filters={"im": im_filter}, fields=["team_id"]
+            )
+            team_ids = {t.team_id for t in im_teams}
+        if team_filter:
+            team_ids.add(team_filter)
+
+        if team_ids:
+            # For now, check if the employee_name contains team reference
+            # This is a basic filter — can be enhanced with custom fields
+            filtered = []
+            for ts in timesheets:
+                emp_name = (ts.employee_name or "").lower()
+                if any(tid.lower() in emp_name for tid in team_ids):
+                    filtered.append(ts)
+            timesheets = filtered
+
+    return timesheets
+
+
+@frappe.whitelist()
+def approve_timesheet(name):
+    """Submit/approve a timesheet."""
+    doc = frappe.get_doc("Timesheet", name)
+    if doc.docstatus == 0:
+        doc.submit()
+        frappe.db.commit()
+    return {"name": doc.name, "status": "Submitted"}
+
+
+@frappe.whitelist()
+def get_timesheet_detail(name):
+    """Get full timesheet with time_logs."""
+    doc = frappe.get_doc("Timesheet", name)
+    return doc.as_dict()

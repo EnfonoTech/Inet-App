@@ -24,11 +24,11 @@ export default function PODispatch() {
     setLoading(true);
     setError(null);
     try {
-      const [poRows, teamList] = await Promise.all([
-        pmApi.listPoIntake({ po_line_status: "New" }),
+      const [poLines, teamList] = await Promise.all([
+        pmApi.listPOIntakeLines("New"),
         pmApi.listINETTeams(),
       ]);
-      setRows(Array.isArray(poRows) ? poRows : []);
+      setRows(Array.isArray(poLines) ? poLines : []);
       setTeams(Array.isArray(teamList) ? teamList : []);
     } catch (err) {
       setError(err.message || "Failed to load data");
@@ -68,7 +68,7 @@ export default function PODispatch() {
         team,
         target_month: targetMonth,
       });
-      const count = result?.dispatched ?? selected.size;
+      const count = result?.created ?? selected.size;
       setSuccessMsg(`Successfully dispatched ${count} line${count !== 1 ? "s" : ""} to team.`);
       setSelected(new Set());
       await loadData();
@@ -88,22 +88,22 @@ export default function PODispatch() {
         </div>
         <div className="page-actions">
           <button className="btn-secondary" onClick={loadData} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
+            {loading ? "Loading..." : "Refresh"}
           </button>
         </div>
       </div>
 
-      {/* ── Toolbar ─────────────────────────────────────────── */}
+      {/* Toolbar */}
       <div className="toolbar">
         <select
           value={team}
           onChange={(e) => setTeam(e.target.value)}
           style={{ minWidth: 180 }}
         >
-          <option value="">Select Team…</option>
+          <option value="">Select Team...</option>
           {teams.map((t) => (
             <option key={t.team_id} value={t.team_id}>
-              {t.team_name}
+              {t.team_name || t.team_id}
             </option>
           ))}
         </select>
@@ -113,16 +113,16 @@ export default function PODispatch() {
           value={targetMonth}
           onChange={(e) => setTargetMonth(e.target.value)}
           style={{
-            background: "var(--bg-input)",
-            border: "1px solid var(--border-medium)",
-            borderRadius: "var(--radius-sm)",
-            color: "var(--text-primary)",
+            background: "var(--bg-input, #f6f8fb)",
+            border: "1px solid var(--border-medium, #e2e8f0)",
+            borderRadius: "var(--radius-sm, 6px)",
+            color: "var(--text, #1e293b)",
             padding: "7px 12px",
             fontSize: "0.82rem",
           }}
         />
 
-        <div className="spacer" />
+        <div style={{ flex: 1 }} />
 
         {selected.size > 0 && (
           <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
@@ -135,33 +135,33 @@ export default function PODispatch() {
           onClick={handleDispatch}
           disabled={dispatching || selected.size === 0 || !team || !targetMonth}
         >
-          {dispatching ? "Dispatching…" : "Dispatch Selected"}
+          {dispatching ? "Dispatching..." : "Dispatch Selected"}
         </button>
       </div>
 
       {successMsg && (
         <div className="notice success" style={{ margin: "0 28px 16px" }}>
-          <span>✅</span> {successMsg}
+          <span>OK</span> {successMsg}
         </div>
       )}
       {dispatchError && (
         <div className="notice error" style={{ margin: "0 28px 16px" }}>
-          <span>⚠</span> {dispatchError}
+          <span>!</span> {dispatchError}
         </div>
       )}
 
-      {/* ── Table ───────────────────────────────────────────── */}
+      {/* Table */}
       <div className="page-content">
         {error && (
           <div className="notice error" style={{ marginBottom: 16 }}>
-            <span>⚠</span> {error}
+            <span>!</span> {error}
           </div>
         )}
 
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-              Loading PO lines…
+              Loading PO lines...
             </div>
           ) : rows.length === 0 ? (
             <div className="empty-state">
@@ -173,7 +173,7 @@ export default function PODispatch() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>
+                  <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
                       checked={selected.size === rows.length && rows.length > 0}
@@ -185,7 +185,9 @@ export default function PODispatch() {
                   <th>Item Description</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Rate</th>
+                  <th style={{ textAlign: "right" }}>Amount</th>
                   <th>Project Code</th>
+                  <th>Site Code</th>
                   <th>Area</th>
                 </tr>
               </thead>
@@ -206,10 +208,14 @@ export default function PODispatch() {
                     </td>
                     <td>{row.po_no}</td>
                     <td>{row.item_code}</td>
-                    <td>{row.item_description}</td>
+                    <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {row.item_description}
+                    </td>
                     <td style={{ textAlign: "right" }}>{row.qty}</td>
                     <td style={{ textAlign: "right" }}>{fmt.format(row.rate || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
                     <td>{row.project_code}</td>
+                    <td>{row.site_code}</td>
                     <td>{row.area}</td>
                   </tr>
                 ))}

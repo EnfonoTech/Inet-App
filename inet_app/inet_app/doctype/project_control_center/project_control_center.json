@@ -84,7 +84,7 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Implementation Manager",
-   "options": "Employee"
+   "options": "IM Master"
   },
   {
    "fieldname": "center_area",
