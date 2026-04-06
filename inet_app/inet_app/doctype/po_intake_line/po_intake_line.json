@@ -19,7 +19,8 @@
     "project_code",
     "activity_code",
     "area",
-    "line_status"
+    "line_status",
+    "dispatch_mode"
   ],
   "fields": [
     {
@@ -126,6 +127,13 @@
       "label": "Line Status",
       "options": "Active\nArchive",
       "in_list_view": 1
+    },
+    {
+      "fieldname": "dispatch_mode",
+      "fieldtype": "Select",
+      "label": "Dispatch Mode",
+      "options": "\nAuto\nManual",
+      "read_only": 1
     }
   ],
   "istable": 1,

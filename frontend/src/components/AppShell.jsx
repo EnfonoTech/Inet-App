@@ -96,10 +96,11 @@ const imNav = [
   { to: "/im-dashboard", label: "My Dashboard", icon: "dashboard" },
   { to: "/im-projects",  label: "My Projects",  icon: "folder" },
   { to: "/im-teams",     label: "My Teams",     icon: "user" },
+  { to: "/im-dispatch",  label: "Dispatches",   icon: "send" },
   { to: "/im-planning",  label: "Planning",     icon: "calendar" },
   { to: "/im-execution", label: "Execution",    icon: "eye" },
-  { to: "/im-reports",     label: "Reports",      icon: "barChart" },
-  { to: "/im-timesheets", label: "Timesheets",   icon: "clock" },
+  { to: "/im-reports",   label: "Reports",      icon: "barChart" },
+  { to: "/im-timesheets", label: "Timesheets",  icon: "clock" },
 ];
 
 const fieldNav = [

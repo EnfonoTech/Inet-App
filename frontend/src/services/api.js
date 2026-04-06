@@ -104,6 +104,7 @@ export const pmApi = {
   confirmPOUpload:      (rows)      => call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(rows) }),
   listPOIntakeLines:    (status)    => call("inet_app.api.command_center.list_po_intake_lines", { status: status || "New" }),
   dispatchPOLines:      (payload)   => call("inet_app.api.command_center.dispatch_po_lines", { payload: JSON.stringify(payload) }),
+  convertDispatchMode:  (payload)   => call("inet_app.api.command_center.convert_dispatch_mode", { payload: JSON.stringify(payload) }),
   createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
   updateExecution:      (payload)   => call("inet_app.api.command_center.update_execution", { payload: JSON.stringify(payload) }),
   generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),

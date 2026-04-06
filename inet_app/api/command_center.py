@@ -37,6 +37,77 @@ def _make_poid(po_no, po_line_no, shipment_number):
     return "-".join(parts)
 
 
+def _try_auto_dispatch(doc_name, po_no, child_rows):
+    """
+    After PO Intake insert, auto-dispatch lines whose project has an IM+team assigned.
+
+    child_rows: list of (child_doc_name, line_dict) tuples
+    Returns count of auto-dispatched lines.
+    """
+    count = 0
+    for child_doc_name, line_dict in child_rows:
+        project_code = line_dict.get("project_code")
+        if not project_code:
+            continue
+
+        # Resolve IM from Project Control Center
+        im_name = frappe.db.get_value(
+            "Project Control Center", project_code, "implementation_manager"
+        )
+        if not im_name:
+            continue
+
+        # Find active INET Team for this IM
+        team_doc = frappe.db.get_value(
+            "INET Team",
+            {"im": im_name, "status": "Active"},
+            ["name", "team_type"],
+            as_dict=True,
+        )
+        if not team_doc:
+            continue
+
+        team_id = team_doc.name
+
+        # Resolve customer
+        customer = frappe.db.get_value(
+            "Project Control Center", project_code, "customer"
+        )
+
+        dispatch = frappe.new_doc("PO Dispatch")
+        dispatch.po_intake = doc_name
+        dispatch.po_no = po_no
+        dispatch.po_line_no = cint(line_dict.get("po_line_no") or 0)
+        dispatch.item_code = line_dict.get("item_code")
+        dispatch.item_description = line_dict.get("item_description")
+        dispatch.qty = flt(line_dict.get("qty", 0))
+        dispatch.rate = flt(line_dict.get("rate", 0))
+        dispatch.line_amount = flt(line_dict.get("line_amount", 0))
+        dispatch.project_code = project_code
+        dispatch.customer = customer
+        dispatch.im = im_name
+        dispatch.team = team_id
+        dispatch.target_month = None
+        dispatch.planning_mode = "Plan"
+        dispatch.dispatch_status = "Dispatched"
+        dispatch.dispatch_mode = "Auto"
+        dispatch.site_code = line_dict.get("site_code")
+        dispatch.site_name = line_dict.get("site_name")
+        dispatch.center_area = line_dict.get("center_area")
+        dispatch.insert(ignore_permissions=True)
+        dispatch.db_set("system_id", dispatch.name, update_modified=False)
+
+        frappe.db.set_value(
+            "PO Intake Line",
+            child_doc_name,
+            {"po_line_status": "Dispatched", "dispatch_mode": "Auto"},
+            update_modified=False,
+        )
+        count += 1
+
+    return count
+
+
 # ---------------------------------------------------------------------------
 # Task 12 — Pipeline Operations
 # ---------------------------------------------------------------------------
@@ -234,33 +305,42 @@ def confirm_po_upload(rows):
         created += 1
         names.append(doc.name)
 
+        # Auto-dispatch lines whose project has a team/IM assigned
+        # Build (child_row_name, line_dict) pairs from the inserted doc
+        child_pairs = []
+        for child_row, src_line in zip(doc.po_lines, lines):
+            child_pairs.append((child_row.name, src_line))
+        auto_count = _try_auto_dispatch(doc.name, po_no, child_pairs)
+        if auto_count:
+            frappe.db.commit()
+
     return {"created": created, "names": names}
 
 
 @frappe.whitelist()
 def list_po_intake_lines(status="New"):
     """
-    Return PO Intake child lines (not parents) that match given po_line_status.
-    Each row includes parent PO Intake fields (po_no, customer).
+    Return PO Intake child lines that match given po_line_status (or all when status='all').
+    Each row is enriched with parent PO Intake fields and, for dispatched lines, dispatch info.
     """
     filters = {}
-    if status:
+    if status and status.lower() != "all":
         filters["po_line_status"] = status
 
     lines = frappe.get_all(
         "PO Intake Line",
         filters=filters,
         fields=[
-            "name", "parent", "po_line_no", "poid", "item_code",
-            "item_description", "qty", "rate", "line_amount",
+            "name", "parent", "po_line_no", "poid", "shipment_number",
+            "item_code", "item_description", "qty", "rate", "line_amount",
             "project_code", "site_code", "site_name", "area",
-            "po_line_status", "activity_code",
+            "po_line_status", "activity_code", "dispatch_mode",
         ],
         order_by="parent desc, idx asc",
         limit_page_length=500,
     )
 
-    # Enrich each line with PO-level info
+    # Enrich each line with PO-level info and dispatch assignment info
     parent_cache = {}
     for line in lines:
         parent_name = line.get("parent")
@@ -272,6 +352,20 @@ def list_po_intake_lines(status="New"):
         line["po_no"] = pdata.get("po_no", "")
         line["customer"] = pdata.get("customer", "")
         line["po_intake"] = parent_name
+
+        if line.get("po_line_status") == "Dispatched":
+            dispatch_data = frappe.db.get_value(
+                "PO Dispatch",
+                {"po_intake": parent_name, "po_line_no": line.get("po_line_no")},
+                ["name", "im", "team", "dispatch_mode", "target_month"],
+                as_dict=True,
+            ) or {}
+            line["dispatch_name"] = dispatch_data.get("name")
+            line["dispatched_im"] = dispatch_data.get("im")
+            line["dispatched_team"] = dispatch_data.get("team")
+            line["dispatch_target_month"] = dispatch_data.get("target_month")
+            if not line.get("dispatch_mode"):
+                line["dispatch_mode"] = dispatch_data.get("dispatch_mode")
 
     return lines
 
@@ -362,6 +456,7 @@ def dispatch_po_lines(payload):
         doc.target_month = target_month
         doc.planning_mode = planning_mode
         doc.dispatch_status = "Dispatched"
+        doc.dispatch_mode = "Manual"
         doc.center_area = center_area
         doc.site_code = site_code
         doc.site_name = site_name
@@ -373,7 +468,7 @@ def dispatch_po_lines(payload):
         if line_child_name:
             frappe.db.set_value(
                 "PO Intake Line", line_child_name,
-                "po_line_status", "Dispatched",
+                {"po_line_status": "Dispatched", "dispatch_mode": "Manual"},
                 update_modified=False,
             )
 
@@ -382,6 +477,71 @@ def dispatch_po_lines(payload):
         system_ids.append(doc.name)
 
     return {"created": created, "system_ids": system_ids}
+
+
+@frappe.whitelist()
+def convert_dispatch_mode(payload):
+    """
+    Convert Auto-dispatched lines to Manual (or vice-versa).
+
+    payload = {
+        "scope": "lines" | "project",
+        "line_names": [...],        # PO Intake Line child row names (for scope=lines)
+        "project_code": "...",      # required when scope=project
+        "new_team": "team_id",      # optional — re-assign team
+        "new_im": "im_name",        # optional — re-assign IM
+        "target_mode": "Manual",    # "Manual" or "Auto" (default "Manual")
+    }
+
+    Returns {"converted": N}
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload)
+
+    scope = payload.get("scope", "lines")
+    project_code = payload.get("project_code")
+    line_names = payload.get("line_names") or []
+    new_team = payload.get("new_team")
+    new_im = payload.get("new_im")
+    target_mode = payload.get("target_mode", "Manual")
+
+    if scope == "project" and project_code:
+        line_names = frappe.get_all(
+            "PO Intake Line",
+            filters={"project_code": project_code, "po_line_status": "Dispatched"},
+            pluck="name",
+        )
+
+    count = 0
+    for line_name in line_names:
+        frappe.db.set_value(
+            "PO Intake Line", line_name, "dispatch_mode", target_mode,
+            update_modified=False,
+        )
+
+        line_data = frappe.db.get_value(
+            "PO Intake Line", line_name, ["parent", "po_line_no"], as_dict=True
+        )
+        if line_data:
+            dispatch_names = frappe.get_all(
+                "PO Dispatch",
+                filters={"po_intake": line_data.parent, "po_line_no": line_data.po_line_no},
+                pluck="name",
+            )
+            for dispatch_name in dispatch_names:
+                update_vals = {"dispatch_mode": target_mode}
+                if new_team:
+                    update_vals["team"] = new_team
+                if new_im:
+                    update_vals["im"] = new_im
+                frappe.db.set_value(
+                    "PO Dispatch", dispatch_name, update_vals, update_modified=False
+                )
+            count += len(dispatch_names)
+
+        frappe.db.commit()
+
+    return {"converted": count}
 
 
 @frappe.whitelist()

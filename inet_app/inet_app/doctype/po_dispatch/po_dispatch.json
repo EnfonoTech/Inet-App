@@ -22,6 +22,7 @@
     "target_month",
     "planning_mode",
     "dispatch_status",
+    "dispatch_mode",
     "section_site",
     "center_area",
     "site_code",
@@ -127,6 +128,15 @@
       "label": "Status",
       "options": "Pending\nDispatched\nPlanned\nCompleted\nCancelled",
       "in_list_view": 1
+    },
+    {
+      "default": "Manual",
+      "fieldname": "dispatch_mode",
+      "fieldtype": "Select",
+      "label": "Dispatch Mode",
+      "options": "Auto\nManual",
+      "in_list_view": 1,
+      "read_only": 1
     },
     {
       "fieldname": "section_site",
