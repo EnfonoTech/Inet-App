@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -15,16 +16,8 @@ export default function IMPlanning() {
     async function load() {
       setLoading(true);
       try {
-        const filters = [["im", "=", imName || ""]];
-        if (statusFilter) filters.push(["plan_status", "=", statusFilter]);
-        const res = await fetch(
-          `/api/resource/Rollout Plan?filters=${encodeURIComponent(JSON.stringify(filters))}` +
-          `&fields=${encodeURIComponent(JSON.stringify(["name", "system_id", "team", "plan_date", "visit_type", "plan_status", "target_amount"]))}` +
-          `&limit_page_length=200&order_by=plan_date+desc`,
-          { credentials: "include" }
-        );
-        const json = await res.json();
-        setPlans(json?.data || []);
+        const res = await pmApi.listIMRolloutPlans(imName, statusFilter || undefined);
+        setPlans(Array.isArray(res) ? res : []);
       } catch {
         setPlans([]);
       }
@@ -44,7 +37,9 @@ export default function IMPlanning() {
         (p.system_id || "").toLowerCase().includes(q) ||
         (p.team || "").toLowerCase().includes(q) ||
         (p.plan_date || "").toLowerCase().includes(q) ||
-        (p.visit_type || "").toLowerCase().includes(q)
+        (p.visit_type || "").toLowerCase().includes(q) ||
+        (p.site_code || "").toLowerCase().includes(q) ||
+        (p.po_no || "").toLowerCase().includes(q)
       );
     }
     return true;
@@ -58,15 +53,15 @@ export default function IMPlanning() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Planning</h1>
-          <div className="page-subtitle">Rollout plans for your teams</div>
+          <div className="page-subtitle">Rollout plans for your teams.</div>
         </div>
+
       </div>
 
-      {/* ── Toolbar ─────────────────────────────────────────── */}
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search Plan ID, System ID, Team, Date…"
+          placeholder="Search Plan ID, System ID, DUID, PO, Team…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -81,8 +76,10 @@ export default function IMPlanning() {
         >
           <option value="">All Statuses</option>
           <option value="Planned">Planned</option>
-          <option value="In Progress">In Progress</option>
+          <option value="Planning with Issue">Planning with Issue</option>
+          <option value="In Execution">In Execution</option>
           <option value="Completed">Completed</option>
+          <option value="Cancelled">Cancelled</option>
         </select>
         <select
           value={visitFilter}
@@ -112,11 +109,11 @@ export default function IMPlanning() {
           ) : filtered.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📅</div>
-              <h3>{hasFilters ? "No results match your filters" : "No rollout plans found"}</h3>
+              <h3>{hasFilters ? "No results match your filters" : "No rollout plans yet"}</h3>
               <p>
                 {hasFilters
                   ? "Try adjusting your search or filter criteria."
-                  : "No plans match the current filter."}
+                  : "No plans found for your current data."}
               </p>
             </div>
           ) : (
@@ -125,11 +122,13 @@ export default function IMPlanning() {
                 <tr>
                   <th>Plan ID</th>
                   <th>System ID</th>
+                  <th>DUID</th>
+                  <th>PO</th>
                   <th>Team</th>
                   <th>Plan Date</th>
-                  <th>Visit Type</th>
+                  <th>Visit</th>
                   <th>Status</th>
-                  <th style={{ textAlign: "right" }}>Target Amount</th>
+                  <th style={{ textAlign: "right" }}>Target (SAR)</th>
                 </tr>
               </thead>
               <tbody>
@@ -137,6 +136,8 @@ export default function IMPlanning() {
                   <tr key={p.name}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.system_id}</td>
+                    <td>{p.site_code || "—"}</td>
+                    <td>{p.po_no || "—"}</td>
                     <td>{p.team}</td>
                     <td>{p.plan_date}</td>
                     <td>{p.visit_type}</td>
@@ -152,8 +153,8 @@ export default function IMPlanning() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={6} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                    {filtered.length}{hasFilters && ` of ${plans.length}`} rows
+                  <td colSpan={8} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                    {filtered.length}{hasFilters && ` of ${plans.length}`} plans
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     {fmt.format(totalAmt)}

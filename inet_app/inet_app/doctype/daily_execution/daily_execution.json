@@ -7,6 +7,7 @@
   "field_order": [
     "system_id",
     "rollout_plan",
+    "im",
     "team",
     "execution_date",
     "execution_status",
@@ -29,6 +30,13 @@
       "fieldtype": "Link",
       "label": "Rollout Plan",
       "options": "Rollout Plan"
+    },
+    {
+      "fieldname": "im",
+      "fieldtype": "Link",
+      "label": "Implementation Manager",
+      "options": "IM Master",
+      "read_only": 1
     },
     {
       "fieldname": "team",
@@ -79,6 +87,13 @@
       "fieldtype": "Select",
       "label": "QC Status",
       "options": "Pending\nPass\nFail"
+    },
+    {
+      "default": "Open",
+      "fieldname": "ciag_status",
+      "fieldtype": "Select",
+      "label": "CIAG Status",
+      "options": "Open\nIn Progress\nSubmitted\nApproved\nRejected\nN/A"
     },
     {
       "default": "0",

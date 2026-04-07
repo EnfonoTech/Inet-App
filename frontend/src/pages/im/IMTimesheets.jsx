@@ -4,6 +4,15 @@ import { useAuth } from "../../context/AuthContext";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
 
+function shortDt(v) {
+  if (!v) return "—";
+  try {
+    return new Date(v).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return String(v);
+  }
+}
+
 export default function IMTimesheets() {
   const { imName } = useAuth();
   const [timesheets, setTimesheets] = useState([]);
@@ -16,7 +25,7 @@ export default function IMTimesheets() {
   async function loadTimesheets() {
     setLoading(true);
     try {
-      const filters = { im: imName };
+      const filters = { im: imName, include_log_bounds: true };
       if (dateFrom) filters.from_date = dateFrom;
       if (dateTo) filters.to_date = dateTo;
       if (statusFilter) filters.status = statusFilter;
@@ -120,6 +129,8 @@ export default function IMTimesheets() {
                   <th>ID</th>
                   <th>Employee</th>
                   <th>Date</th>
+                  <th>Start</th>
+                  <th>End</th>
                   <th style={{ textAlign: "right" }}>Total Hours</th>
                   <th style={{ textAlign: "right" }}>Billable Hours</th>
                   <th>Status</th>
@@ -131,6 +142,8 @@ export default function IMTimesheets() {
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{ts.name}</td>
                     <td>{ts.employee_name || "—"}</td>
                     <td>{ts.start_date || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{shortDt(ts.log_start)}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{shortDt(ts.log_end)}</td>
                     <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>
                       {ts.total_hours != null ? fmt.format(ts.total_hours) : "—"}
                     </td>
@@ -152,7 +165,7 @@ export default function IMTimesheets() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={3} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={5} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     {filtered.length}{hasFilters && ` of ${timesheets.length}`} rows
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>

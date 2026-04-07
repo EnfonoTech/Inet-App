@@ -7,6 +7,7 @@
   "field_order": [
     "customer",
     "item_code",
+    "standard_activity",
     "customer_activity_type",
     "domain",
     "item_description",
@@ -29,6 +30,13 @@
       "label": "Item Code",
       "reqd": 1,
       "in_list_view": 1
+    },
+    {
+      "fieldname": "standard_activity",
+      "fieldtype": "Link",
+      "label": "Standard Activity",
+      "options": "Activity Cost Master",
+      "description": "Maps this item to a standard billable activity (Activity Cost Master)"
     },
     {
       "fieldname": "customer_activity_type",

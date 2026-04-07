@@ -3,6 +3,39 @@ import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+const VISIT_TYPES = ["Work Done", "Re-Visit", "Extra Visit"];
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function Modal({ open, onClose, title, children, width = 460 }) {
+  if (!open) return null;
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 9999,
+        background: "rgba(15,23,42,0.5)", display: "flex",
+        alignItems: "center", justifyContent: "center",
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "#fff", borderRadius: 14, padding: "28px 32px",
+          width, maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>{title}</h3>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 function DispatchModeBadge({ mode }) {
   const isAuto = mode === "Auto";
@@ -35,6 +68,13 @@ export default function IMDispatch() {
   const [error, setError] = useState(null);
   const [modeFilter, setModeFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState(new Set());
+  const [showModal, setShowModal] = useState(false);
+  const [planDate, setPlanDate] = useState(todayDate());
+  const [visitType, setVisitType] = useState("Work Done");
+  const [creating, setCreating] = useState(false);
+  const [successMsg, setSuccessMsg] = useState(null);
+  const [createError, setCreateError] = useState(null);
 
   useEffect(() => {
     load();
@@ -44,8 +84,12 @@ export default function IMDispatch() {
     setLoading(true);
     setError(null);
     try {
-      const filters = [];
-      if (imName) filters.push(["im", "=", imName]);
+      if (!imName) {
+        setRows([]);
+        setLoading(false);
+        return;
+      }
+      const filters = [["im", "=", imName]];
       const res = await pmApi.listPODispatches(filters);
       setRows(Array.isArray(res) ? res : []);
     } catch (err) {
@@ -55,6 +99,8 @@ export default function IMDispatch() {
     }
   }
 
+  const planable = (r) => (r.dispatch_status || "") === "Dispatched";
+
   const filtered = rows.filter((r) => {
     if (modeFilter !== "all" && r.dispatch_mode !== modeFilter) return false;
     if (search) {
@@ -63,21 +109,70 @@ export default function IMDispatch() {
         (r.po_no || "").toLowerCase().includes(q) ||
         (r.project_code || "").toLowerCase().includes(q) ||
         (r.item_code || "").toLowerCase().includes(q) ||
-        (r.site_code || "").toLowerCase().includes(q)
+        (r.site_code || "").toLowerCase().includes(q) ||
+        (r.system_id || "").toLowerCase().includes(q)
       );
     }
     return true;
   });
 
+  const planableRows = filtered.filter(planable);
+
+  function toggleRow(name) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  function toggleAllPlanable() {
+    if (selected.size === planableRows.length && planableRows.length > 0) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(planableRows.map((r) => r.name)));
+    }
+  }
+
+  async function handleCreatePlans() {
+    if (selected.size === 0 || !planDate || !visitType) return;
+    setCreating(true);
+    setCreateError(null);
+    setSuccessMsg(null);
+    try {
+      const dispatches = Array.from(selected);
+      const result = await pmApi.createRolloutPlans({
+        dispatches,
+        plan_date: planDate,
+        visit_type: visitType,
+      });
+      const count = result?.created ?? dispatches.length;
+      setSuccessMsg(`Created ${count} rollout plan${count !== 1 ? "s" : ""}. View them under Planning.`);
+      setSelected(new Set());
+      setShowModal(false);
+      await load();
+    } catch (err) {
+      setCreateError(err.message || "Failed to create plans");
+    } finally {
+      setCreating(false);
+    }
+  }
+
   const autoCount = rows.filter((r) => r.dispatch_mode === "Auto").length;
   const manualCount = rows.filter((r) => r.dispatch_mode === "Manual").length;
+  const dispatchedCount = rows.filter((r) => planable(r)).length;
+
+  const selectedAmt = filtered
+    .filter((r) => selected.has(r.name))
+    .reduce((s, r) => s + (r.line_amount || 0), 0);
 
   return (
     <div>
       <div className="page-header">
         <div>
           <h1 className="page-title">My Dispatches</h1>
-          <div className="page-subtitle">PO lines dispatched to you — Auto & Manual</div>
+          <div className="page-subtitle">Dispatch lines assigned to your IM.</div>
         </div>
         <div className="page-actions">
           <button className="btn-secondary" onClick={load} disabled={loading}>
@@ -86,46 +181,52 @@ export default function IMDispatch() {
         </div>
       </div>
 
-      {/* Summary cards */}
+      {successMsg && (
+        <div className="notice success" style={{ margin: "0 28px 16px" }}>
+          <span>✓</span> {successMsg}
+        </div>
+      )}
+
       {!loading && rows.length > 0 && (
-        <div style={{ display: "flex", gap: 16, margin: "0 28px 20px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, margin: "0 28px 14px", flexWrap: "wrap" }}>
           <div style={{
-            flex: 1, minWidth: 160, padding: "16px 20px", borderRadius: 12,
+            flex: "0 1 180px", minWidth: 140, padding: "10px 12px", borderRadius: 10,
+            background: "linear-gradient(135deg,#f59e0b 0%,#d97706 100%)",
+            color: "#fff", boxShadow: "0 4px 16px rgba(245,158,11,0.25)",
+          }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.9, marginBottom: 3 }}>Ready to plan</div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 800, lineHeight: 1.1 }}>{dispatchedCount}</div>
+            <div style={{ fontSize: "0.62rem", opacity: 0.85, marginTop: 2 }}>Status = Dispatched</div>
+          </div>
+          <div style={{
+            flex: "0 1 180px", minWidth: 140, padding: "10px 12px", borderRadius: 10,
             background: "linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)",
             color: "#fff", boxShadow: "0 4px 16px rgba(99,102,241,0.2)",
           }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.85, marginBottom: 6 }}>Auto Dispatched</div>
-            <div style={{ fontSize: "2rem", fontWeight: 800 }}>{autoCount}</div>
+            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.85, marginBottom: 3 }}>Auto Dispatched</div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 800, lineHeight: 1.1 }}>{autoCount}</div>
           </div>
           <div style={{
-            flex: 1, minWidth: 160, padding: "16px 20px", borderRadius: 12,
+            flex: "0 1 180px", minWidth: 140, padding: "10px 12px", borderRadius: 10,
             background: "linear-gradient(135deg,#0ea5e9 0%,#06b6d4 100%)",
             color: "#fff", boxShadow: "0 4px 16px rgba(14,165,233,0.2)",
           }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.85, marginBottom: 6 }}>Manual Dispatch</div>
-            <div style={{ fontSize: "2rem", fontWeight: 800 }}>{manualCount}</div>
-          </div>
-          <div style={{
-            flex: 1, minWidth: 160, padding: "16px 20px", borderRadius: 12,
-            background: "linear-gradient(135deg,#10b981 0%,#059669 100%)",
-            color: "#fff", boxShadow: "0 4px 16px rgba(16,185,129,0.2)",
-          }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.85, marginBottom: 6 }}>📋 Total Lines</div>
-            <div style={{ fontSize: "2rem", fontWeight: 800 }}>{rows.length}</div>
+            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.85, marginBottom: 3 }}>Manual Dispatch</div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 800, lineHeight: 1.1 }}>{manualCount}</div>
           </div>
         </div>
       )}
 
-      {/* Filter bar */}
       <div className="toolbar">
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {[
-            { key: "all",    label: "All" },
-            { key: "Auto",   label: "Auto Dispatched" },
+            { key: "all", label: "All" },
+            { key: "Auto", label: "Auto" },
             { key: "Manual", label: "Manual" },
           ].map((f) => (
             <button
               key={f.key}
+              type="button"
               onClick={() => setModeFilter(f.key)}
               style={{
                 padding: "6px 16px",
@@ -146,7 +247,7 @@ export default function IMDispatch() {
         <div style={{ flex: 1 }} />
         <input
           type="search"
-          placeholder="Search PO No, Project, Item..."
+          placeholder="Search PO, DUID, System ID, Project…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -154,10 +255,46 @@ export default function IMDispatch() {
             borderRadius: 8,
             border: "1px solid #e2e8f0",
             fontSize: "0.84rem",
-            minWidth: 240,
+            minWidth: 220,
           }}
         />
+        {selected.size > 0 && (
+          <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+            {selected.size} selected · SAR {fmt.format(selectedAmt)}
+          </span>
+        )}
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => { setCreateError(null); setShowModal(true); }}
+          disabled={selected.size === 0}
+        >
+          Create rollout plans ({selected.size})
+        </button>
       </div>
+
+      <Modal open={showModal} onClose={() => !creating && setShowModal(false)} title="Create rollout plans">
+        {createError && <div className="notice error" style={{ marginBottom: 12 }}>{createError}</div>}
+        <p style={{ fontSize: "0.85rem", color: "#64748b", marginTop: 0 }}>
+          {selected.size} dispatch line(s) will move to <strong>Planned</strong> and appear under Planning.
+        </p>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6 }}>Plan date</label>
+          <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0" }} />
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6 }}>Visit type</label>
+          <select value={visitType} onChange={(e) => setVisitType(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            {VISIT_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button type="button" className="btn-secondary" disabled={creating} onClick={() => setShowModal(false)}>Cancel</button>
+          <button type="button" className="btn-primary" disabled={creating} onClick={handleCreatePlans}>
+            {creating ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </Modal>
 
       <div className="page-content">
         {error && (
@@ -174,76 +311,85 @@ export default function IMDispatch() {
           ) : filtered.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📋</div>
-              <h3>No dispatch records found</h3>
+              <h3>{!imName ? "IM account not linked" : "No dispatch records found"}</h3>
               <p>
-                {modeFilter !== "all"
-                  ? `No ${modeFilter} dispatch records found.`
-                  : "No PO lines have been dispatched to you yet."}
+                {!imName
+                  ? "Link your user to IM Master so dispatches can load."
+                  : modeFilter !== "all"
+                    ? `No ${modeFilter} dispatch records match.`
+                    : "No PO lines have been dispatched to you yet."}
               </p>
             </div>
           ) : (
             <table className="data-table">
               <thead>
                 <tr>
+                  <th style={{ width: 40 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all planable"
+                      checked={planableRows.length > 0 && planableRows.every((r) => selected.has(r.name))}
+                      onChange={toggleAllPlanable}
+                    />
+                  </th>
                   <th>System ID</th>
-                  <th>Dispatch Mode</th>
+                  <th>Mode</th>
                   <th>PO No</th>
                   <th>Project</th>
-                  <th>Item Code</th>
-                  <th>Description</th>
+                  <th>Item</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
-                  <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                  <th style={{ textAlign: "right" }}>Amount</th>
                   <th>Team</th>
                   <th>DUID</th>
-                  <th>Target Month</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
-                  <tr
-                    key={row.name}
-                    style={{
-                      background: row.dispatch_mode === "Auto"
-                        ? "rgba(99,102,241,0.04)"
-                        : undefined,
-                    }}
-                  >
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.system_id || row.name}</td>
-                    <td><DispatchModeBadge mode={row.dispatch_mode || "Manual"} /></td>
-                    <td>{row.po_no}</td>
-                    <td>{row.project_code}</td>
-                    <td>{row.item_code}</td>
-                    <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.82rem" }}>
-                      {row.item_description}
-                    </td>
-                    <td style={{ textAlign: "right" }}>{row.qty}</td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
-                    <td>{row.team}</td>
-                    <td>{row.site_code}</td>
-                    <td style={{ fontSize: "0.82rem" }}>
-                      {row.target_month
-                        ? new Date(row.target_month).toLocaleDateString("en", { month: "short", year: "numeric" })
-                        : "—"}
-                    </td>
-                    <td>
-                      <span className={`status-badge ${(row.dispatch_status || "pending").toLowerCase()}`}>
-                        <span className="status-dot" />
-                        {row.dispatch_status || "Pending"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((row) => {
+                  const canPlan = planable(row);
+                  return (
+                    <tr
+                      key={row.name}
+                      style={{
+                        background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
+                        opacity: canPlan ? 1 : 0.85,
+                      }}
+                    >
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(row.name)}
+                          disabled={!canPlan}
+                          onChange={() => toggleRow(row.name)}
+                          title={canPlan ? "" : "Only Dispatched lines can be planned"}
+                        />
+                      </td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.system_id || row.name}</td>
+                      <td><DispatchModeBadge mode={row.dispatch_mode || "Manual"} /></td>
+                      <td>{row.po_no}</td>
+                      <td>{row.project_code}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.item_code}</td>
+                      <td style={{ textAlign: "right" }}>{row.qty}</td>
+                      <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
+                      <td>{row.team}</td>
+                      <td>{row.site_code}</td>
+                      <td>
+                        <span className={`status-badge ${(row.dispatch_status || "pending").toLowerCase()}`}>
+                          <span className="status-dot" />
+                          {row.dispatch_status || "Pending"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length} row{filtered.length !== 1 ? "s" : ""}</strong>
-                    {modeFilter === "all" && (
-                      <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600, fontSize: "0.82rem" }}>
-                        Auto: {autoCount} · Manual: {manualCount}
-                      </span>
-                    )}
+                    <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
+                      Select rows with status <strong>Dispatched</strong> to create rollout plans.
+                    </span>
                   </td>
                 </tr>
               </tfoot>

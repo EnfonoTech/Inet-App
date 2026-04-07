@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -9,21 +10,18 @@ export default function IMExecution() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [reopenFor, setReopenFor] = useState(null);
+  const [issueCategory, setIssueCategory] = useState("");
+  const [planningRoute, setPlanningRoute] = useState("standard");
+  const [reopenBusy, setReopenBusy] = useState(false);
+  const [reopenErr, setReopenErr] = useState(null);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
       try {
-        const filters = [["im", "=", imName || ""]];
-        if (statusFilter) filters.push(["execution_status", "=", statusFilter]);
-        const res = await fetch(
-          `/api/resource/Daily Execution?filters=${encodeURIComponent(JSON.stringify(filters))}` +
-          `&fields=${encodeURIComponent(JSON.stringify(["name", "rollout_plan", "team", "execution_date", "execution_status", "achieved_qty", "gps_location"]))}` +
-          `&limit_page_length=200&order_by=execution_date+desc`,
-          { credentials: "include" }
-        );
-        const json = await res.json();
-        setExecutions(json?.data || []);
+        const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
+        setExecutions(Array.isArray(res) ? res : []);
       } catch {
         setExecutions([]);
       }
@@ -39,27 +37,65 @@ export default function IMExecution() {
       (e.name || "").toLowerCase().includes(q) ||
       (e.rollout_plan || "").toLowerCase().includes(q) ||
       (e.team || "").toLowerCase().includes(q) ||
-      (e.execution_date || "").toLowerCase().includes(q)
+      (e.execution_date || "").toLowerCase().includes(q) ||
+      (e.site_code || "").toLowerCase().includes(q) ||
+      (e.po_no || "").toLowerCase().includes(q)
     );
   });
 
   const hasFilters = statusFilter || search;
   const totalAchieved = filtered.reduce((s, e) => s + (e.achieved_qty || 0), 0);
 
+  async function submitReopen() {
+    if (!reopenFor) return;
+    setReopenBusy(true);
+    setReopenErr(null);
+    try {
+      await pmApi.reopenRolloutForRevisit(reopenFor, issueCategory, planningRoute);
+      setReopenFor(null);
+      setIssueCategory("");
+      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
+      setExecutions(Array.isArray(res) ? res : []);
+    } catch (err) {
+      setReopenErr(err.message || "Failed");
+    } finally {
+      setReopenBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
         <div>
           <h1 className="page-title">Execution Monitor</h1>
-          <div className="page-subtitle">Track your teams' daily execution progress</div>
+          <div className="page-subtitle">Field execution progress with QC and CIAG status.</div>
         </div>
       </div>
 
-      {/* ── Toolbar ─────────────────────────────────────────── */}
+      {reopenFor && (
+        <div style={{ margin: "0 28px 16px", padding: 20, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12 }}>
+          <h4 style={{ margin: "0 0 12px" }}>Return rollout to planning: {reopenFor}</h4>
+          {reopenErr && <div className="notice error" style={{ marginBottom: 10 }}>{reopenErr}</div>}
+          <div className="form-group" style={{ marginBottom: 10 }}>
+            <label>Issue category</label>
+            <input value={issueCategory} onChange={(e) => setIssueCategory(e.target.value)} placeholder="e.g. PAT Rejection, QC Rejection" style={{ width: "100%", maxWidth: 400, padding: 8 }} />
+          </div>
+          <div className="form-group" style={{ marginBottom: 12 }}>
+            <label>Route</label>
+            <select value={planningRoute} onChange={(e) => setPlanningRoute(e.target.value)} style={{ padding: 8 }}>
+              <option value="standard">Planning (standard)</option>
+              <option value="with_issue">Planning with Issue</option>
+            </select>
+          </div>
+          <button className="btn-primary" disabled={reopenBusy} onClick={submitReopen}>{reopenBusy ? "…" : "Confirm"}</button>
+          <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setReopenFor(null)}>Cancel</button>
+        </div>
+      )}
+
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search Execution ID, Plan, Team, Date…"
+          placeholder="Search Execution ID, Plan, DUID, PO, Team…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -77,6 +113,7 @@ export default function IMExecution() {
           <option value="Completed">Completed</option>
           <option value="Hold">Hold</option>
           <option value="Postponed">Postponed</option>
+          <option value="Cancelled">Cancelled</option>
         </select>
         {hasFilters && (
           <button
@@ -100,20 +137,24 @@ export default function IMExecution() {
               <p>
                 {hasFilters
                   ? "Try adjusting your search or filter criteria."
-                  : "No field execution data available."}
+                  : "Executions appear after teams log work against planned rollouts."}
               </p>
             </div>
           ) : (
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Execution ID</th>
+                  <th>Execution</th>
                   <th>Rollout Plan</th>
+                  <th>DUID</th>
+                  <th>PO</th>
                   <th>Team</th>
                   <th>Date</th>
                   <th>Status</th>
-                  <th style={{ textAlign: "right" }}>Achieved Qty</th>
-                  <th>GPS</th>
+                  <th>QC</th>
+                  <th>CIAG</th>
+                  <th style={{ textAlign: "right" }}>Qty</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -121,6 +162,8 @@ export default function IMExecution() {
                   <tr key={e.name}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan}</td>
+                    <td>{e.site_code || "—"}</td>
+                    <td>{e.po_no || "—"}</td>
                     <td>{e.team}</td>
                     <td>{e.execution_date}</td>
                     <td>
@@ -129,16 +172,25 @@ export default function IMExecution() {
                         {e.execution_status}
                       </span>
                     </td>
+                    <td>{e.qc_status || "—"}</td>
+                    <td>{e.ciag_status || "—"}</td>
                     <td style={{ textAlign: "right" }}>{e.achieved_qty || 0}</td>
-                    <td style={{ fontSize: "0.72rem", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {e.gps_location || "-"}
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: "0.72rem", padding: "4px 8px" }}
+                        onClick={() => setReopenFor(e.rollout_plan)}
+                      >
+                        Re-plan
+                      </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={5} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={9} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     {filtered.length}{hasFilters && ` of ${executions.length}`} rows
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>

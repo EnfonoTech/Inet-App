@@ -3,13 +3,11 @@ import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
+const TIMER_KEY = "inet_field_ts_timer";
 
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function nowTime() {
-  return new Date().toISOString().slice(0, 16); // "YYYY-MM-DDTHH:MM"
+function toLocalDatetimeValue(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export default function Timesheet() {
@@ -29,6 +27,42 @@ export default function Timesheet() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [timerStart, setTimerStart] = useState(() => sessionStorage.getItem(TIMER_KEY));
+  const [, forceTick] = useState(0);
+
+  useEffect(() => {
+    if (!timerStart) return;
+    const id = setInterval(() => forceTick((x) => x + 1), 1000);
+    return () => clearInterval(id);
+  }, [timerStart]);
+
+  function elapsedLabel() {
+    if (!timerStart) return "00:00:00";
+    const sec = Math.max(0, Math.floor((Date.now() - new Date(timerStart).getTime()) / 1000));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  function startTimer() {
+    const iso = new Date().toISOString();
+    sessionStorage.setItem(TIMER_KEY, iso);
+    setTimerStart(iso);
+  }
+
+  function stopTimer() {
+    if (!timerStart) return;
+    const start = new Date(timerStart);
+    const end = new Date();
+    sessionStorage.removeItem(TIMER_KEY);
+    setTimerStart(null);
+    setFromTime(toLocalDatetimeValue(start));
+    setToTime(toLocalDatetimeValue(end));
+    const diff = (end - start) / 3600000;
+    if (diff > 0) setHours(diff.toFixed(1));
+    setShowForm(true);
+  }
 
   useEffect(() => {
     loadTimesheets();
@@ -40,7 +74,7 @@ export default function Timesheet() {
   async function loadTimesheets() {
     setLoading(true);
     try {
-      const res = await pmApi.listTimesheets({ team: teamId });
+      const res = await pmApi.listTimesheets({ team: teamId, include_log_bounds: true });
       setTimesheets(res || []);
     } catch {
       setTimesheets([]);
@@ -120,6 +154,35 @@ export default function Timesheet() {
         </div>
       )}
 
+      <div style={{
+        background: "linear-gradient(135deg,#0f172a 0%,#1e293b 100%)",
+        borderRadius: "var(--radius)",
+        padding: "18px 22px",
+        marginBottom: 20,
+        border: "1px solid rgba(99,102,241,0.35)",
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 16,
+      }}>
+        <div>
+          <div style={{ fontSize: "0.72rem", color: "#94a3b8", fontWeight: 600, marginBottom: 4 }}>LIVE TIMER (this device)</div>
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "1.65rem", fontWeight: 700, color: "#7dd3fc", letterSpacing: "0.04em" }}>
+            {elapsedLabel()}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          {!timerStart ? (
+            <button type="button" className="btn-primary" onClick={startTimer}>Start</button>
+          ) : (
+            <button type="button" className="btn-primary" onClick={stopTimer} style={{ background: "#dc2626", borderColor: "#dc2626" }}>Stop &amp; fill entry</button>
+          )}
+        </div>
+        <p style={{ margin: 0, fontSize: "0.78rem", color: "#94a3b8", flex: "1 1 200px" }}>
+          Start when you begin work; Stop opens the form with start/end times filled. Submit to record hours for your employee profile.
+        </p>
+      </div>
+
       {/* New Timesheet Form */}
       {showForm && (
         <div style={{
@@ -198,6 +261,8 @@ export default function Timesheet() {
                 <th>ID</th>
                 <th>Employee</th>
                 <th>Date</th>
+                <th>Start</th>
+                <th>End</th>
                 <th style={{ textAlign: "right" }}>Hours</th>
                 <th>Status</th>
               </tr>
@@ -208,6 +273,12 @@ export default function Timesheet() {
                   <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{ts.name}</td>
                   <td>{ts.employee_name || "\u2014"}</td>
                   <td>{ts.start_date || "\u2014"}</td>
+                  <td style={{ fontSize: 12 }}>
+                    {ts.log_start ? new Date(ts.log_start).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "\u2014"}
+                  </td>
+                  <td style={{ fontSize: 12 }}>
+                    {ts.log_end ? new Date(ts.log_end).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "\u2014"}
+                  </td>
                   <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>
                     {ts.total_hours != null ? fmt.format(ts.total_hours) : "\u2014"}
                   </td>
