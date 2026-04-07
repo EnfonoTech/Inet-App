@@ -1110,13 +1110,18 @@ def get_im_dashboard(im=None):
     im_rec = None
 
     def _find_im_rec(filters):
-        if not frappe.db.table_exists("tabIM Master"):
+        # Use DocType registry check; table_exists() uses a stale cache
+        if not frappe.db.exists("DocType", "IM Master"):
             return None
-        rows = frappe.get_all(
-            "IM Master", filters=filters,
-            fields=["name", "full_name", "email"], limit=1
-        )
-        return rows[0] if rows else None
+        try:
+            rows = frappe.get_all(
+                "IM Master", filters=filters,
+                fields=["name", "full_name", "email"], limit=1,
+                ignore_permissions=True,
+            )
+            return rows[0] if rows else None
+        except Exception:
+            return None
 
     # 1. Passed value is an exact IM Master document name (im_id)
     if im and frappe.db.exists("IM Master", im):

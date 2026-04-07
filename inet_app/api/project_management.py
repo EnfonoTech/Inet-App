@@ -631,20 +631,26 @@ def get_logged_user():
         app_role = "admin"
     elif "INET IM" in user_roles:
         app_role = "im"
-        if frappe.db.table_exists("tabIM Master"):
-            # Try without status filter first to avoid blocking on blank status
-            im_rec = frappe.get_all(
-                "IM Master", filters={"user": user},
-                fields=["name", "full_name"], limit=1
-            )
-            if not im_rec:
-                # match by full_name (handles case where user field not set)
+        try:
+            # ignore_permissions: session-init lookup must not be blocked by
+            # role/user permissions. Use DocType existence check (registry)
+            # instead of table_exists() which uses a stale table cache.
+            if frappe.db.exists("DocType", "IM Master"):
                 im_rec = frappe.get_all(
-                    "IM Master", filters={"full_name": full_name},
-                    fields=["name", "full_name"], limit=1
+                    "IM Master", filters={"user": user},
+                    fields=["name", "full_name"], limit=1,
+                    ignore_permissions=True,
                 )
-            if im_rec:
-                im_name = im_rec[0].name   # always the im_id document name
+                if not im_rec:
+                    im_rec = frappe.get_all(
+                        "IM Master", filters={"full_name": full_name},
+                        fields=["name", "full_name"], limit=1,
+                        ignore_permissions=True,
+                    )
+                if im_rec:
+                    im_name = im_rec[0].name
+        except Exception:
+            pass
         if not im_name:
             im_name = full_name  # last-resort fallback
         im_teams = frappe.get_all(
