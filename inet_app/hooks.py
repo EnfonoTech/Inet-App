@@ -14,7 +14,11 @@ fixtures = [
 	{
 		"dt": "Custom Field",
 		"filters": [["module", "=", "Inet App"]],
-	}
+	},
+	{
+		"dt": "Role",
+		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team"]]],
+	},
 ]
 
 after_migrate = "inet_app.setup.after_migrate"
