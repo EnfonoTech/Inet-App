@@ -647,16 +647,27 @@ def get_logged_user():
             team_id = im_teams[0].team_id
     elif "INET Field Team" in user_roles:
         app_role = "field"
-        first = (full_name or "").split()[0] if full_name else ""
-        if first:
-            ft = frappe.get_all(
-                "INET Team",
-                filters={"team_name": ["like", f"%{first}%"]},
-                fields=["team_id"],
-                limit=1,
-            )
-            if ft:
-                team_id = ft[0].team_id
+        # Primary: exact match by field_user (User link on INET Team)
+        ft = frappe.get_all(
+            "INET Team",
+            filters={"field_user": user, "status": "Active"},
+            fields=["team_id"],
+            limit=1,
+        )
+        if ft:
+            team_id = ft[0].team_id
+        else:
+            # Fallback: match by first name in team_name (legacy behaviour)
+            first = (full_name or "").split()[0] if full_name else ""
+            if first:
+                ft2 = frappe.get_all(
+                    "INET Team",
+                    filters={"team_name": ["like", f"%{first}%"]},
+                    fields=["team_id"],
+                    limit=1,
+                )
+                if ft2:
+                    team_id = ft2[0].team_id
 
     return {
         "user": user,
