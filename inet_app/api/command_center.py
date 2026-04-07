@@ -1095,24 +1095,63 @@ def get_command_dashboard():
 @frappe.whitelist()
 def get_im_dashboard(im=None):
     """
-    Similar to get_command_dashboard but filtered to a single IM.
-    If im is None, auto-detect from the logged-in user's full_name.
-
-    Returns a dashboard dict scoped to that IM.
+    Filtered dashboard for a single IM.
+    Resolves the IM Master record name in multiple ways so mismatched
+    im/full_name values don't silently return empty data.
     """
-    if not im:
-        # Try resolving from IM Master by user account first
-        if frappe.db.table_exists("tabIM Master"):
-            im_rec = frappe.get_all(
-                "IM Master", filters={"user": frappe.session.user, "status": "Active"},
-                fields=["name"], limit=1
-            )
-            if im_rec:
-                im = im_rec[0].name
-        if not im:
-            im = frappe.db.get_value("User", frappe.session.user, "full_name")
-    if not im:
-        frappe.throw("Could not resolve IM. Please pass im parameter.")
+    session_user = frappe.session.user
+    user_full_name = frappe.db.get_value("User", session_user, "full_name") or ""
+
+    # ── Resolve all possible IM identifiers ──────────────────────────────────
+    # im_identifiers collects every value that could appear in INET Team.im
+    # or Project Control Center.implementation_manager (im_id OR full_name)
+    # so we can query with an IN filter and match regardless of how the admin
+    # typed / linked the IM field.
+    im_rec = None
+
+    def _find_im_rec(filters):
+        if not frappe.db.table_exists("tabIM Master"):
+            return None
+        rows = frappe.get_all(
+            "IM Master", filters=filters,
+            fields=["name", "full_name", "email"], limit=1
+        )
+        return rows[0] if rows else None
+
+    # 1. Passed value is an exact IM Master document name (im_id)
+    if im and frappe.db.exists("IM Master", im):
+        im_rec = _find_im_rec({"name": im})
+    # 2. Passed value matches full_name
+    if not im_rec and im:
+        im_rec = _find_im_rec({"full_name": im})
+    # 3. Passed value matches email
+    if not im_rec and im:
+        im_rec = _find_im_rec({"email": im})
+    # 4. Auto-detect from session user link (no status filter – avoid blank-status blocks)
+    if not im_rec:
+        im_rec = _find_im_rec({"user": session_user})
+    # 5. Auto-detect from session user full_name
+    if not im_rec and user_full_name:
+        im_rec = _find_im_rec({"full_name": user_full_name})
+
+    # Build the set of all values that could appear in INET Team.im / PCC.implementation_manager
+    if im_rec:
+        im_identifiers = list({
+            v for v in [im_rec.name, im_rec.full_name, im_rec.email, im, user_full_name]
+            if v
+        })
+        im_resolved = im_rec.name   # canonical im_id for display
+    else:
+        # Absolute last resort — use whatever was passed
+        im_resolved = im or user_full_name or "Unknown"
+        im_identifiers = list({v for v in [im, user_full_name] if v})
+
+    if not im_identifiers:
+        return {"im": None, "teams": [], "projects": [], "kpi": {},
+                "debug": {"error": "Could not resolve IM from session or parameter"}}
+
+    # Use im_resolved as the canonical display name going forward
+    im = im_resolved
 
     today_str = nowdate()
     today = getdate(today_str)
@@ -1120,18 +1159,18 @@ def get_im_dashboard(im=None):
     days_in_month = _days_in_month(today)
     day_of_month = today.day
 
-    # Teams belonging to this IM
+    # Teams belonging to this IM — match any known identifier value
     teams = frappe.get_all(
         "INET Team",
-        filters={"im": im, "status": "Active"},
+        filters={"im": ["in", im_identifiers], "status": "Active"},
         fields=["name", "team_id", "team_name", "team_type", "daily_cost", "status"],
     )
     team_ids = [t.name for t in teams]
 
-    # Projects assigned to this IM (via implementation_manager)
+    # Projects assigned to this IM — match any known identifier value
     projects = frappe.get_all(
         "Project Control Center",
-        filters={"implementation_manager": im},
+        filters={"implementation_manager": ["in", im_identifiers]},
         fields=["name", "project_code", "project_name", "project_status",
                 "completion_percentage", "budget_amount", "customer"],
         order_by="modified desc",
@@ -1143,13 +1182,25 @@ def get_im_dashboard(im=None):
         p["budget"] = p.pop("budget_amount", 0) or 0
         p["status"] = p.pop("project_status", "Active") or "Active"
 
+    debug_info = {
+        "im_resolved": im_resolved,
+        "im_identifiers": im_identifiers,
+        "teams_found": len(team_ids),
+        "projects_found": len(projects),
+    }
+
     if not team_ids:
         return {
-            "im": im,
+            "im": im_resolved,
             "teams": [],
             "projects": projects,
             "kpi": {"team_count": 0, "revenue": 0, "cost": 0, "profit": 0},
-            "message": "No active teams found for this IM.",
+            "message": (
+                f"No active INET Teams found for this IM "
+                f"(searched: {', '.join(im_identifiers)}). "
+                f"In INET Team master set 'Implementation Manager' to one of those values."
+            ),
+            "debug": debug_info,
             "last_updated": frappe.utils.now(),
         }
 
@@ -1215,7 +1266,7 @@ def get_im_dashboard(im=None):
     planned_activities = cint(planned_rows[0].cnt if planned_rows else 0)
 
     return {
-        "im": im,
+        "im": im_resolved,
         "teams": teams,
         "projects": projects,
         "kpi": {
@@ -1230,6 +1281,7 @@ def get_im_dashboard(im=None):
             "team_count": len(teams),
             "planned_activities": planned_activities,
         },
+        "debug": debug_info,
         "last_updated": frappe.utils.now(),
     }
 

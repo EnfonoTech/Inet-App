@@ -631,17 +631,27 @@ def get_logged_user():
         app_role = "admin"
     elif "INET IM" in user_roles:
         app_role = "im"
-        # Resolve IM from IM Master by user account first, then fallback to full_name
-        im_rec = frappe.get_all(
-            "IM Master", filters={"user": user, "status": "Active"},
-            fields=["name", "full_name"], limit=1
-        ) if frappe.db.table_exists("tabIM Master") else []
-        if im_rec:
-            im_name = im_rec[0].name
-        else:
-            im_name = full_name
+        if frappe.db.table_exists("tabIM Master"):
+            # Try without status filter first to avoid blocking on blank status
+            im_rec = frappe.get_all(
+                "IM Master", filters={"user": user},
+                fields=["name", "full_name"], limit=1
+            )
+            if not im_rec:
+                # match by full_name (handles case where user field not set)
+                im_rec = frappe.get_all(
+                    "IM Master", filters={"full_name": full_name},
+                    fields=["name", "full_name"], limit=1
+                )
+            if im_rec:
+                im_name = im_rec[0].name   # always the im_id document name
+        if not im_name:
+            im_name = full_name  # last-resort fallback
         im_teams = frappe.get_all(
-            "INET Team", filters={"im": im_name}, fields=["team_id"], limit=100
+            "INET Team",
+            filters={"im": ["in", [im_name, full_name]]},
+            fields=["team_id"],
+            limit=100,
         )
         if im_teams:
             team_id = im_teams[0].team_id
