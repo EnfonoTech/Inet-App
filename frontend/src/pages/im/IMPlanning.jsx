@@ -7,27 +7,51 @@ export default function IMPlanning() {
   const { imName } = useAuth();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("Planned");
+  const [statusFilter, setStatusFilter] = useState("Planned");
+  const [visitFilter, setVisitFilter] = useState("");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     async function load() {
       setLoading(true);
       try {
         const filters = [["im", "=", imName || ""]];
-        if (filter) filters.push(["plan_status", "=", filter]);
+        if (statusFilter) filters.push(["plan_status", "=", statusFilter]);
         const res = await fetch(
           `/api/resource/Rollout Plan?filters=${encodeURIComponent(JSON.stringify(filters))}` +
-          `&fields=${encodeURIComponent(JSON.stringify(["name","system_id","team","plan_date","visit_type","plan_status","target_amount"]))}` +
+          `&fields=${encodeURIComponent(JSON.stringify(["name", "system_id", "team", "plan_date", "visit_type", "plan_status", "target_amount"]))}` +
           `&limit_page_length=200&order_by=plan_date+desc`,
           { credentials: "include" }
         );
         const json = await res.json();
         setPlans(json?.data || []);
-      } catch { setPlans([]); }
+      } catch {
+        setPlans([]);
+      }
       setLoading(false);
     }
     load();
-  }, [imName, filter]);
+  }, [imName, statusFilter]);
+
+  const visitTypes = [...new Set(plans.map((p) => p.visit_type).filter(Boolean))].sort();
+
+  const filtered = plans.filter((p) => {
+    if (visitFilter && p.visit_type !== visitFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (
+        (p.name || "").toLowerCase().includes(q) ||
+        (p.system_id || "").toLowerCase().includes(q) ||
+        (p.team || "").toLowerCase().includes(q) ||
+        (p.plan_date || "").toLowerCase().includes(q) ||
+        (p.visit_type || "").toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
+  const hasFilters = visitFilter || search;
+  const totalAmt = filtered.reduce((s, p) => s + (p.target_amount || 0), 0);
 
   return (
     <div>
@@ -36,24 +60,64 @@ export default function IMPlanning() {
           <h1 className="page-title">Planning</h1>
           <div className="page-subtitle">Rollout plans for your teams</div>
         </div>
-        <div className="page-actions">
-          <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ minWidth: 140 }}>
-            <option value="">All Statuses</option>
-            <option value="Planned">Planned</option>
-            <option value="In Progress">In Progress</option>
-            <option value="Completed">Completed</option>
-          </select>
-        </div>
       </div>
+
+      {/* ── Toolbar ─────────────────────────────────────────── */}
+      <div className="toolbar">
+        <input
+          type="search"
+          placeholder="Search Plan ID, System ID, Team, Date…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{
+            padding: "7px 14px", borderRadius: 8,
+            border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,
+          }}
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+        >
+          <option value="">All Statuses</option>
+          <option value="Planned">Planned</option>
+          <option value="In Progress">In Progress</option>
+          <option value="Completed">Completed</option>
+        </select>
+        <select
+          value={visitFilter}
+          onChange={(e) => setVisitFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+        >
+          <option value="">All Visit Types</option>
+          {visitTypes.map((vt) => (
+            <option key={vt} value={vt}>{vt}</option>
+          ))}
+        </select>
+        {(hasFilters) && (
+          <button
+            className="btn-secondary"
+            style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setSearch(""); setVisitFilter(""); }}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
       <div className="page-content">
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : plans.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📅</div>
-              <h3>No rollout plans found</h3>
-              <p>No plans match the current filter.</p>
+              <h3>{hasFilters ? "No results match your filters" : "No rollout plans found"}</h3>
+              <p>
+                {hasFilters
+                  ? "Try adjusting your search or filter criteria."
+                  : "No plans match the current filter."}
+              </p>
             </div>
           ) : (
             <table className="data-table">
@@ -69,7 +133,7 @@ export default function IMPlanning() {
                 </tr>
               </thead>
               <tbody>
-                {plans.map((p) => (
+                {filtered.map((p) => (
                   <tr key={p.name}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.system_id}</td>
@@ -77,7 +141,7 @@ export default function IMPlanning() {
                     <td>{p.plan_date}</td>
                     <td>{p.visit_type}</td>
                     <td>
-                      <span className={`status-badge ${(p.plan_status || "").toLowerCase().replace(/\s/g,"-")}`}>
+                      <span className={`status-badge ${(p.plan_status || "").toLowerCase().replace(/\s/g, "-")}`}>
                         <span className="status-dot" />
                         {p.plan_status}
                       </span>
@@ -86,6 +150,16 @@ export default function IMPlanning() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={6} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                    {filtered.length}{hasFilters && ` of ${plans.length}`} rows
+                  </td>
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                    {fmt.format(totalAmt)}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>

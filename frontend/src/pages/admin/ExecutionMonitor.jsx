@@ -3,6 +3,8 @@ import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
+const STATUS_OPTIONS = ["", "Planned", "In Execution", "Completed", "Cancelled"];
+
 function statusBadgeClass(status) {
   if (!status) return "";
   const s = status.toLowerCase().replace(/\s+/g, "-");
@@ -19,6 +21,10 @@ export default function ExecutionMonitor() {
   const [error, setError] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
   const intervalRef = useRef(null);
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [visitFilter, setVisitFilter] = useState("");
 
   async function loadData() {
     setError(null);
@@ -46,6 +52,25 @@ export default function ExecutionMonitor() {
     return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   }
 
+  const visitTypes = [...new Set(rows.map((r) => r.visit_type).filter(Boolean))].sort();
+
+  const filtered = rows.filter((r) => {
+    if (statusFilter && r.plan_status !== statusFilter) return false;
+    if (visitFilter && r.visit_type !== visitFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (
+        (r.name || "").toLowerCase().includes(q) ||
+        (r.team || "").toLowerCase().includes(q) ||
+        (r.plan_date || "").toLowerCase().includes(q) ||
+        (r.visit_type || "").toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
+  const hasFilters = search || statusFilter || visitFilter;
+
   return (
     <div>
       <div className="page-header">
@@ -68,6 +93,49 @@ export default function ExecutionMonitor() {
         </div>
       </div>
 
+      {/* ── Toolbar ─────────────────────────────────────────── */}
+      <div className="toolbar">
+        <input
+          type="search"
+          placeholder="Search System ID, Team, Date…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{
+            padding: "7px 14px", borderRadius: 8,
+            border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240,
+          }}
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+        >
+          <option value="">All Statuses</option>
+          {STATUS_OPTIONS.filter(Boolean).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select
+          value={visitFilter}
+          onChange={(e) => setVisitFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+        >
+          <option value="">All Visit Types</option>
+          {visitTypes.map((vt) => (
+            <option key={vt} value={vt}>{vt}</option>
+          ))}
+        </select>
+        {hasFilters && (
+          <button
+            className="btn-secondary"
+            style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setSearch(""); setStatusFilter(""); setVisitFilter(""); }}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
       <div className="page-content">
         {error && (
           <div className="notice error" style={{ marginBottom: 16 }}>
@@ -80,11 +148,15 @@ export default function ExecutionMonitor() {
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading execution data…
             </div>
-          ) : rows.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📊</div>
-              <h3>No active executions</h3>
-              <p>No plans are currently Planned or In Execution.</p>
+              <h3>{hasFilters ? "No results match your filters" : "No active executions"}</h3>
+              <p>
+                {hasFilters
+                  ? "Try adjusting your search or filter criteria."
+                  : "No plans are currently Planned or In Execution."}
+              </p>
             </div>
           ) : (
             <table className="data-table">
@@ -100,7 +172,7 @@ export default function ExecutionMonitor() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
+                {filtered.map((row) => {
                   const pct = row.target > 0
                     ? Math.round((row.achieved / row.target) * 100)
                     : 0;
@@ -129,6 +201,15 @@ export default function ExecutionMonitor() {
                   );
                 })}
               </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={7} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                    <strong>{filtered.length}</strong>
+                    {hasFilters && ` of ${rows.length}`}
+                    {" "}record{filtered.length !== 1 ? "s" : ""}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>
