@@ -99,9 +99,13 @@ export default function TodaysWork() {
   useEffect(() => {
     async function loadData() {
       setError(null);
+      if (!teamId) {
+        setLoading(false);
+        return;
+      }
       try {
         const result = await pmApi.getFieldTeamDashboard(teamId);
-        const items = result?.plans || result?.today_plans || result || [];
+        const items = result?.plans || result?.today_plans || result?.planned || result || [];
         setPlans(Array.isArray(items) ? items : []);
       } catch (err) {
         setError(err.message || "Failed to load today's work");
@@ -111,19 +115,6 @@ export default function TodaysWork() {
     }
     loadData();
   }, [teamId]);
-
-  if (loading) {
-    return (
-      <div>
-        <div className="page-header">
-          <h1 className="page-title">Today's Work</h1>
-        </div>
-        <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-          Loading your work for today…
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -139,11 +130,13 @@ export default function TodaysWork() {
             })}
           </div>
         </div>
-        <div className="page-actions">
-          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-            {plans.length} item{plans.length !== 1 ? "s" : ""} planned
-          </span>
-        </div>
+        {!loading && plans.length > 0 && (
+          <div className="page-actions">
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+              {plans.length} item{plans.length !== 1 ? "s" : ""} planned
+            </span>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -152,7 +145,17 @@ export default function TodaysWork() {
         </div>
       )}
 
-      {plans.length === 0 ? (
+      {loading ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+          Loading your work for today…
+        </div>
+      ) : !teamId ? (
+        <div className="empty-state" style={{ marginTop: 40 }}>
+          <div className="empty-icon">👤</div>
+          <h3>No team assigned</h3>
+          <p>Your account is not linked to a field team. Please contact your Implementation Manager.</p>
+        </div>
+      ) : plans.length === 0 ? (
         <div className="empty-state" style={{ marginTop: 40 }}>
           <div className="empty-icon">🗓</div>
           <h3>No work planned for today</h3>

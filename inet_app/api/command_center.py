@@ -1234,7 +1234,7 @@ def get_field_team_dashboard(team_id=None):
     today_str = nowdate()
 
     if not team_id:
-        frappe.throw("team_id is required.")
+        return {"team": None, "today": today_str, "planned": [], "last_updated": frappe.utils.now()}
 
     # Rollout Plans for this team today
     plans = frappe.db.sql(

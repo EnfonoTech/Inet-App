@@ -248,7 +248,6 @@ export default function AppShell() {
 
       {/* ── Main Content ────────────────────────────────────── */}
       <main className="content" style={{ marginLeft: sidebarWidth, width: `calc(100% - ${sidebarWidth}px)` }}>
-        <div className="topbar" />
         <Outlet />
       </main>
     </div>

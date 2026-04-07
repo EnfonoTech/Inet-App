@@ -418,31 +418,6 @@ a:hover { color: var(--blue-dark); }
   transition: margin-left var(--transition), width var(--transition);
 }
 
-/* ── Topbar ─────────────────────────────────────────────────── */
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 28px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-white);
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  min-height: 0;
-}
-
-.topbar-route {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-muted);
-  padding: 4px 10px;
-  background: var(--bg-accent);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-}
 
 /* ── Form Inputs ────────────────────────────────────────────── */
 input, select, textarea {
@@ -847,9 +822,6 @@ body.dashboard-fullscreen .content {
   width: 100% !important;
 }
 
-body.dashboard-fullscreen .topbar {
-  display: none;
-}
 
 /* ── Login page ────────────────────────────────────────────── */
 .login-screen {
