@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 export default function IMTeams() {
-  const { imName } = useAuth();
+  const { imName, user } = useAuth();
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -14,21 +15,21 @@ export default function IMTeams() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(
-          `/api/resource/INET Team?filters=${encodeURIComponent(JSON.stringify([["im", "=", imName]]))}` +
-          `&fields=${encodeURIComponent(JSON.stringify(["name", "team_id", "team_name", "team_type", "status", "daily_cost", "area"]))}` +
-          `&limit_page_length=100&order_by=team_id+asc`,
-          { credentials: "include" }
-        );
-        const json = await res.json();
-        setTeams(json?.data || []);
+        const imCandidates = [imName, user?.full_name].filter(Boolean);
+        const filters =
+          imCandidates.length > 1
+            ? { im: ["in", imCandidates] }
+            : { im: imCandidates[0] || "__none__" };
+        const rows = await pmApi.listINETTeams(filters);
+        setTeams(rows || []);
       } catch {
         setTeams([]);
       }
       setLoading(false);
     }
-    if (imName) load();
-  }, [imName]);
+    if (imName || user?.full_name) load();
+    else setLoading(false);
+  }, [imName, user?.full_name]);
 
   const teamTypes = [...new Set(teams.map((t) => t.team_type).filter(Boolean))].sort();
 
