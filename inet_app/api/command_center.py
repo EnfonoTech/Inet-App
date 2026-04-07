@@ -588,7 +588,7 @@ def create_rollout_plans(payload):
         dispatch = frappe.db.get_value(
             "PO Dispatch",
             dispatch_name,
-            ["name", "system_id", "team", "line_amount"],
+            ["name", "system_id", "team", "line_amount", "im"],
             as_dict=True,
         )
         if not dispatch:
@@ -598,6 +598,8 @@ def create_rollout_plans(payload):
         doc.po_dispatch = dispatch_name
         doc.system_id = dispatch.system_id or dispatch_name
         doc.team = dispatch.team
+        if dispatch.im and hasattr(doc, "im"):
+            doc.im = dispatch.im
         doc.plan_date = plan_date
         doc.visit_type = visit_type
         doc.visit_multiplier = visit_multiplier
@@ -630,6 +632,7 @@ def update_execution(payload):
         achieved_amount
         gps_location
         qc_status
+        ciag_status
         revisit_flag
         remarks
 
@@ -659,6 +662,12 @@ def update_execution(payload):
         doc.rollout_plan = rollout_plan
         doc.system_id = rp.system_id if rp else None
         doc.team = rp.team if rp else None
+        pd_name = frappe.db.get_value("Rollout Plan", rollout_plan, "po_dispatch")
+        im_v = None
+        if pd_name:
+            im_v = frappe.db.get_value("PO Dispatch", pd_name, "im")
+        if im_v and hasattr(doc, "im"):
+            doc.im = im_v
 
     # Apply updatable fields
     for field in [
@@ -668,24 +677,31 @@ def update_execution(payload):
         "achieved_amount",
         "gps_location",
         "qc_status",
+        "ciag_status",
         "revisit_flag",
         "remarks",
-        "activity_code",
     ]:
-        if field in payload:
+        if field in payload and hasattr(doc, field):
             setattr(doc, field, payload[field])
 
-    # Auto-fetch activity cost when activity_code is set
-    if payload.get("activity_code"):
-        acm_cost = frappe.db.get_value(
-            "Activity Cost Master", payload["activity_code"], "base_cost_sar"
-        )
-        doc.activity_cost_sar = flt(acm_cost or 0)
+    if payload.get("activity_code") and hasattr(doc, "activity_code"):
+        doc.activity_code = payload["activity_code"]
+        if hasattr(doc, "activity_cost_sar"):
+            acm_cost = frappe.db.get_value(
+                "Activity Cost Master", payload["activity_code"], "base_cost_sar"
+            )
+            doc.activity_cost_sar = flt(acm_cost or 0)
 
     if doc.is_new():
         doc.insert(ignore_permissions=True)
     else:
         doc.save(ignore_permissions=True)
+
+    # PM → IM → execution: first active execution moves rollout to In Execution
+    if doc.rollout_plan and doc.execution_status in ("In Progress", "Completed"):
+        rp_status = frappe.db.get_value("Rollout Plan", doc.rollout_plan, "plan_status")
+        if rp_status == "Planned" and doc.execution_status == "In Progress":
+            frappe.db.set_value("Rollout Plan", doc.rollout_plan, "plan_status", "In Execution")
 
     frappe.db.commit()
     return {"name": doc.name, "status": doc.execution_status}
@@ -1092,25 +1108,16 @@ def get_command_dashboard():
     }
 
 
-@frappe.whitelist()
-def get_im_dashboard(im=None):
+def resolve_im_for_session(im=None):
     """
-    Filtered dashboard for a single IM.
-    Resolves the IM Master record name in multiple ways so mismatched
-    im/full_name values don't silently return empty data.
+    Resolve IM Master document name + all identifier strings usable in PO Dispatch.im
+    and similar Link fields. Shared by IM dashboard, pipeline lists, and overview APIs.
     """
     session_user = frappe.session.user
     user_full_name = frappe.db.get_value("User", session_user, "full_name") or ""
-
-    # ── Resolve all possible IM identifiers ──────────────────────────────────
-    # im_identifiers collects every value that could appear in INET Team.im
-    # or Project Control Center.implementation_manager (im_id OR full_name)
-    # so we can query with an IN filter and match regardless of how the admin
-    # typed / linked the IM field.
     im_rec = None
 
     def _find_im_rec(filters):
-        # Use DocType registry check; table_exists() uses a stale cache
         if not frappe.db.exists("DocType", "IM Master"):
             return None
         try:
@@ -1123,40 +1130,287 @@ def get_im_dashboard(im=None):
         except Exception:
             return None
 
-    # 1. Passed value is an exact IM Master document name (im_id)
     if im and frappe.db.exists("IM Master", im):
         im_rec = _find_im_rec({"name": im})
-    # 2. Passed value matches full_name
     if not im_rec and im:
         im_rec = _find_im_rec({"full_name": im})
-    # 3. Passed value matches email
     if not im_rec and im:
         im_rec = _find_im_rec({"email": im})
-    # 4. Auto-detect from session user link (no status filter – avoid blank-status blocks)
     if not im_rec:
         im_rec = _find_im_rec({"user": session_user})
-    # 5. Auto-detect from session user full_name
     if not im_rec and user_full_name:
         im_rec = _find_im_rec({"full_name": user_full_name})
 
-    # Build the set of all values that could appear in INET Team.im / PCC.implementation_manager
     if im_rec:
         im_identifiers = list({
             v for v in [im_rec.name, im_rec.full_name, im_rec.email, im, user_full_name]
             if v
         })
-        im_resolved = im_rec.name   # canonical im_id for display
+        im_resolved = im_rec.name
     else:
-        # Absolute last resort — use whatever was passed
-        im_resolved = im or user_full_name or "Unknown"
+        im_resolved = im or user_full_name or None
         im_identifiers = list({v for v in [im, user_full_name] if v})
 
     if not im_identifiers:
-        return {"im": None, "teams": [], "projects": [], "kpi": {},
-                "debug": {"error": "Could not resolve IM from session or parameter"}}
+        return None, [], {}
+    return im_resolved, im_identifiers, {"session_user": session_user, "user_full_name": user_full_name}
 
-    # Use im_resolved as the canonical display name going forward
+
+def im_action_counts(im_identifiers):
+    """Counts for IM dashboard action strip (PM→IM→execution workflow)."""
+    if not im_identifiers:
+        return {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0}
+    ph = ", ".join(["%s"] * len(im_identifiers))
+    params = tuple(im_identifiers)
+    pending = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS c FROM `tabPO Dispatch`
+        WHERE im IN ({ph}) AND dispatch_status = 'Dispatched'
+        """,
+        params,
+        as_dict=True,
+    )[0].c
+    qc_open = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS c FROM `tabDaily Execution` de
+        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE pd.im IN ({ph}) AND de.qc_status = 'Fail'
+        AND de.execution_status NOT IN ('Cancelled')
+        """,
+        params,
+        as_dict=True,
+    )[0].c
+    planned_exec = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS c FROM `tabRollout Plan` rp
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE pd.im IN ({ph}) AND rp.plan_status = 'Planned'
+        """,
+        params,
+        as_dict=True,
+    )[0].c
+    return {
+        "pending_plan_dispatches": cint(pending),
+        "qc_fail_needs_action": cint(qc_open),
+        "planned_ready_execution": cint(planned_exec),
+    }
+
+
+@frappe.whitelist()
+def list_im_rollout_plans(im=None, plan_status=None):
+    """Rollout plans for this IM (join PO Dispatch — works before im backfill on Rollout Plan)."""
+    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
+    if not im_identifiers:
+        return []
+    ph = ", ".join(["%s"] * len(im_identifiers))
+    params = list(im_identifiers)
+    status_clause = ""
+    if plan_status:
+        status_clause = " AND rp.plan_status = %s"
+        params.append(plan_status)
+    rows = frappe.db.sql(
+        f"""
+        SELECT rp.name, rp.system_id, rp.po_dispatch, rp.team, rp.plan_date, rp.visit_type,
+               rp.visit_number, rp.visit_multiplier, rp.target_amount, rp.achieved_amount,
+               rp.completion_pct, rp.plan_status,
+               pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code
+        FROM `tabRollout Plan` rp
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE pd.im IN ({ph}){status_clause}
+        ORDER BY rp.plan_date DESC, rp.modified DESC
+        LIMIT 500
+        """,
+        tuple(params),
+        as_dict=True,
+    )
+    return rows or []
+
+
+@frappe.whitelist()
+def list_im_daily_executions(im=None, execution_status=None):
+    """Daily executions for this IM's dispatches."""
+    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
+    if not im_identifiers:
+        return []
+    ph = ", ".join(["%s"] * len(im_identifiers))
+    params = list(im_identifiers)
+    status_clause = ""
+    if execution_status:
+        status_clause = " AND de.execution_status = %s"
+        params.append(execution_status)
+    ciag_sel = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL"
+    rows = frappe.db.sql(
+        f"""
+        SELECT de.name, de.system_id, de.rollout_plan, de.team, de.execution_date,
+               de.execution_status, de.achieved_qty, de.achieved_amount, de.gps_location,
+               de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag,
+               pd.im AS dispatch_im, pd.site_code, pd.po_no
+        FROM `tabDaily Execution` de
+        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE pd.im IN ({ph}){status_clause}
+        ORDER BY de.execution_date DESC, de.modified DESC
+        LIMIT 500
+        """,
+        tuple(params),
+        as_dict=True,
+    )
+    return rows or []
+
+
+@frappe.whitelist()
+def get_duid_overview(duid=None, po_no=None):
+    """
+    DUID-wise (site_code) rollout view: PO line, plans, executions.
+    Optional po_no narrows dispatch rows. Expenses / acceptance: placeholders for Phase 2.
+
+    PM / desk admin only — not for INET IM / field roles.
+    """
+    user = frappe.session.user
+    if not user or user == "Guest":
+        frappe.throw("Not permitted", frappe.PermissionError)
+    roles = set(frappe.get_roles(user))
+    if not (
+        "Administrator" in roles
+        or "System Manager" in roles
+        or "INET Admin" in roles
+    ):
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    duid = (duid or "").strip()
+    po_no = (po_no or "").strip()
+    if not duid and not po_no:
+        frappe.throw("Provide duid (site / DUID) and/or po_no")
+
+    dfilters = {}
+    if duid:
+        dfilters["site_code"] = duid
+    if po_no:
+        dfilters["po_no"] = po_no
+
+    dispatches = frappe.get_all(
+        "PO Dispatch",
+        filters=dfilters,
+        fields=["*"],
+        order_by="modified desc",
+        limit_page_length=50,
+    )
+    dispatch_names = [d.name for d in dispatches]
+    plans = []
+    executions = []
+    if dispatch_names:
+        plans = frappe.get_all(
+            "Rollout Plan",
+            filters={"po_dispatch": ["in", dispatch_names]},
+            fields=["*"],
+            order_by="plan_date desc",
+            limit_page_length=200,
+        )
+        plan_names = [p.name for p in plans]
+        if plan_names:
+            executions = frappe.get_all(
+                "Daily Execution",
+                filters={"rollout_plan": ["in", plan_names]},
+                fields=["*"],
+                order_by="execution_date desc",
+                limit_page_length=200,
+            )
+
+    return {
+        "duid": duid or None,
+        "po_no": po_no or None,
+        "dispatches": dispatches,
+        "rollout_plans": plans,
+        "executions": executions,
+        "additional_activities": [],
+        "expenses": [],
+        "acceptance": [],
+        "notes": "Additional activities, expenses, and acceptance lines can be linked in a later phase.",
+    }
+
+
+@frappe.whitelist()
+def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route="standard"):
+    """
+    Re-visit workflow: move job back to planning. planning_route:
+    'standard' -> plan_status Planned; 'with_issue' -> Planning with Issue.
+    Non-completed executions for this plan are cancelled.
+    """
+    if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
+        frappe.throw("Invalid Rollout Plan")
+
+    route = (planning_route or "standard").lower().replace(" ", "_")
+    if route in ("with_issue", "planning_with_issue", "issue"):
+        new_status = "Planning with Issue"
+    else:
+        new_status = "Planned"
+
+    frappe.db.set_value(
+        "Rollout Plan",
+        rollout_plan,
+        {
+            "plan_status": new_status,
+            "issue_category": (issue_category or "")[:140],
+            "visit_type": "Re-Visit",
+        },
+        update_modified=True,
+    )
+
+    for row in frappe.get_all(
+        "Daily Execution",
+        filters={"rollout_plan": rollout_plan, "execution_status": ["not in", ["Completed", "Cancelled"]]},
+        pluck="name",
+    ):
+        frappe.db.set_value("Daily Execution", row, "execution_status", "Cancelled", update_modified=True)
+
+    frappe.db.commit()
+    return {"ok": True, "rollout_plan": rollout_plan, "plan_status": new_status}
+
+
+@frappe.whitelist()
+def backfill_rollout_and_execution_im():
+    """One-shot: set Rollout Plan.im and Daily Execution.im from PO Dispatch (Administrator)."""
+    frappe.only_for("System Manager")
+    updated_rp = 0
+    updated_de = 0
+    for rp in frappe.get_all("Rollout Plan", filters={"po_dispatch": ["!=", ""]}, fields=["name", "po_dispatch"]):
+        im_v = frappe.db.get_value("PO Dispatch", rp.po_dispatch, "im")
+        if im_v:
+            frappe.db.set_value("Rollout Plan", rp.name, "im", im_v, update_modified=False)
+            updated_rp += 1
+    for de in frappe.get_all("Daily Execution", filters={"rollout_plan": ["!=", ""]}, fields=["name", "rollout_plan"]):
+        pd = frappe.db.get_value("Rollout Plan", de.rollout_plan, "po_dispatch")
+        if not pd:
+            continue
+        im_v = frappe.db.get_value("PO Dispatch", pd, "im")
+        if im_v:
+            frappe.db.set_value("Daily Execution", de.name, "im", im_v, update_modified=False)
+            updated_de += 1
+    frappe.db.commit()
+    return {"rollout_plans_updated": updated_rp, "executions_updated": updated_de}
+
+
+@frappe.whitelist()
+def get_im_dashboard(im=None):
+    """
+    Filtered dashboard for a single IM.
+    Resolves the IM Master record name in multiple ways so mismatched
+    im/full_name values don't silently return empty data.
+    """
+    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
+    if not im_identifiers:
+        return {
+            "im": None,
+            "teams": [],
+            "projects": [],
+            "kpi": {},
+            "action_items": {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0},
+            "debug": {"error": "Could not resolve IM from session or parameter"},
+        }
+
     im = im_resolved
+    action_items = im_action_counts(im_identifiers)
 
     today_str = nowdate()
     today = getdate(today_str)
@@ -1192,6 +1446,7 @@ def get_im_dashboard(im=None):
         "im_identifiers": im_identifiers,
         "teams_found": len(team_ids),
         "projects_found": len(projects),
+        "action_items": action_items,
     }
 
     if not team_ids:
@@ -1200,6 +1455,7 @@ def get_im_dashboard(im=None):
             "teams": [],
             "projects": projects,
             "kpi": {"team_count": 0, "revenue": 0, "cost": 0, "profit": 0},
+            "action_items": action_items,
             "message": (
                 f"No active INET Teams found for this IM "
                 f"(searched: {', '.join(im_identifiers)}). "
@@ -1274,6 +1530,7 @@ def get_im_dashboard(im=None):
         "im": im_resolved,
         "teams": teams,
         "projects": projects,
+        "action_items": action_items,
         "kpi": {
             "monthly_target": monthly_target,
             "target_today": target_today,
@@ -1550,6 +1807,8 @@ def create_timesheet(payload):
 
     # Try to resolve employee from team
     employee = payload.get("employee")
+    if not employee and frappe.db.exists("DocType", "Employee"):
+        employee = frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
     if not employee and team:
         # Look up employee linked to this team (if any)
         emp = frappe.db.get_value("Employee", {"employee_name": ["like", f"%{team}%"]}, "name")
@@ -1601,6 +1860,8 @@ def list_timesheets(filters=None):
     if filters.get("status"):
         db_filters["docstatus"] = 1 if filters["status"] == "Submitted" else 0
 
+    include_bounds = filters.pop("include_log_bounds", None) or filters.pop("include_log_times", None)
+
     timesheets = frappe.get_all(
         "Timesheet",
         filters=db_filters,
@@ -1612,6 +1873,29 @@ def list_timesheets(filters=None):
         order_by="modified desc",
         limit_page_length=200,
     )
+
+    if include_bounds and timesheets and frappe.db.exists("DocType", "Timesheet Detail"):
+        names = [t.name for t in timesheets]
+        try:
+            ph = ", ".join(["%s"] * len(names))
+            bounds = frappe.db.sql(
+                f"""
+                SELECT parent, MIN(from_time) AS log_start, MAX(to_time) AS log_end
+                FROM `tabTimesheet Detail`
+                WHERE parent IN ({ph}) AND parenttype = 'Timesheet'
+                GROUP BY parent
+                """,
+                tuple(names),
+                as_dict=True,
+            )
+            bmap = {b.parent: b for b in (bounds or [])}
+            for ts in timesheets:
+                b = bmap.get(ts.name)
+                if b:
+                    ts["log_start"] = b.log_start
+                    ts["log_end"] = b.log_end
+        except Exception:
+            pass
 
     # Filter by date range if provided
     from_date = filters.get("from_date")
@@ -1633,23 +1917,31 @@ def list_timesheets(filters=None):
     im_filter = filters.get("im")
 
     if team_filter or im_filter:
-        # Get team IDs for the IM
         team_ids = set()
         if im_filter:
+            _im_r, im_ids, _ = resolve_im_for_session(im_filter)
+            lookup = im_ids or [im_filter]
             im_teams = frappe.get_all(
-                "INET Team", filters={"im": im_filter}, fields=["team_id"]
+                "INET Team",
+                filters={"im": ["in", lookup], "status": "Active"},
+                fields=["team_id", "team_name"],
             )
-            team_ids = {t.team_id for t in im_teams}
+            for t in im_teams:
+                if t.get("team_id"):
+                    team_ids.add(t["team_id"])
+                if t.get("team_name"):
+                    team_ids.add(t["team_name"])
         if team_filter:
             team_ids.add(team_filter)
 
+        if im_filter and not team_ids:
+            return []
+
         if team_ids:
-            # For now, check if the employee_name contains team reference
-            # This is a basic filter — can be enhanced with custom fields
             filtered = []
             for ts in timesheets:
                 emp_name = (ts.employee_name or "").lower()
-                if any(tid.lower() in emp_name for tid in team_ids):
+                if any(str(tid).lower() in emp_name for tid in team_ids if tid):
                     filtered.append(ts)
             timesheets = filtered
 

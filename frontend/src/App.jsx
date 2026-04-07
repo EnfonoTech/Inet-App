@@ -27,6 +27,7 @@ import IMExecution from "./pages/im/IMExecution";
 import IMReports from "./pages/im/IMReports";
 import IMTimesheets from "./pages/im/IMTimesheets";
 import IMDispatch from "./pages/im/IMDispatch";
+import OperationsOverview from "./pages/OperationsOverview";
 
 /* -- Field pages ------------------------------------------------ */
 import TodaysWork from "./pages/field/TodaysWork";
@@ -85,6 +86,7 @@ function AppContent() {
             <Route path="/reports" element={<Reports />} />
             <Route path="/timesheets" element={<AdminTimesheets />} />
             <Route path="/masters" element={<Masters />} />
+            <Route path="/overview" element={<OperationsOverview />} />
           </>
         )}
 

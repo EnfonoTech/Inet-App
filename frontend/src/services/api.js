@@ -99,6 +99,24 @@ export const pmApi = {
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
   getCommandDashboard:  ()          => call("inet_app.api.command_center.get_command_dashboard"),
   getIMDashboard:       (im)        => call("inet_app.api.command_center.get_im_dashboard", { im }),
+  listIMRolloutPlans:   (im, planStatus) =>
+    call("inet_app.api.command_center.list_im_rollout_plans", {
+      im: im || "",
+      ...(planStatus ? { plan_status: planStatus } : {}),
+    }),
+  listIMDailyExecutions:(im, execStatus) =>
+    call("inet_app.api.command_center.list_im_daily_executions", {
+      im: im || "",
+      ...(execStatus ? { execution_status: execStatus } : {}),
+    }),
+  getDuidOverview:      (duid, poNo) =>
+    call("inet_app.api.command_center.get_duid_overview", { duid: duid || "", po_no: poNo || "" }),
+  reopenRolloutForRevisit: (rolloutPlan, issueCategory, planningRoute) =>
+    call("inet_app.api.command_center.reopen_rollout_for_revisit", {
+      rollout_plan: rolloutPlan,
+      issue_category: issueCategory || "",
+      planning_route: planningRoute || "standard",
+    }),
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
   uploadPOFile:         (file_url)  => call("inet_app.api.command_center.upload_po_file", { file_url }),
   confirmPOUpload:      (rows)      => call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(rows) }),
