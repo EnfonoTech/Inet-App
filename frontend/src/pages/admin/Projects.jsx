@@ -29,6 +29,7 @@ const INITIAL_FORM = {
   project_name: "",
   customer: "",
   implementation_manager: "",
+  huawei_im: "",
   center_area: "",
   project_domain: "",
   budget_amount: "",
@@ -39,6 +40,8 @@ function CreateProjectModal({ open, onClose, onCreated }) {
   const [form, setForm] = useState({ ...INITIAL_FORM });
   const [customers, setCustomers] = useState([]);
   const [ims, setIms] = useState([]);
+  const [domains, setDomains] = useState([]);
+  const [huaweiIms, setHuaweiIms] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -46,12 +49,10 @@ function CreateProjectModal({ open, onClose, onCreated }) {
     if (!open) return;
     setForm({ ...INITIAL_FORM });
     setError(null);
-    // Load customers
     pmApi.listCustomers({ limit: 200 }).then(res => setCustomers(res || [])).catch(() => {});
-    // Load IMs from IM Master
-    pmApi.listIMMasters({ status: "Active" }).then(res => {
-      setIms(res || []);
-    }).catch(() => {});
+    pmApi.listIMMasters({ status: "Active" }).then(res => setIms(res || [])).catch(() => {});
+    pmApi.listProjectDomains().then(res => setDomains(res || [])).catch(() => {});
+    pmApi.listHuaweiIMs().then(res => setHuaweiIms(res || [])).catch(() => {});
   }, [open]);
 
   if (!open) return null;
@@ -74,6 +75,7 @@ function CreateProjectModal({ open, onClose, onCreated }) {
         project_name: form.project_name.trim(),
         customer: form.customer || undefined,
         implementation_manager: form.implementation_manager || undefined,
+        huawei_im: form.huawei_im || undefined,
         center_area: form.center_area || undefined,
         project_domain: form.project_domain || undefined,
         budget_amount: form.budget_amount ? parseFloat(form.budget_amount) : undefined,
@@ -154,8 +156,24 @@ function CreateProjectModal({ open, onClose, onCreated }) {
               <input style={inputStyle} value={form.center_area} onChange={e => setField("center_area", e.target.value)} placeholder="e.g. Central" />
             </div>
             <div>
-              <label style={labelStyle}>Domain</label>
-              <input style={inputStyle} value={form.project_domain} onChange={e => setField("project_domain", e.target.value)} placeholder="e.g. FLM, RAN" />
+              <label style={labelStyle}>Project Domain</label>
+              <select style={inputStyle} value={form.project_domain} onChange={e => setField("project_domain", e.target.value)}>
+                <option value="">-- Select Domain --</option>
+                {domains.map(d => (
+                  <option key={d.name} value={d.name}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Huawei IM</label>
+              <select style={inputStyle} value={form.huawei_im} onChange={e => setField("huawei_im", e.target.value)}>
+                <option value="">-- Select Huawei IM --</option>
+                {huaweiIms.map(h => (
+                  <option key={h.name} value={h.name}>
+                    {h.full_name}{h.email ? ` (${h.email})` : ""}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label style={labelStyle}>Budget Amount (SAR)</label>
@@ -183,6 +201,11 @@ export default function Projects() {
   const [statusFilter, setStatusFilter] = useState("");
   const [domainFilter, setDomainFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [allDomains, setAllDomains] = useState([]);
+
+  useEffect(() => {
+    pmApi.listProjectDomains().then(res => setAllDomains(res || [])).catch(() => {});
+  }, []);
 
   async function loadProjects() {
     setLoading(true);
@@ -201,9 +224,7 @@ export default function Projects() {
     }
   }
 
-  useEffect(() => { loadProjects(); }, [search, statusFilter, domainFilter]);
-
-  const domains = [...new Set(projects.map(p => p.project_domain).filter(Boolean))].sort();
+  useEffect(() => { loadProjects(); }, [search, statusFilter, domainFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -252,7 +273,7 @@ export default function Projects() {
           }}
         >
           <option value="">All Domains</option>
-          {domains.map(d => <option key={d} value={d}>{d}</option>)}
+          {allDomains.map(d => <option key={d.name} value={d.name}>{d.name}</option>)}
         </select>
       </div>
 

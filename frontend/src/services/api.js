@@ -122,6 +122,8 @@ export const pmApi = {
   listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost"], limit_page_length: 100 }),
   listPODispatches:  (filters) => call("frappe.client.get_list", { doctype: "PO Dispatch", filters: filters || {}, fields: ["*"], order_by: "modified desc", limit_page_length: 100 }),
   listRolloutPlans:  (filters) => call("frappe.client.get_list", { doctype: "Rollout Plan", filters: filters || {}, fields: ["*"], order_by: "plan_date desc", limit_page_length: 100 }),
+  listProjectDomains:(filters) => call("frappe.client.get_list", { doctype: "Project Domain", filters: filters || { status: "Active" }, fields: ["name", "domain_name", "status"], order_by: "domain_name asc", limit_page_length: 100 }),
+  listHuaweiIMs:     (filters) => call("frappe.client.get_list", { doctype: "Huawei IM", filters: filters || { status: "Active" }, fields: ["name", "full_name", "email", "phone"], order_by: "full_name asc", limit_page_length: 100 }),
 
   // ── Role Detection helpers ─────────────────────────────────
   getUserRoles:      (user)    => call("frappe.client.get_list", { doctype: "Has Role", filters: { parent: user, role: "System Manager" }, fields: ["role"], limit_page_length: 1 }),
