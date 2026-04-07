@@ -23,7 +23,7 @@ function DispatchModeBadge({ mode }) {
       color: "#fff",
       boxShadow: isAuto ? "0 1px 4px rgba(99,102,241,0.28)" : "0 1px 4px rgba(14,165,233,0.22)",
     }}>
-      {isAuto ? "⚡ Auto" : "✋ Manual"}
+      {isAuto ? "Auto" : "Manual"}
     </span>
   );
 }
@@ -287,7 +287,7 @@ export default function PODispatch() {
       {activeTab === "Dispatched" && autoRows.length > 0 && (
         <div className="toolbar" style={{ flexWrap: "wrap", gap: 10 }}>
           <span style={{ fontWeight: 600, fontSize: "0.84rem", color: "#6366f1" }}>
-            ⚡ {autoRows.length} Auto-dispatched line{autoRows.length !== 1 ? "s" : ""}
+            {autoRows.length} Auto-dispatched line{autoRows.length !== 1 ? "s" : ""}
           </span>
           <div style={{ flex: 1 }} />
           {uniqueProjects.map((proj) => (
@@ -445,7 +445,7 @@ export default function PODispatch() {
                     <strong>{rows.length} row{rows.length !== 1 ? "s" : ""}</strong>
                     {activeTab === "Dispatched" && autoRows.length > 0 && (
                       <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600, fontSize: "0.82rem" }}>
-                        ⚡ {autoRows.length} Auto · ✋ {rows.length - autoRows.length} Manual
+                        Auto: {autoRows.length} · Manual: {rows.length - autoRows.length}
                       </span>
                     )}
                   </td>

@@ -91,7 +91,7 @@ function StatusBadge({ valid }) {
 
 export default function POUpload() {
   const [step, setStep] = useState(0);
-  const [customer, setCustomer] = useState("Huawei");
+  const [customer, setCustomer] = useState("");
   const [customers, setCustomers] = useState([]);
   const [parseResult, setParseResult] = useState(null); // { valid_rows, error_rows }
   const [parsing, setParsing] = useState(false);
@@ -206,13 +206,8 @@ export default function POUpload() {
                 }}
               >
                 <option value="">-- Choose Customer --</option>
-                <option value="Huawei">Huawei</option>
-                <option value="STC">STC</option>
-                <option value="Mobily">Mobily</option>
-                <option value="Zain">Zain</option>
-                <option value="TLS">TLS</option>
-                {customers.filter(c => !["Huawei","STC","Mobily","Zain","TLS"].includes(c.customer_name)).map(c => (
-                  <option key={c.name} value={c.customer_name}>{c.customer_name}</option>
+                {customers.map(c => (
+                  <option key={c.name} value={c.customer_name || c.name}>{c.customer_name || c.name}</option>
                 ))}
               </select>
               <p style={{ fontSize: "0.78rem", color: "var(--text-muted, #94a3b8)", marginTop: 6, marginBottom: 0 }}>

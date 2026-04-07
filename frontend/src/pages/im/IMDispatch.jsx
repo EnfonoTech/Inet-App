@@ -23,7 +23,7 @@ function DispatchModeBadge({ mode }) {
         ? "0 1px 6px rgba(99,102,241,0.3)"
         : "0 1px 6px rgba(14,165,233,0.25)",
     }}>
-      {isAuto ? "⚡ Auto Dispatched" : "✋ Manual Dispatch"}
+      {isAuto ? "Auto Dispatched" : "Manual Dispatch"}
     </span>
   );
 }
@@ -94,7 +94,7 @@ export default function IMDispatch() {
             background: "linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)",
             color: "#fff", boxShadow: "0 4px 16px rgba(99,102,241,0.2)",
           }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.85, marginBottom: 6 }}>⚡ Auto Dispatched</div>
+            <div style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.85, marginBottom: 6 }}>Auto Dispatched</div>
             <div style={{ fontSize: "2rem", fontWeight: 800 }}>{autoCount}</div>
           </div>
           <div style={{
@@ -102,7 +102,7 @@ export default function IMDispatch() {
             background: "linear-gradient(135deg,#0ea5e9 0%,#06b6d4 100%)",
             color: "#fff", boxShadow: "0 4px 16px rgba(14,165,233,0.2)",
           }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.85, marginBottom: 6 }}>✋ Manual Dispatch</div>
+            <div style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.85, marginBottom: 6 }}>Manual Dispatch</div>
             <div style={{ fontSize: "2rem", fontWeight: 800 }}>{manualCount}</div>
           </div>
           <div style={{
@@ -121,8 +121,8 @@ export default function IMDispatch() {
         <div style={{ display: "flex", gap: 8 }}>
           {[
             { key: "all",    label: "All" },
-            { key: "Auto",   label: "⚡ Auto Dispatched" },
-            { key: "Manual", label: "✋ Manual" },
+            { key: "Auto",   label: "Auto Dispatched" },
+            { key: "Manual", label: "Manual" },
           ].map((f) => (
             <button
               key={f.key}
@@ -241,7 +241,7 @@ export default function IMDispatch() {
                     <strong>{filtered.length} row{filtered.length !== 1 ? "s" : ""}</strong>
                     {modeFilter === "all" && (
                       <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600, fontSize: "0.82rem" }}>
-                        ⚡ {autoCount} Auto · ✋ {manualCount} Manual
+                        Auto: {autoCount} · Manual: {manualCount}
                       </span>
                     )}
                   </td>
