@@ -1124,14 +1124,31 @@ def get_im_dashboard(im=None):
     teams = frappe.get_all(
         "INET Team",
         filters={"im": im, "status": "Active"},
-        fields=["name", "team_id", "team_type", "daily_cost"],
+        fields=["name", "team_id", "team_name", "team_type", "daily_cost", "status"],
     )
     team_ids = [t.name for t in teams]
+
+    # Projects assigned to this IM (via implementation_manager)
+    projects = frappe.get_all(
+        "Project Control Center",
+        filters={"implementation_manager": im},
+        fields=["name", "project_code", "project_name", "project_status",
+                "completion_percentage", "budget_amount", "customer"],
+        order_by="modified desc",
+        limit=50,
+    )
+    # Normalize field names for frontend
+    for p in projects:
+        p["completion_pct"] = p.pop("completion_percentage", 0) or 0
+        p["budget"] = p.pop("budget_amount", 0) or 0
+        p["status"] = p.pop("project_status", "Active") or "Active"
 
     if not team_ids:
         return {
             "im": im,
             "teams": [],
+            "projects": projects,
+            "kpi": {"team_count": 0, "revenue": 0, "cost": 0, "profit": 0},
             "message": "No active teams found for this IM.",
             "last_updated": frappe.utils.now(),
         }
@@ -1200,6 +1217,7 @@ def get_im_dashboard(im=None):
     return {
         "im": im,
         "teams": teams,
+        "projects": projects,
         "kpi": {
             "monthly_target": monthly_target,
             "target_today": target_today,
@@ -1209,6 +1227,7 @@ def get_im_dashboard(im=None):
             "gap_today": gap_today,
             "active_teams_today": active_today,
             "total_teams": len(teams),
+            "team_count": len(teams),
             "planned_activities": planned_activities,
         },
         "last_updated": frappe.utils.now(),

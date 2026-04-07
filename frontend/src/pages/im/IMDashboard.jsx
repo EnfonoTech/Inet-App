@@ -69,11 +69,23 @@ export default function IMDashboard() {
   }
 
   useEffect(() => {
-    loadData();
+    if (imName) loadData();
+    else setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imName]);
 
   if (loading) return <LoadingState />;
+
+  if (!imName) {
+    return (
+      <div className="dashboard">
+        <div className="notice error" style={{ margin: "24px 28px" }}>
+          <span>⚠</span> Your user account is not linked to an IM Master record.
+          Go to <strong>Frappe Desk → INET App → IM Master</strong>, open your record and set <strong>User Account</strong> to your login email.
+        </div>
+      </div>
+    );
+  }
 
   if (error) {
     return (
@@ -85,7 +97,7 @@ export default function IMDashboard() {
     );
   }
 
-  const kpis = data?.kpis || {};
+  const kpis = data?.kpi || data?.kpis || {};
   const teams = data?.teams || [];
   const projects = data?.projects || [];
 

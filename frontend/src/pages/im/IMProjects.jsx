@@ -13,7 +13,7 @@ export default function IMProjects() {
       try {
         const res = await fetch(
           `/api/resource/Project Control Center?filters=${encodeURIComponent(JSON.stringify([["implementation_manager","=",imName]]))}` +
-          `&fields=${encodeURIComponent(JSON.stringify(["name","project_code","project_name","customer","project_status","domain","completion_pct","total_revenue"]))}` +
+          `&fields=${encodeURIComponent(JSON.stringify(["name","project_code","project_name","customer","project_status","project_domain","completion_percentage","budget_amount"]))}` +
           `&limit_page_length=100&order_by=modified+desc`,
           { credentials: "include" }
         );
@@ -55,7 +55,7 @@ export default function IMProjects() {
                   <th>Domain</th>
                   <th>Status</th>
                   <th style={{ textAlign: "right" }}>Completion</th>
-                  <th style={{ textAlign: "right" }}>Revenue</th>
+                  <th style={{ textAlign: "right" }}>Budget</th>
                 </tr>
               </thead>
               <tbody>
@@ -64,15 +64,15 @@ export default function IMProjects() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{p.project_code}</td>
                     <td>{p.project_name}</td>
                     <td>{p.customer}</td>
-                    <td>{p.domain}</td>
+                    <td>{p.project_domain}</td>
                     <td>
                       <span className={`status-badge ${(p.project_status || "").toLowerCase().replace(/\s/g,"-")}`}>
                         <span className="status-dot" />
                         {p.project_status || "Active"}
                       </span>
                     </td>
-                    <td style={{ textAlign: "right" }}>{p.completion_pct ?? 0}%</td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(p.total_revenue || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{p.completion_percentage ?? 0}%</td>
+                    <td style={{ textAlign: "right" }}>{fmt.format(p.budget_amount || 0)}</td>
                   </tr>
                 ))}
               </tbody>
