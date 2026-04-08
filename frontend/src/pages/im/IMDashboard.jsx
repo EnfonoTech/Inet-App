@@ -2,41 +2,50 @@ import { useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import KPICard from "../../components/KPICard";
-import MiniTable from "../../components/MiniTable";
+import { BarChart, DonutChart } from "../../components/Charts";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-const teamCols = [
-  { label: "Team ID",   key: "team_id" },
-  { label: "Team Name", key: "team_name" },
-  { label: "Type",      key: "team_type" },
-  { label: "Status",    key: "status" },
-  {
-    label: "Daily Cost",
-    key: "daily_cost",
-    align: "right",
-    render: (v) => fmt.format(v || 0),
-  },
-];
+function statusTone(status) {
+  const s = String(status || "").toLowerCase();
+  if (s.includes("risk")) return "red";
+  if (s.includes("hold")) return "amber";
+  if (s.includes("active")) return "green";
+  return "blue";
+}
 
-const projectCols = [
-  { label: "Code",   key: "project_code" },
-  { label: "Name",   key: "project_name" },
-  { label: "Status", key: "status" },
-  {
-    label: "Completion %",
-    key: "completion_pct",
-    align: "right",
-    colorFn: (v) => v >= 80 ? "text-green" : v >= 40 ? "text-amber" : "text-red",
-    render: (v) => `${v ?? 0}%`,
-  },
-  {
-    label: "Budget",
-    key: "budget",
-    align: "right",
-    render: (v) => fmt.format(v || 0),
-  },
-];
+function StatusBadge({ status }) {
+  const tone = statusTone(status);
+  const styles = {
+    red:   { bg: "#fef2f2", fg: "#991b1b", bd: "#fecaca" },
+    amber: { bg: "#fffbeb", fg: "#92400e", bd: "#fde68a" },
+    green: { bg: "#ecfdf5", fg: "#065f46", bd: "#a7f3d0" },
+    blue:  { bg: "#eff6ff", fg: "#1e40af", bd: "#bfdbfe" },
+  }[tone];
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 10px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 800,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+        background: styles.bg,
+        color: styles.fg,
+        border: `1px solid ${styles.bd}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: styles.fg, opacity: 0.7 }} />
+      {status || "—"}
+    </span>
+  );
+}
 
 function SetupGuide({ debug, imName }) {
   const resolved    = debug?.im_resolved || imName || "—";
@@ -162,12 +171,39 @@ export default function IMDashboard() {
 
   const kpis     = data?.kpi || data?.kpis || {};
   const teams    = data?.teams    || [];
-  const projects = data?.projects || [];
   const debug    = data?.debug    || null;
   const message  = data?.message  || null;
+  const action   = data?.action_items || {};
 
   // Show setup guide when there is no data at all
   const isEmpty = teams.length === 0 && projects.length === 0;
+
+  const monthPct = (() => {
+    const target = kpis.monthly_target || 0;
+    const rev = kpis.revenue || 0;
+    if (!target) return 0;
+    return Math.round(Math.min(100, Math.max(0, (rev / target) * 100)));
+  })();
+
+  const todayPct = (() => {
+    const target = kpis.target_today || 0;
+    const rev = kpis.revenue || 0;
+    if (!target) return 0;
+    return Math.round(Math.min(100, Math.max(0, (rev / target) * 100)));
+  })();
+
+  const financeBars = [
+    { label: "Target", value: Math.round(kpis.monthly_target || 0), color: "" },
+    { label: "Revenue", value: Math.round(kpis.revenue || 0), color: "green" },
+    { label: "Cost", value: Math.round(kpis.cost || 0), color: "amber" },
+    { label: "Profit", value: Math.round(kpis.profit || 0), color: (kpis.profit || 0) >= 0 ? "green" : "red" },
+  ];
+
+  const actionBars = [
+    { label: "Pending", value: action.pending_plan_dispatches || 0, color: "amber" },
+    { label: "QC Fail", value: action.qc_fail_needs_action || 0, color: (action.qc_fail_needs_action || 0) > 0 ? "red" : "green" },
+    { label: "Ready", value: action.planned_ready_execution || 0, color: "blue" },
+  ];
 
   return (
     <div className="dashboard">
@@ -192,40 +228,63 @@ export default function IMDashboard() {
       {isEmpty && <SetupGuide debug={debug} imName={imName} />}
 
       {/* ── KPI Row ─────────────────────────────────────────── */}
-      <div className="section-label">Performance Overview</div>
-      <div className="kpi-row" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-        <KPICard label="Revenue"    value={fmt.format(kpis.revenue || 0)} colorClass="text-green" />
-        <KPICard label="Cost"       value={fmt.format(kpis.cost || 0)} />
-        <KPICard label="Profit"     value={fmt.format(kpis.profit || 0)}
-          colorClass={(kpis.profit || 0) >= 0 ? "text-green" : "text-red"} />
-        <KPICard label="Teams"      value={kpis.team_count || teams.length || 0} />
+      <div className="section-label">INET Teams Performance</div>
+      <div className="kpi-row kpi-row-inet">
+        <KPICard label="Monthly Target" value={kpis.monthly_target || 0} />
+        <KPICard label="Target Today" value={kpis.target_today || 0} />
+        <KPICard label="Achieved" value={kpis.revenue || 0} colorClass="text-green" />
+        <KPICard label="Gap Today" value={kpis.gap_today || 0} colorClass={(kpis.gap_today || 0) <= 0 ? "text-green" : "text-red"} />
+        <KPICard label="Active Teams" value={kpis.active_teams_today || 0} colorClass="text-green" />
+        <KPICard label="Planned Activities" value={kpis.planned_activities || 0} />
       </div>
 
-      {/* ── Bottom Grid: 2 Panels ─────────────────────────── */}
-      <div className="bottom-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-        {/* Panel 1: My Teams */}
+      {/* ── Action strip (PM-like) ─────────────────────────── */}
+      <div className="section-label">Action Items</div>
+      <div className="kpi-row kpi-row-top" style={{ marginBottom: 10 }}>
+        <KPICard label="Pending Dispatches" value={action.pending_plan_dispatches || 0} colorClass={(action.pending_plan_dispatches || 0) > 0 ? "text-amber" : ""} />
+        <KPICard label="QC Fail Needs Action" value={action.qc_fail_needs_action || 0} colorClass={(action.qc_fail_needs_action || 0) > 0 ? "text-red" : "text-green"} />
+        <KPICard label="Ready to Execute" value={action.planned_ready_execution || 0} />
+      </div>
+
+      {/* ── Charts ─────────────────────────────────────────── */}
+      <div className="section-label">Charts</div>
+      <div className="bottom-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         <div className="panel">
           <div className="panel-header">
-            <h3>My Teams</h3>
-            <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-              {teams.length} teams
-            </span>
+            <h3>Month completion</h3>
           </div>
-          <div className="panel-body">
-            <MiniTable columns={teamCols} rows={teams} emptyText="No teams assigned — see setup guide above" />
+          <div className="panel-body" style={{ display: "flex", justifyContent: "center", padding: 18 }}>
+            <DonutChart value={monthPct} label="This month" />
           </div>
         </div>
-
-        {/* Panel 2: My Projects */}
         <div className="panel">
           <div className="panel-header">
-            <h3>My Projects</h3>
+            <h3>Today completion</h3>
+          </div>
+          <div className="panel-body" style={{ display: "flex", justifyContent: "center", padding: 18 }}>
+            <DonutChart value={todayPct} label="Today" />
+          </div>
+        </div>
+        <div className="panel">
+          <div className="panel-header">
+            <h3>Action items</h3>
+          </div>
+          <div className="panel-body">
+            <BarChart bars={actionBars} />
+          </div>
+        </div>
+      </div>
+
+      <div className="bottom-grid" style={{ gridTemplateColumns: "1fr" }}>
+        <div className="panel">
+          <div className="panel-header">
+            <h3>Financial snapshot</h3>
             <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-              {projects.length} projects
+              Updated {data?.last_updated ? String(data.last_updated) : ""}
             </span>
           </div>
           <div className="panel-body">
-            <MiniTable columns={projectCols} rows={projects} emptyText="No projects assigned — see setup guide above" />
+            <BarChart bars={financeBars} />
           </div>
         </div>
       </div>

@@ -2,9 +2,10 @@
  * MiniTable — compact table for dashboard panels.
  *
  * Props:
- *   columns   — array of { label, key, align?, colorFn? }
+ *   columns   — array of { label, key, align?, colorFn?, render? }
  *                align: "right" | "left" (default "left")
  *                colorFn: (value, row) => className string or ""
+ *                render: (value, row) => ReactNode
  *   rows      — array of row objects
  *   emptyText — string shown when rows is empty
  */
@@ -52,7 +53,7 @@ export default function MiniTable({ columns = [], rows = [], emptyText = "No dat
                   className={`mono ${color}`.trim()}
                   style={{ textAlign: col.align || "left" }}
                 >
-                  {cell(val)}
+                  {col.render ? col.render(val, row) : cell(val)}
                 </td>
               );
             })}

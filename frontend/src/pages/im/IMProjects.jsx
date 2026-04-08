@@ -3,11 +3,30 @@ import { useAuth } from "../../context/AuthContext";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
+function statusStyle(status) {
+  const s = String(status || "").toLowerCase();
+  if (s.includes("risk")) {
+    return { bg: "#fef2f2", fg: "#991b1b", bd: "#fecaca" };
+  }
+  if (s.includes("hold")) {
+    return { bg: "#fffbeb", fg: "#92400e", bd: "#fde68a" };
+  }
+  if (s.includes("active")) {
+    return { bg: "#ecfdf5", fg: "#065f46", bd: "#a7f3d0" };
+  }
+  if (s.includes("complete")) {
+    return { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" };
+  }
+  return { bg: "#f8fafc", fg: "#334155", bd: "#cbd5e1" };
+}
+
 export default function IMProjects() {
   const { imName } = useAuth();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [domainFilter, setDomainFilter] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -36,6 +55,8 @@ export default function IMProjects() {
   }, [imName]);
 
   const filtered = projects.filter((p) => {
+    if (statusFilter && (p.project_status || "") !== statusFilter) return false;
+    if (domainFilter && (p.project_domain || "") !== domainFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -44,6 +65,10 @@ export default function IMProjects() {
       (p.customer     || "").toLowerCase().includes(q)
     );
   });
+
+  const statuses = [...new Set(projects.map((p) => p.project_status).filter(Boolean))].sort();
+  const domains = [...new Set(projects.map((p) => p.project_domain).filter(Boolean))].sort();
+  const hasFilters = search || statusFilter || domainFilter;
 
   return (
     <div>
@@ -73,9 +98,34 @@ export default function IMProjects() {
             border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280,
           }}
         />
-        {search && (
-          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => setSearch("")}>Clear</button>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+        >
+          <option value="">All Status</option>
+          {statuses.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select
+          value={domainFilter}
+          onChange={(e) => setDomainFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+        >
+          <option value="">All Domains</option>
+          {domains.map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+        {hasFilters && (
+          <button
+            className="btn-secondary"
+            style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setSearch(""); setStatusFilter(""); setDomainFilter(""); }}
+          >
+            Clear
+          </button>
         )}
         <div style={{ flex: 1 }} />
         {!loading && projects.length === 0 && imName && (
@@ -126,8 +176,31 @@ export default function IMProjects() {
                     <td>{p.customer}</td>
                     <td>{p.project_domain}</td>
                     <td>
-                      <span className={`status-badge ${(p.project_status || "").toLowerCase().replace(/\s/g, "-")}`}>
-                        <span className="status-dot" />
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "3px 10px",
+                          borderRadius: 999,
+                          fontSize: 11,
+                          fontWeight: 800,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.04em",
+                          background: statusStyle(p.project_status).bg,
+                          color: statusStyle(p.project_status).fg,
+                          border: `1px solid ${statusStyle(p.project_status).bd}`,
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: 999,
+                            background: statusStyle(p.project_status).fg,
+                            opacity: 0.75,
+                          }}
+                        />
                         {p.project_status || "Active"}
                       </span>
                     </td>
