@@ -50,6 +50,41 @@ const fieldStyle = {
   boxSizing: "border-box",
 };
 const labelStyle = { display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 5, color: "#475569" };
+function DetailItem({ label, value }) {
+  const txt = String(value || "");
+  const isStatus = /status/i.test(label) || /mode/i.test(label);
+  const tone = txt.toLowerCase().includes("planned") || txt.toLowerCase().includes("auto")
+    ? { bg: "#eff6ff", fg: "#1d4ed8" }
+    : txt.toLowerCase().includes("dispatch")
+      ? { bg: "#ecfdf5", fg: "#047857" }
+      : txt.toLowerCase().includes("cancel")
+        ? { bg: "#fef2f2", fg: "#b91c1c" }
+        : { bg: "#fffbeb", fg: "#b45309" };
+  return (
+    <div style={{ padding: "8px 10px" }}>
+      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>{label}</div>
+      {isStatus ? (
+        <span style={{ display: "inline-block", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 700, background: tone.bg, color: tone.fg }}>
+          {value || "—"}
+        </span>
+      ) : (
+        <div style={{ fontSize: 13, color: "#0f172a", fontWeight: 500 }}>{value || "—"}</div>
+      )}
+    </div>
+  );
+}
+function Pill({ label, value, tone = "blue" }) {
+  const palette = {
+    blue: { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
+    green: { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" },
+    amber: { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" },
+  }[tone];
+  return (
+    <div style={{ border: `1px solid ${palette.bd}`, background: palette.bg, color: palette.fg, borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+      {label}: {value || "—"}
+    </div>
+  );
+}
 
 export default function RolloutPlanning() {
   const [rows, setRows] = useState([]);
@@ -64,6 +99,7 @@ export default function RolloutPlanning() {
   const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
   const [createError, setCreateError] = useState(null);
+  const [detailRow, setDetailRow] = useState(null);
 
   async function loadData() {
     setLoading(true);
@@ -158,7 +194,7 @@ export default function RolloutPlanning() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search System ID, PO No, Item, Project, Team, DUID…"
+          placeholder="Search POID, Item, Project, Team, DUID…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -239,8 +275,7 @@ export default function RolloutPlanning() {
                       onChange={toggleAll}
                     />
                   </th>
-                  <th>System ID</th>
-                  <th>PO No</th>
+                  <th>POID</th>
                   <th>Item Code</th>
                   <th>Project</th>
                   <th>DUID</th>
@@ -248,6 +283,7 @@ export default function RolloutPlanning() {
                   <th>IM</th>
                   <th>Target Month</th>
                   <th style={{ textAlign: "right" }}>Line Amount</th>
+                  <th>Open</th>
                 </tr>
               </thead>
               <tbody>
@@ -266,7 +302,6 @@ export default function RolloutPlanning() {
                       />
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
-                    <td>{row.po_no}</td>
                     <td>{row.item_code}</td>
                     <td>{row.project_code}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
@@ -278,12 +313,22 @@ export default function RolloutPlanning() {
                         : "—"}
                     </td>
                     <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: "0.72rem", padding: "4px 10px" }}
+                        onClick={() => setDetailRow(row)}
+                      >
+                        View
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={9} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={8} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length}</strong>
                     {search && ` of ${rows.length}`}
                     {" "}row{filtered.length !== 1 ? "s" : ""}
@@ -296,6 +341,7 @@ export default function RolloutPlanning() {
                   <td style={{ textAlign: "right", padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700 }}>
                     {fmt.format(totalAmt)}
                   </td>
+                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                 </tr>
               </tfoot>
             </table>
@@ -361,6 +407,41 @@ export default function RolloutPlanning() {
             {creating ? "Creating…" : `Create ${selected.size} Plan${selected.size !== 1 ? "s" : ""}`}
           </button>
         </div>
+      </Modal>
+
+      <Modal
+        open={!!detailRow}
+        onClose={() => setDetailRow(null)}
+        title={`PO Dispatch Details${detailRow?.name ? ` - ${detailRow.name}` : ""}`}
+        width={720}
+      >
+        {detailRow && (
+          <div style={{ maxHeight: "65vh", overflow: "auto", borderRadius: 8, background: "#f8fafc", padding: 12 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <Pill label="POID" value={detailRow.name} tone="blue" />
+              <Pill label="Project" value={detailRow.project_code} tone="amber" />
+              <Pill label="Team" value={detailRow.team} tone="green" />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
+              <DetailItem label="POID" value={detailRow.name} />
+              <DetailItem label="PO No" value={detailRow.po_no} />
+              <DetailItem label="Item Code" value={detailRow.item_code} />
+              <DetailItem label="Description" value={detailRow.item_description} />
+              <DetailItem label="Project" value={detailRow.project_code} />
+              <DetailItem label="DUID" value={detailRow.site_code} />
+              <DetailItem label="Site Name" value={detailRow.site_name} />
+              <DetailItem label="Team" value={detailRow.team} />
+              <DetailItem label="IM" value={detailRow.im} />
+              <DetailItem label="Dispatch Status" value={detailRow.dispatch_status} />
+              <DetailItem label="Planning Mode" value={detailRow.planning_mode} />
+              <DetailItem label="Dispatch Mode" value={detailRow.dispatch_mode} />
+              <DetailItem label="Qty" value={fmt.format(detailRow.qty || 0)} />
+              <DetailItem label="Rate (SAR)" value={fmt.format(detailRow.rate || 0)} />
+              <DetailItem label="Line Amount (SAR)" value={fmt.format(detailRow.line_amount || 0)} />
+              <DetailItem label="Target Month" value={detailRow.target_month} />
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

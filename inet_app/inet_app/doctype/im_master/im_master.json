@@ -1,115 +1,139 @@
 {
-  "actions": [],
-  "autoname": "field:im_id",
-  "creation": "2026-04-05 12:00:00.000000",
-  "doctype": "DocType",
-  "engine": "InnoDB",
-  "field_order": [
-    "im_id",
-    "full_name",
-    "email",
-    "phone",
-    "column_break_1",
-    "employee",
-    "user",
-    "status",
-    "section_break_cost",
-    "monthly_cost_sar",
-    "daily_cost_sar"
-  ],
-  "fields": [
-    {
-      "fieldname": "im_id",
-      "fieldtype": "Data",
-      "label": "IM ID",
-      "reqd": 1,
-      "unique": 1,
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "full_name",
-      "fieldtype": "Data",
-      "label": "Full Name",
-      "reqd": 1,
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "email",
-      "fieldtype": "Data",
-      "label": "Email",
-      "options": "Email",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "phone",
-      "fieldtype": "Data",
-      "label": "Phone"
-    },
-    {
-      "fieldname": "column_break_1",
-      "fieldtype": "Column Break"
-    },
-    {
-      "fieldname": "employee",
-      "fieldtype": "Link",
-      "label": "Employee",
-      "options": "Employee"
-    },
-    {
-      "fieldname": "user",
-      "fieldtype": "Link",
-      "label": "User Account",
-      "options": "User"
-    },
-    {
-      "default": "Active",
-      "fieldname": "status",
-      "fieldtype": "Select",
-      "label": "Status",
-      "options": "Active\nInactive",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "section_break_cost",
-      "fieldtype": "Section Break",
-      "label": "Cost Rates"
-    },
-    {
-      "fieldname": "monthly_cost_sar",
-      "fieldtype": "Currency",
-      "label": "Monthly Cost (SAR)",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "daily_cost_sar",
-      "fieldtype": "Currency",
-      "label": "Daily Cost (SAR)"
-    }
-  ],
-  "index_web_pages_for_search": 0,
-  "istable": 0,
-  "links": [],
-  "modified": "2026-04-05 12:00:00.000000",
-  "modified_by": "Administrator",
-  "module": "Inet App",
-  "name": "IM Master",
-  "naming_rule": "By fieldname",
-  "owner": "Administrator",
-  "permissions": [
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "INET Admin", "share": 1, "write": 1
-    },
-    {
-      "read": 1, "write": 1, "report": 1, "role": "INET IM"
-    }
-  ],
-  "sort_field": "modified",
-  "sort_order": "DESC",
-  "title_field": "full_name",
-  "track_changes": 1
+ "actions": [],
+ "autoname": "field:im_id",
+ "creation": "2026-04-05 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "im_id",
+  "full_name",
+  "email",
+  "phone",
+  "column_break_1",
+  "employee",
+  "user",
+  "status",
+  "section_break_cost",
+  "monthly_cost_sar",
+  "column_break_pozg",
+  "daily_cost_sar"
+ ],
+ "fields": [
+  {
+   "fieldname": "im_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "IM ID",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "full_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Full Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Email",
+   "options": "Email"
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "label": "Phone"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User Account",
+   "options": "User"
+  },
+  {
+   "default": "Active",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Active\nInactive"
+  },
+  {
+   "fieldname": "section_break_cost",
+   "fieldtype": "Section Break",
+   "label": "Cost Rates"
+  },
+  {
+   "fieldname": "monthly_cost_sar",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Monthly Cost (SAR)"
+  },
+  {
+   "fieldname": "daily_cost_sar",
+   "fieldtype": "Currency",
+   "label": "Daily Cost (SAR)"
+  },
+  {
+   "fieldname": "column_break_pozg",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "links": [],
+ "modified": "2026-04-08 12:07:58.527529",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "IM Master",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "full_name",
+ "track_changes": 1
 }

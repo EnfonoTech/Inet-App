@@ -1,115 +1,142 @@
 {
-  "actions": [],
-  "autoname": "format:WD-{YYYY}-{#####}",
-  "creation": "2026-04-04 00:00:00.000000",
-  "doctype": "DocType",
-  "engine": "InnoDB",
-  "field_order": [
-    "system_id",
-    "execution",
-    "item_code",
-    "executed_qty",
-    "billing_rate_sar",
-    "revenue_sar",
-    "team_cost_sar",
-    "subcontract_cost_sar",
-    "total_cost_sar",
-    "margin_sar",
-    "inet_margin_pct",
-    "billing_status"
-  ],
-  "fields": [
-    {
-      "fieldname": "system_id",
-      "fieldtype": "Data",
-      "label": "System ID"
-    },
-    {
-      "fieldname": "execution",
-      "fieldtype": "Link",
-      "label": "Execution",
-      "options": "Daily Execution"
-    },
-    {
-      "fieldname": "item_code",
-      "fieldtype": "Data",
-      "label": "Item Code",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "executed_qty",
-      "fieldtype": "Float",
-      "label": "Executed Qty"
-    },
-    {
-      "fieldname": "billing_rate_sar",
-      "fieldtype": "Currency",
-      "label": "Billing Rate (SAR)"
-    },
-    {
-      "fieldname": "revenue_sar",
-      "fieldtype": "Currency",
-      "label": "Revenue (SAR)",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "team_cost_sar",
-      "fieldtype": "Currency",
-      "label": "Team Cost (SAR)"
-    },
-    {
-      "fieldname": "subcontract_cost_sar",
-      "fieldtype": "Currency",
-      "label": "Subcontract Cost (SAR)"
-    },
-    {
-      "fieldname": "total_cost_sar",
-      "fieldtype": "Currency",
-      "label": "Total Cost (SAR)",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "margin_sar",
-      "fieldtype": "Currency",
-      "label": "Margin (SAR)",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "inet_margin_pct",
-      "fieldtype": "Percent",
-      "label": "INET Margin %"
-    },
-    {
-      "default": "Pending",
-      "fieldname": "billing_status",
-      "fieldtype": "Select",
-      "label": "Billing Status",
-      "options": "Pending\nInvoiced\nClosed",
-      "in_list_view": 1
-    }
-  ],
-  "index_web_pages_for_search": 1,
-  "istable": 0,
-  "links": [],
-  "modified": "2026-04-04 00:00:00.000000",
-  "modified_by": "Administrator",
-  "module": "Inet App",
-  "name": "Work Done",
-  "owner": "Administrator",
-  "permissions": [
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "INET Admin", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "read": 1, "write": 1, "report": 1, "export": 1, "role": "INET IM"
-    }
-  ],
-  "sort_field": "modified",
-  "sort_order": "DESC",
-  "track_changes": 1
+ "actions": [],
+ "autoname": "format:WD-{YYYY}-{#####}",
+ "creation": "2026-04-04 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "system_id",
+  "execution",
+  "item_code",
+  "executed_qty",
+  "billing_rate_sar",
+  "revenue_sar",
+  "column_break_wrgw",
+  "team_cost_sar",
+  "subcontract_cost_sar",
+  "total_cost_sar",
+  "margin_sar",
+  "inet_margin_pct",
+  "billing_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "system_id",
+   "fieldtype": "Data",
+   "label": "System ID"
+  },
+  {
+   "fieldname": "execution",
+   "fieldtype": "Link",
+   "label": "Execution",
+   "options": "Daily Execution"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Code"
+  },
+  {
+   "fieldname": "executed_qty",
+   "fieldtype": "Float",
+   "label": "Executed Qty"
+  },
+  {
+   "fieldname": "billing_rate_sar",
+   "fieldtype": "Currency",
+   "label": "Billing Rate (SAR)"
+  },
+  {
+   "fieldname": "revenue_sar",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Revenue (SAR)"
+  },
+  {
+   "fieldname": "team_cost_sar",
+   "fieldtype": "Currency",
+   "label": "Team Cost (SAR)"
+  },
+  {
+   "fieldname": "subcontract_cost_sar",
+   "fieldtype": "Currency",
+   "label": "Subcontract Cost (SAR)"
+  },
+  {
+   "fieldname": "total_cost_sar",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total Cost (SAR)"
+  },
+  {
+   "fieldname": "margin_sar",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Margin (SAR)"
+  },
+  {
+   "fieldname": "inet_margin_pct",
+   "fieldtype": "Percent",
+   "label": "INET Margin %"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "billing_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Billing Status",
+   "options": "Pending\nInvoiced\nClosed"
+  },
+  {
+   "fieldname": "column_break_wrgw",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-08 12:08:05.874210",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Work Done",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
 }

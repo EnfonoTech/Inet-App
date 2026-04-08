@@ -127,7 +127,7 @@ export default function OperationsOverview() {
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>System ID</th>
+                          <th>POID</th>
                           <th>PO</th>
                           <th>DUID</th>
                           <th>Item</th>
@@ -138,7 +138,7 @@ export default function OperationsOverview() {
                       <tbody>
                         {data.dispatches.map((d) => (
                           <tr key={d.name}>
-                            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{d.system_id || d.name}</td>
+                            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{d.name}</td>
                             <td>{d.po_no}</td>
                             <td>{d.site_code}</td>
                             <td>{d.item_code}</td>

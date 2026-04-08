@@ -3,7 +3,7 @@ import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-const STATUS_OPTIONS = ["", "Planned", "In Execution", "Completed", "Cancelled"];
+const STATUS_OPTIONS = ["", "Planned", "In Execution", "Completed", "Cancelled", "Planning with Issue"];
 
 function statusBadgeClass(status) {
   if (!status) return "";
@@ -13,6 +13,43 @@ function statusBadgeClass(status) {
   if (s === "completed") return "completed";
   if (s === "cancelled") return "cancelled";
   return "new";
+}
+
+function DetailItem({ label, value }) {
+  const txt = String(value || "");
+  const isStatus = /status/i.test(label);
+  const tone = txt.toLowerCase().includes("complete") || txt.toLowerCase().includes("pass")
+    ? { bg: "#ecfdf5", fg: "#047857" }
+    : txt.toLowerCase().includes("cancel") || txt.toLowerCase().includes("fail")
+      ? { bg: "#fef2f2", fg: "#b91c1c" }
+      : txt.toLowerCase().includes("progress") || txt.toLowerCase().includes("execution")
+        ? { bg: "#eff6ff", fg: "#1d4ed8" }
+        : { bg: "#fffbeb", fg: "#b45309" };
+  return (
+    <div style={{ padding: "8px 10px" }}>
+      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>{label}</div>
+      {isStatus ? (
+        <span style={{ display: "inline-block", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 700, background: tone.bg, color: tone.fg }}>
+          {value || "—"}
+        </span>
+      ) : (
+        <div style={{ fontSize: 13, color: "#0f172a", fontWeight: 500 }}>{value || "—"}</div>
+      )}
+    </div>
+  );
+}
+
+function Pill({ label, value, tone = "blue" }) {
+  const palette = {
+    blue: { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
+    green: { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" },
+    amber: { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" },
+  }[tone];
+  return (
+    <div style={{ border: `1px solid ${palette.bd}`, background: palette.bg, color: palette.fg, borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+      {label}: {value || "—"}
+    </div>
+  );
 }
 
 export default function ExecutionMonitor() {
@@ -25,13 +62,12 @@ export default function ExecutionMonitor() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [visitFilter, setVisitFilter] = useState("");
+  const [detailRow, setDetailRow] = useState(null);
 
   async function loadData() {
     setError(null);
     try {
-      const list = await pmApi.listRolloutPlans({
-        plan_status: ["in", ["Planned", "In Execution"]],
-      });
+      const list = await pmApi.listExecutionMonitorRows({});
       setRows(Array.isArray(list) ? list : []);
       setLastRefresh(new Date());
     } catch (err) {
@@ -61,6 +97,11 @@ export default function ExecutionMonitor() {
       const q = search.toLowerCase();
       return (
         (r.name || "").toLowerCase().includes(q) ||
+        (r.item_code || "").toLowerCase().includes(q) ||
+        (r.item_description || "").toLowerCase().includes(q) ||
+        (r.project_code || "").toLowerCase().includes(q) ||
+        (r.site_name || "").toLowerCase().includes(q) ||
+        (r.po_dispatch || "").toLowerCase().includes(q) ||
         (r.team || "").toLowerCase().includes(q) ||
         (r.plan_date || "").toLowerCase().includes(q) ||
         (r.visit_type || "").toLowerCase().includes(q)
@@ -97,7 +138,7 @@ export default function ExecutionMonitor() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search System ID, Team, Date…"
+          placeholder="Search POID, Plan, Team, Date…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -162,30 +203,46 @@ export default function ExecutionMonitor() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>System ID</th>
+                  <th>Plan</th>
+                  <th>POID</th>
+                  <th>Item</th>
+                  <th>Project / Site</th>
                   <th>Team</th>
                   <th>Plan Date</th>
                   <th>Visit Type</th>
                   <th style={{ textAlign: "right" }}>Target</th>
                   <th style={{ textAlign: "right" }}>Achieved</th>
-                  <th>Status</th>
+                  <th>Plan Status</th>
+                  <th>Exec Status</th>
+                  <th>Open</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((row) => {
-                  const pct = row.target > 0
-                    ? Math.round((row.achieved / row.target) * 100)
+                  const target = row.target_amount || 0;
+                  const achieved = row.execution_achieved_amount || row.achieved_amount || 0;
+                  const pct = target > 0
+                    ? Math.round((achieved / target) * 100)
                     : 0;
                   return (
                     <tr key={row.name}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.po_dispatch || "—"}</td>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{row.item_code || "—"}</div>
+                        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{row.item_description || "—"}</div>
+                      </td>
+                      <td>
+                        <div>{row.project_code || "—"}</div>
+                        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{row.site_name || row.site_code || "—"}</div>
+                      </td>
                       <td>{row.team}</td>
                       <td>{row.plan_date}</td>
                       <td>{row.visit_type}</td>
-                      <td style={{ textAlign: "right" }}>{fmt.format(row.target || 0)}</td>
+                      <td style={{ textAlign: "right" }}>{fmt.format(target)}</td>
                       <td style={{ textAlign: "right" }}>
                         <span style={{ color: pct >= 80 ? "var(--green)" : pct >= 40 ? "var(--amber)" : "var(--red)" }}>
-                          {fmt.format(row.achieved || 0)}
+                          {fmt.format(achieved)}
                         </span>
                         <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: 4 }}>
                           ({pct}%)
@@ -197,13 +254,29 @@ export default function ExecutionMonitor() {
                           {row.plan_status}
                         </span>
                       </td>
+                      <td>
+                        <span className={`status-badge ${statusBadgeClass(row.execution_status || "Planned")}`}>
+                          <span className="status-dot" />
+                          {row.execution_status || "—"}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: "0.72rem", padding: "4px 10px" }}
+                          onClick={() => setDetailRow(row)}
+                        >
+                          View
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={7} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length}</strong>
                     {hasFilters && ` of ${rows.length}`}
                     {" "}record{filtered.length !== 1 ? "s" : ""}
@@ -214,6 +287,47 @@ export default function ExecutionMonitor() {
           )}
         </div>
       </div>
+      {detailRow && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setDetailRow(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(860px, 94vw)", maxHeight: "78vh", overflow: "auto" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Execution Details</h3>
+              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <Pill label="POID" value={detailRow.po_dispatch} tone="blue" />
+              <Pill label="Plan" value={detailRow.name} tone="amber" />
+              <Pill label="Exec" value={detailRow.execution_name} tone="green" />
+            </div>
+            <div style={{ margin: 0, fontSize: 12, background: "#f8fafc", borderRadius: 8, padding: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
+                <DetailItem label="Plan ID" value={detailRow.name} />
+                <DetailItem label="POID" value={detailRow.po_dispatch} />
+                <DetailItem label="Item Code" value={detailRow.item_code} />
+                <DetailItem label="Item Description" value={detailRow.item_description} />
+                <DetailItem label="Project" value={detailRow.project_code} />
+                <DetailItem label="Site" value={detailRow.site_name || detailRow.site_code} />
+                <DetailItem label="Team" value={detailRow.team} />
+                <DetailItem label="Visit Type" value={detailRow.visit_type} />
+                <DetailItem label="Plan Date" value={detailRow.plan_date} />
+                <DetailItem label="Execution Date" value={detailRow.execution_date} />
+                <DetailItem label="Plan Status" value={detailRow.plan_status} />
+                <DetailItem label="Execution Status" value={detailRow.execution_status} />
+                <DetailItem label="Target (SAR)" value={fmt.format(detailRow.target_amount || 0)} />
+                <DetailItem label="Achieved (SAR)" value={fmt.format(detailRow.execution_achieved_amount || detailRow.achieved_amount || 0)} />
+                <DetailItem label="QC Status" value={detailRow.qc_status} />
+                <DetailItem label="GPS" value={detailRow.gps_location} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

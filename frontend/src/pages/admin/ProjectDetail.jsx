@@ -360,6 +360,7 @@ export default function ProjectDetail() {
   const [activeTab, setActiveTab] = useState("overview");
   const [editing, setEditing] = useState(false);
   const [showAssignTeam, setShowAssignTeam] = useState(false);
+  const [detailModal, setDetailModal] = useState(null);
 
   function loadData() {
     setLoading(true);
@@ -391,8 +392,7 @@ export default function ProjectDetail() {
   const { project, dispatches, plans, executions, work_done, teams, financial_summary: fin } = data;
 
   const dispatchColumns = [
-    { key: "system_id", label: "System ID", mono: true },
-    { key: "po_no", label: "PO No", mono: true },
+    { key: "name", label: "POID", mono: true },
     { key: "po_line_no", label: "Line", mono: true },
     { key: "item_code", label: "Item Code" },
     { key: "item_description", label: "Description" },
@@ -402,11 +402,11 @@ export default function ProjectDetail() {
     { key: "team", label: "Team" },
     { key: "im", label: "IM" },
     { key: "dispatch_status", label: "Status", render: v => <Badge value={v} /> },
+    { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "PO Dispatch Details", row })}>View</button> },
   ];
 
   const planColumns = [
-    { key: "system_id", label: "System ID", mono: true },
-    { key: "po_dispatch", label: "Dispatch", mono: true },
+    { key: "po_dispatch", label: "POID", mono: true },
     { key: "team", label: "Team" },
     { key: "plan_date", label: "Plan Date" },
     { key: "visit_type", label: "Visit Type" },
@@ -415,10 +415,11 @@ export default function ProjectDetail() {
     { key: "achieved_amount", label: "Achieved", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "completion_pct", label: "Completion", align: "right", render: v => v != null ? `${v}%` : "\u2014" },
     { key: "plan_status", label: "Status", render: v => <Badge value={v} /> },
+    { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Rollout Plan Details", row })}>View</button> },
   ];
 
   const executionColumns = [
-    { key: "system_id", label: "System ID", mono: true },
+    { key: "system_id", label: "POID", mono: true },
     { key: "rollout_plan", label: "Plan", mono: true },
     { key: "team", label: "Team" },
     { key: "execution_date", label: "Date" },
@@ -426,10 +427,11 @@ export default function ProjectDetail() {
     { key: "achieved_amount", label: "Achieved Amt", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "execution_status", label: "Status", render: v => <Badge value={v} /> },
     { key: "qc_status", label: "QC", render: v => <Badge value={v} /> },
+    { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Execution Details", row })}>View</button> },
   ];
 
   const workDoneColumns = [
-    { key: "system_id", label: "System ID", mono: true },
+    { key: "system_id", label: "POID", mono: true },
     { key: "execution", label: "Execution", mono: true },
     { key: "item_code", label: "Item Code" },
     { key: "executed_qty", label: "Qty", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
@@ -438,6 +440,7 @@ export default function ProjectDetail() {
     { key: "total_cost_sar", label: "Cost", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "margin_sar", label: "Margin", align: "right", render: (v) => v != null ? <span style={{ color: v >= 0 ? "#065f46" : "#991b1b", fontWeight: 600 }}>{fmt.format(v)}</span> : "\u2014" },
     { key: "billing_status", label: "Billing", render: v => <Badge value={v} /> },
+    { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Work Done Details", row })}>View</button> },
   ];
 
   const teamColumns = [
@@ -562,6 +565,69 @@ export default function ProjectDetail() {
               onSaved={() => { setShowAssignTeam(false); loadData(); }}
             />
           )}
+        </div>
+      )}
+
+      {detailModal && (
+        <div className="modal-overlay" onClick={() => setDetailModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">{detailModal.title}</h2>
+              <button className="modal-close" onClick={() => setDetailModal(null)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: "#f8fafc", borderRadius: 8, padding: 10 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                  {["name", "po_dispatch", "rollout_plan", "execution", "team", "status", "plan_status", "execution_status", "billing_status"]
+                    .filter((k) => detailModal.row && detailModal.row[k])
+                    .slice(0, 4)
+                    .map((k) => (
+                      <div key={k} style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                        {k.replace(/_/g, " ").replace(/\b\w/g, (x) => x.toUpperCase())}: {String(detailModal.row[k])}
+                      </div>
+                    ))}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
+                  {Object.entries(detailModal.row || {}).map(([k, v]) => (
+                    <div key={k} style={{ padding: "8px 10px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>
+                        {k.replace(/_/g, " ").replace(/\b\w/g, (x) => x.toUpperCase())}
+                      </div>
+                      {/(^|_)status$/i.test(k) || /status/i.test(k) ? (
+                        <span style={{
+                          display: "inline-block",
+                          borderRadius: 999,
+                          padding: "3px 10px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          background: String(v || "").toLowerCase().includes("complete") || String(v || "").toLowerCase().includes("approved")
+                            ? "#ecfdf5"
+                            : String(v || "").toLowerCase().includes("cancel") || String(v || "").toLowerCase().includes("reject") || String(v || "").toLowerCase().includes("fail")
+                              ? "#fef2f2"
+                              : String(v || "").toLowerCase().includes("progress") || String(v || "").toLowerCase().includes("execution")
+                                ? "#eff6ff"
+                                : "#fffbeb",
+                          color: String(v || "").toLowerCase().includes("complete") || String(v || "").toLowerCase().includes("approved")
+                            ? "#047857"
+                            : String(v || "").toLowerCase().includes("cancel") || String(v || "").toLowerCase().includes("reject") || String(v || "").toLowerCase().includes("fail")
+                              ? "#b91c1c"
+                              : String(v || "").toLowerCase().includes("progress") || String(v || "").toLowerCase().includes("execution")
+                                ? "#1d4ed8"
+                                : "#b45309",
+                        }}>
+                          {v == null || v === "" ? "—" : String(v)}
+                        </span>
+                      ) : (
+                        <div style={{ fontSize: 13, color: "#0f172a", fontWeight: 500 }}>
+                          {v == null || v === "" ? "—" : String(v)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

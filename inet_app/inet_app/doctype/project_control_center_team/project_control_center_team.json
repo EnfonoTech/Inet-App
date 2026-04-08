@@ -12,7 +12,7 @@
   "status"
  ],
  "fields": [
-  {"fieldname": "team", "fieldtype": "Data", "in_list_view": 1, "label": "Team", "reqd": 1},
+  {"fieldname": "team", "fieldtype": "Link", "in_list_view": 1, "label": "Team", "options": "INET Team", "reqd": 1},
   {"fieldname": "role_in_project", "fieldtype": "Data", "in_list_view": 1, "label": "Role in Project"},
   {"fieldname": "assignment_date", "fieldtype": "Date", "label": "Assignment Date"},
   {"fieldname": "end_date", "fieldtype": "Date", "label": "End Date"},

@@ -14,7 +14,7 @@
   "status"
  ],
  "fields": [
-  {"fieldname": "team_id", "fieldtype": "Data", "in_list_view": 1, "in_standard_filter": 1, "label": "Team ID", "reqd": 1},
+  {"fieldname": "team_id", "fieldtype": "Link", "in_list_view": 1, "in_standard_filter": 1, "label": "Team ID", "options": "INET Team", "reqd": 1},
   {"fieldname": "project", "fieldtype": "Link", "in_list_view": 1, "in_standard_filter": 1, "label": "Project", "options": "Project Control Center", "reqd": 1},
   {"fieldname": "assignment_date", "fieldtype": "Date", "in_list_view": 1, "label": "Assignment Date", "reqd": 1},
   {"fieldname": "end_date", "fieldtype": "Date", "label": "End Date"},

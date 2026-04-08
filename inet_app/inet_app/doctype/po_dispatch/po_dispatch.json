@@ -1,186 +1,224 @@
 {
-  "actions": [],
-  "autoname": "format:SYS-{YYYY}-{#####}",
-  "creation": "2026-04-04 00:00:00.000000",
-  "doctype": "DocType",
-  "engine": "InnoDB",
-  "field_order": [
-    "system_id",
-    "po_intake",
-    "po_no",
-    "po_line_no",
-    "item_code",
-    "item_description",
-    "qty",
-    "rate",
-    "line_amount",
-    "section_assignment",
-    "project_code",
-    "customer",
-    "im",
-    "team",
-    "target_month",
-    "planning_mode",
-    "dispatch_status",
-    "dispatch_mode",
-    "section_site",
-    "center_area",
-    "site_code",
-    "site_name"
-  ],
-  "fields": [
-    {
-      "fieldname": "system_id",
-      "fieldtype": "Data",
-      "label": "System ID",
-      "read_only": 1,
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "po_intake",
-      "fieldtype": "Link",
-      "label": "PO Intake",
-      "options": "PO Intake"
-    },
-    {
-      "fieldname": "po_no",
-      "fieldtype": "Data",
-      "label": "PO No.",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "po_line_no",
-      "fieldtype": "Int",
-      "label": "PO Line No."
-    },
-    {
-      "fieldname": "item_code",
-      "fieldtype": "Data",
-      "label": "Item Code",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "item_description",
-      "fieldtype": "Small Text",
-      "label": "Item Description"
-    },
-    {
-      "fieldname": "qty",
-      "fieldtype": "Float",
-      "label": "Qty"
-    },
-    {
-      "fieldname": "rate",
-      "fieldtype": "Currency",
-      "label": "Rate (SAR)"
-    },
-    {
-      "fieldname": "line_amount",
-      "fieldtype": "Currency",
-      "label": "Line Amount (SAR)",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "section_assignment",
-      "fieldtype": "Section Break",
-      "label": "Assignment"
-    },
-    {
-      "fieldname": "project_code",
-      "fieldtype": "Link",
-      "label": "Project Code",
-      "options": "Project Control Center",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "customer",
-      "fieldtype": "Data",
-      "label": "Customer"
-    },
-    {
-      "fieldname": "im",
-      "fieldtype": "Link",
-      "label": "Implementation Manager",
-      "options": "IM Master",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "team",
-      "fieldtype": "Data",
-      "label": "Team"
-    },
-    {
-      "fieldname": "target_month",
-      "fieldtype": "Date",
-      "label": "Target Month"
-    },
-    {
-      "default": "Plan",
-      "fieldname": "planning_mode",
-      "fieldtype": "Select",
-      "label": "Planning Mode",
-      "options": "Plan\nDirect"
-    },
-    {
-      "default": "Pending",
-      "fieldname": "dispatch_status",
-      "fieldtype": "Select",
-      "label": "Status",
-      "options": "Pending\nDispatched\nPlanned\nCompleted\nCancelled",
-      "in_list_view": 1
-    },
-    {
-      "default": "Manual",
-      "fieldname": "dispatch_mode",
-      "fieldtype": "Select",
-      "label": "Dispatch Mode",
-      "options": "Auto\nManual",
-      "in_list_view": 1,
-      "read_only": 1
-    },
-    {
-      "fieldname": "section_site",
-      "fieldtype": "Section Break",
-      "label": "Site Details"
-    },
-    {
-      "fieldname": "center_area",
-      "fieldtype": "Data",
-      "label": "Center Area"
-    },
-    {
-      "fieldname": "site_code",
-      "fieldtype": "Data",
-      "label": "Site Code"
-    },
-    {
-      "fieldname": "site_name",
-      "fieldtype": "Data",
-      "label": "Site Name"
-    }
-  ],
-  "index_web_pages_for_search": 1,
-  "istable": 0,
-  "links": [],
-  "modified": "2026-04-04 00:00:00.000000",
-  "modified_by": "Administrator",
-  "module": "Inet App",
-  "name": "PO Dispatch",
-  "owner": "Administrator",
-  "permissions": [
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "INET Admin", "share": 1, "write": 1
-    },
-    {
-      "read": 1, "write": 1, "report": 1, "export": 1, "print": 1, "role": "INET IM"
-    }
-  ],
-  "sort_field": "modified",
-  "sort_order": "DESC",
-  "track_changes": 1
+ "actions": [],
+ "autoname": "format:SYS-{YYYY}-{#####}",
+ "creation": "2026-04-04 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "system_id",
+  "po_intake",
+  "po_no",
+  "po_line_no",
+  "item_code",
+  "column_break_wdvn",
+  "item_description",
+  "qty",
+  "rate",
+  "line_amount",
+  "section_assignment",
+  "project_code",
+  "customer",
+  "im",
+  "team",
+  "column_break_vuud",
+  "target_month",
+  "planning_mode",
+  "dispatch_status",
+  "dispatch_mode",
+  "section_site",
+  "center_area",
+  "site_code",
+  "column_break_wuyp",
+  "site_name"
+ ],
+ "fields": [
+  {
+   "fieldname": "system_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "System ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "po_intake",
+   "fieldtype": "Link",
+   "label": "PO Intake",
+   "options": "PO Intake"
+  },
+  {
+   "fieldname": "po_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "PO No."
+  },
+  {
+   "fieldname": "po_line_no",
+   "fieldtype": "Int",
+   "label": "PO Line No."
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Code"
+  },
+  {
+   "fieldname": "item_description",
+   "fieldtype": "Small Text",
+   "label": "Item Description"
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Qty"
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "label": "Rate (SAR)"
+  },
+  {
+   "fieldname": "line_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Line Amount (SAR)"
+  },
+  {
+   "fieldname": "section_assignment",
+   "fieldtype": "Section Break",
+   "label": "Assignment"
+  },
+  {
+   "fieldname": "project_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Project Code",
+   "options": "Project Control Center"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Data",
+   "label": "Customer"
+  },
+  {
+   "fieldname": "im",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Implementation Manager",
+   "options": "IM Master"
+  },
+  {
+   "fieldname": "team",
+   "fieldtype": "Link",
+   "label": "Team",
+   "options": "INET Team"
+  },
+  {
+   "fieldname": "target_month",
+   "fieldtype": "Date",
+   "label": "Target Month"
+  },
+  {
+   "default": "Plan",
+   "fieldname": "planning_mode",
+   "fieldtype": "Select",
+   "label": "Planning Mode",
+   "options": "Plan\nDirect"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "dispatch_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending\nDispatched\nPlanned\nCompleted\nCancelled"
+  },
+  {
+   "default": "Manual",
+   "fieldname": "dispatch_mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Dispatch Mode",
+   "options": "Auto\nManual",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_site",
+   "fieldtype": "Section Break",
+   "label": "Site Details"
+  },
+  {
+   "fieldname": "center_area",
+   "fieldtype": "Data",
+   "label": "Center Area"
+  },
+  {
+   "fieldname": "site_code",
+   "fieldtype": "Data",
+   "label": "Site Code"
+  },
+  {
+   "fieldname": "site_name",
+   "fieldtype": "Data",
+   "label": "Site Name"
+  },
+  {
+   "fieldname": "column_break_wdvn",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_vuud",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_wuyp",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-08 12:09:33.778075",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PO Dispatch",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
 }

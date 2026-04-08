@@ -1,128 +1,161 @@
 {
-  "actions": [],
-  "autoname": "format:RPL-{YYYY}-{#####}",
-  "creation": "2026-04-04 00:00:00.000000",
-  "doctype": "DocType",
-  "engine": "InnoDB",
-  "field_order": [
-    "system_id",
-    "po_dispatch",
-    "im",
-    "team",
-    "plan_date",
-    "visit_type",
-    "visit_number",
-    "visit_multiplier",
-    "target_amount",
-    "achieved_amount",
-    "completion_pct",
-    "plan_status"
-  ],
-  "fields": [
-    {
-      "fieldname": "system_id",
-      "fieldtype": "Data",
-      "label": "System ID"
-    },
-    {
-      "fieldname": "po_dispatch",
+ "actions": [],
+ "autoname": "format:RPL-{YYYY}-{#####}",
+ "creation": "2026-04-04 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "po_dispatch",
+  "im",
+  "team",
+  "plan_date",
+  "visit_type",
+  "visit_number",
+  "column_break_dtdy",
+  "visit_multiplier",
+  "target_amount",
+  "achieved_amount",
+  "completion_pct",
+  "plan_status",
+  "section_break_ceaq",
+  "issue_category"
+ ],
+ "fields": [
+  {
+   "fieldname": "po_dispatch",
+   "fieldtype": "Link",
+   "label": "PO Dispatch",
+   "options": "PO Dispatch"
+  },
+  {
+   "fieldname": "im",
+   "fieldtype": "Link",
+   "label": "Implementation Manager",
+   "options": "IM Master",
+   "read_only": 1
+  },
+  {
+   "description": "Set when returning job to planning (re-visit / QC)",
+   "fieldname": "issue_category",
+   "fieldtype": "Small Text",
+   "label": "Issue Category"
+  },
+  {
+   "fieldname": "team",
       "fieldtype": "Link",
-      "label": "PO Dispatch",
-      "options": "PO Dispatch"
-    },
-    {
-      "fieldname": "im",
-      "fieldtype": "Link",
-      "label": "Implementation Manager",
-      "options": "IM Master",
-      "read_only": 1
-    },
-    {
-      "fieldname": "issue_category",
-      "fieldtype": "Small Text",
-      "label": "Issue Category",
-      "description": "Set when returning job to planning (re-visit / QC)"
-    },
-    {
-      "fieldname": "team",
-      "fieldtype": "Data",
-      "label": "Team"
-    },
-    {
-      "fieldname": "plan_date",
-      "fieldtype": "Date",
-      "label": "Plan Date",
-      "reqd": 1
-    },
-    {
-      "default": "Work Done",
-      "fieldname": "visit_type",
-      "fieldtype": "Select",
-      "label": "Visit Type",
-      "options": "Work Done\nRe-Visit\nExtra Visit"
-    },
-    {
-      "default": "1",
-      "fieldname": "visit_number",
-      "fieldtype": "Int",
-      "label": "Visit Number"
-    },
-    {
-      "default": "1.0",
-      "fieldname": "visit_multiplier",
-      "fieldtype": "Float",
-      "label": "Visit Multiplier"
-    },
-    {
-      "fieldname": "target_amount",
-      "fieldtype": "Currency",
-      "label": "Target Amount (SAR)"
-    },
-    {
-      "fieldname": "achieved_amount",
-      "fieldtype": "Currency",
-      "label": "Achieved Amount (SAR)"
-    },
-    {
-      "fieldname": "completion_pct",
-      "fieldtype": "Percent",
-      "label": "Completion %"
-    },
-    {
-      "default": "Planned",
-      "fieldname": "plan_status",
-      "fieldtype": "Select",
-      "label": "Status",
-      "options": "Planned\nPlanning with Issue\nIn Execution\nCompleted\nCancelled",
-      "in_list_view": 1
-    }
-  ],
-  "index_web_pages_for_search": 1,
-  "istable": 0,
-  "links": [],
-  "modified": "2026-04-04 00:00:00.000000",
-  "modified_by": "Administrator",
-  "module": "Inet App",
-  "name": "Rollout Plan",
-  "owner": "Administrator",
-  "permissions": [
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "INET Admin", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "INET IM", "share": 1, "write": 1
-    },
-    {
-      "read": 1, "report": 1, "role": "INET Field Team"
-    }
-  ],
-  "sort_field": "modified",
-  "sort_order": "DESC",
-  "track_changes": 1
+      "label": "Team",
+      "options": "INET Team"
+  },
+  {
+   "fieldname": "plan_date",
+   "fieldtype": "Date",
+   "label": "Plan Date",
+   "reqd": 1
+  },
+  {
+   "default": "Work Done",
+   "fieldname": "visit_type",
+   "fieldtype": "Select",
+   "label": "Visit Type",
+   "options": "Work Done\nRe-Visit\nExtra Visit"
+  },
+  {
+   "default": "1",
+   "fieldname": "visit_number",
+   "fieldtype": "Int",
+   "label": "Visit Number"
+  },
+  {
+   "default": "1.0",
+   "fieldname": "visit_multiplier",
+   "fieldtype": "Float",
+   "label": "Visit Multiplier"
+  },
+  {
+   "fieldname": "target_amount",
+   "fieldtype": "Currency",
+   "label": "Target Amount (SAR)"
+  },
+  {
+   "fieldname": "achieved_amount",
+   "fieldtype": "Currency",
+   "label": "Achieved Amount (SAR)"
+  },
+  {
+   "fieldname": "completion_pct",
+   "fieldtype": "Percent",
+   "label": "Completion %"
+  },
+  {
+   "default": "Planned",
+   "fieldname": "plan_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Planned\nPlanning with Issue\nIn Execution\nCompleted\nCancelled"
+  },
+  {
+   "fieldname": "column_break_dtdy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_ceaq",
+   "fieldtype": "Section Break"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-08 12:06:30.859001",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Rollout Plan",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "INET Field Team"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
 }
