@@ -3,6 +3,31 @@ import { useAuth } from "../../context/AuthContext";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
+function statusTone(value) {
+  const s = String(value || "").toLowerCase();
+  if (s.includes("complete") || s.includes("approved") || s.includes("active")) return { bg: "#ecfdf5", fg: "#047857" };
+  if (s.includes("cancel") || s.includes("reject") || s.includes("risk")) return { bg: "#fef2f2", fg: "#b91c1c" };
+  if (s.includes("progress") || s.includes("planned")) return { bg: "#eff6ff", fg: "#1d4ed8" };
+  return { bg: "#fffbeb", fg: "#b45309" };
+}
+
+function DetailItem({ label, value }) {
+  const isStatus = /status|mode/i.test(label);
+  const tone = statusTone(value);
+  return (
+    <div style={{ background: "#fff", borderRadius: 8, padding: "8px 10px" }}>
+      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>{label}</div>
+      {isStatus ? (
+        <span style={{ display: "inline-block", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 700, background: tone.bg, color: tone.fg }}>
+          {value == null || value === "" ? "—" : String(value)}
+        </span>
+      ) : (
+        <div style={{ fontSize: 13, color: "#0f172a", fontWeight: 500 }}>{value == null || value === "" ? "—" : String(value)}</div>
+      )}
+    </div>
+  );
+}
+
 function statusStyle(status) {
   const s = String(status || "").toLowerCase();
   if (s.includes("risk")) {
@@ -27,6 +52,7 @@ export default function IMProjects() {
   const [search, setSearch]     = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [domainFilter, setDomainFilter] = useState("");
+  const [detailRow, setDetailRow] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -166,6 +192,7 @@ export default function IMProjects() {
                   <th>Status</th>
                   <th style={{ textAlign: "right" }}>Completion</th>
                   <th style={{ textAlign: "right" }}>Budget</th>
+                  <th>View</th>
                 </tr>
               </thead>
               <tbody>
@@ -206,12 +233,17 @@ export default function IMProjects() {
                     </td>
                     <td style={{ textAlign: "right" }}>{p.completion_percentage ?? 0}%</td>
                     <td style={{ textAlign: "right" }}>{fmt.format(p.budget_amount || 0)}</td>
+                    <td>
+                      <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} onClick={() => setDetailRow(p)}>
+                        View
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={7} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.78rem" }}>
+                  <td colSpan={8} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.78rem" }}>
                     <strong>{filtered.length}</strong>{search && ` of ${projects.length}`} project{filtered.length !== 1 ? "s" : ""}
                   </td>
                 </tr>
@@ -220,6 +252,38 @@ export default function IMProjects() {
           )}
         </div>
       </div>
+      {detailRow && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDetailRow(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(860px, 94vw)", maxHeight: "78vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Project Details</h3>
+              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+            </div>
+            <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                  Project: {detailRow.project_code || "—"}
+                </div>
+                <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                  Customer: {detailRow.customer || "—"}
+                </div>
+                <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                  IM: {detailRow.implementation_manager || "—"}
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                {Object.entries(detailRow).map(([k, v]) => (
+                  <DetailItem
+                    key={k}
+                    label={k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                    value={v}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
