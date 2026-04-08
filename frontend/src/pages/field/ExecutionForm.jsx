@@ -31,6 +31,10 @@ export default function ExecutionForm() {
   const navigate = useNavigate();
   const { teamId } = useAuth();
 
+  const [inExecPlans, setInExecPlans] = useState([]);
+  const [loadingInExec, setLoadingInExec] = useState(false);
+  const [inExecError, setInExecError] = useState(null);
+
   const [plan, setPlan] = useState(null);
   const [loadingPlan, setLoadingPlan] = useState(true);
   const [planError, setPlanError] = useState(null);
@@ -112,8 +116,36 @@ export default function ExecutionForm() {
         setLoadingPlan(false);
       }
     }
-    if (id) loadPlan();
+    if (id) {
+      setLoadingPlan(true);
+      loadPlan();
+    } else {
+      setPlan(null);
+      setLoadingPlan(false);
+      setPlanError(null);
+    }
   }, [id]);
+
+  useEffect(() => {
+    async function loadInExecution() {
+      if (!teamId || id) return;
+      setLoadingInExec(true);
+      setInExecError(null);
+      try {
+        const list = await pmApi.listRolloutPlans({
+          team: teamId,
+          plan_status: "In Execution",
+        });
+        setInExecPlans(Array.isArray(list) ? list : []);
+      } catch (e) {
+        setInExecPlans([]);
+        setInExecError(e.message || "Could not load In Execution plans");
+      } finally {
+        setLoadingInExec(false);
+      }
+    }
+    loadInExecution();
+  }, [teamId, id]);
 
   // Load activity costs
   useEffect(() => {
@@ -189,6 +221,10 @@ export default function ExecutionForm() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (!id) {
+      setSubmitError("No rollout plan selected. Open an item from Today's Work.");
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
 
@@ -238,6 +274,71 @@ export default function ExecutionForm() {
         </div>
         <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
           Loading plan details...
+        </div>
+      </div>
+    );
+  }
+
+  if (!id) {
+    return (
+      <div>
+        <div className="page-header">
+          <div>
+            <h1 className="page-title">Execute</h1>
+            <div className="page-subtitle">
+              Open an <strong>In Execution</strong> rollout plan to continue work
+            </div>
+          </div>
+        </div>
+
+        <div className="page-content" style={{ maxWidth: 720 }}>
+          {inExecError && (
+            <div className="notice error" style={{ marginBottom: 16 }}>
+              <span>&oplus;</span> {inExecError}
+            </div>
+          )}
+
+          <div className="detail-panel" style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              color: "var(--text-label)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              marginBottom: 12,
+            }}>
+              In Execution
+            </div>
+
+            {loadingInExec ? (
+              <div style={{ padding: 16, color: "var(--text-muted)" }}>Loading…</div>
+            ) : inExecPlans.length === 0 ? (
+              <div style={{ padding: 16, color: "var(--text-muted)" }}>
+                No rollout plans are currently <strong>In Execution</strong> for your team.
+                <div style={{ marginTop: 10 }}>
+                  Go to <strong>Today&apos;s Work</strong> to start a new execution.
+                </div>
+              </div>
+            ) : (
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Select Rollout Plan</label>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v) navigate(`/field-execute/${v}`);
+                  }}
+                >
+                  <option value="">— Select —</option>
+                  {inExecPlans.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name} · {p.site_name || p.project_code || p.po_dispatch || p.visit_type || "In Execution"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );

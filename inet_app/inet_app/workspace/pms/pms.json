@@ -1,6 +1,6 @@
 {
  "charts": [],
- "content": "[{\"id\":\"AV_pouvtqI\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">PMS</span>\",\"col\":12}},{\"id\":\"pi8c9xRgFf\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Control Center\",\"col\":3}},{\"id\":\"LmtiLXkBTY\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Work Update\",\"col\":3}}]",
+ "content": "[{\"id\":\"AV_pouvtqI\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">PMS</span>\",\"col\":12}},{\"id\":\"pi8c9xRgFf\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Control Center\",\"col\":3}},{\"id\":\"LmtiLXkBTY\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Work Update\",\"col\":3}},{\"id\":\"ETL1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Execution Time Log\",\"col\":3}}]",
  "creation": "2026-04-01 15:23:02.377164",
  "custom_blocks": [],
  "docstatus": 0,
@@ -38,6 +38,14 @@
    "doc_view": "List",
    "label": "Daily Work Update",
    "link_to": "Daily Work Update",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Execution Time Log",
+   "link_to": "Execution Time Log",
    "stats_filter": "[]",
    "type": "DocType"
   }

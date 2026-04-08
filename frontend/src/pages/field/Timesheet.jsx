@@ -34,8 +34,9 @@ export default function Timesheet() {
 
   const [planned, setPlanned] = useState([]);
   const [manualPlan, setManualPlan] = useState("");
-  const [fromTime, setFromTime] = useState("");
-  const [toTime, setToTime] = useState("");
+  const [manualDate, setManualDate] = useState("");
+  const [manualStart, setManualStart] = useState("");
+  const [manualEnd, setManualEnd] = useState("");
   const [manualNotes, setManualNotes] = useState("");
   const [showManual, setShowManual] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -88,6 +89,14 @@ export default function Timesheet() {
   }, [teamId]);
 
   useEffect(() => {
+    if (!showManual) return;
+    if (manualDate) return;
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    setManualDate(`${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`);
+  }, [showManual, manualDate]);
+
+  useEffect(() => {
     if (!teamId) return;
     pmApi.getFieldTeamDashboard(teamId).then((r) => {
       const items = r?.planned ?? r?.plans ?? [];
@@ -112,18 +121,19 @@ export default function Timesheet() {
     e.preventDefault();
     setError(null);
     setSuccess(null);
-    if (!manualPlan || !fromTime || !toTime) {
-      setError("Choose a rollout plan and enter start and end times.");
+    if (!manualPlan || !manualDate || !manualStart || !manualEnd) {
+      setError("Choose a rollout plan, date, start time, and end time.");
       return;
     }
     setSubmitting(true);
     try {
-      const st = fromTime.replace("T", " ") + ":00";
-      const et = toTime.replace("T", " ") + ":00";
+      const st = `${manualDate} ${manualStart}:00`;
+      const et = `${manualDate} ${manualEnd}:00`;
       await pmApi.saveExecutionTimeLogManual(manualPlan, st, et, manualNotes);
       setSuccess("Time log saved.");
-      setFromTime("");
-      setToTime("");
+      setManualDate("");
+      setManualStart("");
+      setManualEnd("");
       setManualNotes("");
       setManualPlan("");
       setShowManual(false);
@@ -142,7 +152,7 @@ export default function Timesheet() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Time log</h1>
-          <div className="page-subtitle">Time tracked per rollout / execution (not ERPNext timesheet)</div>
+          <div className="page-subtitle">Time tracked per rollout / execution</div>
         </div>
         <div className="page-actions">
           <button className="btn-primary" type="button" onClick={() => { setShowManual(true); setError(null); setSuccess(null); }}>
@@ -230,12 +240,16 @@ export default function Timesheet() {
                 )}
               </div>
               <div className="form-group">
-                <label>Start *</label>
-                <input type="datetime-local" value={fromTime} onChange={(e) => setFromTime(e.target.value)} required />
+                <label>Date *</label>
+                <input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} required />
               </div>
               <div className="form-group">
-                <label>End *</label>
-                <input type="datetime-local" value={toTime} onChange={(e) => setToTime(e.target.value)} required />
+                <label>Start time *</label>
+                <input type="time" value={manualStart} onChange={(e) => setManualStart(e.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label>End time *</label>
+                <input type="time" value={manualEnd} onChange={(e) => setManualEnd(e.target.value)} required />
               </div>
               <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                 <label>Notes</label>

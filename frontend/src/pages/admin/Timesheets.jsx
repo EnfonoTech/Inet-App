@@ -70,7 +70,7 @@ export default function Timesheets() {
         <div>
           <h1 className="page-title">Execution time logs</h1>
           <div className="page-subtitle">
-            Field time on rollouts (not ERPNext timesheet) · {filtered.length} rows · {fmt.format(totalHours)} h
+            Field time on rollouts · {filtered.length} rows · {fmt.format(totalHours)} h
           </div>
         </div>
       </div>
