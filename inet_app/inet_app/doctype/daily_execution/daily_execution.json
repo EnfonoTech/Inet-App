@@ -1,139 +1,179 @@
 {
-  "actions": [],
-  "autoname": "format:EXE-{YYYY}{MM}-{#####}",
-  "creation": "2026-04-04 00:00:00.000000",
-  "doctype": "DocType",
-  "engine": "InnoDB",
-  "field_order": [
-    "system_id",
-    "rollout_plan",
-    "im",
-    "team",
-    "execution_date",
-    "execution_status",
-    "achieved_qty",
-    "achieved_amount",
-    "gps_location",
-    "photos",
-    "qc_status",
-    "ciag_status",
-    "revisit_flag",
-    "remarks"
-  ],
-  "fields": [
-    {
-      "fieldname": "system_id",
-      "fieldtype": "Data",
-      "label": "System ID"
-    },
-    {
-      "fieldname": "rollout_plan",
-      "fieldtype": "Link",
-      "label": "Rollout Plan",
-      "options": "Rollout Plan"
-    },
-    {
-      "fieldname": "im",
-      "fieldtype": "Link",
-      "label": "Implementation Manager",
-      "options": "IM Master",
-      "read_only": 1
-    },
-    {
-      "fieldname": "team",
-      "fieldtype": "Data",
-      "label": "Team",
-      "in_list_view": 1
-    },
-    {
-      "default": "Today",
-      "fieldname": "execution_date",
-      "fieldtype": "Date",
-      "label": "Execution Date",
-      "reqd": 1,
-      "in_list_view": 1
-    },
-    {
-      "default": "In Progress",
-      "fieldname": "execution_status",
-      "fieldtype": "Select",
-      "label": "Status",
-      "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "achieved_qty",
-      "fieldtype": "Float",
-      "label": "Achieved Qty"
-    },
-    {
-      "fieldname": "achieved_amount",
-      "fieldtype": "Currency",
-      "label": "Achieved Amount (SAR)",
-      "in_list_view": 1
-    },
-    {
-      "fieldname": "gps_location",
-      "fieldtype": "Data",
-      "label": "GPS Location"
-    },
-    {
-      "fieldname": "photos",
-      "fieldtype": "Attach Image",
-      "label": "Photos"
-    },
-    {
-      "default": "Pending",
-      "fieldname": "qc_status",
-      "fieldtype": "Select",
-      "label": "QC Status",
-      "options": "Pending\nPass\nFail"
-    },
-    {
-      "default": "Open",
-      "fieldname": "ciag_status",
-      "fieldtype": "Select",
-      "label": "CIAG Status",
-      "options": "Open\nIn Progress\nSubmitted\nApproved\nRejected\nN/A"
-    },
-    {
-      "default": "0",
-      "fieldname": "revisit_flag",
-      "fieldtype": "Check",
-      "label": "Revisit Required"
-    },
-    {
-      "fieldname": "remarks",
-      "fieldtype": "Small Text",
-      "label": "Remarks"
-    }
-  ],
-  "index_web_pages_for_search": 1,
-  "istable": 0,
-  "links": [],
-  "modified": "2026-04-04 00:00:00.000000",
-  "modified_by": "Administrator",
-  "module": "Inet App",
-  "name": "Daily Execution",
-  "owner": "Administrator",
-  "permissions": [
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "INET Admin", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1,
-      "read": 1, "report": 1, "role": "INET IM", "share": 1, "write": 1
-    },
-    {
-      "create": 1, "read": 1, "write": 1, "report": 1, "role": "INET Field Team"
-    }
-  ],
-  "sort_field": "modified",
-  "sort_order": "DESC",
-  "track_changes": 1
+ "actions": [],
+ "autoname": "format:EXE-{YYYY}{MM}-{#####}",
+ "creation": "2026-04-04 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "system_id",
+  "rollout_plan",
+  "im",
+  "team",
+  "execution_date",
+  "execution_status",
+  "column_break_jobe",
+  "achieved_qty",
+  "achieved_amount",
+  "gps_location",
+  "photos",
+  "qc_status",
+  "ciag_status",
+  "revisit_flag",
+  "section_break_yvjh",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "fieldname": "system_id",
+   "fieldtype": "Data",
+   "label": "System ID"
+  },
+  {
+   "fieldname": "rollout_plan",
+   "fieldtype": "Link",
+   "label": "Rollout Plan",
+   "options": "Rollout Plan"
+  },
+  {
+   "fieldname": "im",
+   "fieldtype": "Link",
+   "label": "Implementation Manager",
+   "options": "IM Master",
+   "read_only": 1
+  },
+  {
+   "fieldname": "team",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Team",
+   "options": "INET Team"
+  },
+  {
+   "default": "Today",
+   "fieldname": "execution_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Execution Date",
+   "reqd": 1
+  },
+  {
+   "default": "In Progress",
+   "fieldname": "execution_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+  "options": "In progress\nCompleted\nHold\nCancelled\nPostponed\nPOD Pending\nPO Required\nSpan Loss\nSpare Parts\nExtra Visit\nLate Arrival\nQuality Issue\nTravel"
+  },
+  {
+   "fieldname": "achieved_qty",
+   "fieldtype": "Float",
+   "label": "Achieved Qty"
+  },
+  {
+   "fieldname": "achieved_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Achieved Amount (SAR)"
+  },
+  {
+   "fieldname": "gps_location",
+   "fieldtype": "Data",
+   "label": "GPS Location"
+  },
+  {
+   "fieldname": "photos",
+   "fieldtype": "Attach Image",
+   "label": "Photos"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "qc_status",
+   "fieldtype": "Select",
+   "label": "QC Status",
+   "options": "Pending\nPass\nFail"
+  },
+  {
+   "default": "Open",
+   "fieldname": "ciag_status",
+   "fieldtype": "Select",
+   "label": "CIAG Status",
+   "options": "Open\nIn Progress\nSubmitted\nApproved\nRejected\nN/A"
+  },
+  {
+   "default": "0",
+   "fieldname": "revisit_flag",
+   "fieldtype": "Check",
+   "label": "Revisit Required"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "column_break_jobe",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_yvjh",
+   "fieldtype": "Section Break"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-08 12:07:07.628598",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Daily Execution",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Field Team",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
 }

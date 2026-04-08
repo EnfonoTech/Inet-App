@@ -3,6 +3,75 @@ import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+const EXECUTION_STATUS_OPTIONS = [
+  "In progress",
+  "Completed",
+  "Hold",
+  "Cancelled",
+  "Postponed",
+  "POD Pending",
+  "PO Required",
+  "Span Loss",
+  "Spare Parts",
+  "Extra Visit",
+  "Late Arrival",
+  "Quality Issue",
+  "Travel",
+];
+
+function badgeTone(value) {
+  const s = String(value || "").toLowerCase();
+  if (!s) return { bg: "#f1f5f9", fg: "#334155", dot: "#64748b" };
+
+  // Explicit execution statuses
+  const tones = {
+    "in progress": { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" },
+    completed: { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" },
+    hold: { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" },
+    cancelled: { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" },
+    postponed: { bg: "#fefce8", fg: "#a16207", dot: "#eab308" },
+    "pod pending": { bg: "#fff7ed", fg: "#c2410c", dot: "#f97316" },
+    "po required": { bg: "#fff7ed", fg: "#9a3412", dot: "#ea580c" },
+    "span loss": { bg: "#fef2f2", fg: "#991b1b", dot: "#dc2626" },
+    "spare parts": { bg: "#ecfeff", fg: "#0e7490", dot: "#06b6d4" },
+    "extra visit": { bg: "#f5f3ff", fg: "#6d28d9", dot: "#8b5cf6" },
+    "late arrival": { bg: "#fff7ed", fg: "#9a3412", dot: "#f97316" },
+    "quality issue": { bg: "#fef2f2", fg: "#991b1b", dot: "#ef4444" },
+    travel: { bg: "#eef2ff", fg: "#3730a3", dot: "#6366f1" },
+  };
+  if (tones[s]) return tones[s];
+
+  // Fallbacks for any future values
+  if (s.includes("complete") || s.includes("approved") || s.includes("done") || s.includes("pass")) return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
+  if (s.includes("cancel") || s.includes("reject") || s.includes("fail")) return { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" };
+  if (s.includes("progress") || s.includes("review") || s.includes("open")) return { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" };
+  if (s.includes("hold") || s.includes("pending") || s.includes("wait") || s.includes("postponed")) return { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" };
+  return { bg: "#f8fafc", fg: "#334155", dot: "#64748b" };
+}
+
+function StatusPill({ value }) {
+  const tone = badgeTone(value);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 10px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        background: tone.bg,
+        color: tone.fg,
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: tone.dot }} />
+      {value || "—"}
+    </span>
+  );
+}
 
 function statusTone(value) {
   const s = String(value || "").toLowerCase();
@@ -34,6 +103,8 @@ export default function IMExecution() {
   const [executions, setExecutions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
+  const [qcFilter, setQcFilter] = useState("");
+  const [ciagFilter, setCiagFilter] = useState("");
   const [search, setSearch] = useState("");
   const [reopenFor, setReopenFor] = useState(null);
   const [issueCategory, setIssueCategory] = useState("");
@@ -57,6 +128,8 @@ export default function IMExecution() {
   }, [imName, statusFilter]);
 
   const filtered = executions.filter((e) => {
+    if (qcFilter && (e.qc_status || "") !== qcFilter) return false;
+    if (ciagFilter && (e.ciag_status || "") !== ciagFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -69,7 +142,9 @@ export default function IMExecution() {
     );
   });
 
-  const hasFilters = statusFilter || search;
+  const qcOptions = [...new Set(executions.map((e) => e.qc_status).filter(Boolean))].sort();
+  const ciagOptions = [...new Set(executions.map((e) => e.ciag_status).filter(Boolean))].sort();
+  const hasFilters = statusFilter || qcFilter || ciagFilter || search;
   const totalAchieved = filtered.reduce((s, e) => s + (e.achieved_qty || 0), 0);
 
   async function submitReopen() {
@@ -94,7 +169,6 @@ export default function IMExecution() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Execution Monitor</h1>
-          <div className="page-subtitle">Field execution progress with QC and CIAG status.</div>
         </div>
       </div>
 
@@ -135,17 +209,37 @@ export default function IMExecution() {
           style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
         >
           <option value="">All Statuses</option>
-          <option value="In Progress">In Progress</option>
-          <option value="Completed">Completed</option>
-          <option value="Hold">Hold</option>
-          <option value="Postponed">Postponed</option>
-          <option value="Cancelled">Cancelled</option>
+          {EXECUTION_STATUS_OPTIONS.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+        <select
+          value={qcFilter}
+          onChange={(e) => setQcFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+        >
+          <option value="">All QC</option>
+          {qcOptions.map((qc) => (
+            <option key={qc} value={qc}>{qc}</option>
+          ))}
+        </select>
+        <select
+          value={ciagFilter}
+          onChange={(e) => setCiagFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+        >
+          <option value="">All CIAG</option>
+          {ciagOptions.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
         </select>
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setStatusFilter(""); }}
+            onClick={() => { setSearch(""); setStatusFilter(""); setQcFilter(""); setCiagFilter(""); }}
           >
             Clear
           </button>
@@ -193,13 +287,10 @@ export default function IMExecution() {
                     <td>{e.team}</td>
                     <td>{e.execution_date}</td>
                     <td>
-                      <span className={`status-badge ${(e.execution_status || "").toLowerCase().replace(/\s/g, "-")}`}>
-                        <span className="status-dot" />
-                        {e.execution_status}
-                      </span>
+                      <StatusPill value={e.execution_status} />
                     </td>
-                    <td>{e.qc_status || "—"}</td>
-                    <td>{e.ciag_status || "—"}</td>
+                    <td><StatusPill value={e.qc_status} /></td>
+                    <td><StatusPill value={e.ciag_status} /></td>
                     <td style={{ textAlign: "right" }}>{e.achieved_qty || 0}</td>
                     <td>
                       <button
@@ -260,7 +351,7 @@ export default function IMExecution() {
                 {Object.entries(detailRow).map(([k, v]) => (
                   <DetailItem
                     key={k}
-                    label={k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                    label={String(k).toLowerCase() === "system_id" ? "POID" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                     value={v}
                   />
                 ))}

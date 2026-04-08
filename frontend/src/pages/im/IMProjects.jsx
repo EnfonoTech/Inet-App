@@ -275,7 +275,7 @@ export default function IMProjects() {
                 {Object.entries(detailRow).map(([k, v]) => (
                   <DetailItem
                     key={k}
-                    label={k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                    label={String(k).toLowerCase() === "system_id" ? "POID" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                     value={v}
                   />
                 ))}

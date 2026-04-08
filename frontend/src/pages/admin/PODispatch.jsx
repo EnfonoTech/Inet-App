@@ -3,6 +3,7 @@ import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+const HIDDEN_DETAIL_FIELDS = new Set(["owner", "creation", "modified", "modified_by", "docstatus", "idx"]);
 
 function todayMonth() {
   return new Date().toISOString().slice(0, 7);
@@ -20,6 +21,31 @@ function DispatchModeBadge({ mode }) {
     }}>
       {isAuto ? "Auto" : "Manual"}
     </span>
+  );
+}
+
+function statusTone(value) {
+  const s = String(value || "").toLowerCase();
+  if (s.includes("complete") || s.includes("approved") || s.includes("dispatched")) return { bg: "#ecfdf5", fg: "#047857" };
+  if (s.includes("cancel") || s.includes("reject") || s.includes("fail")) return { bg: "#fef2f2", fg: "#b91c1c" };
+  if (s.includes("progress") || s.includes("planned") || s.includes("auto")) return { bg: "#eff6ff", fg: "#1d4ed8" };
+  return { bg: "#fffbeb", fg: "#b45309" };
+}
+
+function DetailItem({ label, value }) {
+  const isStatus = /status|mode/i.test(label);
+  const tone = statusTone(value);
+  return (
+    <div style={{ background: "#fff", borderRadius: 8, padding: "8px 10px" }}>
+      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>{label}</div>
+      {isStatus ? (
+        <span style={{ display: "inline-block", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 700, background: tone.bg, color: tone.fg }}>
+          {value == null || value === "" ? "—" : String(value)}
+        </span>
+      ) : (
+        <div style={{ fontSize: 13, color: "#0f172a", fontWeight: 500 }}>{value == null || value === "" ? "—" : String(value)}</div>
+      )}
+    </div>
   );
 }
 
@@ -79,6 +105,9 @@ export default function PODispatch() {
   const [convertTeam, setConvertTeam] = useState("");
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [convertScope, setConvertScope] = useState(null);
+  const [showProjectConvertModal, setShowProjectConvertModal] = useState(false);
+  const [convertProject, setConvertProject] = useState("");
+  const [detailRow, setDetailRow] = useState(null);
 
   const [successMsg, setSuccessMsg] = useState(null);
   const [errMsg, setErrMsg] = useState(null);
@@ -189,6 +218,29 @@ export default function PODispatch() {
   const uniqueProjects = [...new Set(autoRows.map(r => r.project_code).filter(Boolean))];
   const showDispatched = activeTab === "Dispatched" || activeTab === "all";
 
+  async function handleConvertByProject() {
+    if (!convertProject) return;
+    setConverting(true);
+    setShowProjectConvertModal(false);
+    try {
+      const res = await pmApi.convertDispatchMode({
+        scope: "project",
+        project_code: convertProject,
+        target_mode: "Manual",
+        new_team: convertTeam || undefined,
+      });
+      const count = res?.converted ?? 0;
+      showNotice("ok", `Converted ${count} record${count !== 1 ? "s" : ""} to Manual.`);
+      setConvertProject("");
+      setConvertTeam("");
+      loadData(activeTab);
+    } catch (err) {
+      showNotice("err", err.message || "Convert failed");
+    } finally {
+      setConverting(false);
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────
   return (
     <div>
@@ -250,6 +302,61 @@ export default function PODispatch() {
         </div>
       </Modal>
 
+      <Modal open={showProjectConvertModal} onClose={() => setShowProjectConvertModal(false)} title="Convert Project to Manual">
+        <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "0.88rem" }}>
+          Select one project. All auto-dispatched lines in that project will be converted to Manual.
+        </p>
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Project *</label>
+          <select style={inputStyle} value={convertProject} onChange={(e) => setConvertProject(e.target.value)}>
+            <option value="">Select project...</option>
+            {uniqueProjects.map((proj) => <option key={proj} value={proj}>{proj}</option>)}
+          </select>
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={labelStyle}>Re-assign to Team (optional)</label>
+          <select style={inputStyle} value={convertTeam} onChange={e => setConvertTeam(e.target.value)}>
+            <option value="">Keep current team</option>
+            {teams.map(t => <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button className="btn-secondary" onClick={() => setShowProjectConvertModal(false)}>Cancel</button>
+          <button className="btn-primary" onClick={handleConvertByProject} disabled={!convertProject || converting}>
+            {converting ? "Converting..." : "Convert"}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.poid ? ` - ${detailRow.poid}` : ""}`} width={760}>
+        {detailRow && (
+          <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                POID: {detailRow.poid || "—"}
+              </div>
+              <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                Project: {detailRow.project_code || "—"}
+              </div>
+              <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                Team: {detailRow.dispatched_team || "—"}
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+              {Object.entries(detailRow)
+                .filter(([k]) => !HIDDEN_DETAIL_FIELDS.has(String(k).toLowerCase()))
+                .map(([k, v]) => (
+                <DetailItem
+                  key={k}
+                  label={k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                  value={v}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="page-header">
         <div>
@@ -299,14 +406,12 @@ export default function PODispatch() {
         {/* Dispatched tab: auto-convert buttons */}
         {activeTab === "Dispatched" && autoRows.length > 0 && (
           <>
-            {uniqueProjects.map(proj => (
-              <button key={proj} className="btn-secondary" style={{ fontSize: "0.8rem" }}
-                onClick={() => openConvertModal("project", [], proj)} disabled={converting}>
-                Convert All "{proj}" → Manual
-              </button>
-            ))}
+            <button className="btn-primary" style={{ fontSize: "0.8rem" }}
+              onClick={() => { setConvertProject(""); setConvertTeam(""); setShowProjectConvertModal(true); }} disabled={converting}>
+              Convert by Project
+            </button>
             {selected.size > 0 && (
-              <button className="btn-secondary" style={{ fontSize: "0.8rem", borderColor: "#8b5cf6", color: "#7c3aed" }}
+              <button className="btn-primary" style={{ fontSize: "0.8rem" }}
                 onClick={() => openConvertModal("lines", [...selected], null)} disabled={converting}>
                 Convert {selected.size} → Manual
               </button>
@@ -416,14 +521,11 @@ export default function PODispatch() {
                       )}
                       {activeTab === "Dispatched" && (
                         <td onClick={e => e.stopPropagation()}>
-                          {isAuto && (
-                            <button className="btn-secondary"
-                              style={{ fontSize: "0.73rem", padding: "3px 10px", whiteSpace: "nowrap" }}
-                              onClick={() => openConvertModal("lines", [row.name], row.project_code)}
-                              disabled={converting}>
-                              → Manual
-                            </button>
-                          )}
+                          <button className="btn-secondary"
+                            style={{ fontSize: "0.73rem", padding: "3px 10px", whiteSpace: "nowrap" }}
+                            onClick={() => setDetailRow(row)}>
+                            View
+                          </button>
                         </td>
                       )}
                     </tr>

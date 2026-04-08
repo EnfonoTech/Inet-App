@@ -4,6 +4,7 @@ import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Work Done", "Re-Visit", "Extra Visit"];
+const HIDDEN_DETAIL_FIELDS = new Set(["owner", "creation", "modified", "modified_by", "docstatus", "idx"]);
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -337,10 +338,12 @@ export default function IMDispatch() {
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              {Object.entries(detailRow).map(([k, v]) => (
+              {Object.entries(detailRow)
+                .filter(([k]) => !HIDDEN_DETAIL_FIELDS.has(String(k).toLowerCase()))
+                .map(([k, v]) => (
                 <DetailItem
                   key={k}
-                  label={k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                  label={String(k).toLowerCase() === "system_id" ? "POID" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                   value={v}
                 />
               ))}
