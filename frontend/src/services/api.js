@@ -129,6 +129,8 @@ export const pmApi = {
 
   // ── Activity Cost Master ───────────────────────────────────
   listActivityCosts:    ()              => call("inet_app.api.command_center.list_activity_costs"),
+  listExecutionMonitorRows: (filters)   => call("inet_app.api.command_center.list_execution_monitor_rows", { filters: JSON.stringify(filters || {}) }),
+  listWorkDoneRows:        (filters)    => call("inet_app.api.command_center.list_work_done_rows", { filters: JSON.stringify(filters || {}) }),
 
   // ── Execution Time Log (field work time on rollout; not ERPNext Timesheet) ──
   startExecutionTimer:        (rollout_plan) =>
@@ -156,6 +158,20 @@ export const pmApi = {
   listTimesheets:       (filters) => call("inet_app.api.command_center.list_timesheets", { filters: JSON.stringify(filters || {}) }),
   approveTimesheet:     (name)    => call("inet_app.api.command_center.approve_timesheet", { name }),
   getTimesheetDetail:   (name)    => call("inet_app.api.command_center.get_timesheet_detail", { name }),
+  getTablePreferences:  (table_id) => call("inet_app.api.command_center.get_table_preferences", { table_id }),
+  saveTablePreferences: (table_id, config) =>
+    call("inet_app.api.command_center.save_table_preferences", {
+      table_id,
+      config: JSON.stringify(config || {}),
+    }),
+  getTableFieldValues: (doctype, fieldname, names) =>
+    call("inet_app.api.command_center.get_table_field_values", {
+      doctype,
+      fieldname,
+      names: JSON.stringify(names || []),
+    }),
+  getDoctypeFields: (doctype) =>
+    call("inet_app.api.command_center.get_doctype_fields", { doctype }),
 
   // ── List APIs (Command Center doctypes) ────────────────────
   listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost"], limit_page_length: 100 }),

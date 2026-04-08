@@ -40,6 +40,182 @@ def _make_poid(po_no, po_line_no, shipment_number):
     return "-".join(parts)
 
 
+def _resolve_line_poid(po_no, po_line_no, shipment_number, fallback=None):
+    """Prefer explicit POID from intake line; otherwise rebuild from line metadata."""
+    poid = (fallback or "").strip()
+    return poid or _make_poid(po_no, po_line_no, shipment_number)
+
+
+def _sanitize_table_pref_config(config):
+    """Sanitize table personalization payload."""
+    if isinstance(config, str):
+        config = frappe.parse_json(config)
+    config = config or {}
+    if not isinstance(config, dict):
+        return {}
+
+    out = {}
+
+    order = config.get("order")
+    if isinstance(order, list):
+        out["order"] = [str(x) for x in order if str(x).strip()][:200]
+
+    hidden = config.get("hidden")
+    if isinstance(hidden, list):
+        out["hidden"] = [str(x) for x in hidden if str(x).strip()][:200]
+
+    widths = config.get("widths")
+    if isinstance(widths, dict):
+        clean_widths = {}
+        for k, v in widths.items():
+            key = str(k).strip()
+            if not key:
+                continue
+            px = cint(v)
+            # Guardrails
+            px = max(60, min(px, 1200))
+            clean_widths[key] = px
+        out["widths"] = clean_widths
+
+    filters = config.get("filters")
+    if isinstance(filters, dict):
+        clean_filters = {}
+        for k, v in filters.items():
+            key = str(k).strip()
+            if not key:
+                continue
+            clean_filters[key] = str(v or "")[:200]
+        out["filters"] = clean_filters
+
+    out["show_filters"] = 1 if cint(config.get("show_filters")) else 0
+    return out
+
+
+def _get_all_table_prefs_for_user(user):
+    raw = frappe.db.get_value("User", user, "user_settings")
+    if not raw:
+        return {}
+    try:
+        parsed = frappe.parse_json(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    prefs = parsed.get("inet_table_preferences") or {}
+    return prefs if isinstance(prefs, dict) else {}
+
+
+def _save_all_table_prefs_for_user(user, prefs):
+    raw = frappe.db.get_value("User", user, "user_settings")
+    try:
+        parsed = frappe.parse_json(raw) if raw else {}
+    except Exception:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    parsed["inet_table_preferences"] = prefs
+    frappe.db.set_value("User", user, "user_settings", json.dumps(parsed), update_modified=False)
+
+
+@frappe.whitelist()
+def get_table_preferences(table_id):
+    """Read per-user table preferences for a page/table id."""
+    table_id = str(table_id or "").strip()
+    if not table_id:
+        frappe.throw("table_id is required")
+    user = frappe.session.user
+    prefs = _get_all_table_prefs_for_user(user)
+    config = prefs.get(table_id) or {}
+    return _sanitize_table_pref_config(config)
+
+
+@frappe.whitelist()
+def save_table_preferences(table_id, config=None):
+    """Save per-user table preferences for a page/table id."""
+    table_id = str(table_id or "").strip()
+    if not table_id:
+        frappe.throw("table_id is required")
+    if len(table_id) > 180:
+        frappe.throw("table_id is too long")
+
+    user = frappe.session.user
+    prefs = _get_all_table_prefs_for_user(user)
+    prefs[table_id] = _sanitize_table_pref_config(config)
+    _save_all_table_prefs_for_user(user, prefs)
+    return {"ok": True}
+
+
+@frappe.whitelist()
+def get_table_field_values(doctype, fieldname, names):
+    """
+    Fetch one field for a list of document names.
+    Used by table personalization to add doctype-backed columns dynamically.
+    """
+    doctype = str(doctype or "").strip()
+    fieldname = str(fieldname or "").strip()
+    if isinstance(names, str):
+        names = frappe.parse_json(names)
+    names = names or []
+
+    if not doctype or not fieldname:
+        frappe.throw("doctype and fieldname are required")
+    if not isinstance(names, list):
+        frappe.throw("names must be a list")
+
+    meta = frappe.get_meta(doctype)
+    if not meta.has_field(fieldname) and fieldname != "name":
+        frappe.throw(f"Field '{fieldname}' not found in {doctype}")
+
+    rows = frappe.get_all(
+        doctype,
+        filters={"name": ["in", [str(n) for n in names if str(n).strip()]]},
+        fields=["name", fieldname],
+        limit_page_length=max(1, len(names)),
+    )
+    out = {r.get("name"): r.get(fieldname) for r in rows}
+    return {"values": out}
+
+
+@frappe.whitelist()
+def get_doctype_fields(doctype):
+    """Return selectable fields for a doctype as {label, fieldname}."""
+    doctype = str(doctype or "").strip()
+    if not doctype:
+        frappe.throw("doctype is required")
+    meta = frappe.get_meta(doctype)
+    fields = [{"label": "Name", "fieldname": "name"}]
+    for df in meta.fields:
+        if not getattr(df, "fieldname", None):
+            continue
+        if df.fieldtype in ("Section Break", "Column Break", "Tab Break", "Button", "Fold", "Heading", "HTML"):
+            continue
+        fields.append({
+            "label": (df.label or df.fieldname),
+            "fieldname": df.fieldname,
+        })
+    return {"fields": fields}
+
+
+def _insert_po_dispatch_with_poid(dispatch_doc, poid):
+    """
+    Insert PO Dispatch then enforce canonical name = POID.
+    Returns final dispatch name.
+    """
+    dispatch_doc.insert(ignore_permissions=True)
+    final_name = dispatch_doc.name
+    poid = (poid or "").strip()
+    if poid and poid != dispatch_doc.name:
+        if not frappe.db.exists("PO Dispatch", poid):
+            frappe.rename_doc("PO Dispatch", dispatch_doc.name, poid, force=True, merge=False)
+            final_name = poid
+        else:
+            # Avoid accidental duplicate rename collisions; keep existing doc name.
+            final_name = dispatch_doc.name
+
+    frappe.db.set_value("PO Dispatch", final_name, "system_id", final_name, update_modified=False)
+    return final_name
+
+
 def _try_auto_dispatch(doc_name, po_no, child_rows):
     """
     After PO Intake insert, auto-dispatch lines whose project has an IM+team assigned.
@@ -97,8 +273,13 @@ def _try_auto_dispatch(doc_name, po_no, child_rows):
         dispatch.site_code = line_dict.get("site_code")
         dispatch.site_name = line_dict.get("site_name")
         dispatch.center_area = line_dict.get("center_area")
-        dispatch.insert(ignore_permissions=True)
-        dispatch.db_set("system_id", dispatch.name, update_modified=False)
+        poid = _resolve_line_poid(
+            po_no=po_no,
+            po_line_no=line_dict.get("po_line_no"),
+            shipment_number=line_dict.get("shipment_number"),
+            fallback=line_dict.get("poid"),
+        )
+        _insert_po_dispatch_with_poid(dispatch, poid)
 
         frappe.db.set_value(
             "PO Intake Line",
@@ -109,6 +290,55 @@ def _try_auto_dispatch(doc_name, po_no, child_rows):
         count += 1
 
     return count
+
+
+@frappe.whitelist()
+def backfill_po_dispatch_id_to_poid(limit=500):
+    """
+    One-time maintenance:
+    Rename PO Dispatch docs to the PO Intake Line POID when possible.
+    Returns summary counters.
+    """
+    limit = cint(limit or 500)
+    rows = frappe.get_all(
+        "PO Dispatch",
+        fields=["name", "po_intake", "po_line_no", "po_no"],
+        order_by="modified desc",
+        limit_page_length=limit,
+    )
+
+    renamed = 0
+    skipped = 0
+    failed = []
+
+    for d in rows:
+        line = frappe.db.get_value(
+            "PO Intake Line",
+            {"parent": d.po_intake, "po_line_no": d.po_line_no},
+            ["poid", "shipment_number"],
+            as_dict=True,
+        )
+        poid = _resolve_line_poid(
+            po_no=d.po_no,
+            po_line_no=d.po_line_no,
+            shipment_number=(line or {}).get("shipment_number"),
+            fallback=(line or {}).get("poid"),
+        )
+        if not poid or d.name == poid:
+            skipped += 1
+            continue
+        if frappe.db.exists("PO Dispatch", poid):
+            skipped += 1
+            continue
+        try:
+            frappe.rename_doc("PO Dispatch", d.name, poid, force=True, merge=False)
+            frappe.db.set_value("PO Dispatch", poid, "system_id", poid, update_modified=False)
+            renamed += 1
+        except Exception:
+            failed.append({"from": d.name, "to": poid})
+
+    frappe.db.commit()
+    return {"checked": len(rows), "renamed": renamed, "skipped": skipped, "failed": failed}
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +627,7 @@ def dispatch_po_lines(payload):
 
     Returns
     -------
-    {"created": N, "system_ids": [...]}
+    {"created": N, "poids": [...]}
     """
     if isinstance(payload, str):
         payload = frappe.parse_json(payload)
@@ -424,7 +654,7 @@ def dispatch_po_lines(payload):
             team_type = team_doc.team_type
 
     created = 0
-    system_ids = []
+    poids = []
 
     for line in lines:
         po_intake_name = line.get("po_intake") or line.get("parent")
@@ -440,6 +670,12 @@ def dispatch_po_lines(payload):
         site_name = line.get("site_name")
         po_no = line.get("po_no")
         line_child_name = line.get("name")  # child table row name
+        poid = _resolve_line_poid(
+            po_no=po_no,
+            po_line_no=po_line_no,
+            shipment_number=line.get("shipment_number"),
+            fallback=line.get("poid"),
+        )
 
         # Resolve customer from PO Intake parent
         customer = line.get("customer")
@@ -474,8 +710,7 @@ def dispatch_po_lines(payload):
         doc.site_code = site_code
         doc.site_name = site_name
 
-        doc.insert(ignore_permissions=True)
-        doc.db_set("system_id", doc.name, update_modified=False)
+        final_dispatch_name = _insert_po_dispatch_with_poid(doc, poid)
 
         # Mark the PO Intake Line as "Dispatched"
         if line_child_name:
@@ -487,9 +722,9 @@ def dispatch_po_lines(payload):
 
         frappe.db.commit()
         created += 1
-        system_ids.append(doc.name)
+        poids.append(final_dispatch_name)
 
-    return {"created": created, "system_ids": system_ids}
+    return {"created": created, "poids": poids}
 
 
 @frappe.whitelist()
@@ -591,7 +826,7 @@ def create_rollout_plans(payload):
         dispatch = frappe.db.get_value(
             "PO Dispatch",
             dispatch_name,
-            ["name", "system_id", "team", "line_amount", "im"],
+            ["name", "team", "line_amount", "im"],
             as_dict=True,
         )
         if not dispatch:
@@ -599,7 +834,6 @@ def create_rollout_plans(payload):
 
         doc = frappe.new_doc("Rollout Plan")
         doc.po_dispatch = dispatch_name
-        doc.system_id = dispatch.system_id or dispatch_name
         doc.team = dispatch.team
         if dispatch.im and hasattr(doc, "im"):
             doc.im = dispatch.im
@@ -694,12 +928,12 @@ def update_execution(payload):
             frappe.throw("rollout_plan is required when creating a new Daily Execution.")
 
         rp = frappe.db.get_value(
-            "Rollout Plan", rollout_plan, ["system_id", "team"], as_dict=True
+            "Rollout Plan", rollout_plan, ["po_dispatch", "team"], as_dict=True
         )
 
         doc = frappe.new_doc("Daily Execution")
         doc.rollout_plan = rollout_plan
-        doc.system_id = rp.system_id if rp else None
+        doc.system_id = rp.po_dispatch if rp else None
         doc.team = rp.team if rp else None
         pd_name = frappe.db.get_value("Rollout Plan", rollout_plan, "po_dispatch")
         im_v = None
@@ -865,6 +1099,239 @@ def generate_work_done(execution_name):
     frappe.db.commit()
 
     return {"name": wd.name}
+
+
+# ---------------------------------------------------------------------------
+# Admin list APIs — Execution monitor / Work Done
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def list_execution_monitor_rows(filters=None):
+    """
+    Rich rows for PM Execution Monitor (Rollout + latest execution + dispatch context).
+
+    filters:
+      {
+        "status": "Planned|In Execution|Completed|Cancelled|Planning with Issue",
+        "visit_type": "...",
+        "team": "...",
+        "from_date": "YYYY-MM-DD",
+        "to_date": "YYYY-MM-DD",
+      }
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters)
+    filters = filters or {}
+
+    rp_filters = {}
+    if filters.get("status"):
+        rp_filters["plan_status"] = filters["status"]
+    if filters.get("visit_type"):
+        rp_filters["visit_type"] = filters["visit_type"]
+    if filters.get("team"):
+        rp_filters["team"] = filters["team"]
+    if filters.get("from_date") and filters.get("to_date"):
+        rp_filters["plan_date"] = ["between", [filters["from_date"], filters["to_date"]]]
+    elif filters.get("from_date"):
+        rp_filters["plan_date"] = [">=", filters["from_date"]]
+    elif filters.get("to_date"):
+        rp_filters["plan_date"] = ["<=", filters["to_date"]]
+
+    plans = frappe.get_all(
+        "Rollout Plan",
+        filters=rp_filters,
+        fields=[
+            "name",
+            "po_dispatch",
+            "team",
+            "plan_date",
+            "visit_type",
+            "target_amount",
+            "achieved_amount",
+            "completion_pct",
+            "plan_status",
+            "modified",
+        ],
+        order_by="modified desc",
+        limit_page_length=500,
+    )
+    if not plans:
+        return []
+
+    plan_names = [p.name for p in plans]
+    dispatch_names = [p.po_dispatch for p in plans if p.po_dispatch]
+
+    execution_rows = frappe.get_all(
+        "Daily Execution",
+        filters={"rollout_plan": ["in", plan_names]},
+        fields=[
+            "name",
+            "rollout_plan",
+            "execution_date",
+            "execution_status",
+            "achieved_qty",
+            "achieved_amount",
+            "qc_status",
+            "gps_location",
+            "modified",
+        ],
+        order_by="modified desc",
+        limit_page_length=2000,
+    )
+    latest_exec_by_plan = {}
+    for ex in execution_rows:
+        if ex.rollout_plan not in latest_exec_by_plan:
+            latest_exec_by_plan[ex.rollout_plan] = ex
+
+    dispatch_map = {}
+    if dispatch_names:
+        drows = frappe.get_all(
+            "PO Dispatch",
+            filters={"name": ["in", dispatch_names]},
+            fields=["name", "po_no", "item_code", "item_description", "project_code", "site_name", "site_code"],
+            limit_page_length=1000,
+        )
+        dispatch_map = {d.name: d for d in drows}
+
+    out = []
+    for p in plans:
+        ex = latest_exec_by_plan.get(p.name)
+        d = dispatch_map.get(p.po_dispatch) if p.po_dispatch else None
+        out.append(
+            {
+                "name": p.name,
+                "system_id": p.po_dispatch or p.name,
+                "po_dispatch": p.po_dispatch,
+                "po_no": d.po_no if d else None,
+                "item_code": d.item_code if d else None,
+                "item_description": d.item_description if d else None,
+                "project_code": d.project_code if d else None,
+                "site_name": d.site_name if d else None,
+                "site_code": d.site_code if d else None,
+                "team": p.team,
+                "plan_date": p.plan_date,
+                "visit_type": p.visit_type,
+                "target_amount": flt(p.target_amount or 0),
+                "achieved_amount": flt(p.achieved_amount or 0),
+                "completion_pct": flt(p.completion_pct or 0),
+                "plan_status": p.plan_status,
+                "execution_name": ex.name if ex else None,
+                "execution_date": ex.execution_date if ex else None,
+                "execution_status": ex.execution_status if ex else None,
+                "execution_achieved_qty": flt(ex.achieved_qty or 0) if ex else 0,
+                "execution_achieved_amount": flt(ex.achieved_amount or 0) if ex else 0,
+                "qc_status": ex.qc_status if ex else None,
+                "gps_location": ex.gps_location if ex else None,
+                "modified": p.modified,
+            }
+        )
+    return out
+
+
+@frappe.whitelist()
+def list_work_done_rows(filters=None):
+    """
+    Rich Work Done rows for PM page.
+    filters: { billing_status, from_date, to_date, team, project_code }
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters)
+    filters = filters or {}
+
+    wd_filters = {}
+    if filters.get("billing_status"):
+        wd_filters["billing_status"] = filters["billing_status"]
+
+    rows = frappe.get_all(
+        "Work Done",
+        filters=wd_filters,
+        fields=[
+            "name",
+            "execution",
+            "system_id",
+            "item_code",
+            "executed_qty",
+            "billing_rate_sar",
+            "revenue_sar",
+            "team_cost_sar",
+            "subcontract_cost_sar",
+            "total_cost_sar",
+            "margin_sar",
+            "billing_status",
+            "modified",
+        ],
+        order_by="modified desc",
+        limit_page_length=500,
+    )
+    if not rows:
+        return []
+
+    exec_names = [r.execution for r in rows if r.execution]
+    ex_map = {}
+    if exec_names:
+        ex_rows = frappe.get_all(
+            "Daily Execution",
+            filters={"name": ["in", exec_names]},
+            fields=["name", "rollout_plan", "execution_date", "execution_status", "team"],
+            limit_page_length=1000,
+        )
+        ex_map = {e.name: e for e in ex_rows}
+
+    plan_names = [e.rollout_plan for e in ex_map.values() if e.rollout_plan]
+    rp_map = {}
+    if plan_names:
+        rp_rows = frappe.get_all(
+            "Rollout Plan",
+            filters={"name": ["in", plan_names]},
+            fields=["name", "po_dispatch", "plan_date", "visit_type"],
+            limit_page_length=1000,
+        )
+        rp_map = {r.name: r for r in rp_rows}
+
+    dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
+    pd_map = {}
+    if dispatch_names:
+        pd_rows = frappe.get_all(
+            "PO Dispatch",
+            filters={"name": ["in", dispatch_names]},
+            fields=["name", "po_no", "project_code", "site_name", "team", "item_description"],
+            limit_page_length=1000,
+        )
+        pd_map = {p.name: p for p in pd_rows}
+
+    out = []
+    for r in rows:
+        ex = ex_map.get(r.execution)
+        rp = rp_map.get(ex.rollout_plan) if ex and ex.rollout_plan else None
+        pd = pd_map.get(rp.po_dispatch) if rp and rp.po_dispatch else None
+        team = (pd.team if pd else None) or (ex.team if ex else None)
+        project_code = pd.project_code if pd else None
+        if filters.get("team") and team != filters["team"]:
+            continue
+        if filters.get("project_code") and project_code != filters["project_code"]:
+            continue
+        ex_date = ex.execution_date if ex else None
+        if filters.get("from_date") and ex_date and str(ex_date) < str(filters["from_date"]):
+            continue
+        if filters.get("to_date") and ex_date and str(ex_date) > str(filters["to_date"]):
+            continue
+        out.append(
+            {
+                **r,
+                "po_dispatch": rp.po_dispatch if rp else None,
+                "po_no": pd.po_no if pd else None,
+                "project_code": project_code,
+                "site_name": pd.site_name if pd else None,
+                "team": team,
+                "item_description": pd.item_description if pd else None,
+                "execution_date": ex_date,
+                "execution_status": ex.execution_status if ex else None,
+                "plan_date": rp.plan_date if rp else None,
+                "visit_type": rp.visit_type if rp else None,
+            }
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1246,7 +1713,7 @@ def list_im_rollout_plans(im=None, plan_status=None):
         params.append(plan_status)
     rows = frappe.db.sql(
         f"""
-        SELECT rp.name, rp.system_id, rp.po_dispatch, rp.team, rp.plan_date, rp.visit_type,
+        SELECT rp.name, rp.po_dispatch AS system_id, rp.po_dispatch, rp.team, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount, rp.achieved_amount,
                rp.completion_pct, rp.plan_status,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code
@@ -1277,7 +1744,7 @@ def list_im_daily_executions(im=None, execution_status=None):
     ciag_sel = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL"
     rows = frappe.db.sql(
         f"""
-        SELECT de.name, de.system_id, de.rollout_plan, de.team, de.execution_date,
+        SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan, de.team, de.execution_date,
                de.execution_status, de.achieved_qty, de.achieved_amount, de.gps_location,
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag,
                pd.im AS dispatch_im, pd.site_code, pd.po_no
@@ -1691,7 +2158,7 @@ def get_project_summary(project_code):
     # PO Dispatches for this project
     dispatches = frappe.get_all("PO Dispatch",
         filters={"project_code": project_code},
-        fields=["name", "system_id", "po_no", "po_line_no", "item_code", "item_description",
+        fields=["name", "po_no", "po_line_no", "item_code", "item_description",
                 "qty", "rate", "line_amount", "team", "im", "dispatch_status", "center_area"],
         order_by="modified desc",
         limit_page_length=500)
@@ -1704,7 +2171,7 @@ def get_project_summary(project_code):
     if dispatch_names:
         plans = frappe.get_all("Rollout Plan",
             filters={"po_dispatch": ["in", dispatch_names]},
-            fields=["name", "system_id", "po_dispatch", "team", "plan_date", "visit_type",
+            fields=["name", "po_dispatch", "team", "plan_date", "visit_type",
                     "visit_multiplier", "target_amount", "achieved_amount", "completion_pct", "plan_status"],
             order_by="plan_date desc",
             limit_page_length=500)
@@ -1715,10 +2182,13 @@ def get_project_summary(project_code):
     if plan_names:
         executions = frappe.get_all("Daily Execution",
             filters={"rollout_plan": ["in", plan_names]},
-            fields=["name", "system_id", "rollout_plan", "team", "execution_date",
+            fields=["name", "rollout_plan", "team", "execution_date",
                     "execution_status", "achieved_qty", "achieved_amount", "qc_status"],
             order_by="execution_date desc",
             limit_page_length=500)
+        plan_poid_map = {p.name: p.po_dispatch for p in plans}
+        for e in executions:
+            e["system_id"] = plan_poid_map.get(e.rollout_plan)
 
     # Work Done
     execution_names = [e.name for e in executions]
@@ -1726,10 +2196,13 @@ def get_project_summary(project_code):
     if execution_names:
         work_done = frappe.get_all("Work Done",
             filters={"execution": ["in", execution_names]},
-            fields=["name", "system_id", "execution", "item_code", "executed_qty",
+            fields=["name", "execution", "item_code", "executed_qty",
                     "billing_rate_sar", "revenue_sar", "team_cost_sar", "subcontract_cost_sar",
                     "total_cost_sar", "margin_sar", "billing_status"],
             limit_page_length=500)
+        exec_poid_map = {e.name: e.get("system_id") for e in executions}
+        for wd in work_done:
+            wd["system_id"] = exec_poid_map.get(wd.execution)
 
     # Teams involved — merge from dispatches + Team Assignment doctype
     dispatch_teams = set(d.team for d in dispatches if d.team)

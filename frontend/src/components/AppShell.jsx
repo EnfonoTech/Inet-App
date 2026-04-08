@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import FieldGlobalTimerBar from "./FieldGlobalTimerBar";
+import DataTablePro from "./DataTablePro";
 import inetLogo from "../assets/inet-logo.png";
 
 /* ── SVG Icon Components (Feather-style) ───────────────────── */
@@ -256,6 +257,7 @@ export default function AppShell() {
       {/* ── Main Content ────────────────────────────────────── */}
       <main className="content" style={{ marginLeft: sidebarWidth, width: `calc(100% - ${sidebarWidth}px)` }}>
         <FieldGlobalTimerBar role={role} />
+        <DataTablePro />
         <Outlet />
       </main>
     </div>
