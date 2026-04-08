@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { pmApi } from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
+import {
+  elapsedSecondsFromServerEpoch,
+  formatElapsedSeconds,
+  makeSkewMs,
+} from "../../utils/executionTimerDisplay";
 
 const EXECUTION_STATUSES = [
   "In Progress",
@@ -23,6 +29,7 @@ function DetailRow({ label, value }) {
 export default function ExecutionForm() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { teamId } = useAuth();
 
   const [plan, setPlan] = useState(null);
   const [loadingPlan, setLoadingPlan] = useState(true);
@@ -41,6 +48,55 @@ export default function ExecutionForm() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [submittedPlanStatus, setSubmittedPlanStatus] = useState(null);
+
+  const [runningHere, setRunningHere] = useState(null);
+  const [runningElsewhere, setRunningElsewhere] = useState(null);
+  const [timerBusy, setTimerBusy] = useState(false);
+  const [timerError, setTimerError] = useState(null);
+  const [, timerTick] = useState(0);
+  const timerSkewMsRef = useRef(0);
+
+  useEffect(() => {
+    const iv = setInterval(() => timerTick((x) => x + 1), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => {
+    const src = runningHere || runningElsewhere;
+    if (src?.server_time_ms != null) {
+      timerSkewMsRef.current = makeSkewMs(src.server_time_ms);
+    }
+  }, [runningHere?.log_name, runningElsewhere?.log_name, runningHere?.server_time_ms, runningElsewhere?.server_time_ms]);
+
+  useEffect(() => {
+    if (!id || !teamId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await pmApi.getRunningExecutionTimer();
+        if (cancelled) return;
+        if (!r?.log_name) {
+          setRunningHere(null);
+          setRunningElsewhere(null);
+          return;
+        }
+        if (r.rollout_plan === id) {
+          setRunningHere(r);
+          setRunningElsewhere(null);
+        } else {
+          setRunningHere(null);
+          setRunningElsewhere(r);
+        }
+      } catch {
+        if (!cancelled) {
+          setRunningHere(null);
+          setRunningElsewhere(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [id, teamId, success]);
 
   useEffect(() => {
     async function loadPlan() {
@@ -73,6 +129,41 @@ export default function ExecutionForm() {
       setActivityCost(found ? found.base_cost_sar : null);
     } else {
       setActivityCost(null);
+    }
+  }
+
+  async function handleStartTimer() {
+    if (!id) return;
+    setTimerBusy(true);
+    setTimerError(null);
+    try {
+      await pmApi.startExecutionTimer(id);
+      window.dispatchEvent(new Event("inet-timer-changed"));
+      const r = await pmApi.getRunningExecutionTimer();
+      if (r?.rollout_plan === id) {
+        setRunningHere(r);
+        setRunningElsewhere(null);
+      }
+    } catch (e) {
+      setTimerError(e.message || "Could not start timer");
+    } finally {
+      setTimerBusy(false);
+    }
+  }
+
+  async function handleStopTimer(logName) {
+    if (!logName) return;
+    setTimerBusy(true);
+    setTimerError(null);
+    try {
+      await pmApi.stopExecutionTimer(logName);
+      setRunningHere(null);
+      setRunningElsewhere(null);
+      window.dispatchEvent(new Event("inet-timer-changed"));
+    } catch (e) {
+      setTimerError(e.message || "Could not stop timer");
+    } finally {
+      setTimerBusy(false);
     }
   }
 
@@ -123,6 +214,14 @@ export default function ExecutionForm() {
         }
       }
 
+      try {
+        const plist = await pmApi.listRolloutPlans({ name: id });
+        const p = Array.isArray(plist) && plist.length > 0 ? plist[0] : null;
+        setSubmittedPlanStatus(p?.plan_status || null);
+      } catch {
+        setSubmittedPlanStatus(null);
+      }
+
       setSuccess(true);
     } catch (err) {
       setSubmitError(err.message || "Failed to submit execution update");
@@ -154,6 +253,11 @@ export default function ExecutionForm() {
           <div className="notice success" style={{ marginBottom: 20 }}>
             <span>&#x2705;</span> Execution update submitted successfully!
             {execStatus === "Completed" && " Work Done record has been generated."}
+            {submittedPlanStatus && (
+              <div style={{ marginTop: 10, fontSize: "0.88rem" }}>
+                Rollout plan status is now: <strong>{submittedPlanStatus}</strong>
+              </div>
+            )}
           </div>
           <button className="btn-primary" onClick={() => navigate(-1)}>
             Back to Today's Work
@@ -187,6 +291,72 @@ export default function ExecutionForm() {
         )}
 
         {/* Plan Details */}
+        {teamId && plan && !["Completed", "Cancelled"].includes(plan.plan_status) && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: "16px 18px",
+              borderRadius: "var(--radius)",
+              border: "1px solid rgba(99,102,241,0.35)",
+              background: "linear-gradient(135deg,#0f172a 0%,#1e293b 100%)",
+            }}
+          >
+            <div style={{ fontSize: "0.72rem", color: "#94a3b8", fontWeight: 600, marginBottom: 8 }}>
+              TIME ON THIS EXECUTION
+            </div>
+            {timerError && (
+              <div className="notice error" style={{ marginBottom: 10, fontSize: "0.8rem" }}>
+                {timerError}
+              </div>
+            )}
+            {runningElsewhere && (
+              <div style={{ marginBottom: 12, fontSize: "0.82rem", color: "#fecaca" }}>
+                Another timer is running on plan{" "}
+                <span style={{ fontFamily: "monospace" }}>{runningElsewhere.rollout_plan}</span>
+                {runningElsewhere.item_description ? ` — ${runningElsewhere.item_description}` : ""}.
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={timerBusy}
+                    onClick={() => handleStopTimer(runningElsewhere.log_name)}
+                  >
+                    Stop that timer
+                  </button>
+                </div>
+              </div>
+            )}
+            {runningHere && (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14 }}>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "1.5rem", fontWeight: 700, color: "#7dd3fc" }}>
+                  {formatElapsedSeconds(
+                    elapsedSecondsFromServerEpoch(runningHere.start_time_ms, timerSkewMsRef.current)
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{ background: "#dc2626", borderColor: "#dc2626" }}
+                  disabled={timerBusy}
+                  onClick={() => handleStopTimer(runningHere.log_name)}
+                >
+                  Stop timer
+                </button>
+              </div>
+            )}
+            {!runningHere && !runningElsewhere && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button type="button" className="btn-primary" disabled={timerBusy} onClick={handleStartTimer}>
+                  {timerBusy ? "Please wait…" : "Start timer"}
+                </button>
+                <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+                  Tracks time on this rollout while you work (saved when you stop).
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
         {plan && (
           <div className="detail-panel" style={{ marginBottom: 20 }}>
             <div style={{

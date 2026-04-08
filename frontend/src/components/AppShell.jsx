@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import FieldGlobalTimerBar from "./FieldGlobalTimerBar";
 import inetLogo from "../assets/inet-logo.png";
 
 /* ── SVG Icon Components (Feather-style) ───────────────────── */
@@ -93,7 +94,7 @@ const adminNav = [
   { to: "/execution",  label: "Execution",   icon: "eye" },
   { to: "/work-done",  label: "Work Done",   icon: "checkCircle" },
   { to: "/reports",    label: "Reports",     icon: "barChart" },
-  { to: "/timesheets", label: "Timesheets",  icon: "clock" },
+  { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/overview",   label: "Search / Overview", icon: "search" },
   { to: "/masters",    label: "Masters",     icon: "settings" },
 ];
@@ -106,14 +107,14 @@ const imNav = [
   { to: "/im-planning",  label: "Planning",     icon: "calendar" },
   { to: "/im-execution", label: "Execution",    icon: "eye" },
   { to: "/im-reports",   label: "Reports",      icon: "barChart" },
-  { to: "/im-timesheets", label: "Timesheets",  icon: "clock" },
+  { to: "/im-timesheets", label: "Time logs",   icon: "clock" },
 ];
 
 const fieldNav = [
   { to: "/today",        label: "Today's Work", icon: "clipboard" },
   { to: "/field-execute", label: "Execute",     icon: "tool" },
   { to: "/field-history",    label: "History",     icon: "checkCircle" },
-  { to: "/field-timesheet", label: "Timesheet",   icon: "clock" },
+  { to: "/field-timesheet", label: "Time log",    icon: "clock" },
 ];
 
 /* ── Chevron SVG ───────────────────────────────────────────── */
@@ -254,6 +255,7 @@ export default function AppShell() {
 
       {/* ── Main Content ────────────────────────────────────── */}
       <main className="content" style={{ marginLeft: sidebarWidth, width: `calc(100% - ${sidebarWidth}px)` }}>
+        <FieldGlobalTimerBar role={role} />
         <Outlet />
       </main>
     </div>

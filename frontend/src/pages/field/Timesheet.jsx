@@ -1,149 +1,152 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
+import {
+  elapsedSecondsFromServerEpoch,
+  formatElapsedSeconds,
+  makeSkewMs,
+} from "../../utils/executionTimerDisplay";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
-const TIMER_KEY = "inet_field_ts_timer";
+const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
-function toLocalDatetimeValue(d) {
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function shortDt(v) {
+  if (!v) return "—";
+  try {
+    return new Date(v).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(v);
+  }
 }
 
 export default function Timesheet() {
   const { teamId } = useAuth();
-  const [timesheets, setTimesheets] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [running, setRunning] = useState(null);
+  const [, tick] = useState(0);
+  const timerSkewMsRef = useRef(0);
 
-  // Form state
-  const [activityType, setActivityType] = useState("Execution");
+  const [planned, setPlanned] = useState([]);
+  const [manualPlan, setManualPlan] = useState("");
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
-  const [hours, setHours] = useState("");
-  const [project, setProject] = useState("");
-  const [description, setDescription] = useState("");
-  const [projects, setProjects] = useState([]);
+  const [manualNotes, setManualNotes] = useState("");
+  const [showManual, setShowManual] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [timerStart, setTimerStart] = useState(() => sessionStorage.getItem(TIMER_KEY));
-  const [, forceTick] = useState(0);
 
   useEffect(() => {
-    if (!timerStart) return;
-    const id = setInterval(() => forceTick((x) => x + 1), 1000);
+    if (!running?.log_name) return undefined;
+    const id = setInterval(() => tick((x) => x + 1), 1000);
     return () => clearInterval(id);
-  }, [timerStart]);
-
-  function elapsedLabel() {
-    if (!timerStart) return "00:00:00";
-    const sec = Math.max(0, Math.floor((Date.now() - new Date(timerStart).getTime()) / 1000));
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = sec % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-
-  function startTimer() {
-    const iso = new Date().toISOString();
-    sessionStorage.setItem(TIMER_KEY, iso);
-    setTimerStart(iso);
-  }
-
-  function stopTimer() {
-    if (!timerStart) return;
-    const start = new Date(timerStart);
-    const end = new Date();
-    sessionStorage.removeItem(TIMER_KEY);
-    setTimerStart(null);
-    setFromTime(toLocalDatetimeValue(start));
-    setToTime(toLocalDatetimeValue(end));
-    const diff = (end - start) / 3600000;
-    if (diff > 0) setHours(diff.toFixed(1));
-    setShowForm(true);
-  }
+  }, [running?.log_name]);
 
   useEffect(() => {
-    loadTimesheets();
-    pmApi.listProjects({ limit: 100 }).then(res => {
-      setProjects((res || []).map(p => p.project_code));
-    }).catch(() => {});
-  }, []);
+    if (running?.server_time_ms != null) {
+      timerSkewMsRef.current = makeSkewMs(running.server_time_ms);
+    }
+  }, [running?.log_name, running?.server_time_ms]);
 
-  async function loadTimesheets() {
+  async function refreshRunning() {
+    try {
+      const r = await pmApi.getRunningExecutionTimer();
+      if (r && r.log_name && r.start_time_ms != null && r.server_time_ms != null) {
+        timerSkewMsRef.current = makeSkewMs(r.server_time_ms);
+        setRunning(r);
+      } else {
+        setRunning(null);
+      }
+    } catch {
+      setRunning(null);
+    }
+  }
+
+  async function loadLogs() {
     setLoading(true);
     try {
-      const res = await pmApi.listTimesheets({ team: teamId, include_log_bounds: true });
-      setTimesheets(res || []);
+      const res = await pmApi.listExecutionTimeLogs({}, 200, 0);
+      setLogs(res?.logs || []);
+      setTotal(res?.total ?? (res?.logs || []).length);
     } catch {
-      setTimesheets([]);
+      setLogs([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   }
 
-  function calcHours() {
-    if (fromTime && toTime) {
-      const diff = (new Date(toTime) - new Date(fromTime)) / 3600000;
-      if (diff > 0) setHours(diff.toFixed(1));
+  useEffect(() => {
+    loadLogs();
+    refreshRunning();
+  }, [teamId]);
+
+  useEffect(() => {
+    if (!teamId) return;
+    pmApi.getFieldTeamDashboard(teamId).then((r) => {
+      const items = r?.planned ?? r?.plans ?? [];
+      setPlanned(Array.isArray(items) ? items : []);
+    }).catch(() => setPlanned([]));
+  }, [teamId]);
+
+  async function stopRunning() {
+    if (!running?.log_name) return;
+    setError(null);
+    try {
+      await pmApi.stopExecutionTimer(running.log_name);
+      setRunning(null);
+      window.dispatchEvent(new Event("inet-timer-changed"));
+      loadLogs();
+    } catch (e) {
+      setError(e.message || "Stop failed");
     }
   }
 
-  useEffect(() => { calcHours(); }, [fromTime, toTime]);
-
-  function resetForm() {
-    setActivityType("Execution");
-    setFromTime("");
-    setToTime("");
-    setHours("");
-    setProject("");
-    setDescription("");
+  async function handleManualSubmit(e) {
+    e.preventDefault();
     setError(null);
     setSuccess(null);
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!fromTime || !toTime || !hours) {
-      setError("Please fill in start time, end time, and hours.");
+    if (!manualPlan || !fromTime || !toTime) {
+      setError("Choose a rollout plan and enter start and end times.");
       return;
     }
     setSubmitting(true);
-    setError(null);
     try {
-      await pmApi.createTimesheet({
-        team: teamId,
-        time_logs: [{
-          activity_type: activityType,
-          from_time: fromTime.replace("T", " ") + ":00",
-          to_time: toTime.replace("T", " ") + ":00",
-          hours: parseFloat(hours),
-          project: project || undefined,
-          description: description,
-        }],
-      });
-      setSuccess("Timesheet submitted successfully!");
-      resetForm();
-      setShowForm(false);
-      loadTimesheets();
+      const st = fromTime.replace("T", " ") + ":00";
+      const et = toTime.replace("T", " ") + ":00";
+      await pmApi.saveExecutionTimeLogManual(manualPlan, st, et, manualNotes);
+      setSuccess("Time log saved.");
+      setFromTime("");
+      setToTime("");
+      setManualNotes("");
+      setManualPlan("");
+      setShowManual(false);
+      loadLogs();
     } catch (err) {
-      setError(err.message || "Failed to submit timesheet");
+      setError(err.message || "Save failed");
     } finally {
       setSubmitting(false);
     }
   }
 
+  const totalHours = logs.reduce((s, r) => s + (parseFloat(r.duration_hours) || 0), 0);
+
   return (
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Timesheet</h1>
-          <div className="page-subtitle">Track your daily work hours</div>
+          <h1 className="page-title">Time log</h1>
+          <div className="page-subtitle">Time tracked per rollout / execution (not ERPNext timesheet)</div>
         </div>
         <div className="page-actions">
-          <button className="btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
-            + Log Time
+          <button className="btn-primary" type="button" onClick={() => { setShowManual(true); setError(null); setSuccess(null); }}>
+            + Manual entry
           </button>
         </div>
       </div>
@@ -154,113 +157,120 @@ export default function Timesheet() {
         </div>
       )}
 
-      <div style={{
-        background: "linear-gradient(135deg,#0f172a 0%,#1e293b 100%)",
-        borderRadius: "var(--radius)",
-        padding: "18px 22px",
-        marginBottom: 20,
-        border: "1px solid rgba(99,102,241,0.35)",
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "center",
-        gap: 16,
-      }}>
-        <div>
-          <div style={{ fontSize: "0.72rem", color: "#94a3b8", fontWeight: 600, marginBottom: 4 }}>LIVE TIMER (this device)</div>
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "1.65rem", fontWeight: 700, color: "#7dd3fc", letterSpacing: "0.04em" }}>
-            {elapsedLabel()}
+      {running && (
+        <div
+          style={{
+            background: "linear-gradient(135deg,#0f172a 0%,#1e293b 100%)",
+            borderRadius: "var(--radius)",
+            padding: "18px 22px",
+            marginBottom: 20,
+            border: "1px solid rgba(99,102,241,0.35)",
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 16,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: "0.72rem", color: "#94a3b8", fontWeight: 600, marginBottom: 4 }}>RUNNING TIMER</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "1.65rem", fontWeight: 700, color: "#7dd3fc" }}>
+              {formatElapsedSeconds(
+                elapsedSecondsFromServerEpoch(running.start_time_ms, timerSkewMsRef.current)
+              )}
+            </div>
+            <div style={{ fontSize: "0.78rem", color: "#94a3b8", marginTop: 6 }}>
+              {running.rollout_plan}
+              {running.item_description ? ` · ${running.item_description}` : ""}
+            </div>
           </div>
+          <button type="button" className="btn-primary" style={{ background: "#dc2626", borderColor: "#dc2626" }} onClick={stopRunning}>
+            Stop timer
+          </button>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          {!timerStart ? (
-            <button type="button" className="btn-primary" onClick={startTimer}>Start</button>
-          ) : (
-            <button type="button" className="btn-primary" onClick={stopTimer} style={{ background: "#dc2626", borderColor: "#dc2626" }}>Stop &amp; fill entry</button>
-          )}
-        </div>
-        <p style={{ margin: 0, fontSize: "0.78rem", color: "#94a3b8", flex: "1 1 200px" }}>
-          Start when you begin work; Stop opens the form with start/end times filled. Submit to record hours for your employee profile.
-        </p>
-      </div>
+      )}
 
-      {/* New Timesheet Form */}
-      {showForm && (
-        <div style={{
-          background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)",
-          padding: 24, marginBottom: 20, boxShadow: "var(--shadow-sm)",
-        }}>
+      {!teamId && (
+        <div className="notice error" style={{ marginBottom: 16 }}>
+          No team linked to your user — time logs cannot be created until your account is assigned to a field team.
+        </div>
+      )}
+
+      {showManual && teamId && (
+        <div
+          style={{
+            background: "var(--bg-white)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: 24,
+            marginBottom: 20,
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700 }}>New Time Entry</h3>
-            <button onClick={() => setShowForm(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-muted)" }}>&times;</button>
+            <h3 style={{ fontSize: 15, fontWeight: 700 }}>Manual time entry</h3>
+            <button type="button" onClick={() => setShowManual(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-muted)" }}>&times;</button>
           </div>
-
-          {error && <div className="notice error" style={{ marginBottom: 12 }}><span>&oplus;</span> {error}</div>}
-
-          <form onSubmit={handleSubmit}>
+          {error && <div className="notice error" style={{ marginBottom: 12 }}>{error}</div>}
+          <form onSubmit={handleManualSubmit}>
             <div className="form-grid two-col">
-              <div className="form-group">
-                <label>Activity Type</label>
-                <select value={activityType} onChange={e => setActivityType(e.target.value)}>
-                  <option value="Execution">Execution</option>
-                  <option value="Planning">Planning</option>
-                  <option value="Travel">Travel</option>
-                  <option value="QC Inspection">QC Inspection</option>
-                  <option value="Meeting">Meeting</option>
-                  <option value="Training">Training</option>
-                  <option value="Other">Other</option>
+              <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                <label>Rollout plan *</label>
+                <select value={manualPlan} onChange={(e) => setManualPlan(e.target.value)} required>
+                  <option value="">— Select —</option>
+                  {planned.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name} · {p.item_description || p.item_code || "Work"}
+                    </option>
+                  ))}
                 </select>
+                {planned.length === 0 && (
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 6 }}>
+                    No plans for today — open a plan from Today&apos;s Work first, or enter time from the execution screen.
+                  </p>
+                )}
               </div>
               <div className="form-group">
-                <label>Project</label>
-                <select value={project} onChange={e => setProject(e.target.value)}>
-                  <option value="">-- Optional --</option>
-                  {projects.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
+                <label>Start *</label>
+                <input type="datetime-local" value={fromTime} onChange={(e) => setFromTime(e.target.value)} required />
               </div>
               <div className="form-group">
-                <label>Start Time *</label>
-                <input type="datetime-local" value={fromTime} onChange={e => setFromTime(e.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label>End Time *</label>
-                <input type="datetime-local" value={toTime} onChange={e => setToTime(e.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label>Hours</label>
-                <input type="number" min="0" step="0.1" value={hours} onChange={e => setHours(e.target.value)} placeholder="Auto-calculated" />
+                <label>End *</label>
+                <input type="datetime-local" value={toTime} onChange={(e) => setToTime(e.target.value)} required />
               </div>
               <div className="form-group" style={{ gridColumn: "1 / -1" }}>
-                <label>Description</label>
-                <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="What did you work on?" rows={2} />
+                <label>Notes</label>
+                <textarea value={manualNotes} onChange={(e) => setManualNotes(e.target.value)} rows={2} placeholder="Optional" />
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-              <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+              <button type="button" className="btn-secondary" onClick={() => setShowManual(false)}>Cancel</button>
               <button type="submit" className="btn-primary" disabled={submitting}>
-                {submitting ? "Submitting..." : "Submit Timesheet"}
+                {submitting ? "Saving…" : "Save log"}
               </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* Timesheet List */}
       <div style={{ background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontSize: "0.82rem", color: "var(--text-muted)" }}>
+          {loading ? "Loading…" : `${logs.length} of ${total} log(s) · ${fmt.format(totalHours)} h total`}
+        </div>
         {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading timesheets...</div>
-        ) : timesheets.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading time logs…</div>
+        ) : logs.length === 0 ? (
           <div className="empty-state" style={{ marginTop: 20 }}>
-            <div className="empty-icon">&#x1F4CB;</div>
-            <h3>No timesheets yet</h3>
-            <p>Click "+ Log Time" to record your work hours.</p>
+            <div className="empty-icon">&#x1F553;</div>
+            <h3>No time logs yet</h3>
+            <p>Use Start timer on an execution, or add a manual entry for today&apos;s rollout.</p>
           </div>
         ) : (
           <table className="data-table">
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Employee</th>
-                <th>Date</th>
+                <th>Rollout</th>
+                <th>Work</th>
                 <th>Start</th>
                 <th>End</th>
                 <th style={{ textAlign: "right" }}>Hours</th>
@@ -268,28 +278,29 @@ export default function Timesheet() {
               </tr>
             </thead>
             <tbody>
-              {timesheets.map(ts => (
-                <tr key={ts.name}>
-                  <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{ts.name}</td>
-                  <td>{ts.employee_name || "\u2014"}</td>
-                  <td>{ts.start_date || "\u2014"}</td>
-                  <td style={{ fontSize: 12 }}>
-                    {ts.log_start ? new Date(ts.log_start).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "\u2014"}
-                  </td>
-                  <td style={{ fontSize: 12 }}>
-                    {ts.log_end ? new Date(ts.log_end).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "\u2014"}
-                  </td>
+              {logs.map((row) => (
+                <tr key={row.name}>
+                  <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
+                  <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
+                  <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || row.project_code || "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{shortDt(row.start_time)}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{row.is_running ? "…" : shortDt(row.end_time)}</td>
                   <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>
-                    {ts.total_hours != null ? fmt.format(ts.total_hours) : "\u2014"}
+                    {row.is_running ? "—" : fmt.format(row.duration_hours || 0)}
                   </td>
                   <td>
                     <span style={{
-                      display: "inline-block", padding: "3px 10px", borderRadius: 12,
-                      fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-                      background: ts.status === "Submitted" ? "#ecfdf5" : "#eff6ff",
-                      color: ts.status === "Submitted" ? "#065f46" : "#1e40af",
-                    }}>
-                      {ts.status || "Draft"}
+                      display: "inline-block",
+                      padding: "3px 10px",
+                      borderRadius: 12,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      background: row.is_running ? "#fef3c7" : "#ecfdf5",
+                      color: row.is_running ? "#92400e" : "#065f46",
+                    }}
+                    >
+                      {row.is_running ? "Running" : "Done"}
                     </span>
                   </td>
                 </tr>

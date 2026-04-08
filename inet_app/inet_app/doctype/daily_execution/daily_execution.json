@@ -16,6 +16,7 @@
     "gps_location",
     "photos",
     "qc_status",
+    "ciag_status",
     "revisit_flag",
     "remarks"
   ],

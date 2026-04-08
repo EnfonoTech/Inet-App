@@ -130,7 +130,28 @@ export const pmApi = {
   // ── Activity Cost Master ───────────────────────────────────
   listActivityCosts:    ()              => call("inet_app.api.command_center.list_activity_costs"),
 
-  // ── Timesheet APIs ─────────────────────────────────────────
+  // ── Execution Time Log (field work time on rollout; not ERPNext Timesheet) ──
+  startExecutionTimer:        (rollout_plan) =>
+    call("inet_app.api.command_center.start_execution_timer", { rollout_plan }),
+  stopExecutionTimer:         (log_name) =>
+    call("inet_app.api.command_center.stop_execution_timer", { log_name }),
+  getRunningExecutionTimer:   () =>
+    call("inet_app.api.command_center.get_running_execution_timer"),
+  listExecutionTimeLogs:      (filters, limit, offset) =>
+    call("inet_app.api.command_center.list_execution_time_logs", {
+      filters: JSON.stringify(filters || {}),
+      limit: limit ?? 100,
+      offset: offset ?? 0,
+    }),
+  saveExecutionTimeLogManual: (rollout_plan, start_time, end_time, notes) =>
+    call("inet_app.api.command_center.save_execution_time_log_manual", {
+      rollout_plan,
+      start_time,
+      end_time,
+      notes: notes || "",
+    }),
+
+  // ── ERPNext Timesheet (legacy; avoid for portal) ───────────
   createTimesheet:      (payload) => call("inet_app.api.command_center.create_timesheet", { payload: JSON.stringify(payload) }),
   listTimesheets:       (filters) => call("inet_app.api.command_center.list_timesheets", { filters: JSON.stringify(filters || {}) }),
   approveTimesheet:     (name)    => call("inet_app.api.command_center.approve_timesheet", { name }),

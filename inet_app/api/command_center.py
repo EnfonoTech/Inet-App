@@ -10,10 +10,13 @@ import frappe
 from frappe.utils import (
     cint,
     flt,
+    get_datetime,
     get_first_day,
     get_last_day,
     getdate,
+    now_datetime,
     nowdate,
+    time_diff_in_seconds,
 )
 
 # ---------------------------------------------------------------------------
@@ -618,6 +621,42 @@ def create_rollout_plans(payload):
     return {"created": created, "names": names}
 
 
+def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
+    """
+    Keep Rollout Plan plan_status (and optional amounts) in sync with Daily Execution.
+    Options: Planned, Planning with Issue, In Execution, Completed, Cancelled.
+    """
+    if not rollout_plan or not exec_doc:
+        return
+    st = exec_doc.execution_status
+    updates = {}
+
+    if st == "In Progress":
+        cur = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
+        if cur == "Planned":
+            updates["plan_status"] = "In Execution"
+
+    elif st == "Completed":
+        updates["plan_status"] = "Completed"
+        ach_amt = flt(getattr(exec_doc, "achieved_amount", None) or 0)
+        if ach_amt > 0:
+            updates["achieved_amount"] = ach_amt
+        tgt = flt(frappe.db.get_value("Rollout Plan", rollout_plan, "target_amount") or 0)
+        if tgt > 0 and ach_amt >= 0:
+            updates["completion_pct"] = min(100.0, (ach_amt / tgt) * 100.0)
+
+    elif st == "Cancelled":
+        updates["plan_status"] = "Cancelled"
+
+    elif st == "Postponed":
+        updates["plan_status"] = "Planned"
+
+    # Hold: keep current plan status (still on site / in progress)
+
+    if updates:
+        frappe.db.set_value("Rollout Plan", rollout_plan, updates)
+
+
 @frappe.whitelist()
 def update_execution(payload):
     """
@@ -697,11 +736,7 @@ def update_execution(payload):
     else:
         doc.save(ignore_permissions=True)
 
-    # PM → IM → execution: first active execution moves rollout to In Execution
-    if doc.rollout_plan and doc.execution_status in ("In Progress", "Completed"):
-        rp_status = frappe.db.get_value("Rollout Plan", doc.rollout_plan, "plan_status")
-        if rp_status == "Planned" and doc.execution_status == "In Progress":
-            frappe.db.set_value("Rollout Plan", doc.rollout_plan, "plan_status", "In Execution")
+    _sync_rollout_plan_from_daily_execution(doc.rollout_plan, doc)
 
     frappe.db.commit()
     return {"name": doc.name, "status": doc.execution_status}
@@ -1770,7 +1805,389 @@ def list_activity_costs():
 
 
 # ---------------------------------------------------------------------------
-# Timesheet APIs — leveraging ERPNext Timesheet module
+# Execution Time Log — field time on rollout (Next PMS–style; not ERPNext Timesheet)
+# ---------------------------------------------------------------------------
+
+
+def _frappe_dt_to_epoch_ms(value):
+    """
+    Convert Frappe DB datetime (wall time in site timezone) to UTC epoch milliseconds.
+    Used so portal timers stay correct for users in any region (vs parsing strings in local JS).
+    """
+    if value is None:
+        return None
+    dt = get_datetime(value)
+    if not dt:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+
+        tzname = frappe.db.get_single_value("System Settings", "time_zone")
+        if tzname and getattr(dt, "tzinfo", None) is None:
+            dt = dt.replace(tzinfo=ZoneInfo(tzname))
+            return int(dt.timestamp() * 1000)
+    except Exception:
+        pass
+    return int(get_datetime(value).timestamp() * 1000)
+
+
+def _session_inet_field_team_id():
+    """INET Team.team_id for the logged-in field user, if any."""
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return None
+    ft = frappe.get_all(
+        "INET Team",
+        filters={"field_user": user, "status": "Active"},
+        fields=["team_id"],
+        limit=1,
+    )
+    if ft and ft[0].team_id:
+        return ft[0].team_id
+    first = (frappe.db.get_value("User", user, "full_name") or "").split()[0]
+    if first:
+        ft2 = frappe.get_all(
+            "INET Team",
+            filters={"team_name": ["like", f"%{first}%"], "status": "Active"},
+            fields=["team_id"],
+            limit=1,
+        )
+        if ft2 and ft2[0].team_id:
+            return ft2[0].team_id
+    return None
+
+
+def _assert_rollout_plan_access_field_team(team_id, rollout_plan):
+    if not team_id or not rollout_plan:
+        frappe.throw("Team or plan missing", frappe.PermissionError)
+    if not frappe.db.exists("Rollout Plan", rollout_plan):
+        frappe.throw("Rollout Plan not found")
+    plan_team = frappe.db.get_value("Rollout Plan", rollout_plan, "team")
+    if plan_team != team_id:
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+
+def _im_team_ids_for_filter(im_filter=None):
+    """team_id values for teams managed by the resolved IM."""
+    _im_r, im_ids, _meta = resolve_im_for_session(im_filter)
+    if not im_ids:
+        return []
+    teams = frappe.get_all(
+        "INET Team",
+        filters={"im": ["in", im_ids], "status": "Active"},
+        fields=["team_id"],
+        limit_page_length=500,
+    )
+    return [t.team_id for t in teams if t.team_id]
+
+
+@frappe.whitelist()
+def start_execution_timer(rollout_plan):
+    """
+    Start a timer for the given Rollout Plan (field user). One running log per user.
+    """
+    rollout_plan = (rollout_plan or "").strip()
+    if not rollout_plan:
+        frappe.throw("rollout_plan is required")
+
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+    if "INET Field Team" not in roles and "Administrator" not in roles:
+        frappe.throw("Only field team users can start execution timers", frappe.PermissionError)
+
+    team_id = _session_inet_field_team_id()
+    if not team_id:
+        frappe.throw("No active field team linked to your user")
+
+    _assert_rollout_plan_access_field_team(team_id, rollout_plan)
+
+    plan_status = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
+    if plan_status in ("Completed", "Cancelled"):
+        frappe.throw("Cannot start a timer on a completed or cancelled plan.")
+
+    existing = frappe.get_all(
+        "Execution Time Log",
+        filters={"user": user, "is_running": 1},
+        fields=["name", "rollout_plan"],
+        limit=1,
+        ignore_permissions=True,
+    )
+    if existing:
+        frappe.throw(
+            f"You already have a running timer ({existing[0].name}). Stop it first."
+        )
+
+    log = frappe.new_doc("Execution Time Log")
+    log.rollout_plan = rollout_plan
+    log.team_id = team_id
+    log.user = user
+    log.start_time = now_datetime()
+    log.is_running = 1
+    log.insert(ignore_permissions=True)
+    frappe.db.commit()
+
+    server_now = now_datetime()
+    return {
+        "log_name": log.name,
+        "rollout_plan": rollout_plan,
+        "start_time": str(log.start_time),
+        "server_time": str(server_now),
+        "start_time_ms": _frappe_dt_to_epoch_ms(log.start_time),
+        "server_time_ms": _frappe_dt_to_epoch_ms(server_now),
+        "user": user,
+    }
+
+
+@frappe.whitelist()
+def stop_execution_timer(log_name):
+    """Stop a running execution timer and persist duration."""
+    log_name = (log_name or "").strip()
+    if not log_name:
+        frappe.throw("log_name is required")
+
+    log = frappe.get_doc("Execution Time Log", log_name)
+    if not log.is_running:
+        frappe.throw("This timer is not running.")
+
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+    can_stop = log.user == user or "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles
+    if not can_stop:
+        frappe.throw("You can only stop your own timers.", frappe.PermissionError)
+
+    log.end_time = now_datetime()
+    log.is_running = 0
+    start = get_datetime(log.start_time)
+    end = get_datetime(log.end_time)
+    diff_seconds = time_diff_in_seconds(end, start)
+    log.duration_minutes = int(diff_seconds / 60)
+    log.duration_hours = round(diff_seconds / 3600, 2)
+    log.save(ignore_permissions=True)
+    frappe.db.commit()
+
+    return {
+        "log_name": log.name,
+        "rollout_plan": log.rollout_plan,
+        "duration_minutes": log.duration_minutes,
+        "duration_hours": log.duration_hours,
+    }
+
+
+@frappe.whitelist()
+def get_running_execution_timer():
+    """Current user's running Execution Time Log, if any."""
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return None
+
+    running = frappe.get_all(
+        "Execution Time Log",
+        filters={"user": user, "is_running": 1},
+        fields=["name", "rollout_plan", "start_time", "team_id"],
+        limit=1,
+        ignore_permissions=True,
+    )
+    if not running:
+        return None
+    r = running[0]
+    desc = frappe.db.get_value(
+        "Rollout Plan",
+        r.rollout_plan,
+        ["po_dispatch"],
+        as_dict=True,
+    )
+    item_hint = ""
+    if desc and desc.po_dispatch:
+        item_hint = frappe.db.get_value("PO Dispatch", desc.po_dispatch, "item_description") or ""
+
+    server_now = now_datetime()
+    elapsed_seconds = None
+    try:
+        now_ms = _frappe_dt_to_epoch_ms(server_now)
+        st_ms = _frappe_dt_to_epoch_ms(r.start_time)
+        if now_ms is not None and st_ms is not None:
+            elapsed_seconds = int(max(0, (now_ms - st_ms) // 1000))
+    except Exception:
+        elapsed_seconds = None
+    return {
+        "log_name": r.name,
+        "rollout_plan": r.rollout_plan,
+        "start_time": str(r.start_time) if r.start_time else None,
+        "server_time": str(server_now),
+        "start_time_ms": _frappe_dt_to_epoch_ms(r.start_time),
+        "server_time_ms": _frappe_dt_to_epoch_ms(server_now),
+        "elapsed_seconds": elapsed_seconds,
+        "team_id": r.team_id,
+        "item_description": item_hint,
+    }
+
+
+@frappe.whitelist()
+def save_execution_time_log_manual(rollout_plan, start_time, end_time, notes=None):
+    """
+    Create a completed time log without using the live timer (field user).
+    start_time / end_time: ISO or Frappe datetime strings.
+    """
+    rollout_plan = (rollout_plan or "").strip()
+    if not rollout_plan or not start_time or not end_time:
+        frappe.throw("rollout_plan, start_time, and end_time are required")
+
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+    if "INET Field Team" not in roles and "Administrator" not in roles:
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    team_id = _session_inet_field_team_id()
+    if not team_id:
+        frappe.throw("No active field team linked to your user")
+
+    _assert_rollout_plan_access_field_team(team_id, rollout_plan)
+
+    st = get_datetime(start_time)
+    et = get_datetime(end_time)
+    if et < st:
+        frappe.throw("End time cannot be before start time")
+
+    diff_seconds = time_diff_in_seconds(et, st)
+    log = frappe.new_doc("Execution Time Log")
+    log.rollout_plan = rollout_plan
+    log.team_id = team_id
+    log.user = user
+    log.start_time = st
+    log.end_time = et
+    log.is_running = 0
+    log.duration_minutes = int(diff_seconds / 60)
+    log.duration_hours = round(diff_seconds / 3600, 2)
+    log.notes = notes or ""
+    log.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"name": log.name, "duration_hours": log.duration_hours}
+
+
+@frappe.whitelist()
+def list_execution_time_logs(filters=None, limit=100, offset=0):
+    """
+    List execution time logs with role-based scoping.
+    filters (JSON): team_id, im, user, rollout_plan, from_date, to_date, is_running
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters or "{}")
+    if not filters:
+        filters = {}
+
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+    is_desk_admin = (
+        "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles
+    )
+    is_im = "INET IM" in roles
+    is_field = "INET Field Team" in roles
+
+    db_filters = {}
+
+    if filters.get("rollout_plan"):
+        db_filters["rollout_plan"] = filters["rollout_plan"]
+    if filters.get("is_running") is not None and filters.get("is_running") != "":
+        db_filters["is_running"] = cint(filters["is_running"])
+
+    # Role scoping
+    if is_desk_admin:
+        if filters.get("team_id"):
+            db_filters["team_id"] = filters["team_id"]
+        if filters.get("user"):
+            db_filters["user"] = filters["user"]
+    elif is_im:
+        team_ids = _im_team_ids_for_filter(filters.get("im"))
+        if filters.get("team_id"):
+            if filters["team_id"] not in team_ids:
+                return {"logs": [], "total": 0}
+            db_filters["team_id"] = filters["team_id"]
+        else:
+            if not team_ids:
+                return {"logs": [], "total": 0}
+            db_filters["team_id"] = ["in", team_ids]
+        if filters.get("user"):
+            db_filters["user"] = filters["user"]
+    elif is_field:
+        db_filters["user"] = user
+        ft_team = _session_inet_field_team_id()
+        if ft_team:
+            db_filters["team_id"] = ft_team
+    else:
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    from_date = filters.get("from_date")
+    to_date = filters.get("to_date")
+    if from_date and to_date:
+        db_filters["start_time"] = ["between", [f"{from_date} 00:00:00", f"{to_date} 23:59:59"]]
+    elif from_date:
+        db_filters["start_time"] = [">=", f"{from_date} 00:00:00"]
+    elif to_date:
+        db_filters["start_time"] = ["<=", f"{to_date} 23:59:59"]
+
+    total = frappe.db.count("Execution Time Log", db_filters)
+
+    logs = frappe.get_all(
+        "Execution Time Log",
+        filters=db_filters,
+        fields=[
+            "name",
+            "rollout_plan",
+            "team_id",
+            "user",
+            "start_time",
+            "end_time",
+            "duration_hours",
+            "duration_minutes",
+            "is_running",
+            "notes",
+        ],
+        order_by="start_time desc",
+        limit_page_length=min(cint(limit) or 100, 500),
+        limit_start=cint(offset),
+        ignore_permissions=True,
+    )
+
+    for row in logs:
+        raw_start = row.get("start_time")
+        raw_end = row.get("end_time")
+        if row.get("is_running") and raw_start:
+            now_ms = _frappe_dt_to_epoch_ms(now_datetime())
+            st_ms = _frappe_dt_to_epoch_ms(raw_start)
+            if now_ms is not None and st_ms is not None:
+                row["elapsed_seconds"] = int(max(0, (now_ms - st_ms) // 1000))
+        row["start_time"] = str(raw_start) if raw_start else None
+        row["end_time"] = str(raw_end) if raw_end else None
+        row["user_full_name"] = (
+            frappe.get_cached_value("User", row.get("user"), "full_name") or row.get("user")
+        )
+        pd = frappe.db.get_value(
+            "Rollout Plan",
+            row.get("rollout_plan"),
+            ["po_dispatch", "plan_date", "visit_type", "plan_status"],
+            as_dict=True,
+        )
+        if pd:
+            row["plan_date"] = str(pd.plan_date) if pd.plan_date else None
+            row["visit_type"] = pd.visit_type
+            row["plan_status"] = pd.plan_status
+            if pd.po_dispatch:
+                disp = frappe.db.get_value(
+                    "PO Dispatch",
+                    pd.po_dispatch,
+                    ["item_description", "project_code", "site_name"],
+                    as_dict=True,
+                )
+                if disp:
+                    row["item_description"] = disp.item_description
+                    row["project_code"] = disp.project_code
+                    row["site_name"] = disp.site_name
+
+    return {"logs": logs, "total": total}
+
+
+# ---------------------------------------------------------------------------
+# Timesheet APIs — ERPNext Timesheet (legacy; portal uses Execution Time Log)
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()

@@ -105,7 +105,11 @@ export default function TodaysWork() {
       }
       try {
         const result = await pmApi.getFieldTeamDashboard(teamId);
-        const items = result?.plans || result?.today_plans || result?.planned || result || [];
+        const items =
+          result?.planned ??
+          result?.plans ??
+          result?.today_plans ??
+          (Array.isArray(result) ? result : []);
         setPlans(Array.isArray(items) ? items : []);
       } catch (err) {
         setError(err.message || "Failed to load today's work");

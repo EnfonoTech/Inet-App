@@ -2,12 +2,17 @@ import { useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
+const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
 function shortDt(v) {
   if (!v) return "—";
   try {
-    return new Date(v).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return new Date(v).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch {
     return String(v);
   }
@@ -15,93 +20,101 @@ function shortDt(v) {
 
 export default function IMTimesheets() {
   const { imName } = useAuth();
-  const [timesheets, setTimesheets] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
 
-  async function loadTimesheets() {
+  async function loadLogs() {
     setLoading(true);
     try {
-      const filters = { im: imName, include_log_bounds: true };
+      const filters = { im: imName };
       if (dateFrom) filters.from_date = dateFrom;
       if (dateTo) filters.to_date = dateTo;
-      if (statusFilter) filters.status = statusFilter;
-      const res = await pmApi.listTimesheets(filters);
-      setTimesheets(res || []);
+      const res = await pmApi.listExecutionTimeLogs(filters, 500, 0);
+      setLogs(res?.logs || []);
+      setTotal(res?.total ?? (res?.logs || []).length);
     } catch {
-      setTimesheets([]);
+      setLogs([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { loadTimesheets(); }, [dateFrom, dateTo, statusFilter, imName]);
+  useEffect(() => {
+    if (imName) loadLogs();
+    else {
+      setLogs([]);
+      setTotal(0);
+      setLoading(false);
+    }
+  }, [dateFrom, dateTo, imName]);
 
-  const filtered = timesheets.filter((ts) => {
+  const filtered = logs.filter((row) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (
-      (ts.name || "").toLowerCase().includes(q) ||
-      (ts.employee_name || "").toLowerCase().includes(q) ||
-      (ts.start_date || "").toLowerCase().includes(q)
+      (row.name || "").toLowerCase().includes(q) ||
+      (row.user_full_name || "").toLowerCase().includes(q) ||
+      (row.rollout_plan || "").toLowerCase().includes(q) ||
+      (row.team_id || "").toLowerCase().includes(q)
     );
   });
 
-  const totalHours = filtered.reduce((sum, ts) => sum + (ts.total_hours || 0), 0);
-  const billableHours = filtered.reduce((sum, ts) => sum + (ts.total_billable_hours || 0), 0);
-
-  const hasFilters = dateFrom || dateTo || statusFilter || search;
+  const totalHours = filtered.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
+  const hasFilters = dateFrom || dateTo || search;
 
   return (
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Team Timesheets</h1>
+          <h1 className="page-title">Team time logs</h1>
           <div className="page-subtitle">
-            {filtered.length} entries · {fmt.format(totalHours)} total hours
+            Execution time for your teams · {filtered.length} rows · {fmt.format(totalHours)} h
           </div>
         </div>
       </div>
 
-      {/* ── Toolbar / Filters ───────────────────────────────── */}
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search ID, Employee…"
+          placeholder="Search user, plan, team…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
-            padding: "7px 14px", borderRadius: 8,
-            border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 200,
+            padding: "7px 14px",
+            borderRadius: 8,
+            border: "1px solid #e2e8f0",
+            fontSize: "0.84rem",
+            minWidth: 200,
           }}
         />
         <label style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", whiteSpace: "nowrap" }}>From:</label>
         <input
-          type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+          type="date"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
           style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
         />
         <label style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", whiteSpace: "nowrap" }}>To:</label>
         <input
-          type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+          type="date"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
           style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
         />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All Status</option>
-          <option value="Draft">Draft</option>
-          <option value="Submitted">Submitted</option>
-        </select>
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setDateFrom(""); setDateTo(""); setStatusFilter(""); setSearch(""); }}
+            onClick={() => {
+              setDateFrom("");
+              setDateTo("");
+              setSearch("");
+            }}
           >
             Clear
           </button>
@@ -111,72 +124,59 @@ export default function IMTimesheets() {
       <div className="page-content">
         <div className="data-table-wrapper">
           {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading timesheets...</div>
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
           ) : filtered.length === 0 ? (
             <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">&#x1F4CB;</div>
-              <h3>{hasFilters ? "No results match your filters" : "No timesheets found"}</h3>
-              <p>
-                {hasFilters
-                  ? "Try adjusting your search or filter criteria."
-                  : "Timesheets submitted by your teams will appear here."}
-              </p>
+              <div className="empty-icon">&#x1F553;</div>
+              <h3>{hasFilters ? "No results" : "No time logs for your teams"}</h3>
             </div>
           ) : (
             <table className="data-table">
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Employee</th>
-                  <th>Date</th>
+                  <th>User</th>
+                  <th>Team</th>
+                  <th>Rollout</th>
+                  <th>Work</th>
                   <th>Start</th>
                   <th>End</th>
-                  <th style={{ textAlign: "right" }}>Total Hours</th>
-                  <th style={{ textAlign: "right" }}>Billable Hours</th>
-                  <th>Status</th>
+                  <th style={{ textAlign: "right" }}>Hours</th>
+                  <th>State</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((ts) => (
-                  <tr key={ts.name}>
-                    <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{ts.name}</td>
-                    <td>{ts.employee_name || "—"}</td>
-                    <td>{ts.start_date || "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{shortDt(ts.log_start)}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{shortDt(ts.log_end)}</td>
+                {filtered.map((row) => (
+                  <tr key={row.name}>
+                    <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
+                    <td>{row.user_full_name || row.user}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: 12 }}>{row.team_id || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
+                    <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{shortDt(row.start_time)}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{row.is_running ? "—" : shortDt(row.end_time)}</td>
                     <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>
-                      {ts.total_hours != null ? fmt.format(ts.total_hours) : "—"}
-                    </td>
-                    <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>
-                      {ts.total_billable_hours != null ? fmt.format(ts.total_billable_hours) : "—"}
+                      {row.is_running ? "—" : fmt.format(row.duration_hours || 0)}
                     </td>
                     <td>
-                      <span style={{
-                        display: "inline-block", padding: "3px 10px", borderRadius: 12,
-                        fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-                        background: ts.status === "Submitted" ? "#ecfdf5" : "#eff6ff",
-                        color: ts.status === "Submitted" ? "#065f46" : "#1e40af",
-                      }}>
-                        {ts.status || "Draft"}
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "3px 10px",
+                          borderRadius: 12,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          textTransform: "uppercase",
+                          background: row.is_running ? "#fef3c7" : "#ecfdf5",
+                          color: row.is_running ? "#92400e" : "#065f46",
+                        }}
+                      >
+                        {row.is_running ? "Running" : "Done"}
                       </span>
                     </td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={5} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                    {filtered.length}{hasFilters && ` of ${timesheets.length}`} rows
-                  </td>
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    {fmt.format(totalHours)}
-                  </td>
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    {fmt.format(billableHours)}
-                  </td>
-                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
-                </tr>
-              </tfoot>
             </table>
           )}
         </div>
