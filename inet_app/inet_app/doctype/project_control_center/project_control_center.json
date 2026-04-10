@@ -15,6 +15,7 @@
   "implementation_manager",
   "column_break_mmrq",
   "center_area",
+  "region_type",
   "monthly_target",
   "active_flag",
   "project_status",
@@ -91,6 +92,15 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Center Area"
+  },
+  {
+   "default": "Standard",
+   "fieldname": "region_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Region Type",
+   "options": "Standard\nHard",
+   "read_only": 1
   },
   {
    "fieldname": "monthly_target",

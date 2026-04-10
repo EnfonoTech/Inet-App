@@ -32,23 +32,26 @@ def list_projects(limit=20, offset=0, search=None, status=None, domain=None, are
         like = f"%{search}%"
         or_filters = [["project_code", "like", like], ["project_name", "like", like]]
 
+    proj_fields = [
+        "name",
+        "project_code",
+        "project_name",
+        "project_domain",
+        "project_status",
+        "implementation_manager",
+        "center_area",
+        "budget_amount",
+        "actual_cost",
+        "completion_percentage",
+        "modified",
+    ]
+    if frappe.db.has_column("Project Control Center", "region_type"):
+        proj_fields.insert(proj_fields.index("center_area") + 1, "region_type")
     rows = frappe.get_list(
         "Project Control Center",
         filters=filters,
         or_filters=or_filters,
-        fields=[
-            "name",
-            "project_code",
-            "project_name",
-            "project_domain",
-            "project_status",
-            "implementation_manager",
-            "center_area",
-            "budget_amount",
-            "actual_cost",
-            "completion_percentage",
-            "modified",
-        ],
+        fields=proj_fields,
         order_by="modified desc",
         start=cint(offset),
         page_length=min(cint(limit) or 20, 100),

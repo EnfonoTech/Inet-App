@@ -160,7 +160,9 @@ export default function IMDispatch() {
         (r.project_code || "").toLowerCase().includes(q) ||
         (r.item_code || "").toLowerCase().includes(q) ||
         (r.site_code || "").toLowerCase().includes(q) ||
-        (r.name || "").toLowerCase().includes(q)
+        (r.name || "").toLowerCase().includes(q) ||
+        (r.center_area || "").toLowerCase().includes(q) ||
+        (r.region_type || "").toLowerCase().includes(q)
       );
     }
     return true;
@@ -319,7 +321,7 @@ export default function IMDispatch() {
         <div style={{ flex: 1 }} />
         <input
           type="search"
-          placeholder="Search PO, DUID, POID, Project…"
+          placeholder="Search PO, DUID, POID, Project, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -522,6 +524,8 @@ export default function IMDispatch() {
                   <th style={{ textAlign: "right" }}>Amount</th>
                   <th>Team</th>
                   <th>DUID</th>
+                  <th>Center area</th>
+                  <th>Region</th>
                   <th>Status</th>
                   <th>View</th>
                 </tr>
@@ -555,6 +559,10 @@ export default function IMDispatch() {
                       <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
                       <td>{row.team}</td>
                       <td>{row.site_code}</td>
+                      <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>
+                        {row.center_area || "—"}
+                      </td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
                       <td>
                         <span className={`status-badge ${(row.dispatch_status || "pending").toLowerCase()}`}>
                           <span className="status-dot" />
@@ -572,7 +580,7 @@ export default function IMDispatch() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length} row{filtered.length !== 1 ? "s" : ""}</strong>
                     <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
                       Select rows with status <strong>Dispatched</strong> to create rollout plans.

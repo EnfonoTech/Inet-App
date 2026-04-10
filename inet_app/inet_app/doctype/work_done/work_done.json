@@ -7,6 +7,7 @@
  "field_order": [
   "system_id",
   "execution",
+  "region_type",
   "item_code",
   "executed_qty",
   "billing_rate_sar",
@@ -31,6 +32,15 @@
    "fieldtype": "Link",
    "label": "Execution",
    "options": "Daily Execution"
+  },
+  {
+   "default": "Standard",
+   "fieldname": "region_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Region Type",
+   "options": "Standard\nHard",
+   "read_only": 1
   },
   {
    "fieldname": "item_code",

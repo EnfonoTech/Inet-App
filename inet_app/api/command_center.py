@@ -9,6 +9,7 @@ import json
 import os
 
 import frappe
+from inet_app.region_type import is_hard_region, region_type_from_center_area
 from frappe.utils import (
     cint,
     flt,
@@ -275,6 +276,7 @@ def _try_auto_dispatch(doc_name, po_no, child_rows):
         dispatch.site_code = line_dict.get("site_code")
         dispatch.site_name = line_dict.get("site_name")
         dispatch.center_area = line_dict.get("center_area")
+        dispatch.region_type = region_type_from_center_area(dispatch.center_area)
         poid = _resolve_line_poid(
             po_no=po_no,
             po_line_no=line_dict.get("po_line_no"),
@@ -525,7 +527,7 @@ def confirm_po_upload(rows):
 
         if not doc.customer:
             frappe.throw(f"Customer is required for PO {po_no}")
-        if not frappe.db.exists("Customer", {"customer_name": doc.customer}) and not frappe.db.exists("Customer", doc.customer):
+        if not frappe.db.exists("Customer", doc.customer):
             frappe.throw(f"Customer does not exist: {doc.customer}")
 
         for line in lines:
@@ -544,6 +546,9 @@ def confirm_po_upload(rows):
             if not cim_exists:
                 frappe.throw(f"Customer Item Master missing for customer {doc.customer} and item {item_code}")
 
+            line_center_area = line.get("center_area") or first.get("center_area")
+            line_region = region_type_from_center_area(line_center_area)
+
             doc.append(
                 "po_lines",
                 {
@@ -558,6 +563,8 @@ def confirm_po_upload(rows):
                     "rate": rate,
                     "line_amount": flt(line.get("line_amount", 0)) or (qty * rate),
                     "project_code": line.get("project_code"),
+                    "center_area": line_center_area,
+                    "region_type": line_region,
                 },
             )
 
@@ -578,6 +585,27 @@ def confirm_po_upload(rows):
     return {"created": created, "names": names}
 
 
+def _get_dispatch_for_intake_line(parent_name, po_line_no):
+    """Load dispatch row for a PO Intake line; tolerate DB missing `region_type` before migrate."""
+    filters = {"po_intake": parent_name, "po_line_no": po_line_no}
+    fields_full = [
+        "name", "im", "team", "dispatch_mode", "target_month", "region_type", "center_area",
+    ]
+    try:
+        return frappe.db.get_value("PO Dispatch", filters, fields_full, as_dict=True) or {}
+    except frappe.db.OperationalError as e:
+        if not frappe.db.is_missing_column(e):
+            raise
+        row = frappe.db.get_value(
+            "PO Dispatch",
+            filters,
+            ["name", "im", "team", "dispatch_mode", "target_month", "center_area"],
+            as_dict=True,
+        ) or {}
+        row["region_type"] = region_type_from_center_area(row.get("center_area"))
+        return row
+
+
 @frappe.whitelist()
 def list_po_intake_lines(status="New"):
     """
@@ -588,18 +616,39 @@ def list_po_intake_lines(status="New"):
     if status and status.lower() != "all":
         filters["po_line_status"] = status
 
-    lines = frappe.get_all(
-        "PO Intake Line",
-        filters=filters,
-        fields=[
-            "name", "parent", "po_line_no", "poid", "shipment_number",
-            "item_code", "item_description", "qty", "rate", "line_amount",
-            "project_code", "site_code", "site_name", "area",
-            "po_line_status", "activity_code", "dispatch_mode",
-        ],
-        order_by="parent desc, idx asc",
-        limit_page_length=500,
-    )
+    line_fields_full = [
+        "name", "parent", "po_line_no", "poid", "shipment_number",
+        "item_code", "item_description", "qty", "rate", "line_amount",
+        "project_code", "site_code", "site_name", "area", "center_area", "region_type",
+        "po_line_status", "activity_code", "dispatch_mode",
+    ]
+    line_fields_base = [
+        "name", "parent", "po_line_no", "poid", "shipment_number",
+        "item_code", "item_description", "qty", "rate", "line_amount",
+        "project_code", "site_code", "site_name", "area",
+        "po_line_status", "activity_code", "dispatch_mode",
+    ]
+    try:
+        lines = frappe.get_all(
+            "PO Intake Line",
+            filters=filters,
+            fields=line_fields_full,
+            order_by="parent desc, idx asc",
+            limit_page_length=500,
+        )
+    except frappe.db.OperationalError as e:
+        if not frappe.db.is_missing_column(e):
+            raise
+        lines = frappe.get_all(
+            "PO Intake Line",
+            filters=filters,
+            fields=line_fields_base,
+            order_by="parent desc, idx asc",
+            limit_page_length=500,
+        )
+        for row in lines:
+            row.setdefault("center_area", None)
+            row.setdefault("region_type", None)
 
     # Enrich each line with PO-level info and dispatch assignment info
     parent_cache = {}
@@ -607,26 +656,31 @@ def list_po_intake_lines(status="New"):
         parent_name = line.get("parent")
         if parent_name not in parent_cache:
             parent_cache[parent_name] = frappe.db.get_value(
-                "PO Intake", parent_name, ["po_no", "customer"], as_dict=True
+                "PO Intake", parent_name, ["po_no", "customer", "center_area"], as_dict=True
             ) or {}
         pdata = parent_cache[parent_name]
         line["po_no"] = pdata.get("po_no", "")
         line["customer"] = pdata.get("customer", "")
         line["po_intake"] = parent_name
+        line["center_area"] = line.get("center_area") or pdata.get("center_area")
 
         if line.get("po_line_status") == "Dispatched":
-            dispatch_data = frappe.db.get_value(
-                "PO Dispatch",
-                {"po_intake": parent_name, "po_line_no": line.get("po_line_no")},
-                ["name", "im", "team", "dispatch_mode", "target_month"],
-                as_dict=True,
-            ) or {}
+            dispatch_data = _get_dispatch_for_intake_line(parent_name, line.get("po_line_no"))
             line["dispatch_name"] = dispatch_data.get("name")
             line["dispatched_im"] = dispatch_data.get("im")
             line["dispatched_team"] = dispatch_data.get("team")
             line["dispatch_target_month"] = dispatch_data.get("target_month")
             if not line.get("dispatch_mode"):
                 line["dispatch_mode"] = dispatch_data.get("dispatch_mode")
+            if dispatch_data.get("region_type"):
+                line["region_type"] = dispatch_data.get("region_type")
+            elif not line.get("region_type"):
+                line["region_type"] = region_type_from_center_area(
+                    dispatch_data.get("center_area") or line.get("center_area")
+                )
+
+        if not line.get("region_type"):
+            line["region_type"] = region_type_from_center_area(line.get("center_area"))
 
     return lines
 
@@ -725,6 +779,7 @@ def dispatch_po_lines(payload):
         doc.dispatch_status = "Dispatched"
         doc.dispatch_mode = "Manual"
         doc.center_area = center_area
+        doc.region_type = region_type_from_center_area(center_area)
         doc.site_code = site_code
         doc.site_name = site_name
 
@@ -862,7 +917,7 @@ def create_rollout_plans(payload):
         dispatch = frappe.db.get_value(
             "PO Dispatch",
             dispatch_name,
-            ["name", "team", "line_amount", "im"],
+            ["name", "team", "line_amount", "im", "region_type", "center_area"],
             as_dict=True,
         )
         if not dispatch:
@@ -885,6 +940,10 @@ def create_rollout_plans(payload):
         doc.visit_multiplier = visit_multiplier
         doc.target_amount = flt(dispatch.line_amount) * visit_multiplier
         doc.plan_status = "Planned"
+        if hasattr(doc, "region_type"):
+            doc.region_type = dispatch.get("region_type") or region_type_from_center_area(
+                dispatch.get("center_area")
+            )
 
         doc.insert(ignore_permissions=True)
         frappe.db.commit()
@@ -965,19 +1024,29 @@ def _get_rollout_billing_rate(rollout_plan):
     dispatch = frappe.db.get_value(
         "PO Dispatch",
         rp.po_dispatch,
-        ["item_code", "center_area"],
+        ["item_code", "center_area", "region_type", "customer"],
         as_dict=True,
     )
     if not dispatch or not dispatch.item_code:
         return 0.0
 
-    is_hard = "hard" in (dispatch.center_area or "").lower()
+    is_hard = is_hard_region(dispatch.region_type, dispatch.center_area)
+    cim_filters = {"item_code": dispatch.item_code, "active_flag": 1}
+    if dispatch.customer:
+        cim_filters["customer"] = dispatch.customer
     cim = frappe.db.get_value(
         "Customer Item Master",
-        {"item_code": dispatch.item_code, "active_flag": 1},
+        cim_filters,
         ["standard_rate_sar", "hard_rate_sar"],
         as_dict=True,
     )
+    if not cim:
+        cim = frappe.db.get_value(
+            "Customer Item Master",
+            {"item_code": dispatch.item_code, "active_flag": 1},
+            ["standard_rate_sar", "hard_rate_sar"],
+            as_dict=True,
+        )
     if not cim:
         return 0.0
     return flt(cim.hard_rate_sar if is_hard else cim.standard_rate_sar)
@@ -1020,19 +1089,32 @@ def update_execution(payload):
             frappe.throw("rollout_plan is required when creating a new Daily Execution.")
 
         rp = frappe.db.get_value(
-            "Rollout Plan", rollout_plan, ["po_dispatch", "team"], as_dict=True
+            "Rollout Plan", rollout_plan, ["po_dispatch", "team", "region_type"], as_dict=True
         )
 
         doc = frappe.new_doc("Daily Execution")
         doc.rollout_plan = rollout_plan
         doc.system_id = rp.po_dispatch if rp else None
         doc.team = rp.team if rp else None
-        pd_name = frappe.db.get_value("Rollout Plan", rollout_plan, "po_dispatch")
+        pd_name = rp.po_dispatch if rp else None
         im_v = None
         if pd_name:
             im_v = frappe.db.get_value("PO Dispatch", pd_name, "im")
         if im_v and hasattr(doc, "im"):
             doc.im = im_v
+
+        if hasattr(doc, "region_type"):
+            doc.region_type = (rp.get("region_type") if rp else None) or None
+            if not doc.region_type and pd_name:
+                pd_row = frappe.db.get_value(
+                    "PO Dispatch", pd_name, ["region_type", "center_area"], as_dict=True
+                )
+                if pd_row:
+                    doc.region_type = pd_row.get("region_type") or region_type_from_center_area(
+                        pd_row.get("center_area")
+                    )
+            if not doc.region_type:
+                doc.region_type = "Standard"
 
     # Apply updatable fields
     for field in [
@@ -1143,7 +1225,7 @@ def generate_work_done(execution_name):
     dispatch = frappe.db.get_value(
         "PO Dispatch",
         dispatch_name,
-        ["item_code", "center_area", "project_code", "customer", "team"],
+        ["item_code", "center_area", "region_type", "project_code", "customer", "team"],
         as_dict=True,
     )
     if not dispatch:
@@ -1154,14 +1236,24 @@ def generate_work_done(execution_name):
     team_id = dispatch.team
 
     # Determine billing_rate from Customer Item Master
-    is_hard = "hard" in center_area.lower() if center_area else False
+    is_hard = is_hard_region(dispatch.region_type, center_area)
     billing_rate = 0.0
+    cim_filters = {"item_code": item_code, "active_flag": 1}
+    if dispatch.customer:
+        cim_filters["customer"] = dispatch.customer
     cim = frappe.db.get_value(
         "Customer Item Master",
-        {"item_code": item_code, "active_flag": 1},
+        cim_filters,
         ["standard_rate_sar", "hard_rate_sar"],
         as_dict=True,
     )
+    if not cim:
+        cim = frappe.db.get_value(
+            "Customer Item Master",
+            {"item_code": item_code, "active_flag": 1},
+            ["standard_rate_sar", "hard_rate_sar"],
+            as_dict=True,
+        )
     if cim:
         billing_rate = flt(cim.hard_rate_sar if is_hard else cim.standard_rate_sar)
 
@@ -1219,6 +1311,7 @@ def generate_work_done(execution_name):
     wd = frappe.new_doc("Work Done")
     wd.execution = execution_name
     wd.system_id = exec_doc.system_id
+    wd.region_type = dispatch.get("region_type") or region_type_from_center_area(center_area)
     wd.item_code = item_code
     wd.executed_qty = executed_qty
     wd.billing_rate_sar = billing_rate
@@ -1290,21 +1383,24 @@ def list_execution_monitor_rows(filters=None):
     elif filters.get("to_date"):
         rp_filters["plan_date"] = ["<=", filters["to_date"]]
 
+    rp_fields = [
+        "name",
+        "po_dispatch",
+        "team",
+        "plan_date",
+        "visit_type",
+        "target_amount",
+        "achieved_amount",
+        "completion_pct",
+        "plan_status",
+        "modified",
+    ]
+    if frappe.db.has_column("Rollout Plan", "region_type"):
+        rp_fields.append("region_type")
     plans = frappe.get_all(
         "Rollout Plan",
         filters=rp_filters,
-        fields=[
-            "name",
-            "po_dispatch",
-            "team",
-            "plan_date",
-            "visit_type",
-            "target_amount",
-            "achieved_amount",
-            "completion_pct",
-            "plan_status",
-            "modified",
-        ],
+        fields=rp_fields,
         order_by="modified desc",
         limit_page_length=500,
     )
@@ -1338,10 +1434,17 @@ def list_execution_monitor_rows(filters=None):
 
     dispatch_map = {}
     if dispatch_names:
+        d_fields = [
+            "name", "po_no", "item_code", "item_description", "project_code", "site_name", "site_code",
+        ]
+        if frappe.db.has_column("PO Dispatch", "center_area"):
+            d_fields.append("center_area")
+        if frappe.db.has_column("PO Dispatch", "region_type"):
+            d_fields.append("region_type")
         drows = frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", dispatch_names]},
-            fields=["name", "po_no", "item_code", "item_description", "project_code", "site_name", "site_code"],
+            fields=d_fields,
             limit_page_length=1000,
         )
         dispatch_map = {d.name: d for d in drows}
@@ -1361,6 +1464,8 @@ def list_execution_monitor_rows(filters=None):
                 "project_code": d.project_code if d else None,
                 "site_name": d.site_name if d else None,
                 "site_code": d.site_code if d else None,
+                "center_area": (d.get("center_area") if d else None),
+                "region_type": (p.get("region_type") or (d.get("region_type") if d else None)),
                 "team": p.team,
                 "plan_date": p.plan_date,
                 "visit_type": p.visit_type,
@@ -1395,24 +1500,27 @@ def list_work_done_rows(filters=None):
     if filters.get("billing_status"):
         wd_filters["billing_status"] = filters["billing_status"]
 
+    wd_fields = [
+        "name",
+        "execution",
+        "system_id",
+        "item_code",
+        "executed_qty",
+        "billing_rate_sar",
+        "revenue_sar",
+        "team_cost_sar",
+        "subcontract_cost_sar",
+        "total_cost_sar",
+        "margin_sar",
+        "billing_status",
+        "modified",
+    ]
+    if frappe.db.has_column("Work Done", "region_type"):
+        wd_fields.append("region_type")
     rows = frappe.get_all(
         "Work Done",
         filters=wd_filters,
-        fields=[
-            "name",
-            "execution",
-            "system_id",
-            "item_code",
-            "executed_qty",
-            "billing_rate_sar",
-            "revenue_sar",
-            "team_cost_sar",
-            "subcontract_cost_sar",
-            "total_cost_sar",
-            "margin_sar",
-            "billing_status",
-            "modified",
-        ],
+        fields=wd_fields,
         order_by="modified desc",
         limit_page_length=500,
     )
@@ -1433,10 +1541,13 @@ def list_work_done_rows(filters=None):
     plan_names = [e.rollout_plan for e in ex_map.values() if e.rollout_plan]
     rp_map = {}
     if plan_names:
+        rp_fields_wd = ["name", "po_dispatch", "plan_date", "visit_type"]
+        if frappe.db.has_column("Rollout Plan", "region_type"):
+            rp_fields_wd.append("region_type")
         rp_rows = frappe.get_all(
             "Rollout Plan",
             filters={"name": ["in", plan_names]},
-            fields=["name", "po_dispatch", "plan_date", "visit_type"],
+            fields=rp_fields_wd,
             limit_page_length=1000,
         )
         rp_map = {r.name: r for r in rp_rows}
@@ -1444,10 +1555,15 @@ def list_work_done_rows(filters=None):
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
     pd_map = {}
     if dispatch_names:
+        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "team", "item_description"]
+        if frappe.db.has_column("PO Dispatch", "center_area"):
+            pd_fields_wd.append("center_area")
+        if frappe.db.has_column("PO Dispatch", "region_type"):
+            pd_fields_wd.append("region_type")
         pd_rows = frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", dispatch_names]},
-            fields=["name", "po_no", "project_code", "site_name", "team", "item_description"],
+            fields=pd_fields_wd,
             limit_page_length=1000,
         )
         pd_map = {p.name: p for p in pd_rows}
@@ -1475,6 +1591,10 @@ def list_work_done_rows(filters=None):
                 "po_no": pd.po_no if pd else None,
                 "project_code": project_code,
                 "site_name": pd.site_name if pd else None,
+                "center_area": pd.get("center_area") if pd else None,
+                "region_type": r.get("region_type")
+                or (rp.get("region_type") if rp else None)
+                or (pd.get("region_type") if pd else None),
                 "team": team,
                 "item_description": pd.item_description if pd else None,
                 "execution_date": ex_date,
@@ -1910,12 +2030,23 @@ def list_im_rollout_plans(im=None, plan_status=None):
     if plan_status:
         status_clause = " AND rp.plan_status = %s"
         params.append(plan_status)
+    im_plan_extras = []
+    if frappe.db.has_column("Rollout Plan", "region_type"):
+        im_plan_extras.append("rp.region_type AS region_type")
+    else:
+        im_plan_extras.append("NULL AS region_type")
+    if frappe.db.has_column("PO Dispatch", "center_area"):
+        im_plan_extras.append("pd.center_area AS center_area")
+    else:
+        im_plan_extras.append("NULL AS center_area")
+    im_plan_extra_sql = ", " + ", ".join(im_plan_extras)
     rows = frappe.db.sql(
         f"""
         SELECT rp.name, rp.po_dispatch AS system_id, rp.po_dispatch, rp.team, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount, rp.achieved_amount,
                rp.completion_pct, rp.plan_status,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code
+               {im_plan_extra_sql}
         FROM `tabRollout Plan` rp
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         WHERE pd.im IN ({ph}){status_clause}
@@ -1941,12 +2072,23 @@ def list_im_daily_executions(im=None, execution_status=None):
         status_clause = " AND de.execution_status = %s"
         params.append(_normalize_execution_status(execution_status))
     ciag_sel = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL"
+    im_ex_extras = []
+    if frappe.db.has_column("Daily Execution", "region_type"):
+        im_ex_extras.append("de.region_type AS region_type")
+    else:
+        im_ex_extras.append("NULL AS region_type")
+    if frappe.db.has_column("PO Dispatch", "center_area"):
+        im_ex_extras.append("pd.center_area AS center_area")
+    else:
+        im_ex_extras.append("NULL AS center_area")
+    im_ex_extra_sql = ", " + ", ".join(im_ex_extras)
     rows = frappe.db.sql(
         f"""
         SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan, de.team, de.execution_date,
                de.execution_status, de.achieved_qty, de.achieved_amount, de.gps_location,
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag,
                pd.im AS dispatch_im, pd.site_code, pd.po_no
+               {im_ex_extra_sql}
         FROM `tabDaily Execution` de
         INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
@@ -2073,6 +2215,13 @@ def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route
         if hasattr(revisit, "access_period"):
             revisit.access_period = getattr(source, "access_period", None)
         revisit.visit_type = "Re-Visit"
+        pd_reg = frappe.db.get_value(
+            "PO Dispatch", source.po_dispatch, ["region_type", "center_area"], as_dict=True
+        ) or {}
+        if hasattr(revisit, "region_type"):
+            revisit.region_type = pd_reg.get("region_type") or region_type_from_center_area(
+                pd_reg.get("center_area")
+            )
         rev_mult = flt(
             frappe.db.get_value("Visit Multiplier Master", "Re-Visit", "multiplier") or 0.5
         )
@@ -2342,7 +2491,7 @@ def get_field_team_dashboard(team_id=None):
         placeholders = ", ".join(["%s"] * len(dispatch_names))
         dispatch_rows = frappe.db.sql(
             f"""
-            SELECT name, item_code, item_description, project_code, site_name, site_code, center_area
+            SELECT name, item_code, item_description, project_code, site_name, site_code, center_area, region_type
             FROM `tabPO Dispatch`
             WHERE name IN ({placeholders})
             """,
@@ -2373,6 +2522,8 @@ def get_field_team_dashboard(team_id=None):
                 "site_name": dispatch_info.get("site_name"),
                 "site_code": dispatch_info.get("site_code"),
                 "center_area": dispatch_info.get("center_area"),
+                "region_type": dispatch_info.get("region_type")
+                or region_type_from_center_area(dispatch_info.get("center_area")),
             }
         )
 
@@ -2400,7 +2551,7 @@ def get_project_summary(project_code):
     dispatches = frappe.get_all("PO Dispatch",
         filters={"project_code": project_code},
         fields=["name", "po_no", "po_line_no", "item_code", "item_description",
-                "qty", "rate", "line_amount", "team", "im", "dispatch_status", "center_area"],
+                "qty", "rate", "line_amount", "team", "im", "dispatch_status", "center_area", "region_type"],
         order_by="modified desc",
         limit_page_length=500)
 
@@ -2413,7 +2564,7 @@ def get_project_summary(project_code):
         plans = frappe.get_all("Rollout Plan",
             filters={"po_dispatch": ["in", dispatch_names]},
             fields=["name", "po_dispatch", "team", "plan_date", "visit_type",
-                    "visit_multiplier", "target_amount", "achieved_amount", "completion_pct", "plan_status"],
+                    "visit_multiplier", "target_amount", "achieved_amount", "completion_pct", "plan_status", "region_type"],
             order_by="plan_date desc",
             limit_page_length=500)
 
@@ -2424,7 +2575,7 @@ def get_project_summary(project_code):
         executions = frappe.get_all("Daily Execution",
             filters={"rollout_plan": ["in", plan_names]},
             fields=["name", "rollout_plan", "team", "execution_date",
-                    "execution_status", "achieved_qty", "achieved_amount", "qc_status"],
+                    "execution_status", "achieved_qty", "achieved_amount", "qc_status", "region_type"],
             order_by="execution_date desc",
             limit_page_length=500)
         plan_poid_map = {p.name: p.po_dispatch for p in plans}
@@ -2439,7 +2590,7 @@ def get_project_summary(project_code):
             filters={"execution": ["in", execution_names]},
             fields=["name", "execution", "item_code", "executed_qty",
                     "billing_rate_sar", "revenue_sar", "team_cost_sar", "subcontract_cost_sar",
-                    "total_cost_sar", "margin_sar", "billing_status"],
+                    "total_cost_sar", "margin_sar", "billing_status", "region_type"],
             limit_page_length=500)
         exec_poid_map = {e.name: e.get("system_id") for e in executions}
         for wd in work_done:

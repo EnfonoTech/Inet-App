@@ -159,7 +159,9 @@ export default function PODispatch() {
       (r.po_no || "").toLowerCase().includes(q) ||
       (r.item_code || "").toLowerCase().includes(q) ||
       (r.project_code || "").toLowerCase().includes(q) ||
-      (r.site_code || "").toLowerCase().includes(q)
+      (r.site_code || "").toLowerCase().includes(q) ||
+      (r.center_area || "").toLowerCase().includes(q) ||
+      (r.region_type || "").toLowerCase().includes(q)
     );
   });
 
@@ -487,6 +489,8 @@ export default function PODispatch() {
                   <th>Project</th>
                   <th>DUID</th>
                   <th>Area</th>
+                  <th>Center area</th>
+                  <th>Region</th>
                   {showDispatched && (
                     <>
                       <th>Mode</th>
@@ -524,6 +528,10 @@ export default function PODispatch() {
                       <td style={{ whiteSpace: "nowrap" }}>{row.project_code}</td>
                       <td>{row.site_code}</td>
                       <td>{row.area}</td>
+                      <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>
+                        {row.center_area || "—"}
+                      </td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
                       {showDispatched && (
                         <>
                           <td><DispatchModeBadge mode={row.dispatch_mode} /></td>
@@ -551,7 +559,7 @@ export default function PODispatch() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 17 : 16) : 13}
+                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 19 : 18) : 15}
                     style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                     <strong>{filtered.length}</strong> row{filtered.length !== 1 ? "s" : ""}
                     {tableSearch && rows.length !== filtered.length && ` (filtered from ${rows.length})`}

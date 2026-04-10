@@ -217,11 +217,18 @@ def import_control_center_xlsx(file_url):
 				else:
 					active_flag = "Yes" if active_flag_raw else "No"
 
+				category = str(row[2]).strip() if row[2] else ""
+				if category and not frappe.db.exists("Activity Category", category):
+					frappe.get_doc({
+						"doctype": "Activity Category",
+						"activity_category": category,
+					}).insert(ignore_permissions=True)
+
 				frappe.get_doc({
 					"doctype": "Activity Cost Master",
 					"activity_code": activity_code,
 					"standard_activity": str(row[1]).strip() if row[1] else "",
-					"category": str(row[2]).strip() if row[2] else "",
+					"category": category,
 					"base_cost_sar": flt(row[3]) if row[3] else 0,
 					"cost_type": str(row[4]).strip() if row[4] else "",
 					"billing_type": str(row[6]).strip() if row[6] else "",

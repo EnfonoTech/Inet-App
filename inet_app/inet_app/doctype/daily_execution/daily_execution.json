@@ -8,6 +8,7 @@
   "system_id",
   "rollout_plan",
   "im",
+  "region_type",
   "team",
   "execution_date",
   "execution_status",
@@ -39,6 +40,15 @@
    "fieldtype": "Link",
    "label": "Implementation Manager",
    "options": "IM Master",
+   "read_only": 1
+  },
+  {
+   "default": "Standard",
+   "fieldname": "region_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Region Type",
+   "options": "Standard\nHard",
    "read_only": 1
   },
   {

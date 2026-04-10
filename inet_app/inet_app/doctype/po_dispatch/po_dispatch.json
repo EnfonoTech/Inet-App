@@ -27,6 +27,7 @@
   "dispatch_mode",
   "section_site",
   "center_area",
+  "region_type",
   "site_code",
   "column_break_wuyp",
   "site_name"
@@ -151,6 +152,14 @@
    "fieldname": "center_area",
    "fieldtype": "Data",
    "label": "Center Area"
+  },
+  {
+   "default": "Standard",
+   "fieldname": "region_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Region Type",
+   "options": "Standard\nHard"
   },
   {
    "fieldname": "site_code",

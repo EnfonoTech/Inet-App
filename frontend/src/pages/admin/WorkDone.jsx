@@ -91,7 +91,9 @@ export default function WorkDone() {
         (r.site_name || "").toLowerCase().includes(q) ||
         (r.po_dispatch || "").toLowerCase().includes(q) ||
         (r.project_code || "").toLowerCase().includes(q) ||
-        (r.po_no || "").toLowerCase().includes(q)
+        (r.po_no || "").toLowerCase().includes(q) ||
+        (r.center_area || "").toLowerCase().includes(q) ||
+        (r.region_type || "").toLowerCase().includes(q)
       );
     }
     return true;
@@ -129,7 +131,7 @@ export default function WorkDone() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, Item, Project, Team…"
+          placeholder="Search POID, Item, Project, Team, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -210,6 +212,8 @@ export default function WorkDone() {
                   <th>Description</th>
                   <th>Project</th>
                   <th>Site</th>
+                  <th>Center area</th>
+                  <th>Region</th>
                   <th>Team</th>
                   <th>Exec Date</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
@@ -233,6 +237,10 @@ export default function WorkDone() {
                       <td>{row.item_description || "—"}</td>
                       <td>{row.project_code}</td>
                       <td>{row.site_name || "—"}</td>
+                      <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>
+                        {row.center_area || "—"}
+                      </td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
                       <td>{row.team || "—"}</td>
                       <td>{row.execution_date || "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.executed_qty}</td>
@@ -263,7 +271,7 @@ export default function WorkDone() {
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
-                  <td colSpan={8} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
+                  <td colSpan={10} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
                     TOTALS ({filtered.length}{hasFilters && ` of ${rows.length}`} rows)
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px" }}>{fmt.format(totals.qty)}</td>
@@ -313,6 +321,8 @@ export default function WorkDone() {
                 <DetailItem label="Description" value={detailRow.item_description} />
                 <DetailItem label="Project" value={detailRow.project_code} />
                 <DetailItem label="Site" value={detailRow.site_name} />
+                <DetailItem label="Center area" value={detailRow.center_area} />
+                <DetailItem label="Region type" value={detailRow.region_type} />
                 <DetailItem label="Team" value={detailRow.team} />
                 <DetailItem label="Visit Type" value={detailRow.visit_type} />
                 <DetailItem label="Executed Qty" value={fmt.format(detailRow.executed_qty || 0)} />

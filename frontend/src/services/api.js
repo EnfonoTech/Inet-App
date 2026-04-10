@@ -50,9 +50,16 @@ async function call(method, args = {}) {
 
   const json = await res.json();
   if (!res.ok || json.exc) {
-    const msg = json._server_messages
+    let msg = json._server_messages
       ? (() => { try { return JSON.parse(JSON.parse(json._server_messages)[0]).message; } catch { return null; } })()
       : null;
+    if (!msg && json.exception) msg = String(json.exception);
+    if (!msg && json.exc) {
+      try {
+        const parsed = JSON.parse(json.exc);
+        if (Array.isArray(parsed) && parsed[0]) msg = String(parsed[0]);
+      } catch { /* ignore */ }
+    }
     throw new Error(msg || json.message || "API request failed");
   }
   return json.message;

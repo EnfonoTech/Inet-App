@@ -7,6 +7,7 @@
  "field_order": [
   "po_dispatch",
   "im",
+  "region_type",
   "team",
   "plan_date",
   "plan_end_date",
@@ -36,6 +37,15 @@
    "fieldtype": "Link",
    "label": "Implementation Manager",
    "options": "IM Master",
+   "read_only": 1
+  },
+  {
+   "default": "Standard",
+   "fieldname": "region_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Region Type",
+   "options": "Standard\nHard",
    "read_only": 1
   },
   {

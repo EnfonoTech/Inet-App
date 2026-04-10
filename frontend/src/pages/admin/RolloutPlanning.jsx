@@ -158,7 +158,9 @@ export default function RolloutPlanning() {
       (r.project_code || "").toLowerCase().includes(q) ||
       (r.team || "").toLowerCase().includes(q) ||
       (r.im || "").toLowerCase().includes(q) ||
-      (r.site_code || "").toLowerCase().includes(q)
+      (r.site_code || "").toLowerCase().includes(q) ||
+      (r.center_area || "").toLowerCase().includes(q) ||
+      (r.region_type || "").toLowerCase().includes(q)
     );
   });
 
@@ -240,7 +242,7 @@ export default function RolloutPlanning() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, Item, Project, Team, DUID…"
+          placeholder="Search POID, Item, Project, Team, DUID, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -325,6 +327,8 @@ export default function RolloutPlanning() {
                   <th>Item Code</th>
                   <th>Project</th>
                   <th>DUID</th>
+                  <th>Center area</th>
+                  <th>Region</th>
                   <th>Team</th>
                   <th>IM</th>
                   <th>Target Month</th>
@@ -351,6 +355,10 @@ export default function RolloutPlanning() {
                     <td>{row.item_code}</td>
                     <td>{row.project_code}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
+                    <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>
+                      {row.center_area || "—"}
+                    </td>
+                    <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
                     <td>{row.team}</td>
                     <td>{row.im}</td>
                     <td style={{ fontSize: "0.82rem" }}>
@@ -374,7 +382,7 @@ export default function RolloutPlanning() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={8} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={10} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length}</strong>
                     {search && ` of ${rows.length}`}
                     {" "}row{filtered.length !== 1 ? "s" : ""}

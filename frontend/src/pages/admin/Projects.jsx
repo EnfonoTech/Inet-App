@@ -293,6 +293,7 @@ export default function Projects() {
                 <th>Status</th>
                 <th>IM</th>
                 <th>Area</th>
+                <th>Region</th>
                 <th style={{ textAlign: "right" }}>Budget</th>
                 <th style={{ textAlign: "right" }}>Actual Cost</th>
                 <th style={{ textAlign: "right" }}>Progress</th>
@@ -307,6 +308,7 @@ export default function Projects() {
                   <td><StatusBadge status={p.project_status} /></td>
                   <td style={{ fontSize: 13 }}>{p.implementation_manager || "\u2014"}</td>
                   <td style={{ fontSize: 13 }}>{p.center_area || "\u2014"}</td>
+                  <td style={{ fontSize: 13 }}>{p.region_type || "\u2014"}</td>
                   <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
                     {p.budget_amount ? fmt.format(p.budget_amount) : "\u2014"}
                   </td>

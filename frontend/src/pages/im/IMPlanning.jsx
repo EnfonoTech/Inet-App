@@ -65,7 +65,9 @@ export default function IMPlanning() {
         (p.plan_date || "").toLowerCase().includes(q) ||
         (p.visit_type || "").toLowerCase().includes(q) ||
         (p.site_code || "").toLowerCase().includes(q) ||
-        (p.po_no || "").toLowerCase().includes(q)
+        (p.po_no || "").toLowerCase().includes(q) ||
+        (p.center_area || "").toLowerCase().includes(q) ||
+        (p.region_type || "").toLowerCase().includes(q)
       );
     }
     return true;
@@ -87,7 +89,7 @@ export default function IMPlanning() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search Plan ID, POID, DUID, PO, Team…"
+          placeholder="Search Plan ID, POID, DUID, PO, Team, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -149,6 +151,8 @@ export default function IMPlanning() {
                   <th>Plan ID</th>
                   <th>POID</th>
                   <th>DUID</th>
+                  <th>Center area</th>
+                  <th>Region</th>
                   <th>PO</th>
                   <th>Team</th>
                   <th>Plan Date</th>
@@ -164,6 +168,10 @@ export default function IMPlanning() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.po_dispatch || "—"}</td>
                     <td>{p.site_code || "—"}</td>
+                    <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={p.center_area || ""}>
+                      {p.center_area || "—"}
+                    </td>
+                    <td style={{ fontSize: "0.82rem" }}>{p.region_type || "—"}</td>
                     <td>{p.po_no || "—"}</td>
                     <td>{p.team}</td>
                     <td>{p.plan_date}</td>
@@ -185,7 +193,7 @@ export default function IMPlanning() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={9} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     {filtered.length}{hasFilters && ` of ${plans.length}`} plans
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>

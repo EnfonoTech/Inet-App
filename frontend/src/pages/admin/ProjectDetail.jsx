@@ -5,6 +5,12 @@ import { pmApi } from "../../services/api";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtDec = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/** Mirrors server: Hard if center/area text contains "hard" (case-insensitive). */
+function regionTypePreviewFromText(text) {
+  if (!text) return "Standard";
+  return String(text).toLowerCase().includes("hard") ? "Hard" : "Standard";
+}
+
 const STATUS_COLORS = {
   Active: { bg: "#ecfdf5", color: "#065f46", border: "#a7f3d0" },
   "On Hold": { bg: "#fffbeb", color: "#92400e", border: "#fde68a" },
@@ -319,6 +325,9 @@ function EditOverview({ project, onSave, onCancel }) {
           <div>
             <label style={labelStyle}>Center / Area</label>
             <input style={inputStyle} value={form.center_area} onChange={e => setField("center_area", e.target.value)} />
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+              Region type (saved with project): <strong>{regionTypePreviewFromText(form.center_area)}</strong>
+            </div>
           </div>
           <div>
             <label style={labelStyle}>Domain</label>
@@ -402,6 +411,7 @@ export default function ProjectDetail() {
     { key: "team", label: "Team" },
     { key: "im", label: "IM" },
     { key: "dispatch_status", label: "Status", render: v => <Badge value={v} /> },
+    { key: "region_type", label: "Region" },
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "PO Dispatch Details", row })}>View</button> },
   ];
 
@@ -415,6 +425,7 @@ export default function ProjectDetail() {
     { key: "achieved_amount", label: "Achieved", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "completion_pct", label: "Completion", align: "right", render: v => v != null ? `${v}%` : "\u2014" },
     { key: "plan_status", label: "Status", render: v => <Badge value={v} /> },
+    { key: "region_type", label: "Region" },
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Rollout Plan Details", row })}>View</button> },
   ];
 
@@ -427,6 +438,7 @@ export default function ProjectDetail() {
     { key: "achieved_amount", label: "Achieved Amt", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "execution_status", label: "Status", render: v => <Badge value={v} /> },
     { key: "qc_status", label: "QC", render: v => <Badge value={v} /> },
+    { key: "region_type", label: "Region" },
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Execution Details", row })}>View</button> },
   ];
 
@@ -434,6 +446,7 @@ export default function ProjectDetail() {
     { key: "system_id", label: "POID", mono: true },
     { key: "execution", label: "Execution", mono: true },
     { key: "item_code", label: "Item Code" },
+    { key: "region_type", label: "Region" },
     { key: "executed_qty", label: "Qty", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "billing_rate_sar", label: "Rate (SAR)", align: "right", render: v => v != null ? fmtDec.format(v) : "\u2014" },
     { key: "revenue_sar", label: "Revenue", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
@@ -534,6 +547,7 @@ export default function ProjectDetail() {
               ["Huawei IM", project.huawei_im],
               ["Implementation Manager", project.implementation_manager],
               ["Center / Area", project.center_area],
+              ["Region type", project.region_type || regionTypePreviewFromText(project.center_area)],
               ["Active", project.active_flag ? "Yes" : "No"],
               ["Budget Amount", project.budget_amount ? `SAR ${fmt.format(project.budget_amount)}` : null],
               ["Monthly Target", project.monthly_target ? `SAR ${fmt.format(project.monthly_target)}` : null],

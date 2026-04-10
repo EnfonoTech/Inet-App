@@ -148,7 +148,9 @@ export default function IMExecution() {
       (e.team || "").toLowerCase().includes(q) ||
       (e.execution_date || "").toLowerCase().includes(q) ||
       (e.site_code || "").toLowerCase().includes(q) ||
-      (e.po_no || "").toLowerCase().includes(q)
+      (e.po_no || "").toLowerCase().includes(q) ||
+      (e.center_area || "").toLowerCase().includes(q) ||
+      (e.region_type || "").toLowerCase().includes(q)
     );
   });
 
@@ -298,7 +300,7 @@ export default function IMExecution() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search Execution ID, Plan, DUID, PO, Team…"
+          placeholder="Search Execution ID, Plan, DUID, PO, Team, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -370,6 +372,8 @@ export default function IMExecution() {
                   <th>Execution</th>
                   <th>Rollout Plan</th>
                   <th>DUID</th>
+                  <th>Center area</th>
+                  <th>Region</th>
                   <th>PO</th>
                   <th>Team</th>
                   <th>Date</th>
@@ -386,6 +390,10 @@ export default function IMExecution() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan}</td>
                     <td>{e.site_code || "—"}</td>
+                    <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={e.center_area || ""}>
+                      {e.center_area || "—"}
+                    </td>
+                    <td style={{ fontSize: "0.82rem" }}>{e.region_type || "—"}</td>
                     <td>{e.po_no || "—"}</td>
                     <td>{e.team}</td>
                     <td>{e.execution_date}</td>
@@ -446,7 +454,7 @@ export default function IMExecution() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={9} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     {filtered.length}{hasFilters && ` of ${executions.length}`} rows
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>

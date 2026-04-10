@@ -20,6 +20,8 @@
   "project_code",
   "activity_code",
   "area",
+  "center_area",
+  "region_type",
   "line_status",
   "dispatch_mode"
  ],
@@ -120,6 +122,20 @@
    "fieldtype": "Link",
    "label": "Area",
    "options": "Area Master"
+  },
+  {
+   "fieldname": "center_area",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Center Area"
+  },
+  {
+   "default": "Standard",
+   "fieldname": "region_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Region Type",
+   "options": "Standard\nHard"
   },
   {
    "default": "Active",

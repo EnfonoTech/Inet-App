@@ -104,7 +104,9 @@ export default function ExecutionMonitor() {
         (r.po_dispatch || "").toLowerCase().includes(q) ||
         (r.team || "").toLowerCase().includes(q) ||
         (r.plan_date || "").toLowerCase().includes(q) ||
-        (r.visit_type || "").toLowerCase().includes(q)
+        (r.visit_type || "").toLowerCase().includes(q) ||
+        (r.center_area || "").toLowerCase().includes(q) ||
+        (r.region_type || "").toLowerCase().includes(q)
       );
     }
     return true;
@@ -138,7 +140,7 @@ export default function ExecutionMonitor() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, Plan, Team, Date…"
+          placeholder="Search POID, Plan, Team, Date, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -207,6 +209,8 @@ export default function ExecutionMonitor() {
                   <th>POID</th>
                   <th>Item</th>
                   <th>Project / Site</th>
+                  <th>Center area</th>
+                  <th>Region</th>
                   <th>Team</th>
                   <th>Plan Date</th>
                   <th>Visit Type</th>
@@ -236,6 +240,10 @@ export default function ExecutionMonitor() {
                         <div>{row.project_code || "—"}</div>
                         <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{row.site_name || row.site_code || "—"}</div>
                       </td>
+                      <td style={{ fontSize: "0.78rem", maxWidth: 120 }} title={row.center_area || ""}>
+                        {row.center_area || "—"}
+                      </td>
+                      <td style={{ fontSize: "0.78rem" }}>{row.region_type || "—"}</td>
                       <td>{row.team}</td>
                       <td>{row.plan_date}</td>
                       <td>{row.visit_type}</td>
@@ -276,7 +284,7 @@ export default function ExecutionMonitor() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length}</strong>
                     {hasFilters && ` of ${rows.length}`}
                     {" "}record{filtered.length !== 1 ? "s" : ""}
@@ -313,6 +321,8 @@ export default function ExecutionMonitor() {
                 <DetailItem label="Item Description" value={detailRow.item_description} />
                 <DetailItem label="Project" value={detailRow.project_code} />
                 <DetailItem label="Site" value={detailRow.site_name || detailRow.site_code} />
+                <DetailItem label="Center area" value={detailRow.center_area} />
+                <DetailItem label="Region type" value={detailRow.region_type} />
                 <DetailItem label="Team" value={detailRow.team} />
                 <DetailItem label="Visit Type" value={detailRow.visit_type} />
                 <DetailItem label="Plan Date" value={detailRow.plan_date} />

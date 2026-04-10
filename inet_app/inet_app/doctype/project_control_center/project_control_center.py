@@ -2,9 +2,12 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from inet_app.region_type import region_type_from_center_area
+
 
 class ProjectControlCenter(Document):
     def validate(self):
+        self.region_type = region_type_from_center_area(self.center_area)
         self._validate_completion_percentage()
         self._validate_budget_vs_actual()
 
