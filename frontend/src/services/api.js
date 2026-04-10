@@ -118,7 +118,7 @@ export const pmApi = {
       planning_route: planningRoute || "standard",
     }),
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
-  uploadPOFile:         (file_url)  => call("inet_app.api.command_center.upload_po_file", { file_url }),
+  uploadPOFile:         (file_url, customer)  => call("inet_app.api.command_center.upload_po_file", { file_url, customer: customer || "" }),
   confirmPOUpload:      (rows)      => call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(rows) }),
   listPOIntakeLines:    (status)    => call("inet_app.api.command_center.list_po_intake_lines", { status: status || "New" }),
   dispatchPOLines:      (payload)   => call("inet_app.api.command_center.dispatch_po_lines", { payload: JSON.stringify(payload) }),

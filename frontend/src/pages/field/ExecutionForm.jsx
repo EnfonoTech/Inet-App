@@ -238,17 +238,7 @@ export default function ExecutionForm() {
         activity_code: activityCode || undefined,
       };
 
-      const execResult = await pmApi.updateExecution(payload);
-      const executionName = execResult?.name || execResult;
-
-      // If completed, generate Work Done record
-      if (execStatus === "Completed" && executionName) {
-        try {
-          await pmApi.generateWorkDone(executionName);
-        } catch (wdErr) {
-          console.warn("Work Done generation failed:", wdErr);
-        }
-      }
+      await pmApi.updateExecution(payload);
 
       try {
         const plist = await pmApi.listRolloutPlans({ name: id });

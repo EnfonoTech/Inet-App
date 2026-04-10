@@ -62,7 +62,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-  "options": "In progress\nCompleted\nHold\nCancelled\nPostponed\nPOD Pending\nPO Required\nSpan Loss\nSpare Parts\nExtra Visit\nLate Arrival\nQuality Issue\nTravel"
+  "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed\nPOD Pending\nPO Required\nSpan Loss\nSpare Parts\nExtra Visit\nLate Arrival\nQuality Issue\nTravel"
   },
   {
    "fieldname": "achieved_qty",

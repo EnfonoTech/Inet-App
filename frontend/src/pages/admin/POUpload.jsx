@@ -108,10 +108,14 @@ export default function POUpload() {
   }, []);
 
   async function handleFileUploaded(file_url) {
+    if (!customer) {
+      setParseError("Please select a customer before uploading.");
+      return;
+    }
     setParsing(true);
     setParseError(null);
     try {
-      const result = await pmApi.uploadPOFile(file_url);
+      const result = await pmApi.uploadPOFile(file_url, customer);
       setParseResult(result);
       setStep(1);
     } catch (err) {
@@ -152,8 +156,8 @@ export default function POUpload() {
 
   const validRows = parseResult?.valid_rows || [];
   const errorRows = parseResult?.error_rows || [];
-  const newItems = [...new Set(validRows.filter(r => !r.item_exists).map(r => r.item_code).filter(Boolean))];
-  const missingProjects = [...new Set(validRows.filter(r => !r.project_exists).map(r => r.project_code).filter(Boolean))];
+  const newItems = [...new Set(errorRows.filter(r => (r._errors || []).some(e => String(e).includes("Customer Item Master"))).map(r => r.item_code).filter(Boolean))];
+  const missingProjects = [...new Set(errorRows.filter(r => (r._errors || []).some(e => String(e).includes("project_code not found"))).map(r => r.project_code).filter(Boolean))];
 
   return (
     <div>
@@ -429,7 +433,9 @@ export default function POUpload() {
                           <td style={{ textAlign: "right" }}>{fmt.format(row.rate || 0)}</td>
                           <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
                           <td><StatusBadge valid={false} /></td>
-                          <td style={{ color: "var(--red)", fontSize: "0.78rem" }}>{row.error}</td>
+                          <td style={{ color: "var(--red)", fontSize: "0.78rem" }}>
+                            {(row._errors || []).join("; ") || row.error || "—"}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -448,7 +454,7 @@ export default function POUpload() {
               <button className="btn-secondary" onClick={handleReset}>
                 Start Over
               </button>
-              {validRows.length > 0 && (
+              {validRows.length > 0 && errorRows.length === 0 && (
                 <button
                   className="btn-primary"
                   onClick={handleConfirm}

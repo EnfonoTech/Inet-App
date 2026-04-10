@@ -98,6 +98,7 @@ export default function PODispatch() {
   const [showDispatchModal, setShowDispatchModal] = useState(false);
   const [team, setTeam] = useState("");
   const [targetMonth, setTargetMonth] = useState(todayMonth());
+  const [planningMode, setPlanningMode] = useState("Plan");
   const [dispatching, setDispatching] = useState(false);
 
   // Convert modal state
@@ -168,15 +169,21 @@ export default function PODispatch() {
 
   // ── Dispatch ─────────────────────────────────────────────────────────────
   async function handleDispatch() {
-    if (!team || !targetMonth) return;
+    if (!team || !targetMonth || !planningMode) return;
     setDispatching(true);
     try {
       const selectedLines = rows.filter(r => selected.has(r.name));
-      const result = await pmApi.dispatchPOLines({ lines: selectedLines, team, target_month: targetMonth });
+      const result = await pmApi.dispatchPOLines({
+        lines: selectedLines,
+        team,
+        target_month: targetMonth,
+        planning_mode: planningMode,
+      });
       const count = result?.created ?? selected.size;
       showNotice("ok", `Successfully dispatched ${count} line${count !== 1 ? "s" : ""}.`);
       setSelected(new Set());
       setShowDispatchModal(false);
+      setPlanningMode("Plan");
       loadData("New");
     } catch (err) {
       showNotice("err", err.message || "Dispatch failed");
@@ -263,10 +270,20 @@ export default function PODispatch() {
               value={targetMonth} onChange={e => setTargetMonth(e.target.value)}
             />
           </div>
+          <div>
+            <label style={labelStyle}>Planning Mode *</label>
+            <select style={inputStyle} value={planningMode} onChange={e => setPlanningMode(e.target.value)}>
+              <option value="Plan">Plan</option>
+              <option value="Direct">Direct</option>
+            </select>
+          </div>
           <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", fontSize: "0.82rem", color: "#64748b" }}>
             Selected lines: <strong>{selected.size}</strong>
             {team && (
               <span style={{ marginLeft: 10 }}>→ Team: <strong>{teams.find(t => t.team_id === team)?.team_name || team}</strong></span>
+            )}
+            {planningMode && (
+              <span style={{ marginLeft: 10 }}>→ Mode: <strong>{planningMode}</strong></span>
             )}
           </div>
         </div>
@@ -275,7 +292,7 @@ export default function PODispatch() {
           <button
             className="btn-primary"
             onClick={handleDispatch}
-            disabled={dispatching || !team || !targetMonth}
+            disabled={dispatching || !team || !targetMonth || !planningMode}
           >
             {dispatching ? "Dispatching..." : "Confirm Dispatch"}
           </button>

@@ -1,8 +1,14 @@
 import frappe
+from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt
+from frappe.utils import flt, getdate
 
 class RolloutPlan(Document):
+    def validate(self):
+        if self.plan_end_date and self.plan_date:
+            if getdate(self.plan_end_date) < getdate(self.plan_date):
+                frappe.throw(_("Planned end date cannot be before plan start date"))
+
     def before_save(self):
         if not self.visit_multiplier:
             mult = frappe.db.get_value("Visit Multiplier Master", self.visit_type, "multiplier")

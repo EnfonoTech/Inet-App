@@ -9,7 +9,11 @@
   "im",
   "team",
   "plan_date",
+  "plan_end_date",
+  "access_time",
+  "access_period",
   "visit_type",
+  "source_rollout_plan",
   "visit_number",
   "column_break_dtdy",
   "visit_multiplier",
@@ -53,11 +57,35 @@
    "reqd": 1
   },
   {
+   "fieldname": "plan_end_date",
+   "fieldtype": "Date",
+   "label": "Plan End Date"
+  },
+  {
+   "fieldname": "access_time",
+   "fieldtype": "Data",
+   "label": "Access Time",
+   "description": "Planned access time or window (e.g. hours or time range)"
+  },
+  {
+   "fieldname": "access_period",
+   "fieldtype": "Select",
+   "label": "Access Period",
+   "options": "\nDay\nNight"
+  },
+  {
    "default": "Work Done",
    "fieldname": "visit_type",
    "fieldtype": "Select",
    "label": "Visit Type",
    "options": "Work Done\nRe-Visit\nExtra Visit"
+  },
+  {
+   "fieldname": "source_rollout_plan",
+   "fieldtype": "Link",
+   "label": "Source Rollout Plan",
+   "options": "Rollout Plan",
+   "read_only": 1
   },
   {
    "default": "1",

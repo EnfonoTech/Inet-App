@@ -14,6 +14,7 @@
   "column_break_wrgw",
   "team_cost_sar",
   "subcontract_cost_sar",
+  "activity_cost_sar",
   "total_cost_sar",
   "margin_sar",
   "inet_margin_pct",
@@ -62,6 +63,11 @@
    "fieldname": "subcontract_cost_sar",
    "fieldtype": "Currency",
    "label": "Subcontract Cost (SAR)"
+  },
+  {
+   "fieldname": "activity_cost_sar",
+   "fieldtype": "Currency",
+   "label": "Activity Cost (SAR)"
   },
   {
    "fieldname": "total_cost_sar",

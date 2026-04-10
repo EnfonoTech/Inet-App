@@ -158,7 +158,11 @@ after_migrate = "inet_app.setup.after_migrate"
 doc_events = {
 	"Purchase Order": {
 		"on_submit": "inet_app.api.project_management.on_purchase_order_submit"
-	}
+	},
+	"Daily Execution": {
+		"on_update": "inet_app.api.command_center.on_daily_execution_update",
+		"after_insert": "inet_app.api.command_center.on_daily_execution_after_insert",
+	},
 }
 
 # Scheduled Tasks

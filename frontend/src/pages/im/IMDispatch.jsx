@@ -97,6 +97,12 @@ export default function IMDispatch() {
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
   const [planDate, setPlanDate] = useState(todayDate());
+  const [planEndDate, setPlanEndDate] = useState(todayDate());
+  const [planTeam, setPlanTeam] = useState("");
+  const [accessTime, setAccessTime] = useState("");
+  const [accessPeriod, setAccessPeriod] = useState("");
+  const [teamsList, setTeamsList] = useState([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
   const [visitType, setVisitType] = useState("Work Done");
   const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
@@ -106,6 +112,23 @@ export default function IMDispatch() {
   useEffect(() => {
     load();
   }, [imName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!showModal || !imName) return;
+    let cancelled = false;
+    (async () => {
+      setTeamsLoading(true);
+      try {
+        const list = await pmApi.listINETTeams({ im: imName, status: "Active" });
+        if (!cancelled) setTeamsList(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setTeamsList([]);
+      } finally {
+        if (!cancelled) setTeamsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showModal, imName]);
 
   async function load() {
     setLoading(true);
@@ -162,8 +185,23 @@ export default function IMDispatch() {
     }
   }
 
+  function openCreatePlanModal() {
+    setCreateError(null);
+    const selRows = filtered.filter((r) => selected.has(r.name));
+    const teamVals = [...new Set(selRows.map((r) => r.team).filter(Boolean))];
+    setPlanTeam(teamVals.length === 1 ? teamVals[0] : "");
+    setPlanEndDate(planDate);
+    setAccessTime("");
+    setAccessPeriod("");
+    setShowModal(true);
+  }
+
   async function handleCreatePlans() {
-    if (selected.size === 0 || !planDate || !visitType) return;
+    if (selected.size === 0 || !planDate || !planEndDate || !visitType || !planTeam) return;
+    if (planEndDate < planDate) {
+      setCreateError("Planned end date cannot be before start date.");
+      return;
+    }
     setCreating(true);
     setCreateError(null);
     setSuccessMsg(null);
@@ -172,6 +210,10 @@ export default function IMDispatch() {
       const result = await pmApi.createRolloutPlans({
         dispatches,
         plan_date: planDate,
+        plan_end_date: planEndDate,
+        team: planTeam,
+        access_time: accessTime,
+        access_period: accessPeriod,
         visit_type: visitType,
       });
       const count = result?.created ?? dispatches.length;
@@ -193,6 +235,9 @@ export default function IMDispatch() {
   const selectedAmt = filtered
     .filter((r) => selected.has(r.name))
     .reduce((s, r) => s + (r.line_amount || 0), 0);
+
+  const createPlanSelRows = filtered.filter((r) => selected.has(r.name));
+  const createPlanDuids = [...new Set(createPlanSelRows.map((r) => r.site_code || r.name).filter(Boolean))];
 
   return (
     <div>
@@ -293,31 +338,111 @@ export default function IMDispatch() {
         <button
           type="button"
           className="btn-primary"
-          onClick={() => { setCreateError(null); setShowModal(true); }}
+          onClick={openCreatePlanModal}
           disabled={selected.size === 0}
         >
           Create rollout plans ({selected.size})
         </button>
       </div>
 
-      <Modal open={showModal} onClose={() => !creating && setShowModal(false)} title="Create rollout plans">
+      <Modal open={showModal} onClose={() => !creating && setShowModal(false)} title="Create rollout plans for selected DUIDs" width={560}>
         {createError && <div className="notice error" style={{ marginBottom: 12 }}>{createError}</div>}
-        <p style={{ fontSize: "0.85rem", color: "#64748b", marginTop: 0 }}>
-          {selected.size} dispatch line(s) will move to <strong>Planned</strong> and appear under Planning.
-        </p>
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6 }}>Plan date</label>
-          <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0" }} />
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 8 }}>SELECTED DUIDs</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 120, overflowY: "auto", padding: 4 }}>
+            {createPlanDuids.map((d) => (
+              <span
+                key={d}
+                style={{
+                  display: "inline-block",
+                  maxWidth: "100%",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  background: "#f1f5f9",
+                  border: "1px solid #e2e8f0",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                  color: "#334155",
+                  fontFamily: "ui-monospace, monospace",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+                title={d}
+              >
+                {d}
+              </span>
+            ))}
+          </div>
+          <p style={{ fontSize: "0.78rem", color: "#64748b", margin: "8px 0 0" }}>
+            IM <strong>{imName || "—"}</strong> · {selected.size} line{selected.size !== 1 ? "s" : ""} → <strong>Planned</strong> · SAR {fmt.format(selectedAmt)}
+          </p>
         </div>
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6 }}>Visit type</label>
-          <select value={visitType} onChange={(e) => setVisitType(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0" }}>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Assigned team</label>
+          <select
+            value={planTeam}
+            onChange={(e) => setPlanTeam(e.target.value)}
+            disabled={teamsLoading || !imName}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+          >
+            <option value="">{teamsLoading ? "Loading teams…" : !imName ? "Link IM to load teams" : "Select team"}</option>
+            {teamsList.map((t) => (
+              <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Visit type</label>
+          <select value={visitType} onChange={(e) => setVisitType(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}>
             {VISIT_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
         </div>
+
+        <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 10 }}>ACCESS DETAILS</div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Planned start date</label>
+          <input
+            type="date"
+            value={planDate}
+            onChange={(e) => {
+              const v = e.target.value;
+              setPlanDate(v);
+              setPlanEndDate((ed) => (ed < v ? v : ed));
+            }}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+          />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Planned end date</label>
+          <input type="date" value={planEndDate} min={planDate} onChange={(e) => setPlanEndDate(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Access time</label>
+          <input type="text" value={accessTime} onChange={(e) => setAccessTime(e.target.value)} placeholder="e.g. 08:00 or hours" style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Access period</label>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+              <input type="radio" name="access_period_im" checked={accessPeriod === ""} onChange={() => setAccessPeriod("")} />
+              Not set
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+              <input type="radio" name="access_period_im" checked={accessPeriod === "Day"} onChange={() => setAccessPeriod("Day")} />
+              Day
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+              <input type="radio" name="access_period_im" checked={accessPeriod === "Night"} onChange={() => setAccessPeriod("Night")} />
+              Night
+            </label>
+          </div>
+        </div>
+
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button type="button" className="btn-secondary" disabled={creating} onClick={() => setShowModal(false)}>Cancel</button>
-          <button type="button" className="btn-primary" disabled={creating} onClick={handleCreatePlans}>
+          <button type="button" className="btn-primary" disabled={creating || !planDate || !planEndDate || !visitType || !planTeam} onClick={handleCreatePlans}>
             {creating ? "Creating…" : "Create"}
           </button>
         </div>

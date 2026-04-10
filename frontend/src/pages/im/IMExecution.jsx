@@ -4,7 +4,7 @@ import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const EXECUTION_STATUS_OPTIONS = [
-  "In progress",
+  "In Progress",
   "Completed",
   "Hold",
   "Cancelled",
@@ -18,6 +18,7 @@ const EXECUTION_STATUS_OPTIONS = [
   "Quality Issue",
   "Travel",
 ];
+const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
 
 function badgeTone(value) {
   const s = String(value || "").toLowerCase();
@@ -112,6 +113,15 @@ export default function IMExecution() {
   const [reopenBusy, setReopenBusy] = useState(false);
   const [reopenErr, setReopenErr] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
+  const [qcFor, setQcFor] = useState(null);
+  const [qcDecision, setQcDecision] = useState("Pass");
+  const [qcIssueCategory, setQcIssueCategory] = useState("");
+  const [qcBusy, setQcBusy] = useState(false);
+  const [qcErr, setQcErr] = useState(null);
+  const [ciagFor, setCiagFor] = useState(null);
+  const [ciagDecision, setCiagDecision] = useState("Open");
+  const [ciagBusy, setCiagBusy] = useState(false);
+  const [ciagErr, setCiagErr] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -164,6 +174,51 @@ export default function IMExecution() {
     }
   }
 
+  async function submitQc() {
+    if (!qcFor?.name) return;
+    if (qcDecision === "Fail" && !qcIssueCategory.trim()) {
+      setQcErr("Issue category is required when QC = Fail.");
+      return;
+    }
+    setQcBusy(true);
+    setQcErr(null);
+    try {
+      await pmApi.updateExecution({
+        name: qcFor.name,
+        execution_status: "Completed",
+        qc_status: qcDecision,
+        issue_category: qcDecision === "Fail" ? qcIssueCategory.trim() : undefined,
+      });
+      setQcFor(null);
+      setQcIssueCategory("");
+      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
+      setExecutions(Array.isArray(res) ? res : []);
+    } catch (err) {
+      setQcErr(err.message || "Failed to update QC");
+    } finally {
+      setQcBusy(false);
+    }
+  }
+
+  async function submitCiag() {
+    if (!ciagFor?.name) return;
+    setCiagBusy(true);
+    setCiagErr(null);
+    try {
+      await pmApi.updateExecution({
+        name: ciagFor.name,
+        ciag_status: ciagDecision,
+      });
+      setCiagFor(null);
+      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
+      setExecutions(Array.isArray(res) ? res : []);
+    } catch (err) {
+      setCiagErr(err.message || "Failed to update CIAG");
+    } finally {
+      setCiagBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -173,22 +228,70 @@ export default function IMExecution() {
       </div>
 
       {reopenFor && (
-        <div style={{ margin: "0 28px 16px", padding: 20, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12 }}>
-          <h4 style={{ margin: "0 0 12px" }}>Return rollout to planning: {reopenFor}</h4>
-          {reopenErr && <div className="notice error" style={{ marginBottom: 10 }}>{reopenErr}</div>}
-          <div className="form-group" style={{ marginBottom: 10 }}>
-            <label>Issue category</label>
-            <input value={issueCategory} onChange={(e) => setIssueCategory(e.target.value)} placeholder="e.g. PAT Rejection, QC Rejection" style={{ width: "100%", maxWidth: 400, padding: 8 }} />
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setReopenFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>Return rollout to planning: {reopenFor}</h4>
+            {reopenErr && <div className="notice error" style={{ marginBottom: 10 }}>{reopenErr}</div>}
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Issue category</label>
+              <input value={issueCategory} onChange={(e) => setIssueCategory(e.target.value)} placeholder="e.g. PAT Rejection, QC Rejection" style={{ width: "100%", maxWidth: 460, padding: 8 }} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>Route</label>
+              <select value={planningRoute} onChange={(e) => setPlanningRoute(e.target.value)} style={{ padding: 8 }}>
+                <option value="standard">Planning (standard)</option>
+                <option value="with_issue">Planning with Issue</option>
+              </select>
+            </div>
+            <button className="btn-primary" disabled={reopenBusy} onClick={submitReopen}>{reopenBusy ? "…" : "Confirm"}</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setReopenFor(null)}>Cancel</button>
           </div>
+        </div>
+      )}
+
+      {qcFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setQcFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+          <h4 style={{ margin: "0 0 12px" }}>Set QC: {qcFor.name}</h4>
+          {qcErr && <div className="notice error" style={{ marginBottom: 10 }}>{qcErr}</div>}
           <div className="form-group" style={{ marginBottom: 12 }}>
-            <label>Route</label>
-            <select value={planningRoute} onChange={(e) => setPlanningRoute(e.target.value)} style={{ padding: 8 }}>
-              <option value="standard">Planning (standard)</option>
-              <option value="with_issue">Planning with Issue</option>
+            <label>QC Result</label>
+            <select value={qcDecision} onChange={(e) => setQcDecision(e.target.value)} style={{ padding: 8, minWidth: 220 }}>
+              <option value="Pass">Pass</option>
+              <option value="Fail">Fail</option>
             </select>
           </div>
-          <button className="btn-primary" disabled={reopenBusy} onClick={submitReopen}>{reopenBusy ? "…" : "Confirm"}</button>
-          <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setReopenFor(null)}>Cancel</button>
+          {qcDecision === "Fail" && (
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>Issue category</label>
+              <input
+                value={qcIssueCategory}
+                onChange={(e) => setQcIssueCategory(e.target.value)}
+                placeholder="e.g. PAT Rejection, QC Rejection, POD Pending"
+                style={{ width: "100%", maxWidth: 460, padding: 8 }}
+              />
+            </div>
+          )}
+          <button className="btn-primary" disabled={qcBusy} onClick={submitQc}>{qcBusy ? "…" : "Submit QC"}</button>
+          <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setQcFor(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {ciagFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setCiagFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>Set CIAG: {ciagFor.name}</h4>
+            {ciagErr && <div className="notice error" style={{ marginBottom: 10 }}>{ciagErr}</div>}
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>CIAG Status</label>
+              <select value={ciagDecision} onChange={(e) => setCiagDecision(e.target.value)} style={{ padding: 8, minWidth: 220 }}>
+                {CIAG_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary" disabled={ciagBusy} onClick={submitCiag}>{ciagBusy ? "…" : "Submit CIAG"}</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setCiagFor(null)}>Cancel</button>
+          </div>
         </div>
       )}
 
@@ -289,8 +392,36 @@ export default function IMExecution() {
                     <td>
                       <StatusPill value={e.execution_status} />
                     </td>
-                    <td><StatusPill value={e.qc_status} /></td>
-                    <td><StatusPill value={e.ciag_status} /></td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (String(e.execution_status || "") !== "Completed") return;
+                          setQcErr(null);
+                          setQcDecision((e.qc_status === "Fail" || e.qc_status === "Pass") ? e.qc_status : "Pass");
+                          setQcIssueCategory("");
+                          setQcFor(e);
+                        }}
+                        style={{ border: "none", background: "none", padding: 0, cursor: String(e.execution_status || "") === "Completed" ? "pointer" : "not-allowed" }}
+                        title={String(e.execution_status || "") === "Completed" ? "Click to set QC" : "QC can be set after execution is Completed"}
+                      >
+                        <StatusPill value={e.qc_status || "Pending"} />
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCiagErr(null);
+                          setCiagDecision(e.ciag_status || "Open");
+                          setCiagFor(e);
+                        }}
+                        style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
+                        title="Click to set CIAG"
+                      >
+                        <StatusPill value={e.ciag_status || "Open"} />
+                      </button>
+                    </td>
                     <td style={{ textAlign: "right" }}>{e.achieved_qty || 0}</td>
                     <td>
                       <button

@@ -95,6 +95,12 @@ export default function RolloutPlanning() {
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
   const [planDate, setPlanDate] = useState(todayDate());
+  const [planEndDate, setPlanEndDate] = useState(todayDate());
+  const [planTeam, setPlanTeam] = useState("");
+  const [accessTime, setAccessTime] = useState("");
+  const [accessPeriod, setAccessPeriod] = useState("");
+  const [teamsList, setTeamsList] = useState([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
   const [visitType, setVisitType] = useState("Work Done");
   const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
@@ -115,6 +121,23 @@ export default function RolloutPlanning() {
   }
 
   useEffect(() => { loadData(); }, []);
+
+  useEffect(() => {
+    if (!showModal) return;
+    let cancelled = false;
+    (async () => {
+      setTeamsLoading(true);
+      try {
+        const list = await pmApi.listINETTeams({ status: "Active" });
+        if (!cancelled) setTeamsList(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setTeamsList([]);
+      } finally {
+        if (!cancelled) setTeamsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showModal]);
 
   function toggleRow(name) {
     setSelected((prev) => {
@@ -147,8 +170,23 @@ export default function RolloutPlanning() {
     }
   }
 
+  function openCreateModal() {
+    setCreateError(null);
+    const selRows = rows.filter((r) => selected.has(r.name));
+    const teamVals = [...new Set(selRows.map((r) => r.team).filter(Boolean))];
+    setPlanTeam(teamVals.length === 1 ? teamVals[0] : "");
+    setPlanEndDate(planDate);
+    setAccessTime("");
+    setAccessPeriod("");
+    setShowModal(true);
+  }
+
   async function handleCreate() {
-    if (selected.size === 0 || !planDate || !visitType) return;
+    if (selected.size === 0 || !planDate || !planEndDate || !visitType || !planTeam) return;
+    if (planEndDate < planDate) {
+      setCreateError("Planned end date cannot be before start date.");
+      return;
+    }
     setCreating(true);
     setCreateError(null);
     setSuccessMsg(null);
@@ -157,6 +195,10 @@ export default function RolloutPlanning() {
       const result = await pmApi.createRolloutPlans({
         dispatches,
         plan_date: planDate,
+        plan_end_date: planEndDate,
+        team: planTeam,
+        access_time: accessTime,
+        access_period: accessPeriod,
         visit_type: visitType,
       });
       const count = result?.created ?? selected.size;
@@ -175,6 +217,10 @@ export default function RolloutPlanning() {
   const selectedAmt = filtered
     .filter((r) => selected.has(r.name))
     .reduce((s, r) => s + (r.line_amount || 0), 0);
+
+  const createPlanSelRows = rows.filter((r) => selected.has(r.name));
+  const createPlanDuids = [...new Set(createPlanSelRows.map((r) => r.site_code || r.name).filter(Boolean))];
+  const createPlanIms = [...new Set(createPlanSelRows.map((r) => r.im).filter(Boolean))];
 
   return (
     <div>
@@ -222,7 +268,7 @@ export default function RolloutPlanning() {
         )}
         <button
           className="btn-primary"
-          onClick={() => setShowModal(true)}
+          onClick={openCreateModal}
           disabled={selected.size === 0}
         >
           Create Plans ({selected.size})
@@ -352,42 +398,129 @@ export default function RolloutPlanning() {
       {/* ── Create Plans Modal ────────────────────────────────── */}
       <Modal
         open={showModal}
-        onClose={() => setShowModal(false)}
-        title="Create Rollout Plans"
+        onClose={() => !creating && setShowModal(false)}
+        title="Create rollout plans for selected DUIDs"
+        width={560}
       >
-        <div style={{ marginBottom: 20, padding: "12px 16px", background: "#f1f5f9", borderRadius: 8 }}>
-          <div style={{ fontSize: "0.82rem", color: "#475569" }}>Creating plans for</div>
-          <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#1e293b" }}>
-            {selected.size} dispatch{selected.size !== 1 ? "es" : ""}
-          </div>
-          <div style={{ fontSize: "0.78rem", color: "#64748b", marginTop: 2 }}>
-            Total: SAR {fmt.format(selectedAmt)}
-          </div>
-        </div>
+        <>
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 8 }}>SELECTED DUIDs</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 120, overflowY: "auto", padding: 4 }}>
+                  {createPlanDuids.map((d) => (
+                    <span
+                      key={d}
+                      style={{
+                        display: "inline-block",
+                        maxWidth: "100%",
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        background: "#f1f5f9",
+                        border: "1px solid #e2e8f0",
+                        fontSize: "0.78rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        fontFamily: "ui-monospace, monospace",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                      title={d}
+                    >
+                      {d}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#64748b", marginTop: 8 }}>
+                  {selected.size} dispatch line{selected.size !== 1 ? "s" : ""} · SAR {fmt.format(selectedAmt)}
+                  {createPlanIms.length > 0 && (
+                    <span style={{ marginLeft: 10 }}>
+                      IM: {createPlanIms.length === 1 ? createPlanIms[0] : `${createPlanIms.length} IMs`}
+                    </span>
+                  )}
+                </div>
+              </div>
 
-        <div style={{ display: "grid", gap: 16, marginBottom: 24 }}>
-          <div>
-            <label style={labelStyle}>Plan Date</label>
-            <input
-              type="date"
-              value={planDate}
-              onChange={(e) => setPlanDate(e.target.value)}
-              style={fieldStyle}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>Visit Type</label>
-            <select
-              value={visitType}
-              onChange={(e) => setVisitType(e.target.value)}
-              style={fieldStyle}
-            >
-              {VISIT_TYPES.map((vt) => (
-                <option key={vt} value={vt}>{vt}</option>
-              ))}
-            </select>
-          </div>
-        </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>Assigned team</label>
+                <select
+                  value={planTeam}
+                  onChange={(e) => setPlanTeam(e.target.value)}
+                  style={fieldStyle}
+                  disabled={teamsLoading}
+                >
+                  <option value="">{teamsLoading ? "Loading teams…" : "Select team"}</option>
+                  {teamsList.map((t) => (
+                    <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>Visit type</label>
+                <select
+                  value={visitType}
+                  onChange={(e) => setVisitType(e.target.value)}
+                  style={fieldStyle}
+                >
+                  {VISIT_TYPES.map((vt) => (
+                    <option key={vt} value={vt}>{vt}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>ACCESS DETAILS</div>
+              <div style={{ display: "grid", gap: 16, marginBottom: 20 }}>
+                <div>
+                  <label style={labelStyle}>Planned start date</label>
+                  <input
+                    type="date"
+                    value={planDate}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPlanDate(v);
+                      setPlanEndDate((ed) => (ed < v ? v : ed));
+                    }}
+                    style={fieldStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Planned end date</label>
+                  <input
+                    type="date"
+                    value={planEndDate}
+                    min={planDate}
+                    onChange={(e) => setPlanEndDate(e.target.value)}
+                    style={fieldStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Access time</label>
+                  <input
+                    type="text"
+                    value={accessTime}
+                    onChange={(e) => setAccessTime(e.target.value)}
+                    placeholder="e.g. 08:00 or hours"
+                    style={fieldStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Access period</label>
+                  <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+                      <input type="radio" name="access_period_rp" checked={accessPeriod === ""} onChange={() => setAccessPeriod("")} />
+                      Not set
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+                      <input type="radio" name="access_period_rp" checked={accessPeriod === "Day"} onChange={() => setAccessPeriod("Day")} />
+                      Day
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+                      <input type="radio" name="access_period_rp" checked={accessPeriod === "Night"} onChange={() => setAccessPeriod("Night")} />
+                      Night
+                    </label>
+                  </div>
+                </div>
+              </div>
+        </>
 
         {createError && (
           <div className="notice error" style={{ marginBottom: 14 }}>
@@ -402,9 +535,9 @@ export default function RolloutPlanning() {
           <button
             className="btn-primary"
             onClick={handleCreate}
-            disabled={creating || !planDate || !visitType}
+            disabled={creating || !planDate || !planEndDate || !visitType || !planTeam}
           >
-            {creating ? "Creating…" : `Create ${selected.size} Plan${selected.size !== 1 ? "s" : ""}`}
+            {creating ? "Creating…" : `Create ${selected.size} plan${selected.size !== 1 ? "s" : ""}`}
           </button>
         </div>
       </Modal>

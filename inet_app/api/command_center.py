@@ -4,7 +4,9 @@ for inet_app (Frappe 15)
 """
 
 import calendar
+import csv
 import json
+import os
 
 import frappe
 from frappe.utils import (
@@ -347,19 +349,14 @@ def backfill_po_dispatch_id_to_poid(limit=500):
 
 
 @frappe.whitelist()
-def upload_po_file(file_url):
+def upload_po_file(file_url, customer=None):
     """
-    Parse an uploaded Huawei PO export (.xlsx) and return validated / error rows.
+    Parse an uploaded Huawei PO export (.xlsx/.csv) and return validated / error rows.
 
     Returns
     -------
     {"valid_rows": [...], "error_rows": [...], "total": N}
     """
-    try:
-        import openpyxl
-    except ImportError:
-        frappe.throw("openpyxl is not installed. Run `bench pip install openpyxl`.")
-
     # ---- Resolve the physical file path --------------------------------
     if file_url.startswith("/private/files/"):
         file_path = frappe.get_site_path("private", "files", file_url[len("/private/files/"):])
@@ -392,13 +389,25 @@ def upload_po_file(file_url):
         "Publish Date": "publish_date",
     }
 
-    wb = openpyxl.load_workbook(file_path, data_only=True)
-    ws = wb.active
-
-    rows_iter = ws.iter_rows(values_only=True)
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".csv":
+        with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+            csv_rows = list(csv.reader(f))
+        if not csv_rows:
+            frappe.throw("The uploaded file appears to be empty.")
+        raw_headers = csv_rows[0]
+        rows_iter = iter(csv_rows[1:])
+    else:
+        try:
+            import openpyxl
+        except ImportError:
+            frappe.throw("openpyxl is not installed. Run `bench pip install openpyxl`.")
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+        ws = wb.active
+        rows_iter = ws.iter_rows(values_only=True)
+        raw_headers = next(rows_iter, None)
 
     # First row = headers
-    raw_headers = next(rows_iter, None)
     if not raw_headers:
         frappe.throw("The uploaded file appears to be empty.")
 
@@ -424,8 +433,26 @@ def upload_po_file(file_url):
         if not row_dict.get("project_code"):
             errors.append("project_code is required")
         qty = flt(row_dict.get("qty", 0))
+        rate = flt(row_dict.get("rate", 0))
         if qty <= 0:
             errors.append("qty must be > 0")
+        if rate <= 0:
+            errors.append("rate must be > 0")
+
+        project_code = str(row_dict.get("project_code") or "").strip()
+        if project_code and not frappe.db.exists("Project Control Center", project_code):
+            errors.append("project_code not found in Project Control Center")
+
+        item_code = str(row_dict.get("item_code") or "").strip()
+        cim_filters = {"item_code": item_code, "active_flag": 1}
+        if customer:
+            cim_filters["customer"] = customer
+        item_exists = bool(item_code and frappe.db.exists("Customer Item Master", cim_filters))
+        if not item_exists:
+            if customer:
+                errors.append(f"item_code not found in Customer Item Master for customer {customer}")
+            else:
+                errors.append("item_code not found in Customer Item Master")
 
         if errors:
             row_dict["_row"] = row_idx
@@ -433,18 +460,11 @@ def upload_po_file(file_url):
             error_rows.append(row_dict)
         else:
             row_dict["qty"] = qty
-            row_dict["rate"] = flt(row_dict.get("rate", 0))
-            row_dict["line_amount"] = flt(row_dict.get("line_amount", 0))
-            # Check if item exists in the Item master
-            item_code = str(row_dict.get("item_code") or "").strip()
-            row_dict["item_exists"] = bool(
-                item_code and frappe.db.exists("Item", item_code)
-            )
-            # Check if project exists in Project Control Center
-            project_code = str(row_dict.get("project_code") or "").strip()
-            row_dict["project_exists"] = bool(
-                project_code and frappe.db.exists("Project Control Center", project_code)
-            )
+            row_dict["rate"] = rate
+            line_amount = flt(row_dict.get("line_amount", 0))
+            row_dict["line_amount"] = line_amount if line_amount > 0 else (qty * rate)
+            row_dict["item_exists"] = True
+            row_dict["project_exists"] = True
             valid_rows.append(row_dict)
 
     return {
@@ -504,23 +524,25 @@ def confirm_po_upload(rows):
                     doc.customer = customer_name
 
         if not doc.customer:
-            doc.customer = frappe.db.get_value("Customer", {}, "name") or "Unknown"
+            frappe.throw(f"Customer is required for PO {po_no}")
+        if not frappe.db.exists("Customer", {"customer_name": doc.customer}) and not frappe.db.exists("Customer", doc.customer):
+            frappe.throw(f"Customer does not exist: {doc.customer}")
 
         for line in lines:
             item_code = line.get("item_code")
-            # Auto-create item if it doesn't exist in Item master
-            if item_code and not frappe.db.exists("Item", str(item_code)):
-                if not frappe.db.exists("Item Group", "Telecom Services"):
-                    frappe.get_doc({"doctype": "Item Group", "item_group_name": "Telecom Services", "parent_item_group": "All Item Groups"}).insert(ignore_permissions=True)
-                frappe.get_doc({
-                    "doctype": "Item",
-                    "item_code": str(item_code),
-                    "item_name": str(line.get("item_description") or item_code)[:140],
-                    "item_group": "Telecom Services",
-                    "stock_uom": "Nos",
-                    "is_stock_item": 0,
-                    "description": str(line.get("item_description") or ""),
-                }).insert(ignore_permissions=True)
+            qty = flt(line.get("qty", 0))
+            rate = flt(line.get("rate", 0))
+            if qty <= 0 or rate <= 0:
+                frappe.throw(f"Invalid qty/rate in PO {po_no} for item {item_code}")
+            project_code = line.get("project_code")
+            if project_code and not frappe.db.exists("Project Control Center", project_code):
+                frappe.throw(f"Project code not found: {project_code}")
+            cim_exists = frappe.db.exists(
+                "Customer Item Master",
+                {"item_code": item_code, "customer": doc.customer, "active_flag": 1},
+            )
+            if not cim_exists:
+                frappe.throw(f"Customer Item Master missing for customer {doc.customer} and item {item_code}")
 
             doc.append(
                 "po_lines",
@@ -532,16 +554,12 @@ def confirm_po_upload(rows):
                     "site_name": line.get("site_name"),
                     "item_code": item_code,
                     "item_description": line.get("item_description"),
-                    "qty": flt(line.get("qty", 0)),
-                    "rate": flt(line.get("rate", 0)),
-                    "line_amount": flt(line.get("line_amount", 0)),
+                    "qty": qty,
+                    "rate": rate,
+                    "line_amount": flt(line.get("line_amount", 0)) or (qty * rate),
                     "project_code": line.get("project_code"),
                 },
             )
-
-        # Auto-create customer if it doesn't exist
-        if doc.customer and not frappe.db.exists("Customer", {"customer_name": doc.customer}):
-            frappe.get_doc({"doctype": "Customer", "customer_name": doc.customer, "customer_type": "Company"}).insert(ignore_permissions=True)
 
         doc.insert(ignore_permissions=True, ignore_links=True)
         frappe.db.commit()
@@ -800,6 +818,10 @@ def create_rollout_plans(payload):
     payload = {
         "dispatches": ["SYS-2026-00001", ...],
         "plan_date": "2026-04-04",
+        "plan_end_date": "2026-04-05",  # optional; defaults to plan_date
+        "team": "TEAM-001",  # optional INET Team name (team_id); else uses dispatch.team
+        "access_time": "",  # optional
+        "access_period": "Day" | "Night" | "",  # optional
         "visit_type": "Work Done",
     }
 
@@ -812,7 +834,21 @@ def create_rollout_plans(payload):
 
     dispatches = payload.get("dispatches") or []
     plan_date = payload.get("plan_date") or nowdate()
+    plan_end_date = payload.get("plan_end_date") or plan_date
+    team_override = (payload.get("team") or "").strip()
+    access_time = (payload.get("access_time") or "").strip()
+    access_period = (payload.get("access_period") or "").strip()
+    if access_period and access_period not in ("Day", "Night"):
+        access_period = ""
     visit_type = payload.get("visit_type", "Work Done")
+
+    pd = getdate(plan_date)
+    ped = getdate(plan_end_date)
+    if ped < pd:
+        frappe.throw(frappe._("Planned end date cannot be before plan start date"))
+
+    if team_override and not frappe.db.exists("INET Team", team_override):
+        frappe.throw(frappe._("Invalid team selected"))
 
     # Look up multiplier
     visit_multiplier = flt(
@@ -832,12 +868,19 @@ def create_rollout_plans(payload):
         if not dispatch:
             continue
 
+        target_team = team_override or dispatch.team
+        if target_team and not frappe.db.exists("INET Team", target_team):
+            frappe.throw(frappe._("Team {0} is not a valid INET Team").format(target_team))
+
         doc = frappe.new_doc("Rollout Plan")
         doc.po_dispatch = dispatch_name
-        doc.team = dispatch.team
+        doc.team = target_team
         if dispatch.im and hasattr(doc, "im"):
             doc.im = dispatch.im
         doc.plan_date = plan_date
+        doc.plan_end_date = plan_end_date
+        doc.access_time = access_time
+        doc.access_period = access_period or None
         doc.visit_type = visit_type
         doc.visit_multiplier = visit_multiplier
         doc.target_amount = flt(dispatch.line_amount) * visit_multiplier
@@ -846,8 +889,11 @@ def create_rollout_plans(payload):
         doc.insert(ignore_permissions=True)
         frappe.db.commit()
 
-        # Update dispatch status
-        frappe.db.set_value("PO Dispatch", dispatch_name, "dispatch_status", "Planned")
+        # Update dispatch status (and team when explicitly chosen for planning)
+        dispatch_updates = {"dispatch_status": "Planned"}
+        if team_override:
+            dispatch_updates["team"] = team_override
+        frappe.db.set_value("PO Dispatch", dispatch_name, dispatch_updates, update_modified=False)
 
         created += 1
         names.append(doc.name)
@@ -871,11 +917,19 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
             updates["plan_status"] = "In Execution"
 
     elif st == "Completed":
-        updates["plan_status"] = "Completed"
+        qc = str(getattr(exec_doc, "qc_status", None) or "")
         ach_amt = flt(getattr(exec_doc, "achieved_amount", None) or 0)
+        tgt = flt(frappe.db.get_value("Rollout Plan", rollout_plan, "target_amount") or 0)
+        if qc == "Fail":
+            # QC failure returns work to planning; do not close the original plan as Completed.
+            updates["plan_status"] = "Planning with Issue"
+        elif qc == "Pass":
+            updates["plan_status"] = "Completed"
+        else:
+            # Completed execution but QC still pending IM review.
+            updates["plan_status"] = "In Execution"
         if ach_amt > 0:
             updates["achieved_amount"] = ach_amt
-        tgt = flt(frappe.db.get_value("Rollout Plan", rollout_plan, "target_amount") or 0)
         if tgt > 0 and ach_amt >= 0:
             updates["completion_pct"] = min(100.0, (ach_amt / tgt) * 100.0)
 
@@ -889,6 +943,44 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
 
     if updates:
         frappe.db.set_value("Rollout Plan", rollout_plan, updates)
+
+
+def _normalize_execution_status(value):
+    s = str(value or "").strip()
+    if not s:
+        return s
+    if s.lower() == "in progress":
+        return "In Progress"
+    return s
+
+
+def _get_rollout_billing_rate(rollout_plan):
+    if not rollout_plan:
+        return 0.0
+
+    rp = frappe.db.get_value("Rollout Plan", rollout_plan, ["po_dispatch"], as_dict=True)
+    if not rp or not rp.po_dispatch:
+        return 0.0
+
+    dispatch = frappe.db.get_value(
+        "PO Dispatch",
+        rp.po_dispatch,
+        ["item_code", "center_area"],
+        as_dict=True,
+    )
+    if not dispatch or not dispatch.item_code:
+        return 0.0
+
+    is_hard = "hard" in (dispatch.center_area or "").lower()
+    cim = frappe.db.get_value(
+        "Customer Item Master",
+        {"item_code": dispatch.item_code, "active_flag": 1},
+        ["standard_rate_sar", "hard_rate_sar"],
+        as_dict=True,
+    )
+    if not cim:
+        return 0.0
+    return flt(cim.hard_rate_sar if is_hard else cim.standard_rate_sar)
 
 
 @frappe.whitelist()
@@ -949,13 +1041,24 @@ def update_execution(payload):
         "achieved_qty",
         "achieved_amount",
         "gps_location",
+        "photos",
         "qc_status",
+        "issue_category",
         "ciag_status",
         "revisit_flag",
         "remarks",
     ]:
         if field in payload and hasattr(doc, field):
             setattr(doc, field, payload[field])
+
+    if hasattr(doc, "execution_status"):
+        doc.execution_status = _normalize_execution_status(doc.execution_status)
+
+    # Keep achieved amount server-driven from achieved qty * billing rate.
+    if hasattr(doc, "achieved_qty") and hasattr(doc, "achieved_amount"):
+        if "achieved_qty" in payload or "achieved_amount" not in payload:
+            rate = _get_rollout_billing_rate(doc.rollout_plan)
+            doc.achieved_amount = flt(doc.achieved_qty or 0) * flt(rate)
 
     if payload.get("activity_code") and hasattr(doc, "activity_code"):
         doc.activity_code = payload["activity_code"]
@@ -971,9 +1074,40 @@ def update_execution(payload):
         doc.save(ignore_permissions=True)
 
     _sync_rollout_plan_from_daily_execution(doc.rollout_plan, doc)
+    qc = str(getattr(doc, "qc_status", None) or "")
+
+    # Stage 6: QC fail should return work to planning and create a new revisit plan.
+    if (doc.execution_status == "Completed") and (qc == "Fail") and doc.rollout_plan:
+        reopen_rollout_for_revisit(
+            doc.rollout_plan,
+            issue_category=(payload.get("issue_category") or "QC Rejection"),
+            planning_route="with_issue",
+        )
+    elif (doc.execution_status == "Completed") and (qc == "Pass"):
+        _ensure_work_done_for_execution(doc.name)
 
     frappe.db.commit()
     return {"name": doc.name, "status": doc.execution_status}
+
+
+def on_daily_execution_update(doc, method=None):
+    """
+    Hook guard: ensure Work Done exists for completed executions
+    even when updates bypass portal APIs.
+    """
+    if not doc or not getattr(doc, "name", None):
+        return
+    if str(getattr(doc, "execution_status", "") or "") != "Completed":
+        return
+    qc = str(getattr(doc, "qc_status", "") or "")
+    if qc != "Pass":
+        return
+    _ensure_work_done_for_execution(doc.name)
+
+
+def on_daily_execution_after_insert(doc, method=None):
+    """Same as on_update for first-time inserts submitted as Completed."""
+    on_daily_execution_update(doc, method=method)
 
 
 @frappe.whitelist()
@@ -1077,6 +1211,8 @@ def generate_work_done(execution_name):
         )
         activity_cost = flt(acm_cost or 0)
 
+    visit_multiplier = flt(rp.visit_multiplier or 1.0)
+    subcontract_cost = subcontract_cost * visit_multiplier
     total_cost = team_cost + subcontract_cost + activity_cost
     margin = revenue - total_cost
 
@@ -1099,6 +1235,22 @@ def generate_work_done(execution_name):
     frappe.db.commit()
 
     return {"name": wd.name}
+
+
+def _ensure_work_done_for_execution(execution_name):
+    if not execution_name:
+        return None
+    existing = frappe.db.get_value("Work Done", {"execution": execution_name}, "name")
+    if existing:
+        return existing
+    exec_status = frappe.db.get_value("Daily Execution", execution_name, "execution_status")
+    if exec_status != "Completed":
+        return None
+    try:
+        result = generate_work_done(execution_name)
+        return result.get("name")
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1552,22 +1704,69 @@ def get_command_dashboard():
         "in_progress": in_progress_count,
     }
 
-    # ---- Watchlist (action items) ------------------------------------------
+    # ---- Watchlist (action items) — shape matches CommandDashboard.jsx ------
     watchlist = []
+    issue_rows = frappe.db.sql(
+        """
+        SELECT COALESCE(rp.issue_category, 'Uncategorized') AS issue_category, COUNT(*) AS cnt
+        FROM `tabDaily Execution` de
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        WHERE de.qc_status = 'Fail'
+        AND de.execution_date BETWEEN %s AND %s
+        GROUP BY COALESCE(rp.issue_category, 'Uncategorized')
+        ORDER BY cnt DESC
+        LIMIT 5
+        """,
+        (first_day, last_day),
+        as_dict=True,
+    )
+    for row in issue_rows:
+        cnt = cint(row.cnt)
+        watchlist.append(
+            {
+                "indicator": f"QC open issues — {row.issue_category}",
+                "current": cnt,
+                "target": None,
+                "status": "Recover",
+            }
+        )
+
     if idle_teams_count > 0:
         watchlist.append(
-            {"type": "warning", "message": f"{idle_teams_count} team(s) have no activity today."}
+            {
+                "indicator": "Idle teams today",
+                "current": idle_teams_count,
+                "target": None,
+                "status": "Behind",
+            }
         )
     if inet_gap_today > 0:
         watchlist.append(
-            {"type": "danger", "message": f"INET gap today: SAR {inet_gap_today:,.0f}"}
+            {
+                "indicator": "INET revenue gap (month-to-date vs prorated target)",
+                "current": inet_gap_today,
+                "target": None,
+                "status": "Recover",
+            }
         )
     if sub_gap > 0:
         watchlist.append(
-            {"type": "danger", "message": f"Subcon gap: SAR {sub_gap:,.0f}"}
+            {
+                "indicator": "Subcontractor revenue gap",
+                "current": sub_gap,
+                "target": None,
+                "status": "Recover",
+            }
         )
     if not watchlist:
-        watchlist.append({"type": "success", "message": "All targets on track."})
+        watchlist.append(
+            {
+                "indicator": "Operational health",
+                "current": 0,
+                "target": None,
+                "status": "Optimized",
+            }
+        )
 
     return {
         "operational": {
@@ -1740,7 +1939,7 @@ def list_im_daily_executions(im=None, execution_status=None):
     status_clause = ""
     if execution_status:
         status_clause = " AND de.execution_status = %s"
-        params.append(execution_status)
+        params.append(_normalize_execution_status(execution_status))
     ciag_sel = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL"
     rows = frappe.db.sql(
         f"""
@@ -1848,14 +2047,50 @@ def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route
     else:
         new_status = "Planned"
 
+    source = frappe.get_doc("Rollout Plan", rollout_plan)
+    existing_revisit = frappe.db.get_value(
+        "Rollout Plan",
+        {
+            "po_dispatch": source.po_dispatch,
+            "visit_type": "Re-Visit",
+            "plan_status": ["in", ["Planned", "Planning with Issue", "In Execution"]],
+        },
+        "name",
+    )
+
+    if existing_revisit and existing_revisit != rollout_plan:
+        revisit_name = existing_revisit
+    else:
+        revisit = frappe.new_doc("Rollout Plan")
+        revisit.po_dispatch = source.po_dispatch
+        revisit.im = source.im
+        revisit.team = source.team
+        revisit.plan_date = nowdate()
+        if hasattr(revisit, "plan_end_date"):
+            revisit.plan_end_date = nowdate()
+        if hasattr(revisit, "access_time"):
+            revisit.access_time = getattr(source, "access_time", None)
+        if hasattr(revisit, "access_period"):
+            revisit.access_period = getattr(source, "access_period", None)
+        revisit.visit_type = "Re-Visit"
+        rev_mult = flt(
+            frappe.db.get_value("Visit Multiplier Master", "Re-Visit", "multiplier") or 0.5
+        )
+        revisit.visit_multiplier = rev_mult
+        tgt_src = flt(source.target_amount or 0)
+        revisit.target_amount = tgt_src * rev_mult if tgt_src > 0 else 0
+        revisit.plan_status = new_status
+        revisit.issue_category = (issue_category or "")[:140]
+        if hasattr(revisit, "source_rollout_plan"):
+            revisit.source_rollout_plan = rollout_plan
+        revisit.insert(ignore_permissions=True)
+        revisit_name = revisit.name
+
+    # Keep source plan as historical record; do not overwrite to Re-Visit.
     frappe.db.set_value(
         "Rollout Plan",
         rollout_plan,
-        {
-            "plan_status": new_status,
-            "issue_category": (issue_category or "")[:140],
-            "visit_type": "Re-Visit",
-        },
+        {"issue_category": (issue_category or "")[:140]},
         update_modified=True,
     )
 
@@ -1867,7 +2102,12 @@ def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route
         frappe.db.set_value("Daily Execution", row, "execution_status", "Cancelled", update_modified=True)
 
     frappe.db.commit()
-    return {"ok": True, "rollout_plan": rollout_plan, "plan_status": new_status}
+    return {
+        "ok": True,
+        "source_rollout_plan": rollout_plan,
+        "revisit_rollout_plan": revisit_name,
+        "plan_status": new_status,
+    }
 
 
 @frappe.whitelist()
@@ -2080,6 +2320,7 @@ def get_field_team_dashboard(team_id=None):
         FROM `tabRollout Plan` rp
         WHERE rp.team = %s
         AND rp.plan_date = %s
+        AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution', 'Planning with Issue')
         ORDER BY rp.name
         """,
         (team_id, today_str),
