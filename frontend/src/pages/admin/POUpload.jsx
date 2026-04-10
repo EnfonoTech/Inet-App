@@ -1,8 +1,37 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { pmApi } from "../../services/api";
 import FileUpload from "../../components/FileUpload";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+
+/** Survives navigation within the portal until confirm, reset, or tab close. */
+const PO_UPLOAD_DRAFT_KEY = "inet_po_upload_draft_v1";
+const PO_UPLOAD_DRAFT_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+function clearPoUploadDraft() {
+  try {
+    sessionStorage.removeItem(PO_UPLOAD_DRAFT_KEY);
+  } catch { /* ignore */ }
+}
+
+function savePoUploadDraft(customer, parseResult) {
+  try {
+    sessionStorage.setItem(
+      PO_UPLOAD_DRAFT_KEY,
+      JSON.stringify({
+        customer: customer || "",
+        parseResult: {
+          valid_rows: parseResult.valid_rows || [],
+          error_rows: parseResult.error_rows || [],
+          total: parseResult.total,
+        },
+        savedAt: Date.now(),
+      }),
+    );
+  } catch (e) {
+    console.warn("PO upload: could not save draft (storage full?)", e);
+  }
+}
 
 const STEPS = ["Upload", "Review", "Confirm"];
 
@@ -99,6 +128,7 @@ export default function POUpload() {
   const [confirming, setConfirming] = useState(false);
   const [successCount, setSuccessCount] = useState(null);
   const [confirmError, setConfirmError] = useState(null);
+  const draftRestoreDone = useRef(false);
 
   // Load customers on mount
   useEffect(() => {
@@ -106,6 +136,41 @@ export default function POUpload() {
       setCustomers(res || []);
     }).catch(() => {});
   }, []);
+
+  // Restore parse review after navigating away (same browser tab)
+  useEffect(() => {
+    if (draftRestoreDone.current) return;
+    draftRestoreDone.current = true;
+    try {
+      const raw = sessionStorage.getItem(PO_UPLOAD_DRAFT_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (typeof draft.savedAt !== "number" || Date.now() - draft.savedAt > PO_UPLOAD_DRAFT_MAX_AGE_MS) {
+        clearPoUploadDraft();
+        return;
+      }
+      const pr = draft.parseResult;
+      if (!pr || !Array.isArray(pr.valid_rows) || !Array.isArray(pr.error_rows)) {
+        clearPoUploadDraft();
+        return;
+      }
+      if (draft.customer) setCustomer(draft.customer);
+      setParseResult({
+        valid_rows: pr.valid_rows,
+        error_rows: pr.error_rows,
+        total: pr.total ?? pr.valid_rows.length + pr.error_rows.length,
+      });
+      setStep(1);
+    } catch {
+      clearPoUploadDraft();
+    }
+  }, []);
+
+  // Keep draft in sync while on the review step
+  useEffect(() => {
+    if (!parseResult) return;
+    savePoUploadDraft(customer, parseResult);
+  }, [parseResult, customer]);
 
   async function handleFileUploaded(file_url) {
     if (!customer) {
@@ -118,6 +183,7 @@ export default function POUpload() {
       const result = await pmApi.uploadPOFile(file_url, customer);
       setParseResult(result);
       setStep(1);
+      savePoUploadDraft(customer, result);
     } catch (err) {
       setParseError(err.message || "Failed to parse file");
     } finally {
@@ -136,8 +202,11 @@ export default function POUpload() {
     try {
       // Attach customer to each row before sending
       const rowsWithCustomer = parseResult.valid_rows.map(r => ({ ...r, customer }));
+      const rowCount = parseResult.valid_rows.length;
       const result = await pmApi.confirmPOUpload(rowsWithCustomer);
-      setSuccessCount(result?.created ?? parseResult.valid_rows.length);
+      clearPoUploadDraft();
+      setParseResult(null);
+      setSuccessCount(result?.created ?? rowCount);
       setStep(2);
     } catch (err) {
       setConfirmError(err.message || "Failed to import rows");
@@ -147,6 +216,7 @@ export default function POUpload() {
   }
 
   function handleReset() {
+    clearPoUploadDraft();
     setStep(0);
     setParseResult(null);
     setParseError(null);

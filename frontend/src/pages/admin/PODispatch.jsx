@@ -488,7 +488,6 @@ export default function PODispatch() {
                   <th style={{ textAlign: "right" }}>Amount</th>
                   <th>Project</th>
                   <th>DUID</th>
-                  <th>Area</th>
                   <th>Center area</th>
                   <th>Region</th>
                   {showDispatched && (
@@ -527,7 +526,6 @@ export default function PODispatch() {
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmtAmt.format(row.line_amount || 0)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.project_code}</td>
                       <td>{row.site_code}</td>
-                      <td>{row.area}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>
                         {row.center_area || "—"}
                       </td>
@@ -559,7 +557,7 @@ export default function PODispatch() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 19 : 18) : 15}
+                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 18 : 17) : 13}
                     style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                     <strong>{filtered.length}</strong> row{filtered.length !== 1 ? "s" : ""}
                     {tableSearch && rows.length !== filtered.length && ` (filtered from ${rows.length})`}

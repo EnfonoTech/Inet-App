@@ -49,6 +49,69 @@ def _resolve_line_poid(po_no, po_line_no, shipment_number, fallback=None):
     return poid or _make_poid(po_no, po_line_no, shipment_number)
 
 
+def _resolve_customer_link_name(customer_input):
+    """Resolve Excel/UI label to Customer.name for Link fields."""
+    c = (customer_input or "").strip()
+    if not c:
+        return None
+    if frappe.db.exists("Customer", c):
+        return c
+    return frappe.db.get_value("Customer", {"customer_name": c}, "name")
+
+
+def ensure_customer_item_master(customer_input, item_code_input):
+    """
+    Ensure an active Customer Item Master exists for this customer and Item.
+    Creates one with zero rates if missing; reactivates if an inactive row exists.
+
+    Returns
+    -------
+    (ok: bool, err: str|None)
+    """
+    customer = _resolve_customer_link_name(customer_input)
+    item_code = (item_code_input or "").strip()
+    if not customer:
+        return False, "Customer not found in Customer master"
+    if not item_code:
+        return False, "item_code is required"
+    if not frappe.db.exists("Item", item_code):
+        return False, f"Item not found: {item_code}"
+
+    existing = frappe.db.get_value(
+        "Customer Item Master",
+        {"customer": customer, "item_code": item_code},
+        ["name", "active_flag"],
+        as_dict=True,
+    )
+    if existing:
+        if not cint(existing.active_flag):
+            frappe.db.set_value(
+                "Customer Item Master",
+                existing.name,
+                "active_flag",
+                1,
+                update_modified=True,
+            )
+        return True, None
+
+    try:
+        doc = frappe.new_doc("Customer Item Master")
+        doc.customer = customer
+        doc.item_code = item_code
+        doc.active_flag = 1
+        doc.standard_rate_sar = 0
+        doc.hard_rate_sar = 0
+        doc.insert(ignore_permissions=True)
+    except Exception as e:
+        if frappe.db.exists(
+            "Customer Item Master", {"customer": customer, "item_code": item_code}
+        ):
+            return True, None
+        return False, str(e)
+
+    return True, None
+
+
 def _sanitize_table_pref_config(config):
     """Sanitize table personalization payload."""
     if isinstance(config, str):
@@ -417,6 +480,7 @@ def upload_po_file(file_url, customer=None):
 
     valid_rows = []
     error_rows = []
+    cim_ensured_keys = set()
 
     for row_idx, raw_row in enumerate(rows_iter, start=2):
         row_dict = {}
@@ -446,15 +510,20 @@ def upload_po_file(file_url, customer=None):
             errors.append("project_code not found in Project Control Center")
 
         item_code = str(row_dict.get("item_code") or "").strip()
-        cim_filters = {"item_code": item_code, "active_flag": 1}
-        if customer:
-            cim_filters["customer"] = customer
-        item_exists = bool(item_code and frappe.db.exists("Customer Item Master", cim_filters))
-        if not item_exists:
-            if customer:
-                errors.append(f"item_code not found in Customer Item Master for customer {customer}")
-            else:
-                errors.append("item_code not found in Customer Item Master")
+        if customer and item_code:
+            ck = (customer.strip(), item_code)
+            if ck not in cim_ensured_keys:
+                ok_cim, cim_err = ensure_customer_item_master(customer, item_code)
+                if ok_cim:
+                    cim_ensured_keys.add(ck)
+                else:
+                    errors.append(cim_err or "Could not create Customer Item Master")
+        elif item_code:
+            cim_filters = {"item_code": item_code, "active_flag": 1}
+            if not frappe.db.exists("Customer Item Master", cim_filters):
+                errors.append(
+                    "item_code not found in Customer Item Master (pick a customer in upload to auto-create per customer)"
+                )
 
         if errors:
             row_dict["_row"] = row_idx
@@ -527,11 +596,14 @@ def confirm_po_upload(rows):
 
         if not doc.customer:
             frappe.throw(f"Customer is required for PO {po_no}")
-        if not frappe.db.exists("Customer", doc.customer):
+        resolved_cust = _resolve_customer_link_name(doc.customer)
+        if not resolved_cust:
             frappe.throw(f"Customer does not exist: {doc.customer}")
+        doc.customer = resolved_cust
 
+        cim_pairs_done = set()
         for line in lines:
-            item_code = line.get("item_code")
+            item_code = str(line.get("item_code") or "").strip()
             qty = flt(line.get("qty", 0))
             rate = flt(line.get("rate", 0))
             if qty <= 0 or rate <= 0:
@@ -539,12 +611,15 @@ def confirm_po_upload(rows):
             project_code = line.get("project_code")
             if project_code and not frappe.db.exists("Project Control Center", project_code):
                 frappe.throw(f"Project code not found: {project_code}")
-            cim_exists = frappe.db.exists(
-                "Customer Item Master",
-                {"item_code": item_code, "customer": doc.customer, "active_flag": 1},
-            )
-            if not cim_exists:
-                frappe.throw(f"Customer Item Master missing for customer {doc.customer} and item {item_code}")
+            cim_key = (doc.customer, item_code)
+            if cim_key not in cim_pairs_done:
+                ok_cim, cim_err = ensure_customer_item_master(doc.customer, item_code)
+                if not ok_cim:
+                    frappe.throw(
+                        cim_err
+                        or f"Customer Item Master could not be created for customer {doc.customer} and item {item_code}"
+                    )
+                cim_pairs_done.add(cim_key)
 
             line_center_area = line.get("center_area") or first.get("center_area")
             line_region = region_type_from_center_area(line_center_area)
