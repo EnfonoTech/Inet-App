@@ -1,7 +1,7 @@
 {
  "charts": [],
- "content": "[{\"id\":\"AV_pouvtqI\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">PMS</span>\",\"col\":12}},{\"id\":\"pi8c9xRgFf\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Control Center\",\"col\":3}},{\"id\":\"LmtiLXkBTY\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Work Update\",\"col\":3}},{\"id\":\"ETL1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Execution Time Log\",\"col\":3}}]",
- "creation": "2026-04-01 15:23:02.377164",
+ "content": "[{\"id\":\"AV_pouvtqI\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">PMS</span>\",\"col\":12}},{\"id\":\"S0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Control Center\",\"col\":3}},{\"id\":\"S1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"PO Intake\",\"col\":3}},{\"id\":\"S2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"PO Dispatch\",\"col\":3}},{\"id\":\"S3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Rollout Plan\",\"col\":3}},{\"id\":\"S4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Execution\",\"col\":3}},{\"id\":\"S5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Work Done\",\"col\":3}},{\"id\":\"S6\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Execution Time Log\",\"col\":3}},{\"id\":\"H2\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Masters</span>\",\"col\":12}},{\"id\":\"S7\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"IM Master\",\"col\":3}},{\"id\":\"S8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"INET Team\",\"col\":3}},{\"id\":\"S9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Domain\",\"col\":3}},{\"id\":\"S10\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Huawei IM\",\"col\":3}},{\"id\":\"S11\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer Item Master\",\"col\":3}},{\"id\":\"S12\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Activity Cost Master\",\"col\":3}},{\"id\":\"S13\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Work Update\",\"col\":3}}]",
+ "creation": "2026-04-08 09:37:46.910739",
  "custom_blocks": [],
  "docstatus": 0,
  "doctype": "Workspace",
@@ -13,7 +13,7 @@
  "is_hidden": 0,
  "label": "PMS",
  "links": [],
- "modified": "2026-04-01 15:24:49.407908",
+ "modified": "2026-04-12 13:23:02.675041",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "PMS",
@@ -36,8 +36,40 @@
   {
    "color": "Grey",
    "doc_view": "List",
-   "label": "Daily Work Update",
-   "link_to": "Daily Work Update",
+   "label": "PO Intake",
+   "link_to": "PO Intake",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "PO Dispatch",
+   "link_to": "PO Dispatch",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Rollout Plan",
+   "link_to": "Rollout Plan",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Daily Execution",
+   "link_to": "Daily Execution",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Work Done",
+   "link_to": "Work Done",
    "stats_filter": "[]",
    "type": "DocType"
   },
@@ -46,6 +78,62 @@
    "doc_view": "List",
    "label": "Execution Time Log",
    "link_to": "Execution Time Log",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "IM Master",
+   "link_to": "IM Master",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "INET Team",
+   "link_to": "INET Team",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Project Domain",
+   "link_to": "Project Domain",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Huawei IM",
+   "link_to": "Huawei IM",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Customer Item Master",
+   "link_to": "Customer Item Master",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Activity Cost Master",
+   "link_to": "Activity Cost Master",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Daily Work Update",
+   "link_to": "Daily Work Update",
    "stats_filter": "[]",
    "type": "DocType"
   }

@@ -156,7 +156,6 @@ export default function RolloutPlanning() {
       (r.po_no || "").toLowerCase().includes(q) ||
       (r.item_code || "").toLowerCase().includes(q) ||
       (r.project_code || "").toLowerCase().includes(q) ||
-      (r.team || "").toLowerCase().includes(q) ||
       (r.im || "").toLowerCase().includes(q) ||
       (r.site_code || "").toLowerCase().includes(q) ||
       (r.center_area || "").toLowerCase().includes(q) ||
@@ -174,9 +173,8 @@ export default function RolloutPlanning() {
 
   function openCreateModal() {
     setCreateError(null);
-    const selRows = rows.filter((r) => selected.has(r.name));
-    const teamVals = [...new Set(selRows.map((r) => r.team).filter(Boolean))];
-    setPlanTeam(teamVals.length === 1 ? teamVals[0] : "");
+    // Team is always chosen by IM at planning (not copied from dispatch / project).
+    setPlanTeam("");
     setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
@@ -229,7 +227,9 @@ export default function RolloutPlanning() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Rollout Planning</h1>
-          <div className="page-subtitle">Create execution plans from dispatched PO lines</div>
+          <div className="page-subtitle">
+            Create execution plans from dispatched PO lines. PO Dispatch carries the IM only; choose the field team here — it is stored on the Rollout Plan.
+          </div>
         </div>
         <div className="page-actions">
           <button className="btn-secondary" onClick={loadData} disabled={loading}>
@@ -242,7 +242,7 @@ export default function RolloutPlanning() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, Item, Project, Team, DUID, Center area, Region…"
+          placeholder="Search POID, Item, Project, IM, DUID, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -329,7 +329,6 @@ export default function RolloutPlanning() {
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
-                  <th>Team</th>
                   <th>IM</th>
                   <th>Target Month</th>
                   <th style={{ textAlign: "right" }}>Line Amount</th>
@@ -359,7 +358,6 @@ export default function RolloutPlanning() {
                       {row.center_area || "—"}
                     </td>
                     <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
-                    <td>{row.team}</td>
                     <td>{row.im}</td>
                     <td style={{ fontSize: "0.82rem" }}>
                       {row.target_month
@@ -382,7 +380,7 @@ export default function RolloutPlanning() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={10} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={9} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length}</strong>
                     {search && ` of ${rows.length}`}
                     {" "}row{filtered.length !== 1 ? "s" : ""}
@@ -561,7 +559,6 @@ export default function RolloutPlanning() {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
               <Pill label="POID" value={detailRow.name} tone="blue" />
               <Pill label="Project" value={detailRow.project_code} tone="amber" />
-              <Pill label="Team" value={detailRow.team} tone="green" />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
               <DetailItem label="POID" value={detailRow.name} />
@@ -571,7 +568,6 @@ export default function RolloutPlanning() {
               <DetailItem label="Project" value={detailRow.project_code} />
               <DetailItem label="DUID" value={detailRow.site_code} />
               <DetailItem label="Site Name" value={detailRow.site_name} />
-              <DetailItem label="Team" value={detailRow.team} />
               <DetailItem label="IM" value={detailRow.im} />
               <DetailItem label="Dispatch Status" value={detailRow.dispatch_status} />
               <DetailItem label="Planning Mode" value={detailRow.planning_mode} />

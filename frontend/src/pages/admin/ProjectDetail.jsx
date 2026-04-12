@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 
@@ -40,10 +40,17 @@ function Badge({ value }) {
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "dispatches", label: "PO Lines", countKey: "dispatch_count" },
-  { key: "plans", label: "Planning", countKey: "plan_count" },
+  { key: "plans", label: "Rollout", countKey: "plan_count" },
   { key: "executions", label: "Execution", countKey: "execution_count" },
   { key: "work_done", label: "Work Done", countKey: "work_done_count" },
   { key: "teams", label: "Teams", countKey: null },
+];
+
+const ROLLOUT_MODAL_TABS = [
+  { key: "po_lines", label: "PO lines" },
+  { key: "planned", label: "Planned activity" },
+  { key: "additional", label: "Additional activities" },
+  { key: "expenses", label: "Expenses" },
 ];
 
 function SummaryCard({ label, value, sub, color, accent }) {
@@ -112,6 +119,219 @@ function DataTable({ columns, rows, emptyMsg }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+/** DUID-grouped rollout: sub-tabs with tables + View for full row payload. */
+function RolloutDuidModal({ group, onClose, onOpenDetail }) {
+  const [sub, setSub] = useState("po_lines");
+  useEffect(() => {
+    setSub("po_lines");
+  }, [group?.duid_label]);
+
+  const openDetail = useCallback(
+    (title, row) => {
+      if (row && onOpenDetail) onOpenDetail({ title, row });
+    },
+    [onOpenDetail],
+  );
+
+  if (!group) return null;
+
+  const viewBtn = (title, row) => (
+    <button
+      type="button"
+      className="btn-secondary"
+      style={{ fontSize: "0.72rem", padding: "4px 8px" }}
+      onClick={(e) => {
+        e.stopPropagation();
+        openDetail(title, row);
+      }}
+    >
+      View
+    </button>
+  );
+
+  const poCols = [
+    { key: "name", label: "POID", mono: true },
+    { key: "po_no", label: "PO No" },
+    { key: "po_line_no", label: "Line" },
+    { key: "item_code", label: "Item" },
+    { key: "item_description", label: "Description" },
+    { key: "qty", label: "Qty", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "rate", label: "Rate", align: "right", render: (v) => (v != null ? fmtDec.format(v) : "\u2014") },
+    { key: "line_amount", label: "Amount", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "team", label: "Team" },
+    { key: "im", label: "IM" },
+    { key: "dispatch_status", label: "Status", render: (v) => <Badge value={v} /> },
+    { key: "site_code", label: "DUID" },
+    { key: "site_name", label: "Site name" },
+    { key: "center_area", label: "Center area" },
+    { key: "region_type", label: "Region" },
+    { key: "_open", label: "Details", render: (_, row) => viewBtn("PO dispatch details", row) },
+  ];
+
+  const planCols = [
+    { key: "name", label: "Plan", mono: true },
+    { key: "po_dispatch", label: "POID", mono: true },
+    { key: "team", label: "Team" },
+    { key: "plan_date", label: "Plan date" },
+    { key: "plan_end_date", label: "End date" },
+    { key: "visit_type", label: "Visit type" },
+    { key: "visit_number", label: "Visit #", align: "right" },
+    { key: "visit_multiplier", label: "Multiplier", align: "right" },
+    { key: "target_amount", label: "Target", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "achieved_amount", label: "Achieved", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "completion_pct", label: "Completion", align: "right", render: (v) => (v != null ? `${v}%` : "\u2014") },
+    { key: "plan_status", label: "Status", render: (v) => <Badge value={v} /> },
+    { key: "access_time", label: "Access time" },
+    { key: "access_period", label: "Access period" },
+    { key: "region_type", label: "Region" },
+    { key: "issue_category", label: "Issue" },
+    { key: "source_rollout_plan", label: "Source plan" },
+    { key: "_open", label: "Details", render: (_, row) => viewBtn("Rollout plan details", row) },
+  ];
+
+  const expenseCols = [
+    { key: "name", label: "Work done", mono: true },
+    { key: "system_id", label: "POID", mono: true },
+    { key: "execution", label: "Execution", mono: true },
+    { key: "item_code", label: "Item" },
+    { key: "executed_qty", label: "Qty", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "billing_rate_sar", label: "Rate", align: "right", render: (v) => (v != null ? fmtDec.format(v) : "\u2014") },
+    { key: "revenue_sar", label: "Revenue", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "team_cost_sar", label: "Team cost", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "subcontract_cost_sar", label: "Subcontract", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "activity_cost_sar", label: "Activity cost", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "total_cost_sar", label: "Total cost", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "margin_sar", label: "Margin", align: "right", render: (v) =>
+      v != null ? <span style={{ color: v >= 0 ? "#065f46" : "#991b1b", fontWeight: 600 }}>{fmt.format(v)}</span> : "\u2014" },
+    { key: "billing_status", label: "Billing", render: (v) => <Badge value={v} /> },
+    { key: "region_type", label: "Region" },
+    { key: "_open", label: "Details", render: (_, row) => viewBtn("Work done details", row) },
+  ];
+
+  const timeLogCols = [
+    { key: "name", label: "Log", mono: true },
+    { key: "rollout_plan", label: "Plan", mono: true },
+    { key: "team_id", label: "Team" },
+    { key: "user", label: "User" },
+    { key: "start_time", label: "Start" },
+    { key: "end_time", label: "End" },
+    { key: "duration_minutes", label: "Minutes", align: "right" },
+    { key: "duration_hours", label: "Hours", align: "right" },
+    { key: "is_running", label: "Running", render: (v) => (v ? "Yes" : "No") },
+    { key: "notes", label: "Notes" },
+    { key: "_open", label: "Details", render: (_, row) => viewBtn("Time log details", row) },
+  ];
+
+  const duidDisplay = group.site_code || group.duid_label;
+  const poidSummary = Array.isArray(group.poid_list) && group.poid_list.length
+    ? group.poid_list.join(", ")
+    : "\u2014";
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 1100, width: "96vw" }}
+      >
+        <div className="modal-header">
+          <div>
+            <h2 className="modal-title" style={{ marginBottom: 6 }}>
+              Rollout — DUID {duidDisplay}
+            </h2>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", fontWeight: 500 }}>
+              PO lines (POID): {poidSummary}
+            </div>
+          </div>
+          <button type="button" className="modal-close" onClick={onClose}>
+            &times;
+          </button>
+        </div>
+        <div className="modal-body" style={{ paddingTop: 8 }}>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", borderBottom: "2px solid var(--border)", marginBottom: 16 }}>
+            {ROLLOUT_MODAL_TABS.map((t) => {
+              const active = sub === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setSub(t.key)}
+                  style={{
+                    padding: "10px 16px",
+                    background: "none",
+                    border: "none",
+                    borderBottom: active ? "2px solid #6366f1" : "2px solid transparent",
+                    marginBottom: -2,
+                    fontWeight: active ? 700 : 500,
+                    color: active ? "#6366f1" : "#64748b",
+                    fontSize: "0.86rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  {t.label}
+                  <span style={{ marginLeft: 8, fontSize: "0.78rem", opacity: 0.85 }}>
+                    {t.key === "po_lines" && `(${group.po_lines?.length ?? 0})`}
+                    {t.key === "planned" && `(${group.planned_activities?.length ?? 0})`}
+                    {t.key === "additional" && `(${group.additional_activities?.length ?? 0})`}
+                    {t.key === "expenses" &&
+                      `(${group.expenses?.length ?? 0} · logs ${group.time_logs?.length ?? 0})`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {sub === "po_lines" && (
+            <DataTable
+              columns={poCols}
+              rows={group.po_lines || []}
+              emptyMsg="No PO lines for this DUID."
+            />
+          )}
+          {sub === "planned" && (
+            <DataTable
+              columns={planCols}
+              rows={group.planned_activities || []}
+              emptyMsg="No planned rollout activities (Work Done path) for this DUID."
+            />
+          )}
+          {sub === "additional" && (
+            <DataTable
+              columns={planCols}
+              rows={group.additional_activities || []}
+              emptyMsg="No extra / re-visit plans for this DUID."
+            />
+          )}
+          {sub === "expenses" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "var(--text)" }}>
+                  Work done (costs & billing)
+                </div>
+                <DataTable
+                  columns={expenseCols}
+                  rows={group.expenses || []}
+                  emptyMsg="No work done / cost rows linked to this DUID."
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "var(--text)" }}>
+                  Execution time logs
+                </div>
+                <DataTable
+                  columns={timeLogCols}
+                  rows={group.time_logs || []}
+                  emptyMsg="No execution time logs for plans under this DUID."
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -370,6 +590,7 @@ export default function ProjectDetail() {
   const [editing, setEditing] = useState(false);
   const [showAssignTeam, setShowAssignTeam] = useState(false);
   const [detailModal, setDetailModal] = useState(null);
+  const [rolloutModalGroup, setRolloutModalGroup] = useState(null);
 
   function loadData() {
     setLoading(true);
@@ -398,7 +619,16 @@ export default function ProjectDetail() {
     );
   }
 
-  const { project, dispatches, plans, executions, work_done, teams, financial_summary: fin } = data;
+  const {
+    project,
+    dispatches,
+    plans,
+    executions,
+    work_done,
+    teams,
+    financial_summary: fin,
+    rollout_by_duid: rolloutByDuid = [],
+  } = data;
 
   const dispatchColumns = [
     { key: "name", label: "POID", mono: true },
@@ -413,20 +643,6 @@ export default function ProjectDetail() {
     { key: "dispatch_status", label: "Status", render: v => <Badge value={v} /> },
     { key: "region_type", label: "Region" },
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "PO Dispatch Details", row })}>View</button> },
-  ];
-
-  const planColumns = [
-    { key: "po_dispatch", label: "POID", mono: true },
-    { key: "team", label: "Team" },
-    { key: "plan_date", label: "Plan Date" },
-    { key: "visit_type", label: "Visit Type" },
-    { key: "visit_multiplier", label: "Multiplier", align: "right" },
-    { key: "target_amount", label: "Target", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
-    { key: "achieved_amount", label: "Achieved", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
-    { key: "completion_pct", label: "Completion", align: "right", render: v => v != null ? `${v}%` : "\u2014" },
-    { key: "plan_status", label: "Status", render: v => <Badge value={v} /> },
-    { key: "region_type", label: "Region" },
-    { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Rollout Plan Details", row })}>View</button> },
   ];
 
   const executionColumns = [
@@ -560,7 +776,81 @@ export default function ProjectDetail() {
       )}
 
       {activeTab === "dispatches" && <DataTable columns={dispatchColumns} rows={dispatches} emptyMsg="No PO lines dispatched for this project yet." />}
-      {activeTab === "plans" && <DataTable columns={planColumns} rows={plans} emptyMsg="No rollout plans created for this project yet." />}
+      {activeTab === "plans" && (
+        <div>
+          <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "0 0 16px", maxWidth: 720 }}>
+            Rollout is grouped by DUID (site code). PO lines that share the same DUID appear together. Open a row to see PO
+            lines, planned visits, additional visits (extra / re-visit), and expenses (work done costs and field time logs) for
+            that site.
+          </p>
+          {(!rolloutByDuid || rolloutByDuid.length === 0) ? (
+            <EmptyState message="No rollout data yet. Dispatch PO lines to a project, then create rollout plans." />
+          ) : (
+            <DataTable
+              columns={[
+                {
+                  key: "_d",
+                  label: "DUID",
+                  mono: true,
+                  render: (_, g) => (g.site_code && g.site_code !== "(No DUID)" ? g.site_code : g.duid_label),
+                },
+                { key: "site_name", label: "Site name", render: (v) => v || "\u2014" },
+                {
+                  key: "_npo",
+                  label: "# PO lines",
+                  align: "right",
+                  render: (_, g) => g.po_lines?.length ?? 0,
+                },
+                {
+                  key: "_poids",
+                  label: "POIDs (same DUID)",
+                  render: (_, g) =>
+                    g.poid_list?.length ? (
+                      <span style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{g.poid_list.join(", ")}</span>
+                    ) : (
+                      "\u2014"
+                    ),
+                },
+                {
+                  key: "_pl",
+                  label: "Planned",
+                  align: "right",
+                  render: (_, g) => g.planned_activities?.length ?? 0,
+                },
+                {
+                  key: "_ad",
+                  label: "Additional",
+                  align: "right",
+                  render: (_, g) => g.additional_activities?.length ?? 0,
+                },
+                {
+                  key: "_ex",
+                  label: "WD / logs",
+                  align: "right",
+                  render: (_, g) =>
+                    `${g.expenses?.length ?? 0} / ${g.time_logs?.length ?? 0}`,
+                },
+                {
+                  key: "_op",
+                  label: "",
+                  render: (_, g) => (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      style={{ fontSize: 12, padding: "6px 14px" }}
+                      onClick={() => setRolloutModalGroup(g)}
+                    >
+                      Open
+                    </button>
+                  ),
+                },
+              ]}
+              rows={rolloutByDuid.map((g) => ({ ...g, name: g.duid_label }))}
+              emptyMsg="No DUID groups."
+            />
+          )}
+        </div>
+      )}
       {activeTab === "executions" && <DataTable columns={executionColumns} rows={executions} emptyMsg="No execution records for this project yet." />}
       {activeTab === "work_done" && <DataTable columns={workDoneColumns} rows={work_done} emptyMsg="No work done records for this project yet." />}
       {activeTab === "teams" && (
@@ -580,6 +870,14 @@ export default function ProjectDetail() {
             />
           )}
         </div>
+      )}
+
+      {rolloutModalGroup && (
+        <RolloutDuidModal
+          group={rolloutModalGroup}
+          onClose={() => setRolloutModalGroup(null)}
+          onOpenDetail={(p) => setDetailModal(p)}
+        />
       )}
 
       {detailModal && (

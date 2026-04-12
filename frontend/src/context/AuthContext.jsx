@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { frappe_login, frappe_logout, pmApi } from "../services/api";
+import { fetchPortalSession, frappe_login, frappe_logout, pmApi } from "../services/api";
 
 const AuthContext = createContext(null);
 
@@ -36,6 +36,31 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     checkSession();
   }, [checkSession]);
+
+  // Desk (/app) in another tab rotates the session CSRF; refresh when returning to PMS.
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!user) return;
+      (async () => {
+        try {
+          const res = await fetchPortalSession();
+          if (!res?.authenticated) {
+            setUser(null);
+            setRole(null);
+            setImName(null);
+            setTeamId(null);
+          }
+        } catch {
+          /* ignore transient errors */
+        }
+      })();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [user]);
 
   const login = useCallback(
     async (usr, pwd) => {

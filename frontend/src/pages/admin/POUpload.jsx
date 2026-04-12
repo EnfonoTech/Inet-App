@@ -126,7 +126,8 @@ export default function POUpload() {
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState(null);
   const [confirming, setConfirming] = useState(false);
-  const [successCount, setSuccessCount] = useState(null);
+  /** @type {{ linesImported: number, skipped: number, poDocsCreated: number } | null} */
+  const [successSummary, setSuccessSummary] = useState(null);
   const [confirmError, setConfirmError] = useState(null);
   const draftRestoreDone = useRef(false);
 
@@ -206,7 +207,15 @@ export default function POUpload() {
       const result = await pmApi.confirmPOUpload(rowsWithCustomer);
       clearPoUploadDraft();
       setParseResult(null);
-      setSuccessCount(result?.created ?? rowCount);
+      const poDocsCreated = result?.created ?? 0;
+      const skipped = result?.lines_skipped_duplicate ?? 0;
+      const linesImported =
+        typeof result?.lines_imported === "number"
+          ? result.lines_imported
+          : poDocsCreated > 0
+            ? rowCount
+            : 0;
+      setSuccessSummary({ linesImported, skipped, poDocsCreated });
       setStep(2);
     } catch (err) {
       setConfirmError(err.message || "Failed to import rows");
@@ -220,7 +229,7 @@ export default function POUpload() {
     setStep(0);
     setParseResult(null);
     setParseError(null);
-    setSuccessCount(null);
+    setSuccessSummary(null);
     setConfirmError(null);
   }
 
@@ -234,7 +243,10 @@ export default function POUpload() {
       <div className="page-header">
         <div>
           <h1 className="page-title">PO Upload</h1>
-          <div className="page-subtitle">Upload Purchase Order data from Excel or CSV</div>
+          <div className="page-subtitle">
+            Upload Purchase Order data from Excel or CSV. Missing projects and items are created automatically when a
+            customer is selected (minimal defaults).
+          </div>
         </div>
       </div>
 
@@ -538,13 +550,50 @@ export default function POUpload() {
         )}
 
         {/* ── Step 2: Success ────────────────────────────────── */}
-        {step === 2 && (
-          <div style={{ maxWidth: 480 }}>
-            <div className="notice success" style={{ marginBottom: 20 }}>
-              <span>✅</span>{" "}
-              Successfully imported <strong>{successCount}</strong> PO line
-              {successCount !== 1 ? "s" : ""} into PO Intake.
-            </div>
+        {step === 2 && successSummary && (
+          <div style={{ maxWidth: 520 }}>
+            {successSummary.linesImported > 0 ? (
+              <div className="notice success" style={{ marginBottom: 16 }}>
+                <span>✅</span>{" "}
+                Successfully imported <strong>{successSummary.linesImported}</strong> PO line
+                {successSummary.linesImported !== 1 ? "s" : ""} into PO Intake.
+                {successSummary.poDocsCreated > 0 && (
+                  <span style={{ display: "block", marginTop: 8, fontSize: "0.88rem", opacity: 0.95 }}>
+                    ({successSummary.poDocsCreated} new PO Intake document
+                    {successSummary.poDocsCreated !== 1 ? "s" : ""})
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="notice error" style={{ marginBottom: 16 }}>
+                <span>!</span>{" "}
+                No new PO lines were added.
+                {successSummary.skipped > 0 ? (
+                  <span style={{ display: "block", marginTop: 8, fontSize: "0.88rem" }}>
+                    {successSummary.skipped} row{successSummary.skipped !== 1 ? "s" : ""} match lines already on PO Intake
+                    (same PO number, line number, and shipment).
+                  </span>
+                ) : (
+                  <span style={{ display: "block", marginTop: 8, fontSize: "0.88rem" }}>
+                    Check that your file has valid rows and the correct customer.
+                  </span>
+                )}
+              </div>
+            )}
+            {successSummary.skipped > 0 && successSummary.linesImported > 0 && (
+              <div
+                className="notice"
+                style={{
+                  marginBottom: 16,
+                  background: "rgba(245,158,11,0.12)",
+                  border: "1px solid rgba(245,158,11,0.35)",
+                  color: "#92400e",
+                }}
+              >
+                <span>ℹ</span> Skipped <strong>{successSummary.skipped}</strong> duplicate line
+                {successSummary.skipped !== 1 ? "s" : ""} already on PO Intake.
+              </div>
+            )}
             <button className="btn-primary" onClick={handleReset}>
               Upload Another File
             </button>

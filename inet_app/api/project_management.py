@@ -688,7 +688,7 @@ def get_logged_user():
                 if ft2:
                     team_id = ft2[0].team_id
 
-    return {
+    out = {
         "user": user,
         "full_name": full_name,
         "authenticated": True,
@@ -696,6 +696,10 @@ def get_logged_user():
         "im_name": im_name,
         "team_id": team_id,
     }
+    # SPA uses this on every POST; Desk /app load also calls get_csrf_token() and rotates it —
+    # the portal must refresh via GET get_logged_user (no CSRF) after switching tabs.
+    out["csrf_token"] = frappe.sessions.get_csrf_token()
+    return out
 
 
 @frappe.whitelist()

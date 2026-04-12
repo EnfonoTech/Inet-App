@@ -122,6 +122,8 @@ export default function IMExecution() {
   const [ciagDecision, setCiagDecision] = useState("Open");
   const [ciagBusy, setCiagBusy] = useState(false);
   const [ciagErr, setCiagErr] = useState(null);
+  const [wdBusy, setWdBusy] = useState("");
+  const [wdErr, setWdErr] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -202,6 +204,21 @@ export default function IMExecution() {
     }
   }
 
+  async function createWorkDoneFor(en) {
+    if (!en) return;
+    setWdBusy(en);
+    setWdErr(null);
+    try {
+      await pmApi.generateWorkDone(en);
+      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
+      setExecutions(Array.isArray(res) ? res : []);
+    } catch (err) {
+      setWdErr(err.message || "Could not create Work Done");
+    } finally {
+      setWdBusy("");
+    }
+  }
+
   async function submitCiag() {
     if (!ciagFor?.name) return;
     setCiagBusy(true);
@@ -228,6 +245,13 @@ export default function IMExecution() {
           <h1 className="page-title">Execution Monitor</h1>
         </div>
       </div>
+
+      {wdErr && (
+        <div className="notice error" style={{ margin: "0 28px 12px" }}>
+          <span>!</span> {wdErr}
+          <button type="button" className="btn-secondary" style={{ marginLeft: 12, fontSize: "0.75rem" }} onClick={() => setWdErr(null)}>Dismiss</button>
+        </div>
+      )}
 
       {reopenFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setReopenFor(null)}>
@@ -276,6 +300,9 @@ export default function IMExecution() {
           )}
           <button className="btn-primary" disabled={qcBusy} onClick={submitQc}>{qcBusy ? "…" : "Submit QC"}</button>
           <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setQcFor(null)}>Cancel</button>
+          <p style={{ marginTop: 12, fontSize: 12, color: "#64748b" }}>
+            Work Done is not created automatically. After QC Pass, use <strong>Work done</strong> on the execution row.
+          </p>
           </div>
         </div>
       )}
@@ -448,6 +475,20 @@ export default function IMExecution() {
                       >
                         Re-plan
                       </button>
+                      {e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done && (
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          style={{ fontSize: "0.72rem", padding: "4px 8px", marginLeft: 6 }}
+                          disabled={wdBusy === e.name}
+                          onClick={() => createWorkDoneFor(e.name)}
+                        >
+                          {wdBusy === e.name ? "…" : "Work done"}
+                        </button>
+                      )}
+                      {e.work_done && (
+                        <span style={{ marginLeft: 6, fontSize: "0.7rem", color: "#059669", fontWeight: 600 }}>WD ✓</span>
+                      )}
                     </td>
                   </tr>
                 ))}

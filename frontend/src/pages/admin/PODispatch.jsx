@@ -90,20 +90,20 @@ export default function PODispatch() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [teams, setTeams] = useState([]);
+  const [imList, setImList] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [tableSearch, setTableSearch] = useState("");
 
   // Dispatch modal state
   const [showDispatchModal, setShowDispatchModal] = useState(false);
-  const [team, setTeam] = useState("");
+  const [assignIm, setAssignIm] = useState("");
   const [targetMonth, setTargetMonth] = useState(todayMonth());
   const [planningMode, setPlanningMode] = useState("Plan");
   const [dispatching, setDispatching] = useState(false);
 
   // Convert modal state
   const [converting, setConverting] = useState(false);
-  const [convertTeam, setConvertTeam] = useState("");
+  const [convertIm, setConvertIm] = useState("");
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [convertScope, setConvertScope] = useState(null);
   const [showProjectConvertModal, setShowProjectConvertModal] = useState(false);
@@ -126,12 +126,12 @@ export default function PODispatch() {
     setTableSearch("");
     try {
       const status = tab ?? activeTab;
-      const [poLines, teamList] = await Promise.all([
+      const [poLines, ims] = await Promise.all([
         pmApi.listPOIntakeLines(status),
-        pmApi.listINETTeams(),
+        pmApi.listIMMasters({ status: "Active" }),
       ]);
       setRows(Array.isArray(poLines) ? poLines : []);
-      setTeams(Array.isArray(teamList) ? teamList : []);
+      setImList(Array.isArray(ims) ? ims : []);
     } catch (err) {
       setError(err.message || "Failed to load data");
     } finally {
@@ -171,13 +171,13 @@ export default function PODispatch() {
 
   // ── Dispatch ─────────────────────────────────────────────────────────────
   async function handleDispatch() {
-    if (!team || !targetMonth || !planningMode) return;
+    if (!assignIm || !targetMonth || !planningMode) return;
     setDispatching(true);
     try {
       const selectedLines = rows.filter(r => selected.has(r.name));
       const result = await pmApi.dispatchPOLines({
         lines: selectedLines,
-        team,
+        im: assignIm,
         target_month: targetMonth,
         planning_mode: planningMode,
       });
@@ -197,7 +197,7 @@ export default function PODispatch() {
   // ── Convert ──────────────────────────────────────────────────────────────
   function openConvertModal(scope, line_names, project_code) {
     setConvertScope({ scope, line_names: line_names || [], project_code: project_code || null });
-    setConvertTeam("");
+    setConvertIm("");
     setShowConvertModal(true);
   }
 
@@ -211,7 +211,7 @@ export default function PODispatch() {
         line_names: convertScope.line_names,
         project_code: convertScope.project_code,
         target_mode: "Manual",
-        new_team: convertTeam || undefined,
+        new_im: convertIm || undefined,
       });
       const count = res?.converted ?? convertScope.line_names.length;
       showNotice("ok", `Converted ${count} record${count !== 1 ? "s" : ""} to Manual.`);
@@ -236,12 +236,12 @@ export default function PODispatch() {
         scope: "project",
         project_code: convertProject,
         target_mode: "Manual",
-        new_team: convertTeam || undefined,
+        new_im: convertIm || undefined,
       });
       const count = res?.converted ?? 0;
       showNotice("ok", `Converted ${count} record${count !== 1 ? "s" : ""} to Manual.`);
       setConvertProject("");
-      setConvertTeam("");
+      setConvertIm("");
       loadData(activeTab);
     } catch (err) {
       showNotice("err", err.message || "Convert failed");
@@ -257,11 +257,11 @@ export default function PODispatch() {
       <Modal open={showDispatchModal} onClose={() => setShowDispatchModal(false)} title={`Dispatch ${selected.size} Line${selected.size !== 1 ? "s" : ""}`}>
         <div style={{ display: "grid", gap: 16, marginBottom: 24 }}>
           <div>
-            <label style={labelStyle}>Assign to Team *</label>
-            <select style={inputStyle} value={team} onChange={e => setTeam(e.target.value)}>
-              <option value="">Select Team...</option>
-              {teams.map(t => (
-                <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+            <label style={labelStyle}>Assign IM *</label>
+            <select style={inputStyle} value={assignIm} onChange={e => setAssignIm(e.target.value)}>
+              <option value="">Select Implementation Manager...</option>
+              {imList.map((im) => (
+                <option key={im.name} value={im.name}>{im.full_name || im.im_id || im.name}</option>
               ))}
             </select>
           </div>
@@ -281,8 +281,8 @@ export default function PODispatch() {
           </div>
           <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", fontSize: "0.82rem", color: "#64748b" }}>
             Selected lines: <strong>{selected.size}</strong>
-            {team && (
-              <span style={{ marginLeft: 10 }}>→ Team: <strong>{teams.find(t => t.team_id === team)?.team_name || team}</strong></span>
+            {assignIm && (
+              <span style={{ marginLeft: 10 }}>→ IM: <strong>{imList.find((i) => i.name === assignIm)?.full_name || assignIm}</strong></span>
             )}
             {planningMode && (
               <span style={{ marginLeft: 10 }}>→ Mode: <strong>{planningMode}</strong></span>
@@ -294,7 +294,7 @@ export default function PODispatch() {
           <button
             className="btn-primary"
             onClick={handleDispatch}
-            disabled={dispatching || !team || !targetMonth || !planningMode}
+            disabled={dispatching || !assignIm || !targetMonth || !planningMode}
           >
             {dispatching ? "Dispatching..." : "Confirm Dispatch"}
           </button>
@@ -309,10 +309,12 @@ export default function PODispatch() {
             : `${convertScope?.line_names?.length} selected line${convertScope?.line_names?.length !== 1 ? "s" : ""} will be converted to Manual dispatch.`}
         </p>
         <div style={{ marginBottom: 20 }}>
-          <label style={labelStyle}>Re-assign to Team (optional)</label>
-          <select style={inputStyle} value={convertTeam} onChange={e => setConvertTeam(e.target.value)}>
-            <option value="">Keep current team</option>
-            {teams.map(t => <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>)}
+          <label style={labelStyle}>Re-assign IM (optional)</label>
+          <select style={inputStyle} value={convertIm} onChange={(e) => setConvertIm(e.target.value)}>
+            <option value="">Keep current IM</option>
+            {imList.map((im) => (
+              <option key={im.name} value={im.name}>{im.full_name || im.im_id || im.name}</option>
+            ))}
           </select>
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
@@ -333,10 +335,12 @@ export default function PODispatch() {
           </select>
         </div>
         <div style={{ marginBottom: 20 }}>
-          <label style={labelStyle}>Re-assign to Team (optional)</label>
-          <select style={inputStyle} value={convertTeam} onChange={e => setConvertTeam(e.target.value)}>
-            <option value="">Keep current team</option>
-            {teams.map(t => <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>)}
+          <label style={labelStyle}>Re-assign IM (optional)</label>
+          <select style={inputStyle} value={convertIm} onChange={(e) => setConvertIm(e.target.value)}>
+            <option value="">Keep current IM</option>
+            {imList.map((im) => (
+              <option key={im.name} value={im.name}>{im.full_name || im.im_id || im.name}</option>
+            ))}
           </select>
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
@@ -358,7 +362,7 @@ export default function PODispatch() {
                 Project: {detailRow.project_code || "—"}
               </div>
               <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                Team: {detailRow.dispatched_team || "—"}
+                IM: {detailRow.dispatched_im || "—"}
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
@@ -380,7 +384,7 @@ export default function PODispatch() {
       <div className="page-header">
         <div>
           <h1 className="page-title">PO Dispatch</h1>
-          <div className="page-subtitle">Manage PO line dispatch to field teams</div>
+          <div className="page-subtitle">Dispatch PO lines to an Implementation Manager; field team is chosen at rollout planning.</div>
         </div>
         <div className="page-actions">
           <button className="btn-secondary" onClick={() => loadData(activeTab)} disabled={loading}>
@@ -426,7 +430,7 @@ export default function PODispatch() {
         {activeTab === "Dispatched" && autoRows.length > 0 && (
           <>
             <button className="btn-primary" style={{ fontSize: "0.8rem" }}
-              onClick={() => { setConvertProject(""); setConvertTeam(""); setShowProjectConvertModal(true); }} disabled={converting}>
+              onClick={() => { setConvertProject(""); setConvertIm(""); setShowProjectConvertModal(true); }} disabled={converting}>
               Convert by Project
             </button>
             {selected.size > 0 && (
@@ -446,7 +450,7 @@ export default function PODispatch() {
             )}
             <button
               className="btn-primary"
-              onClick={() => setShowDispatchModal(true)}
+              onClick={() => { setAssignIm(""); setShowDispatchModal(true); }}
               disabled={selected.size === 0}
             >
               Dispatch Selected ({selected.size})
@@ -494,7 +498,6 @@ export default function PODispatch() {
                     <>
                       <th>Mode</th>
                       <th>IM</th>
-                      <th>Team</th>
                       <th>Target Month</th>
                     </>
                   )}
@@ -534,7 +537,6 @@ export default function PODispatch() {
                         <>
                           <td><DispatchModeBadge mode={row.dispatch_mode} /></td>
                           <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.dispatched_im || "—"}</td>
-                          <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.dispatched_team || "—"}</td>
                           <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>
                             {row.dispatch_target_month
                               ? new Date(row.dispatch_target_month).toLocaleDateString("en", { month: "short", year: "numeric" })
@@ -557,7 +559,7 @@ export default function PODispatch() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 18 : 17) : 13}
+                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 17 : 16) : 13}
                     style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                     <strong>{filtered.length}</strong> row{filtered.length !== 1 ? "s" : ""}
                     {tableSearch && rows.length !== filtered.length && ` (filtered from ${rows.length})`}

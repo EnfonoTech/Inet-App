@@ -90,6 +90,7 @@ const adminNav = [
   { to: "/dashboard",  label: "Dashboard",   icon: "dashboard" },
   { to: "/projects",   label: "Projects",    icon: "folder" },
   { to: "/po-upload",  label: "PO Upload",   icon: "upload" },
+  { to: "/po-dump",    label: "PO dump",     icon: "barChart" },
   { to: "/dispatch",   label: "Dispatch",    icon: "send" },
   { to: "/planning",   label: "Planning",    icon: "calendar" },
   { to: "/execution",  label: "Execution",   icon: "eye" },

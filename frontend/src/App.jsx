@@ -17,6 +17,7 @@ import Masters from "./pages/admin/Masters";
 import Projects from "./pages/admin/Projects";
 import ProjectDetail from "./pages/admin/ProjectDetail";
 import AdminTimesheets from "./pages/admin/Timesheets";
+import PODump from "./pages/admin/PODump";
 
 /* -- IM pages --------------------------------------------------- */
 import IMDashboard from "./pages/im/IMDashboard";
@@ -79,6 +80,7 @@ function AppContent() {
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:projectCode" element={<ProjectDetail />} />
             <Route path="/po-upload" element={<POUpload />} />
+            <Route path="/po-dump" element={<PODump />} />
             <Route path="/dispatch" element={<PODispatch />} />
             <Route path="/planning" element={<RolloutPlanning />} />
             <Route path="/execution" element={<ExecutionMonitor />} />

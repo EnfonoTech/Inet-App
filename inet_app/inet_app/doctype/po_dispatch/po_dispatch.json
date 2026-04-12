@@ -19,7 +19,6 @@
   "project_code",
   "customer",
   "im",
-  "team",
   "column_break_vuud",
   "target_month",
   "planning_mode",
@@ -34,6 +33,7 @@
  ],
  "fields": [
   {
+   "description": "Immutable internal id from naming series (SYS-YYYY-#####). Document name is the business POID after rename; this field does not change.",
    "fieldname": "system_id",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -107,12 +107,6 @@
    "in_list_view": 1,
    "label": "Implementation Manager",
    "options": "IM Master"
-  },
-  {
-   "fieldname": "team",
-   "fieldtype": "Link",
-   "label": "Team",
-   "options": "INET Team"
   },
   {
    "fieldname": "target_month",

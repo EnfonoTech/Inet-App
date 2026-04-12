@@ -1,3 +1,30 @@
+/**
+ * CSRF for POST /api/method/* — Frappe v15 stores the real token in the session.
+ * Loading Desk (/app) calls get_csrf_token() and rotates it; the SPA must use the
+ * same token. We load it via GET get_logged_user (no CSRF) and refresh on tab focus.
+ */
+let portalCsrfToken = "";
+
+export async function fetchPortalSession() {
+  const res = await fetch("/api/method/inet_app.api.project_management.get_logged_user", {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    portalCsrfToken = "";
+    throw new Error(json.message || "Session check failed");
+  }
+  const msg = json.message;
+  if (msg && msg.csrf_token) {
+    portalCsrfToken = msg.csrf_token;
+  } else {
+    portalCsrfToken = "";
+  }
+  return msg;
+}
+
 export async function frappe_login(usr, pwd) {
   const body = new URLSearchParams({ usr, pwd });
   const res = await fetch("/api/method/login", {
@@ -8,6 +35,7 @@ export async function frappe_login(usr, pwd) {
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || "Login failed");
+  await fetchPortalSession().catch(() => {});
   return json;
 }
 
@@ -17,12 +45,7 @@ export async function frappe_logout() {
     credentials: "include",
     headers: { "X-Frappe-CSRF-Token": getCsrf() },
   });
-}
-
-/** Read Frappe's CSRF token from the browser cookie set at login time. */
-function getCsrf() {
-  const match = document.cookie.match(/frappe_csrf_token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : "fetch";
+  portalCsrfToken = "";
 }
 
 /**
@@ -30,6 +53,31 @@ function getCsrf() {
  * Always uses POST so large payloads never hit URL length limits,
  * and includes the CSRF token required for write operations in v15.
  */
+function getCsrf() {
+  if (portalCsrfToken) return portalCsrfToken;
+  const match = document.cookie.match(/frappe_csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "fetch";
+}
+
+function _parseApiError(json) {
+  let msg = json._server_messages
+    ? (() => { try { return JSON.parse(JSON.parse(json._server_messages)[0]).message; } catch { return null; } })()
+    : null;
+  if (!msg && json.exception) msg = String(json.exception);
+  if (!msg && json.exc) {
+    try {
+      const parsed = JSON.parse(json.exc);
+      if (Array.isArray(parsed) && parsed[0]) msg = String(parsed[0]);
+    } catch { /* ignore */ }
+  }
+  return msg || json.message || "API request failed";
+}
+
+function _isLikelyCsrfError(msg) {
+  const s = String(msg || "").toLowerCase();
+  return s.includes("invalid request") || s.includes("csrf");
+}
+
 async function call(method, args = {}) {
   const body = new URLSearchParams();
   Object.entries(args).forEach(([k, v]) => {
@@ -38,7 +86,8 @@ async function call(method, args = {}) {
     }
   });
 
-  const res = await fetch(`/api/method/${method}`, {
+  const url = `/api/method/${method}`;
+  const opts = () => ({
     method: "POST",
     credentials: "include",
     headers: {
@@ -48,19 +97,17 @@ async function call(method, args = {}) {
     body: body.toString(),
   });
 
-  const json = await res.json();
+  let res = await fetch(url, opts());
+  let json = await res.json();
+
+  if ((!res.ok || json.exc) && _isLikelyCsrfError(_parseApiError(json))) {
+    await fetchPortalSession().catch(() => {});
+    res = await fetch(url, opts());
+    json = await res.json();
+  }
+
   if (!res.ok || json.exc) {
-    let msg = json._server_messages
-      ? (() => { try { return JSON.parse(JSON.parse(json._server_messages)[0]).message; } catch { return null; } })()
-      : null;
-    if (!msg && json.exception) msg = String(json.exception);
-    if (!msg && json.exc) {
-      try {
-        const parsed = JSON.parse(json.exc);
-        if (Array.isArray(parsed) && parsed[0]) msg = String(parsed[0]);
-      } catch { /* ignore */ }
-    }
-    throw new Error(msg || json.message || "API request failed");
+    throw new Error(_parseApiError(json));
   }
   return json.message;
 }
@@ -93,8 +140,8 @@ export const pmApi = {
   createCustomer:  (payload) => call("inet_app.api.project_management.create_customer", { payload: JSON.stringify(payload) }),
   listItemCatalog: (args)    => call("inet_app.api.project_management.list_item_catalog", args),
 
-  // Auth
-  getLoggedUser:   ()        => call("inet_app.api.project_management.get_logged_user"),
+  // Auth — GET so no CSRF; returns csrf_token for subsequent POSTs
+  getLoggedUser:   ()        => fetchPortalSession(),
 
   // Reports
   reportProjectStatusSummary:    (f) => call("inet_app.api.project_management.report_project_status_summary",    { filters: JSON.stringify(f || {}) }),
@@ -133,6 +180,14 @@ export const pmApi = {
   createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
   updateExecution:      (payload)   => call("inet_app.api.command_center.update_execution", { payload: JSON.stringify(payload) }),
   generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),
+  getFieldExecutionForRollout: (rollout_plan) =>
+    call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),
+  exportPODump: (from_date, to_date, unique_inet_uid) =>
+    call("inet_app.api.command_center.export_po_dump", {
+      from_date: from_date || "",
+      to_date: to_date || "",
+      unique_inet_uid: unique_inet_uid === false ? 0 : 1,
+    }),
 
   // ── Activity Cost Master ───────────────────────────────────
   listActivityCosts:    ()              => call("inet_app.api.command_center.list_activity_costs"),

@@ -131,7 +131,7 @@ export default function OperationsOverview() {
                           <th>PO</th>
                           <th>DUID</th>
                           <th>Item</th>
-                          <th>Team</th>
+                          <th>IM</th>
                           <th>Status</th>
                         </tr>
                       </thead>
@@ -142,7 +142,7 @@ export default function OperationsOverview() {
                             <td>{d.po_no}</td>
                             <td>{d.site_code}</td>
                             <td>{d.item_code}</td>
-                            <td>{d.team}</td>
+                            <td>{d.im || "—"}</td>
                             <td>{d.dispatch_status}</td>
                           </tr>
                         ))}

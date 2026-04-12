@@ -14,7 +14,7 @@ export default function IMReports() {
         // Get dispatches for this IM
         const dRes = await fetch(
           `/api/resource/PO Dispatch?filters=${encodeURIComponent(JSON.stringify([["im","=",imName]]))}` +
-          `&fields=${encodeURIComponent(JSON.stringify(["name","dispatch_status","line_amount","team","project_code"]))}` +
+          `&fields=${encodeURIComponent(JSON.stringify(["name","dispatch_status","line_amount","project_code"]))}` +
           `&limit_page_length=500`,
           { credentials: "include" }
         );
@@ -24,13 +24,14 @@ export default function IMReports() {
         const totalLines = dispatches.length;
         const totalAmount = dispatches.reduce((s, d) => s + (d.line_amount || 0), 0);
         const byStatus = {};
-        const byTeam = {};
+        const byProject = {};
         for (const d of dispatches) {
           byStatus[d.dispatch_status] = (byStatus[d.dispatch_status] || 0) + 1;
-          byTeam[d.team] = (byTeam[d.team] || 0) + (d.line_amount || 0);
+          const pk = d.project_code || "(No project)";
+          byProject[pk] = (byProject[pk] || 0) + (d.line_amount || 0);
         }
 
-        setSummary({ totalLines, totalAmount, byStatus, byTeam });
+        setSummary({ totalLines, totalAmount, byStatus, byProject });
       } catch {
         setSummary(null);
       }
@@ -89,10 +90,10 @@ export default function IMReports() {
               </div>
 
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "20px 24px" }}>
-                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 14, color: "#1e293b" }}>Revenue by Team</h3>
-                {Object.entries(summary.byTeam).sort((a,b) => b[1] - a[1]).map(([team, amount]) => (
-                  <div key={team} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
-                    <span style={{ color: "#475569" }}>{team}</span>
+                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 14, color: "#1e293b" }}>Line amount by project</h3>
+                {Object.entries(summary.byProject).sort((a,b) => b[1] - a[1]).map(([proj, amount]) => (
+                  <div key={proj} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
+                    <span style={{ color: "#475569" }}>{proj}</span>
                     <span style={{ fontWeight: 700, color: "#1e293b" }}>SAR {fmt.format(amount)}</span>
                   </div>
                 ))}

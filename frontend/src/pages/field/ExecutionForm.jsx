@@ -16,6 +16,9 @@ const EXECUTION_STATUSES = [
   "Postponed",
 ];
 
+const TEAM_QC_OPTIONS = ["Pending", "Pass", "Fail"];
+const TEAM_CIAG_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
+
 function DetailRow({ label, value }) {
   if (!value) return null;
   return (
@@ -60,6 +63,12 @@ export default function ExecutionForm() {
   const [timerError, setTimerError] = useState(null);
   const [, timerTick] = useState(0);
   const timerSkewMsRef = useRef(0);
+
+  const [existingExec, setExistingExec] = useState(null);
+  const [teamQc, setTeamQc] = useState("Pending");
+  const [teamCiag, setTeamCiag] = useState("Open");
+  const [teamStatusBusy, setTeamStatusBusy] = useState(false);
+  const [teamStatusMsg, setTeamStatusMsg] = useState(null);
 
   useEffect(() => {
     const iv = setInterval(() => timerTick((x) => x + 1), 1000);
@@ -154,6 +163,25 @@ export default function ExecutionForm() {
     }).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!id || !teamId || success) {
+      setExistingExec(null);
+      return;
+    }
+    let cancelled = false;
+    pmApi.getFieldExecutionForRollout(id).then((ex) => {
+      if (cancelled) return;
+      setExistingExec(ex || null);
+      if (ex) {
+        setTeamQc(ex.qc_status || "Pending");
+        setTeamCiag(ex.ciag_status || "Open");
+      }
+    }).catch(() => {
+      if (!cancelled) setExistingExec(null);
+    });
+    return () => { cancelled = true; };
+  }, [id, teamId, success]);
+
   function handleActivityChange(code) {
     setActivityCode(code);
     if (code) {
@@ -180,6 +208,26 @@ export default function ExecutionForm() {
       setTimerError(e.message || "Could not start timer");
     } finally {
       setTimerBusy(false);
+    }
+  }
+
+  async function saveTeamQcCiag() {
+    if (!existingExec?.name) return;
+    setTeamStatusBusy(true);
+    setTeamStatusMsg(null);
+    try {
+      await pmApi.updateExecution({
+        name: existingExec.name,
+        qc_status: teamQc,
+        ciag_status: teamCiag,
+      });
+      setTeamStatusMsg("QC / CIAG saved.");
+      const ex = await pmApi.getFieldExecutionForRollout(id);
+      setExistingExec(ex || null);
+    } catch (err) {
+      setTeamStatusMsg(err.message || "Could not save");
+    } finally {
+      setTeamStatusBusy(false);
     }
   }
 
@@ -343,7 +391,7 @@ export default function ExecutionForm() {
         <div className="page-content">
           <div className="notice success" style={{ marginBottom: 20 }}>
             <span>&#x2705;</span> Execution update submitted successfully!
-            {execStatus === "Completed" && " Work Done record has been generated."}
+            {execStatus === "Completed" && " IM will set QC and create Work Done from the IM portal when ready."}
             {submittedPlanStatus && (
               <div style={{ marginTop: 10, fontSize: "0.88rem" }}>
                 Rollout plan status is now: <strong>{submittedPlanStatus}</strong>
@@ -445,6 +493,46 @@ export default function ExecutionForm() {
                 </span>
               </div>
             )}
+          </div>
+        )}
+
+        {existingExec && (
+          <div className="detail-panel" style={{ marginBottom: 20, border: "1px solid rgba(99,102,241,0.25)" }}>
+            <div style={{
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              color: "var(--text-label)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              marginBottom: 12,
+            }}>
+              Team QC &amp; CIAG
+            </div>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0 0 12px" }}>
+              Your team can update QC and CIAG on this execution. Final billing (Work Done) is created by the IM after QC Pass.
+            </p>
+            <div className="form-grid two-col">
+              <div className="form-group">
+                <label>QC status</label>
+                <select value={teamQc} onChange={(e) => setTeamQc(e.target.value)}>
+                  {TEAM_QC_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>CIAG status</label>
+                <select value={teamCiag} onChange={(e) => setTeamCiag(e.target.value)}>
+                  {TEAM_CIAG_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            {teamStatusMsg && (
+              <div className="notice info" style={{ marginBottom: 10, fontSize: "0.84rem" }}>
+                <span>&#x2139;</span> {teamStatusMsg}
+              </div>
+            )}
+            <button type="button" className="btn-primary" disabled={teamStatusBusy} onClick={saveTeamQcCiag}>
+              {teamStatusBusy ? "Saving…" : "Save QC / CIAG"}
+            </button>
           </div>
         )}
 
@@ -569,7 +657,7 @@ export default function ExecutionForm() {
 
           {execStatus === "Completed" && (
             <div className="notice info" style={{ marginBottom: 12 }}>
-              <span>&#x2139;</span> Submitting as Completed will automatically generate a Work Done record.
+              <span>&#x2139;</span> After you submit as Completed, the IM reviews QC and creates the Work Done record manually when QC is Pass.
             </div>
           )}
 

@@ -189,9 +189,7 @@ export default function IMDispatch() {
 
   function openCreatePlanModal() {
     setCreateError(null);
-    const selRows = filtered.filter((r) => selected.has(r.name));
-    const teamVals = [...new Set(selRows.map((r) => r.team).filter(Boolean))];
-    setPlanTeam(teamVals.length === 1 ? teamVals[0] : "");
+    setPlanTeam("");
     setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
@@ -461,7 +459,7 @@ export default function IMDispatch() {
                 Project: {detailRow.project_code || "—"}
               </div>
               <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                Team: {detailRow.team || "—"}
+                IM: {detailRow.im || "—"}
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
@@ -522,7 +520,7 @@ export default function IMDispatch() {
                   <th>Item</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Amount</th>
-                  <th>Team</th>
+                  <th>IM</th>
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -557,7 +555,7 @@ export default function IMDispatch() {
                       <td style={{ fontSize: "0.82rem" }}>{row.item_code}</td>
                       <td style={{ textAlign: "right" }}>{row.qty}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
-                      <td>{row.team}</td>
+                      <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.im || "—"}</td>
                       <td>{row.site_code}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>
                         {row.center_area || "—"}

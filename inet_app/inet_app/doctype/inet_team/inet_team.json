@@ -15,7 +15,9 @@
   "status",
   "daily_cost_applies",
   "daily_cost",
-  "note"
+  "note",
+  "section_team_members",
+  "team_members"
  ],
  "fields": [
   {
@@ -65,8 +67,20 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Field App User",
+   "label": "Field App User (Team Lead / PMS login)",
    "options": "User"
+  },
+  {
+   "fieldname": "section_team_members",
+   "fieldtype": "Section Break",
+   "label": "Team members"
+  },
+  {
+   "description": "Pick employees and designations; mark exactly one Team Lead (Employee must have User Id for Field App login).",
+   "fieldname": "team_members",
+   "fieldtype": "Table",
+   "label": "Members",
+   "options": "INET Team Member"
   },
   {
    "default": "Active",
@@ -95,7 +109,7 @@
   }
  ],
  "links": [],
- "modified": "2026-04-10 12:52:19.998303",
+ "modified": "2026-04-12 14:04:22.408900",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "INET Team",

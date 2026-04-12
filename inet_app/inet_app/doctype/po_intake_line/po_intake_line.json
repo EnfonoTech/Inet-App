@@ -4,6 +4,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "inet_line_uid",
   "poid",
   "po_line_no",
   "shipment_number",
@@ -26,6 +27,14 @@
   "dispatch_mode"
  ],
  "fields": [
+  {
+   "description": "Stable internal id for exports / dumps (not the business POID).",
+   "fieldname": "inet_line_uid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "INET Line UID",
+   "read_only": 1
+  },
   {
    "description": "Auto: PO No + PO Line No + Shipment No",
    "fieldname": "poid",
