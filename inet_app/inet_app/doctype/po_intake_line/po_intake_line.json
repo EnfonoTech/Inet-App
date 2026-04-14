@@ -4,7 +4,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "inet_line_uid",
+  "source_id",
   "poid",
   "po_line_no",
   "shipment_number",
@@ -16,6 +16,17 @@
   "qty",
   "column_break_uwnp",
   "uom",
+  "due_qty",
+  "billed_quantity",
+  "quantity_cancel",
+  "start_date",
+  "end_date",
+  "sub_contract_no",
+  "currency",
+  "tax_rate",
+  "payment_terms",
+  "project_name",
+  "publish_date",
   "rate",
   "line_amount",
   "project_code",
@@ -28,12 +39,9 @@
  ],
  "fields": [
   {
-   "description": "Stable internal id for exports / dumps (not the business POID).",
-   "fieldname": "inet_line_uid",
+   "fieldname": "source_id",
    "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "INET Line UID",
-   "read_only": 1
+   "label": "ID"
   },
   {
    "description": "Auto: PO No + PO Line No + Shipment No",
@@ -57,9 +65,10 @@
   },
   {
    "fieldname": "site_code",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Site Code / DUID"
+   "label": "DUID",
+   "options": "DUID Master"
   },
   {
    "fieldname": "site_name",
@@ -99,6 +108,61 @@
    "fieldtype": "Link",
    "label": "UOM",
    "options": "UOM"
+  },
+  {
+   "fieldname": "due_qty",
+   "fieldtype": "Float",
+   "label": "Due Qty"
+  },
+  {
+   "fieldname": "billed_quantity",
+   "fieldtype": "Float",
+   "label": "Billed Quantity"
+  },
+  {
+   "fieldname": "quantity_cancel",
+   "fieldtype": "Float",
+   "label": "Quantity Cancel"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Datetime",
+   "label": "Start Date"
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "End Date"
+  },
+  {
+   "fieldname": "sub_contract_no",
+   "fieldtype": "Data",
+   "label": "Sub Contract NO."
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Data",
+   "label": "Currency"
+  },
+  {
+   "fieldname": "tax_rate",
+   "fieldtype": "Data",
+   "label": "Tax Rate"
+  },
+  {
+   "fieldname": "payment_terms",
+   "fieldtype": "Small Text",
+   "label": "Payment Terms"
+  },
+  {
+   "fieldname": "project_name",
+   "fieldtype": "Data",
+   "label": "Project Name"
+  },
+  {
+   "fieldname": "publish_date",
+   "fieldtype": "Datetime",
+   "label": "Publish Date"
   },
   {
    "fieldname": "rate",

@@ -175,6 +175,43 @@ def ensure_customer_item_master(customer_input, item_code_input):
     return True, None
 
 
+def ensure_duid_master(duid_input, site_name=None, center_area=None):
+    """Ensure DUID Master exists for site_code; DUID and site_code are same."""
+    duid = str(duid_input or "").strip()
+    if not duid:
+        return True, None
+    if not frappe.db.exists("DocType", "DUID Master"):
+        return True, None
+
+    existing = frappe.db.get_value(
+        "DUID Master",
+        duid,
+        ["name", "site_name", "center_area"],
+        as_dict=True,
+    )
+    if existing:
+        updates = {}
+        if site_name and not existing.get("site_name"):
+            updates["site_name"] = str(site_name).strip()
+        if center_area and not existing.get("center_area"):
+            updates["center_area"] = str(center_area).strip()
+        if updates:
+            frappe.db.set_value("DUID Master", duid, updates, update_modified=False)
+        return True, None
+
+    try:
+        doc = frappe.new_doc("DUID Master")
+        doc.duid = duid
+        doc.site_name = (site_name or "")[:140]
+        doc.center_area = (center_area or "")[:140]
+        doc.insert(ignore_permissions=True)
+    except Exception as e:
+        if frappe.db.exists("DUID Master", duid):
+            return True, None
+        return False, str(e)
+    return True, None
+
+
 def _sanitize_table_pref_config(config):
     """Sanitize table personalization payload."""
     if isinstance(config, str):
@@ -348,6 +385,73 @@ def _insert_po_dispatch_with_poid(dispatch_doc, poid):
     return final_name
 
 
+def _upsert_po_dispatch_for_line(
+    po_intake_name,
+    po_no,
+    line_dict,
+    *,
+    customer=None,
+    im=None,
+    target_month=None,
+    planning_mode="Plan",
+    dispatch_status="Pending",
+    dispatch_mode="Manual",
+):
+    """Create or update PO Dispatch for a line while preserving immutable system_id."""
+    po_line_no = cint(line_dict.get("po_line_no") or 0)
+    project_code = line_dict.get("project_code")
+    center_area = line_dict.get("center_area") or line_dict.get("area")
+    site_code = (line_dict.get("site_code") or "").strip()
+    site_name = line_dict.get("site_name")
+    ok_duid, err_duid = ensure_duid_master(site_code, site_name, center_area)
+    if not ok_duid:
+        frappe.throw(err_duid or f"Could not create DUID Master for {site_code}")
+    poid = _resolve_line_poid(
+        po_no=po_no,
+        po_line_no=po_line_no,
+        shipment_number=line_dict.get("shipment_number"),
+        fallback=line_dict.get("poid"),
+    )
+    payload = {
+        "po_intake": po_intake_name,
+        "po_no": po_no,
+        "po_line_no": po_line_no,
+        "item_code": line_dict.get("item_code"),
+        "item_description": line_dict.get("item_description"),
+        "qty": flt(line_dict.get("qty", 0)),
+        "rate": flt(line_dict.get("rate", 0)),
+        "line_amount": flt(line_dict.get("line_amount", 0)),
+        "customer": customer,
+        "im": im,
+        "target_month": target_month,
+        "planning_mode": planning_mode,
+        "dispatch_status": dispatch_status,
+        "dispatch_mode": dispatch_mode,
+        "center_area": center_area,
+        "region_type": region_type_from_center_area(center_area),
+        "site_code": site_code,
+        "site_name": site_name,
+    }
+    if project_code and frappe.db.exists("Project Control Center", project_code):
+        payload["project_code"] = project_code
+
+    existing_name = frappe.db.get_value(
+        "PO Dispatch", {"po_intake": po_intake_name, "po_line_no": po_line_no}, "name"
+    )
+    if existing_name:
+        frappe.db.set_value("PO Dispatch", existing_name, payload, update_modified=False)
+        system_id = frappe.db.get_value("PO Dispatch", existing_name, "system_id")
+        if not system_id:
+            frappe.db.set_value("PO Dispatch", existing_name, "system_id", existing_name, update_modified=False)
+        return existing_name
+
+    doc = frappe.new_doc("PO Dispatch")
+    for key, value in payload.items():
+        if value is not None and value != "":
+            setattr(doc, key, value)
+    return _insert_po_dispatch_with_poid(doc, poid)
+
+
 def _try_auto_dispatch(doc_name, po_no, child_rows):
     """
     After PO Intake save, auto-dispatch lines whose project has an IM assigned.
@@ -375,33 +479,17 @@ def _try_auto_dispatch(doc_name, po_no, child_rows):
             "Project Control Center", project_code, "customer"
         )
 
-        dispatch = frappe.new_doc("PO Dispatch")
-        dispatch.po_intake = doc_name
-        dispatch.po_no = po_no
-        dispatch.po_line_no = cint(line_dict.get("po_line_no") or 0)
-        dispatch.item_code = line_dict.get("item_code")
-        dispatch.item_description = line_dict.get("item_description")
-        dispatch.qty = flt(line_dict.get("qty", 0))
-        dispatch.rate = flt(line_dict.get("rate", 0))
-        dispatch.line_amount = flt(line_dict.get("line_amount", 0))
-        dispatch.project_code = project_code
-        dispatch.customer = customer
-        dispatch.im = im_name
-        dispatch.target_month = None
-        dispatch.planning_mode = "Plan"
-        dispatch.dispatch_status = "Dispatched"
-        dispatch.dispatch_mode = "Auto"
-        dispatch.site_code = line_dict.get("site_code")
-        dispatch.site_name = line_dict.get("site_name")
-        dispatch.center_area = line_dict.get("center_area")
-        dispatch.region_type = region_type_from_center_area(dispatch.center_area)
-        poid = _resolve_line_poid(
-            po_no=po_no,
-            po_line_no=line_dict.get("po_line_no"),
-            shipment_number=line_dict.get("shipment_number"),
-            fallback=line_dict.get("poid"),
+        _upsert_po_dispatch_for_line(
+            doc_name,
+            po_no,
+            line_dict,
+            customer=customer,
+            im=im_name,
+            target_month=None,
+            planning_mode="Plan",
+            dispatch_status="Dispatched",
+            dispatch_mode="Auto",
         )
-        _insert_po_dispatch_with_poid(dispatch, poid)
 
         frappe.db.set_value(
             "PO Intake Line",
@@ -473,8 +561,7 @@ def backfill_po_dispatch_id_to_poid(limit=500):
 def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1):
     """
     Export PO Intake lines whose parent PO was created in the date range (upload date).
-    Includes INET Line UID (stable internal id), line serial (idx), and POID.
-    When unique_inet_uid is true, only the first row per inet_line_uid is returned.
+    Returns uploaded PO lines in source column order for audit/export.
     """
     fd = getdate(from_date) if from_date else add_days(getdate(), -30)
     td = getdate(to_date) if to_date else getdate()
@@ -483,7 +570,7 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1):
 
     parents = frappe.db.sql(
         """
-        SELECT name, po_no, DATE(creation) AS upload_date
+        SELECT name, po_no, status, DATE(creation) AS upload_date
         FROM `tabPO Intake`
         WHERE DATE(creation) BETWEEN %s AND %s
         ORDER BY creation DESC
@@ -498,30 +585,38 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1):
         return {
             "from_date": str(fd),
             "to_date": str(td),
-            "unique_inet_uid": bool(cint(unique_inet_uid)),
             "rows": rows_out,
         }
 
-    has_uid = frappe.db.has_column("PO Intake Line", "inet_line_uid")
     fields = [
         "name",
         "parent",
-        "idx",
+        "source_id",
         "poid",
         "po_line_no",
         "shipment_number",
+        "site_name",
+        "site_code",
         "project_code",
+        "project_name",
         "item_code",
         "item_description",
+        "uom",
         "qty",
+        "due_qty",
+        "billed_quantity",
+        "quantity_cancel",
+        "start_date",
+        "end_date",
+        "sub_contract_no",
+        "currency",
         "rate",
         "line_amount",
-        "site_code",
-        "site_name",
+        "tax_rate",
+        "payment_terms",
         "center_area",
+        "publish_date",
     ]
-    if has_uid:
-        fields.insert(3, "inet_line_uid")
 
     lines = frappe.get_all(
         "PO Intake Line",
@@ -530,38 +625,44 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1):
         order_by="parent desc, idx asc",
         limit_page_length=10000,
     )
-    seen = set()
     for ln in lines:
-        uid = ((ln.get("inet_line_uid") if has_uid else None) or ln.name or "").strip()
-        if cint(unique_inet_uid) and uid in seen:
-            continue
-        seen.add(uid)
         par = parent_map.get(ln.parent) or {}
         rows_out.append(
             {
-                "inet_line_uid": (ln.get("inet_line_uid") if has_uid else "") or "",
-                "line_sl": ln.idx,
-                "poid": ln.get("poid") or "",
+                "id": ln.get("source_id") or "",
+                "po_status": (par.get("status") or "OPEN"),
                 "po_no": par.get("po_no") or "",
-                "upload_date": str(par.get("upload_date") or ""),
                 "po_line_no": ln.get("po_line_no"),
-                "shipment_number": ln.get("shipment_number") or "",
-                "project_code": ln.get("project_code") or "",
+                "shipment_no": ln.get("shipment_number") or "",
+                "site_name": ln.get("site_name") or "",
+                "site_code": ln.get("site_code") or "",
                 "item_code": ln.get("item_code") or "",
                 "item_description": ln.get("item_description") or "",
-                "qty": ln.get("qty"),
-                "rate": ln.get("rate"),
+                "unit": ln.get("uom") or "",
+                "requested_qty": ln.get("qty"),
+                "due_qty": ln.get("due_qty"),
+                "billed_quantity": ln.get("billed_quantity"),
+                "quantity_cancel": ln.get("quantity_cancel"),
+                "start_date": ln.get("start_date"),
+                "end_date": ln.get("end_date"),
+                "sub_contract_no": ln.get("sub_contract_no") or "",
+                "currency": ln.get("currency") or "",
+                "unit_price": ln.get("rate"),
                 "line_amount": ln.get("line_amount"),
-                "site_code": ln.get("site_code") or "",
-                "site_name": ln.get("site_name") or "",
+                "tax_rate": ln.get("tax_rate") or "",
+                "payment_terms": ln.get("payment_terms") or "",
+                "poid": ln.get("poid") or "",
+                "project_code": ln.get("project_code") or "",
+                "project_name": ln.get("project_name") or "",
                 "center_area": ln.get("center_area") or "",
+                "publish_date": ln.get("publish_date"),
+                "upload_date": str(par.get("upload_date") or ""),
             }
         )
 
     return {
         "from_date": str(fd),
         "to_date": str(td),
-        "unique_inet_uid": bool(cint(unique_inet_uid)),
         "rows": rows_out,
     }
 
@@ -590,6 +691,8 @@ def upload_po_file(file_url, customer=None):
 
     # ---- Column alias map ----------------------------------------------
     ALIAS = {
+        "ID": "source_id",
+        "PO Status": "po_status",
         "PO NO.": "po_no",
         "PO Line NO.": "po_line_no",
         "Shipment NO.": "shipment_no",
@@ -599,8 +702,17 @@ def upload_po_file(file_url, customer=None):
         "Item Description": "item_description",
         "Unit": "unit",
         "Requested Qty": "qty",
+        "Due Qty": "due_qty",
+        "Billed Quantity": "billed_quantity",
+        "Quantity Cancel": "quantity_cancel",
+        "Start Date": "start_date",
+        "End Date": "end_date",
+        "Sub Contract NO.": "sub_contract_no",
+        "Currency": "currency",
         "Unit Price": "rate",
         "Line Amount": "line_amount",
+        "Tax Rate": "tax_rate",
+        "Payment Terms": "payment_terms",
         "Project Code": "project_code",
         "Project Name": "project_name",
         "Center Area": "center_area",
@@ -829,21 +941,42 @@ def confirm_po_upload(rows):
 
             line_center_area = line.get("center_area") or first.get("center_area")
             line_region = region_type_from_center_area(line_center_area)
+            site_code = str(line.get("site_code") or "").strip()
+            ok_duid, err_duid = ensure_duid_master(
+                site_code,
+                line.get("site_name"),
+                line_center_area,
+            )
+            if not ok_duid:
+                frappe.throw(err_duid or f"Could not create DUID Master for {site_code}")
 
             append_row = {
+                "source_id": line.get("source_id"),
                 "po_line_no": cint(line.get("po_line_no") or 0),
                 "shipment_number": line.get("shipment_no"),
                 "poid": poid,
-                "site_code": line.get("site_code"),
+                "site_code": site_code,
                 "site_name": line.get("site_name"),
                 "item_code": item_code,
                 "item_description": line.get("item_description"),
+                "uom": line.get("unit"),
                 "qty": qty,
+                "due_qty": flt(line.get("due_qty", 0)),
+                "billed_quantity": flt(line.get("billed_quantity", 0)),
+                "quantity_cancel": flt(line.get("quantity_cancel", 0)),
+                "start_date": line.get("start_date"),
+                "end_date": line.get("end_date"),
+                "sub_contract_no": line.get("sub_contract_no"),
+                "currency": line.get("currency"),
                 "rate": rate,
                 "line_amount": flt(line.get("line_amount", 0)) or (qty * rate),
+                "tax_rate": line.get("tax_rate"),
+                "payment_terms": line.get("payment_terms"),
                 "project_code": line.get("project_code"),
+                "project_name": line.get("project_name"),
                 "center_area": line_center_area,
                 "region_type": line_region,
+                "publish_date": line.get("publish_date"),
             }
             new_entries.append((line, append_row))
             existing_poids.add(poid)
@@ -853,6 +986,9 @@ def confirm_po_upload(rows):
 
         if existing_name:
             doc = frappe.get_doc("PO Intake", existing_name)
+            incoming_status = str(first.get("po_status") or "").strip() or "OPEN"
+            if incoming_status:
+                doc.status = incoming_status
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
             doc.save(ignore_permissions=True, ignore_links=True)
@@ -860,6 +996,7 @@ def confirm_po_upload(rows):
             doc = frappe.new_doc("PO Intake")
             doc.po_no = po_no
             doc.customer = resolved_cust
+            doc.status = str(first.get("po_status") or "").strip() or "OPEN"
             doc.publish_date = first.get("publish_date")
             doc.center_area = first.get("center_area")
             for _src, append_row in new_entries:
@@ -887,6 +1024,17 @@ def confirm_po_upload(rows):
                 if got_poid == want_poid:
                     child_rows.append((row.name, row.as_dict()))
                     break
+
+        # Ensure each new line has a PO Dispatch row + immutable system_id even before dispatch.
+        for _child_name, line_dict in child_rows:
+            _upsert_po_dispatch_for_line(
+                doc.name,
+                po_no,
+                line_dict,
+                customer=resolved_cust,
+                dispatch_status="Pending",
+                dispatch_mode="Manual",
+            )
         auto_dispatched += _try_auto_dispatch(doc.name, po_no, child_rows)
 
     return {
@@ -902,7 +1050,7 @@ def _get_dispatch_for_intake_line(parent_name, po_line_no):
     """Load dispatch row for a PO Intake line; tolerate DB missing `region_type` before migrate."""
     filters = {"po_intake": parent_name, "po_line_no": po_line_no}
     fields_full = [
-        "name", "im", "dispatch_mode", "target_month", "region_type", "center_area",
+        "name", "system_id", "im", "dispatch_mode", "target_month", "region_type", "center_area",
     ]
     try:
         return frappe.db.get_value("PO Dispatch", filters, fields_full, as_dict=True) or {}
@@ -912,7 +1060,7 @@ def _get_dispatch_for_intake_line(parent_name, po_line_no):
         row = frappe.db.get_value(
             "PO Dispatch",
             filters,
-            ["name", "im", "dispatch_mode", "target_month", "center_area"],
+            ["name", "system_id", "im", "dispatch_mode", "target_month", "center_area"],
             as_dict=True,
         ) or {}
         row["region_type"] = region_type_from_center_area(row.get("center_area"))
@@ -977,9 +1125,11 @@ def list_po_intake_lines(status="New"):
         line["po_intake"] = parent_name
         line["center_area"] = line.get("center_area") or pdata.get("center_area")
 
-        if line.get("po_line_status") == "Dispatched":
-            dispatch_data = _get_dispatch_for_intake_line(parent_name, line.get("po_line_no"))
+        dispatch_data = _get_dispatch_for_intake_line(parent_name, line.get("po_line_no"))
+        if dispatch_data:
             line["dispatch_name"] = dispatch_data.get("name")
+            line["system_id"] = dispatch_data.get("system_id")
+        if line.get("po_line_status") == "Dispatched" and dispatch_data:
             line["dispatched_im"] = dispatch_data.get("im")
             line["dispatch_target_month"] = dispatch_data.get("target_month")
             if not line.get("dispatch_mode"):
@@ -1068,33 +1218,30 @@ def dispatch_po_lines(payload):
                 "Project Control Center", project_code, "customer"
             )
 
-        # Validate project_code link exists — skip if not found
-        if project_code and not frappe.db.exists("Project Control Center", project_code):
-            project_code = None
-
-        doc = frappe.new_doc("PO Dispatch")
-        doc.po_intake = po_intake_name
-        doc.po_no = po_no
-        doc.po_line_no = po_line_no
-        doc.item_code = item_code
-        doc.item_description = item_description
-        doc.qty = qty
-        doc.rate = rate
-        doc.line_amount = line_amount
-        if project_code:
-            doc.project_code = project_code
-        doc.customer = customer
-        doc.im = im
-        doc.target_month = target_month
-        doc.planning_mode = planning_mode
-        doc.dispatch_status = "Dispatched"
-        doc.dispatch_mode = "Manual"
-        doc.center_area = center_area
-        doc.region_type = region_type_from_center_area(center_area)
-        doc.site_code = site_code
-        doc.site_name = site_name
-
-        final_dispatch_name = _insert_po_dispatch_with_poid(doc, poid)
+        final_dispatch_name = _upsert_po_dispatch_for_line(
+            po_intake_name,
+            po_no,
+            {
+                "po_line_no": po_line_no,
+                "item_code": item_code,
+                "item_description": item_description,
+                "qty": qty,
+                "rate": rate,
+                "line_amount": line_amount,
+                "project_code": project_code,
+                "center_area": center_area,
+                "site_code": site_code,
+                "site_name": site_name,
+                "shipment_number": line.get("shipment_number"),
+                "poid": poid,
+            },
+            customer=customer,
+            im=im,
+            target_month=target_month,
+            planning_mode=planning_mode,
+            dispatch_status="Dispatched",
+            dispatch_mode="Manual",
+        )
 
         # Mark the PO Intake Line as "Dispatched"
         if line_child_name:

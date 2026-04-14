@@ -48,12 +48,12 @@
    "label": "Schedule Date"
   },
   {
-   "default": "Active",
+   "default": "OPEN",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "PO Status",
-   "options": "Active\nArchive"
+   "options": "OPEN\nCLOSED\nCANCELLED"
   },
   {
    "fieldname": "division",

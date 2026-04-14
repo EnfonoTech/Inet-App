@@ -157,8 +157,9 @@
   },
   {
    "fieldname": "site_code",
-   "fieldtype": "Data",
-   "label": "Site Code"
+   "fieldtype": "Link",
+   "label": "DUID",
+   "options": "DUID Master"
   },
   {
    "fieldname": "site_name",

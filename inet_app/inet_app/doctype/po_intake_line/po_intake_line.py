@@ -1,6 +1,5 @@
 import frappe
 from frappe.model.document import Document
-from frappe.model.naming import make_autoname
 
 
 def make_poid(po_no, po_line_no, shipment_number):
@@ -14,13 +13,12 @@ def make_poid(po_no, po_line_no, shipment_number):
 
 class POIntakeLine(Document):
     def before_save(self):
-        if not getattr(self, "inet_line_uid", None):
-            self._set_inet_line_uid()
         self._set_poid()
+        self._ensure_duid_master()
 
     def before_insert(self):
-        self._set_inet_line_uid()
         self._set_poid()
+        self._ensure_duid_master()
 
     def _set_poid(self):
         po_no = getattr(self, "parent", None) or ""
@@ -32,9 +30,14 @@ class POIntakeLine(Document):
                 pass
         self.poid = make_poid(po_no, self.po_line_no, self.shipment_number)
 
-    def _set_inet_line_uid(self):
-        if getattr(self, "inet_line_uid", None):
+    def _ensure_duid_master(self):
+        duid = str(getattr(self, "site_code", "") or "").strip()
+        if not duid or not frappe.db.exists("DocType", "DUID Master"):
             return
-        if not frappe.db.has_column("PO Intake Line", "inet_line_uid"):
+        if frappe.db.exists("DUID Master", duid):
             return
-        self.inet_line_uid = make_autoname("ILN-.YYYY.-.######")
+        doc = frappe.new_doc("DUID Master")
+        doc.duid = duid
+        doc.site_name = (getattr(self, "site_name", "") or "").strip()
+        doc.center_area = (getattr(self, "center_area", "") or "").strip()
+        doc.insert(ignore_permissions=True)

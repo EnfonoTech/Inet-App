@@ -483,6 +483,7 @@ export default function PODispatch() {
                     />
                   </th>
                   <th>POID</th>
+                  <th>System ID</th>
                   <th>PO No</th>
                   <th>Shipment No</th>
                   <th>Item Code</th>
@@ -520,6 +521,7 @@ export default function PODispatch() {
                         <input type="checkbox" checked={selected.has(row.name)} onChange={() => toggleRow(row.name)} />
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.8rem", whiteSpace: "nowrap" }}>{row.poid}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.76rem", whiteSpace: "nowrap" }}>{row.system_id || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.po_no}</td>
                       <td>{row.shipment_number}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.item_code}</td>
@@ -559,7 +561,7 @@ export default function PODispatch() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 17 : 16) : 13}
+                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 18 : 17) : 14}
                     style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                     <strong>{filtered.length}</strong> row{filtered.length !== 1 ? "s" : ""}
                     {tableSearch && rows.length !== filtered.length && ` (filtered from ${rows.length})`}

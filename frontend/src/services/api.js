@@ -181,11 +181,10 @@ export const pmApi = {
   generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),
   getFieldExecutionForRollout: (rollout_plan) =>
     call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),
-  exportPODump: (from_date, to_date, unique_inet_uid) =>
+  exportPODump: (from_date, to_date) =>
     call("inet_app.api.command_center.export_po_dump", {
       from_date: from_date || "",
       to_date: to_date || "",
-      unique_inet_uid: unique_inet_uid === false ? 0 : 1,
     }),
 
   // ── Activity Cost Master ───────────────────────────────────
