@@ -140,7 +140,7 @@ export default function IMPlanning() {
           <option value="">All Teams</option>
           {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
-        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
           <option value="">All DUIDs</option>
           {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
         </select>

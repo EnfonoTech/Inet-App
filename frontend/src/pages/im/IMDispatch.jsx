@@ -305,77 +305,67 @@ export default function IMDispatch() {
 
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {[
-            { key: "all", label: "All" },
-            { key: "Auto", label: "Auto" },
-            { key: "Manual", label: "Manual" },
-          ].map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setModeFilter(f.key)}
-              style={{
-                padding: "6px 16px",
-                borderRadius: 20,
-                border: "1.5px solid",
-                borderColor: modeFilter === f.key ? "#6366f1" : "#e2e8f0",
-                background: modeFilter === f.key ? "#6366f1" : "#fff",
-                color: modeFilter === f.key ? "#fff" : "#64748b",
-                fontWeight: 600,
-                fontSize: "0.8rem",
-                cursor: "pointer",
-              }}
-            >
-              {f.label}
+          <select
+            value={modeFilter}
+            onChange={(e) => setModeFilter(e.target.value)}
+            style={{ minWidth: 86, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}
+          >
+            <option value="all">All</option>
+            <option value="Auto">Auto</option>
+            <option value="Manual">Manual</option>
+          </select>
+          <input
+            type="search"
+            placeholder="Search PO, DUID, POID, Project, Center area, Region…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              padding: "7px 14px",
+              borderRadius: 8,
+              border: "1px solid #e2e8f0",
+              fontSize: "0.84rem",
+              minWidth: 220,
+            }}
+          />
+          <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+            <option value="">All Projects</option>
+            {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+            <option value="">All Teams</option>
+            {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <select
+            value={duidFilter}
+            onChange={(e) => setDuidFilter(e.target.value)}
+            style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}
+          >
+            <option value="">All DUIDs</option>
+            {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+          {hasFilters && (
+            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setModeFilter("all"); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
+              Clear
             </button>
-          ))}
+          )}
         </div>
-        <div style={{ flex: 1 }} />
-        <input
-          type="search"
-          placeholder="Search PO, DUID, POID, Project, Center area, Region…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{
-            padding: "7px 14px",
-            borderRadius: 8,
-            border: "1px solid #e2e8f0",
-            fontSize: "0.84rem",
-            minWidth: 220,
-          }}
-        />
-        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Projects</option>
-          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Teams</option>
-          {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All DUIDs</option>
-          {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
-        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-        {hasFilters && (
-          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setModeFilter("all"); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
-            Clear
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          {selected.size > 0 && (
+            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+              {selected.size} selected · SAR {fmt.format(selectedAmt)}
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={openCreatePlanModal}
+            disabled={selected.size === 0}
+          >
+            Create rollout plans ({selected.size})
           </button>
-        )}
-        {selected.size > 0 && (
-          <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
-            {selected.size} selected · SAR {fmt.format(selectedAmt)}
-          </span>
-        )}
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={openCreatePlanModal}
-          disabled={selected.size === 0}
-        >
-          Create rollout plans ({selected.size})
-        </button>
+        </div>
       </div>
 
       <Modal open={showModal} onClose={() => !creating && setShowModal(false)} title="Create rollout plans for selected DUIDs" width={560}>

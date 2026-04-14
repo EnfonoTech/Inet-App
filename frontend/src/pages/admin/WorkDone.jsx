@@ -176,7 +176,7 @@ export default function WorkDone() {
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
           <option value="">All DUIDs</option>
           {duids.map((d) => <option key={d} value={d}>{d}</option>)}
         </select>
