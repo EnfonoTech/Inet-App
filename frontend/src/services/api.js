@@ -49,11 +49,10 @@ export async function frappe_logout() {
 }
 
 /**
- * Universal Frappe API caller.
- * Always uses POST so large payloads never hit URL length limits,
- * and includes the CSRF token required for write operations in v15.
+ * Current CSRF for non-`call()` requests (e.g. multipart `upload_file`).
+ * Uses session token from fetchPortalSession; keep in sync with api.js only.
  */
-function getCsrf() {
+export function getCsrf() {
   if (portalCsrfToken) return portalCsrfToken;
   const match = document.cookie.match(/frappe_csrf_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : "fetch";

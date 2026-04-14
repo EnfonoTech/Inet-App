@@ -1,4 +1,25 @@
 import { useRef, useState } from "react";
+import { fetchPortalSession, getCsrf } from "../services/api";
+
+function buildUploadForm(file) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  form.append("is_private", "1");
+  form.append("folder", "Home");
+  return form;
+}
+
+function uploadJsonErrorText(json) {
+  if (json._server_messages) {
+    try {
+      return JSON.parse(JSON.parse(json._server_messages)[0]).message;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (json.exc && typeof json.exception === "string") return json.exception;
+  return json.message || "";
+}
 
 /**
  * Drag-and-drop file upload zone.
@@ -13,44 +34,38 @@ export default function FileUpload({ onFileUploaded, accept = ".xlsx,.csv" }) {
   const [fileName, setFileName] = useState(null);
   const inputRef = useRef(null);
 
-  function getCsrf() {
-    // Try frappe_csrf_token first, then csrf_token, then fall back to "fetch"
-    const m1 = document.cookie.match(/frappe_csrf_token=([^;]+)/);
-    if (m1) return decodeURIComponent(m1[1]);
-    const m2 = document.cookie.match(/csrf_token=([^;]+)/);
-    if (m2) return decodeURIComponent(m2[1]);
-    // Try meta tag as last resort
-    const meta = document.querySelector('meta[name="csrf-token"]');
-    if (meta) return meta.getAttribute("content");
-    return "fetch";
-  }
-
   async function uploadFile(file) {
     setUploading(true);
     setError(null);
     setFileName(file.name);
 
-    const form = new FormData();
-    form.append("file", file, file.name);
-    form.append("is_private", "1");
-    form.append("folder", "Home");
-    // Do NOT set Content-Type — let browser set multipart boundary automatically
-
     try {
-      const res = await fetch("/api/method/upload_file", {
-        method: "POST",
-        credentials: "include",
-        headers: { "X-Frappe-CSRF-Token": getCsrf() },
-        body: form,
-      });
-      const json = await res.json();
+      await fetchPortalSession().catch(() => {});
+      let token = getCsrf();
+      const doFetch = (formBody) =>
+        fetch("/api/method/upload_file", {
+          method: "POST",
+          credentials: "include",
+          headers: { "X-Frappe-CSRF-Token": token },
+          body: formBody,
+        });
+
+      let form = buildUploadForm(file);
+      let res = await doFetch(form);
+      let json = await res.json();
+
+      const errText = `${uploadJsonErrorText(json)} ${json.exc || ""}`.toLowerCase();
+      if ((!res.ok || json.exc) && (errText.includes("invalid request") || errText.includes("csrftoken"))) {
+        await fetchPortalSession().catch(() => {});
+        token = getCsrf();
+        form = buildUploadForm(file);
+        res = await doFetch(form);
+        json = await res.json();
+      }
+
       if (!res.ok || json.exc) {
-        let errMsg = "Upload failed";
-        if (json._server_messages) {
-          try { errMsg = JSON.parse(JSON.parse(json._server_messages)[0]).message; } catch { /* ignore */ }
-        } else if (typeof json.message === "string") {
-          errMsg = json.message;
-        }
+        let errMsg = uploadJsonErrorText(json) || "Upload failed";
+        if (!errMsg || errMsg === "undefined") errMsg = typeof json.message === "string" ? json.message : "Upload failed";
         throw new Error(errMsg);
       }
       // Frappe returns { message: { file_url: "..." } }
