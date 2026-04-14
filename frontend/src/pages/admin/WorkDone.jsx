@@ -60,6 +60,9 @@ export default function WorkDone() {
   const [billingFilter, setBillingFilter] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
+  const [duidFilter, setDuidFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [detailRow, setDetailRow] = useState(null);
 
   async function loadData() {
@@ -81,6 +84,9 @@ export default function WorkDone() {
     if (billingFilter && (r.billing_status || "Pending") !== billingFilter) return false;
     if (teamFilter && (r.team || "") !== teamFilter) return false;
     if (projectFilter && (r.project_code || "") !== projectFilter) return false;
+    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
+    if (fromDate && (r.execution_date || "").slice(0, 10) < fromDate) return false;
+    if (toDate && (r.execution_date || "").slice(0, 10) > toDate) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
@@ -99,9 +105,10 @@ export default function WorkDone() {
     return true;
   });
 
-  const hasFilters = search || billingFilter || teamFilter || projectFilter;
+  const hasFilters = search || billingFilter || teamFilter || projectFilter || duidFilter || fromDate || toDate;
   const teams = [...new Set(rows.map((r) => r.team).filter(Boolean))].sort();
   const projects = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
+  const duids = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
 
   const totals = filtered.reduce(
     (acc, r) => ({
@@ -169,11 +176,17 @@ export default function WorkDone() {
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
+        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All DUIDs</option>
+          {duids.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter(""); setTeamFilter(""); setProjectFilter(""); }}
+            onClick={() => { setSearch(""); setBillingFilter(""); setTeamFilter(""); setProjectFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

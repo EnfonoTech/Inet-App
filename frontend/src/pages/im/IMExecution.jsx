@@ -107,6 +107,11 @@ export default function IMExecution() {
   const [qcFilter, setQcFilter] = useState("");
   const [ciagFilter, setCiagFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [teamFilter, setTeamFilter] = useState("");
+  const [duidFilter, setDuidFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [reopenFor, setReopenFor] = useState(null);
   const [issueCategory, setIssueCategory] = useState("");
   const [planningRoute, setPlanningRoute] = useState("standard");
@@ -142,6 +147,11 @@ export default function IMExecution() {
   const filtered = executions.filter((e) => {
     if (qcFilter && (e.qc_status || "") !== qcFilter) return false;
     if (ciagFilter && (e.ciag_status || "") !== ciagFilter) return false;
+    if (projectFilter && (e.project_code || "") !== projectFilter) return false;
+    if (teamFilter && (e.team || "") !== teamFilter) return false;
+    if (duidFilter && (e.site_code || "") !== duidFilter) return false;
+    if (fromDate && (e.execution_date || "").slice(0, 10) < fromDate) return false;
+    if (toDate && (e.execution_date || "").slice(0, 10) > toDate) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -158,7 +168,10 @@ export default function IMExecution() {
 
   const qcOptions = [...new Set(executions.map((e) => e.qc_status).filter(Boolean))].sort();
   const ciagOptions = [...new Set(executions.map((e) => e.ciag_status).filter(Boolean))].sort();
-  const hasFilters = statusFilter || qcFilter || ciagFilter || search;
+  const projectOptions = [...new Set(executions.map((e) => e.project_code).filter(Boolean))].sort();
+  const teamOptions = [...new Set(executions.map((e) => e.team).filter(Boolean))].sort();
+  const duidOptions = [...new Set(executions.map((e) => e.site_code).filter(Boolean))].sort();
+  const hasFilters = statusFilter || qcFilter || ciagFilter || search || projectFilter || teamFilter || duidFilter || fromDate || toDate;
   const totalAchieved = filtered.reduce((s, e) => s + (e.achieved_qty || 0), 0);
 
   async function submitReopen() {
@@ -367,11 +380,25 @@ export default function IMExecution() {
             <option key={c} value={c}>{c}</option>
           ))}
         </select>
+        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All Projects</option>
+          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All Teams</option>
+          {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All DUIDs</option>
+          {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setStatusFilter(""); setQcFilter(""); setCiagFilter(""); }}
+            onClick={() => { setSearch(""); setStatusFilter(""); setQcFilter(""); setCiagFilter(""); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

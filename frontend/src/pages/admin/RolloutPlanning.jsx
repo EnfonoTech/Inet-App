@@ -91,6 +91,11 @@ export default function RolloutPlanning() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [imFilter, setImFilter] = useState("");
+  const [duidFilter, setDuidFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -149,6 +154,11 @@ export default function RolloutPlanning() {
   }
 
   const filtered = rows.filter((r) => {
+    if (projectFilter && (r.project_code || "") !== projectFilter) return false;
+    if (imFilter && (r.im || "") !== imFilter) return false;
+    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
+    if (fromDate && (r.target_month || "").slice(0, 10) < fromDate) return false;
+    if (toDate && (r.target_month || "").slice(0, 10) > toDate) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -162,6 +172,10 @@ export default function RolloutPlanning() {
       (r.region_type || "").toLowerCase().includes(q)
     );
   });
+  const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
+  const imOptions = [...new Set(rows.map((r) => r.im).filter(Boolean))].sort();
+  const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  const hasFilters = search || projectFilter || imFilter || duidFilter || fromDate || toDate;
 
   function toggleAll() {
     if (selected.size === filtered.length && filtered.length > 0) {
@@ -253,11 +267,25 @@ export default function RolloutPlanning() {
             minWidth: 300,
           }}
         />
-        {search && (
+        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All Projects</option>
+          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={imFilter} onChange={(e) => setImFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All IMs</option>
+          {imOptions.map((im) => <option key={im} value={im}>{im}</option>)}
+        </select>
+        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All DUIDs</option>
+          {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => setSearch("")}
+            onClick={() => { setSearch(""); setProjectFilter(""); setImFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -382,7 +410,7 @@ export default function RolloutPlanning() {
                 <tr>
                   <td colSpan={9} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length}</strong>
-                    {search && ` of ${rows.length}`}
+                    {hasFilters && ` of ${rows.length}`}
                     {" "}row{filtered.length !== 1 ? "s" : ""}
                     {selected.size > 0 && (
                       <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600, fontSize: "0.82rem" }}>

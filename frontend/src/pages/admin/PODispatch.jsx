@@ -93,6 +93,11 @@ export default function PODispatch() {
   const [imList, setImList] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [tableSearch, setTableSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [imFilter, setImFilter] = useState("");
+  const [duidFilter, setDuidFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   // Dispatch modal state
   const [showDispatchModal, setShowDispatchModal] = useState(false);
@@ -152,6 +157,11 @@ export default function PODispatch() {
   }
 
   const filtered = rows.filter(r => {
+    if (projectFilter && (r.project_code || "") !== projectFilter) return false;
+    if (imFilter && (r.dispatched_im || "") !== imFilter) return false;
+    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
+    if (fromDate && (r.dispatch_target_month || "").slice(0, 10) < fromDate) return false;
+    if (toDate && (r.dispatch_target_month || "").slice(0, 10) > toDate) return false;
     if (!tableSearch) return true;
     const q = tableSearch.toLowerCase();
     return (
@@ -164,6 +174,10 @@ export default function PODispatch() {
       (r.region_type || "").toLowerCase().includes(q)
     );
   });
+  const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
+  const imOptions = [...new Set(rows.map((r) => r.dispatched_im).filter(Boolean))].sort();
+  const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  const hasFilters = tableSearch || projectFilter || imFilter || duidFilter || fromDate || toDate;
 
   function toggleAll() {
     setSelected(selected.size === filtered.length ? new Set() : new Set(filtered.map(r => r.name)));
@@ -423,6 +437,25 @@ export default function PODispatch() {
           onChange={e => setTableSearch(e.target.value)}
           style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
         />
+        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All Projects</option>
+          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={imFilter} onChange={(e) => setImFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All IMs</option>
+          {imOptions.map((im) => <option key={im} value={im}>{im}</option>)}
+        </select>
+        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All DUIDs</option>
+          {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        {hasFilters && (
+          <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter(""); setImFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
+            Clear
+          </button>
+        )}
 
         <div style={{ flex: 1 }} />
 
@@ -502,7 +535,7 @@ export default function PODispatch() {
                       <th>Target Month</th>
                     </>
                   )}
-                  {activeTab === "Dispatched" && <th>Action</th>}
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -546,22 +579,20 @@ export default function PODispatch() {
                           </td>
                         </>
                       )}
-                      {activeTab === "Dispatched" && (
-                        <td onClick={e => e.stopPropagation()}>
-                          <button className="btn-secondary"
-                            style={{ fontSize: "0.73rem", padding: "3px 10px", whiteSpace: "nowrap" }}
-                            onClick={() => setDetailRow(row)}>
-                            View
-                          </button>
-                        </td>
-                      )}
+                      <td onClick={e => e.stopPropagation()}>
+                        <button className="btn-secondary"
+                          style={{ fontSize: "0.73rem", padding: "3px 10px", whiteSpace: "nowrap" }}
+                          onClick={() => setDetailRow(row)}>
+                          View
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={showDispatched ? (activeTab === "Dispatched" ? 18 : 17) : 14}
+                  <td colSpan={showDispatched ? 18 : 15}
                     style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                     <strong>{filtered.length}</strong> row{filtered.length !== 1 ? "s" : ""}
                     {tableSearch && rows.length !== filtered.length && ` (filtered from ${rows.length})`}

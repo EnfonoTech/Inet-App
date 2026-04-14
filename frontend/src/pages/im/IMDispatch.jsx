@@ -94,6 +94,11 @@ export default function IMDispatch() {
   const [error, setError] = useState(null);
   const [modeFilter, setModeFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [teamFilter, setTeamFilter] = useState("");
+  const [duidFilter, setDuidFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
   const [planDate, setPlanDate] = useState(todayDate());
@@ -153,6 +158,11 @@ export default function IMDispatch() {
 
   const filtered = rows.filter((r) => {
     if (modeFilter !== "all" && r.dispatch_mode !== modeFilter) return false;
+    if (projectFilter && (r.project_code || "") !== projectFilter) return false;
+    if (teamFilter && (r.team || "") !== teamFilter) return false;
+    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
+    if (fromDate && (r.target_month || "").slice(0, 10) < fromDate) return false;
+    if (toDate && (r.target_month || "").slice(0, 10) > toDate) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
@@ -169,6 +179,10 @@ export default function IMDispatch() {
   });
 
   const planableRows = filtered.filter(planable);
+  const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
+  const teamOptions = [...new Set(rows.map((r) => r.team).filter(Boolean))].sort();
+  const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  const hasFilters = search || modeFilter !== "all" || projectFilter || teamFilter || duidFilter || fromDate || toDate;
 
   function toggleRow(name) {
     setSelected((prev) => {
@@ -330,6 +344,25 @@ export default function IMDispatch() {
             minWidth: 220,
           }}
         />
+        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All Projects</option>
+          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All Teams</option>
+          {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+          <option value="">All DUIDs</option>
+          {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        {hasFilters && (
+          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setModeFilter("all"); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
+            Clear
+          </button>
+        )}
         {selected.size > 0 && (
           <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
             {selected.size} selected · SAR {fmt.format(selectedAmt)}
