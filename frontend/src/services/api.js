@@ -169,6 +169,18 @@ export const pmApi = {
       rollout_plan: rolloutPlan,
       issue_category: issueCategory || "",
     }),
+  createIMDummyPODispatch: (payload) =>
+    call("inet_app.api.command_center.create_im_dummy_po_dispatch", {
+      payload: JSON.stringify(payload || {}),
+    }),
+  listPoIntakeLinesForIMMap: (projectCode) =>
+    call("inet_app.api.command_center.list_po_intake_lines_for_im_map", {
+      project_code: projectCode || "",
+    }),
+  mapIMDummyPoToIntakeLine: (payload) =>
+    call("inet_app.api.command_center.map_im_dummy_po_to_intake_line", {
+      payload: JSON.stringify(payload || {}),
+    }),
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
   uploadPOFile:         (file_url, customer)  => call("inet_app.api.command_center.upload_po_file", { file_url, customer: customer || "" }),
   confirmPOUpload:      (rows)      => call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(rows) }),
@@ -235,7 +247,12 @@ export const pmApi = {
 
   // ── List APIs (Command Center doctypes) ────────────────────
   listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost"], limit_page_length: 100 }),
-  listPODispatches:  (filters) => call("frappe.client.get_list", { doctype: "PO Dispatch", filters: filters || {}, fields: ["*"], order_by: "modified desc", limit_page_length: 100 }),
+  listPODispatches:  (filters) =>
+    call("inet_app.api.command_center.list_po_dispatches", {
+      filters: filters || {},
+      order_by: "modified desc",
+      limit_page_length: 100,
+    }),
   listRolloutPlans:  (filters) => call("frappe.client.get_list", { doctype: "Rollout Plan", filters: filters || {}, fields: ["*"], order_by: "plan_date desc", limit_page_length: 100 }),
   listProjectDomains:(filters) => call("frappe.client.get_list", { doctype: "Project Domain", filters: filters || { status: "Active" }, fields: ["name", "domain_name", "status"], order_by: "domain_name asc", limit_page_length: 100 }),
   listHuaweiIMs:     (filters) => call("frappe.client.get_list", { doctype: "Huawei IM", filters: filters || { status: "Active" }, fields: ["name", "full_name", "email", "phone"], order_by: "full_name asc", limit_page_length: 100 }),

@@ -467,6 +467,7 @@ export default function IMExecution() {
                   <th>Execution</th>
                   <th>Rollout Plan</th>
                   <th>POID</th>
+                  <th>Dummy POID</th>
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -501,6 +502,11 @@ export default function IMExecution() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.system_id || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(e.original_dummy_poid || "").trim() && String(e.original_dummy_poid) !== String(e.system_id || "") ? `Original dummy POID: ${e.original_dummy_poid}` : ""}>
+                      {(e.original_dummy_poid || "").trim() && String(e.original_dummy_poid) !== String(e.system_id || "")
+                        ? (e.original_dummy_poid || "").trim()
+                        : "—"}
+                    </td>
                     <td>{e.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={e.center_area || ""}>
                       {e.center_area || "—"}
@@ -575,7 +581,7 @@ export default function IMExecution() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={13} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     {filtered.length}{hasFilters && ` of ${executions.length}`} rows
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>

@@ -24,6 +24,10 @@
   "planning_mode",
   "dispatch_status",
   "dispatch_mode",
+  "is_dummy_po",
+  "dummy_note",
+  "original_dummy_poid",
+  "was_dummy_po",
   "section_site",
   "center_area",
   "region_type",
@@ -135,6 +139,36 @@
    "in_list_view": 1,
    "label": "Dispatch Mode",
    "options": "Auto\nManual",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Placeholder line until mapped to a real PO Intake line.",
+   "fieldname": "is_dummy_po",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Dummy PO"
+  },
+  {
+   "fieldname": "dummy_note",
+   "fieldtype": "Small Text",
+   "label": "Dummy note"
+  },
+  {
+   "description": "Business POID while the line was still dummy (unchanged after map to real PO).",
+   "fieldname": "original_dummy_poid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Original dummy POID",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when this dispatch was created as a dummy PO; stays on after mapping.",
+   "fieldname": "was_dummy_po",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Was dummy PO",
    "read_only": 1
   },
   {

@@ -38,6 +38,7 @@ export default function IMWorkDone() {
     const q = search.toLowerCase();
     return (
       (r.po_dispatch || "").toLowerCase().includes(q) ||
+      (r.original_dummy_poid || "").toLowerCase().includes(q) ||
       (r.execution || "").toLowerCase().includes(q) ||
       (r.project_code || "").toLowerCase().includes(q) ||
       (r.site_code || "").toLowerCase().includes(q) ||
@@ -60,7 +61,7 @@ export default function IMWorkDone() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, execution, project, DUID, item…"
+          placeholder="Search POID, dummy POID, execution, project, DUID, item…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
@@ -76,13 +77,26 @@ export default function IMWorkDone() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>POID</th><th>Execution</th><th>Project</th><th>DUID</th><th>Item</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Revenue</th><th>Status</th>
+                  <th>POID</th>
+                  <th>Dummy POID</th>
+                  <th>Execution</th>
+                  <th>Project</th>
+                  <th>DUID</th>
+                  <th>Item</th>
+                  <th style={{ textAlign: "right" }}>Qty</th>
+                  <th style={{ textAlign: "right" }}>Revenue</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((r) => (
                   <tr key={r.name}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.po_dispatch || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.po_dispatch || "") ? `Original dummy POID: ${r.original_dummy_poid}` : ""}>
+                      {(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.po_dispatch || "")
+                        ? (r.original_dummy_poid || "").trim()
+                        : "—"}
+                    </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.execution || "—"}</td>
                     <td>{r.project_code || "—"}</td>
                     <td>{r.site_code || "—"}</td>

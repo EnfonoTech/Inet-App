@@ -4,7 +4,10 @@ import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Work Done", "Re-Visit", "Extra Visit"];
-const HIDDEN_DETAIL_FIELDS = new Set(["owner", "creation", "modified", "modified_by", "docstatus", "idx"]);
+const HIDDEN_DETAIL_FIELDS = new Set([
+  "owner", "creation", "modified", "modified_by", "docstatus", "idx",
+  "original_dummy_poid", "was_dummy_po",
+]);
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -70,6 +73,44 @@ function statusTone(value) {
   return { bg: "#fffbeb", fg: "#b45309" };
 }
 
+function DummyMappingBanner({ row }) {
+  const orig = (row.original_dummy_poid || "").trim();
+  const current = (row.name || "").trim();
+  const open = !!Number(row.is_dummy_po);
+  const was = !!Number(row.was_dummy_po);
+  if (!open && !was && !orig) return null;
+  return (
+    <div style={{
+      marginBottom: 12,
+      padding: "12px 14px",
+      borderRadius: 10,
+      background: open ? "#fffbeb" : "#eef2ff",
+      border: `1px solid ${open ? "#fcd34d" : "#c7d2fe"}`,
+    }}
+    >
+      <div style={{ fontSize: "0.68rem", fontWeight: 700, color: open ? "#92400e" : "#3730a3", letterSpacing: "0.04em", marginBottom: 6 }}>
+        {open ? "OPEN DUMMY PO" : "MAPPED FROM DUMMY PO"}
+      </div>
+      {orig ? (
+        <div style={{ fontSize: "0.82rem", color: "#0f172a", marginBottom: 4 }}>
+          <span style={{ color: "#64748b" }}>Original dummy POID: </span>
+          <code style={{ fontSize: "0.8rem", background: "#fff", padding: "2px 6px", borderRadius: 4, border: "1px solid #e2e8f0" }}>{orig}</code>
+        </div>
+      ) : null}
+      {!open && orig && current && orig !== current ? (
+        <div style={{ fontSize: "0.78rem", color: "#475569" }}>
+          Current POID (after map): <code style={{ fontSize: "0.76rem" }}>{current}</code>
+        </div>
+      ) : null}
+      {row.po_intake ? (
+        <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 6 }}>
+          PO Intake: <span style={{ fontWeight: 600, color: "#334155" }}>{row.po_intake}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DetailItem({ label, value }) {
   const isStatus = /status|mode/i.test(label);
   const tone = statusTone(value);
@@ -113,6 +154,18 @@ export default function IMDispatch() {
   const [successMsg, setSuccessMsg] = useState(null);
   const [createError, setCreateError] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
+  const [dummyFilter, setDummyFilter] = useState("all");
+  const [showDummyModal, setShowDummyModal] = useState(false);
+  const [dummyBusy, setDummyBusy] = useState(false);
+  const [dummyErr, setDummyErr] = useState(null);
+  const [projectsForDummy, setProjectsForDummy] = useState([]);
+  const [dummyForm, setDummyForm] = useState({ project_code: "" });
+  const [mapForRow, setMapForRow] = useState(null);
+  const [mapLines, setMapLines] = useState([]);
+  const [mapLineId, setMapLineId] = useState("");
+  const [mapBusy, setMapBusy] = useState(false);
+  const [mapErr, setMapErr] = useState(null);
+  const [mapLinesLoading, setMapLinesLoading] = useState(false);
 
   useEffect(() => {
     load();
@@ -135,6 +188,34 @@ export default function IMDispatch() {
     return () => { cancelled = true; };
   }, [showModal, imName]);
 
+  useEffect(() => {
+    if (!mapForRow?.project_code) {
+      setMapLines([]);
+      setMapLineId("");
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      setMapLinesLoading(true);
+      setMapErr(null);
+      try {
+        const list = await pmApi.listPoIntakeLinesForIMMap(mapForRow.project_code);
+        if (!cancelled) {
+          setMapLines(Array.isArray(list) ? list : []);
+          setMapLineId("");
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setMapLines([]);
+          setMapErr(e.message || "Failed to load PO lines");
+        }
+      } finally {
+        if (!cancelled) setMapLinesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mapForRow]);
+
   async function load() {
     setLoading(true);
     setError(null);
@@ -154,9 +235,89 @@ export default function IMDispatch() {
     }
   }
 
+  async function openDummyPoModal() {
+    setDummyErr(null);
+    setDummyForm({ project_code: projectFilter || "" });
+    setShowDummyModal(true);
+    if (!imName) {
+      setProjectsForDummy([]);
+      return;
+    }
+    try {
+      const fields = JSON.stringify([
+        "name", "project_code", "project_name", "implementation_manager",
+      ]);
+      const filters = JSON.stringify([["implementation_manager", "=", imName]]);
+      const res = await fetch(
+        `/api/resource/Project Control Center?filters=${encodeURIComponent(filters)}` +
+        `&fields=${encodeURIComponent(fields)}&limit_page_length=200&order_by=modified+desc`,
+        { credentials: "include" },
+      );
+      const json = await res.json();
+      setProjectsForDummy(Array.isArray(json?.data) ? json.data : []);
+    } catch {
+      setProjectsForDummy([]);
+    }
+  }
+
+  async function submitDummyPo() {
+    if (!dummyForm.project_code) {
+      setDummyErr("Select a project.");
+      return;
+    }
+    setDummyBusy(true);
+    setDummyErr(null);
+    try {
+      await pmApi.createIMDummyPODispatch({ project_code: dummyForm.project_code });
+      setShowDummyModal(false);
+      setSuccessMsg("Dummy PO created.");
+      await load();
+    } catch (e) {
+      setDummyErr(e.message || "Could not create dummy PO");
+    } finally {
+      setDummyBusy(false);
+    }
+  }
+
+  async function submitMapDummy() {
+    if (!mapForRow || !mapLineId) return;
+    setMapBusy(true);
+    setMapErr(null);
+    try {
+      const res = await pmApi.mapIMDummyPoToIntakeLine({
+        dummy_po_dispatch: mapForRow.name,
+        po_intake_line: mapLineId,
+      });
+      setMapForRow(null);
+      setDetailRow(null);
+      const oid = (res?.original_dummy_poid || "").trim();
+      const pid = (res?.poid || res?.name || "").trim();
+      const pint = (res?.po_intake || "").trim();
+      setSuccessMsg(
+        oid
+          ? `Mapped. POID ${pid}. Original dummy POID: ${oid}${pint ? `. Intake: ${pint}` : ""}.`
+          : "Dummy PO mapped. POID updated.",
+      );
+      await load();
+    } catch (e) {
+      setMapErr(e.message || "Map failed");
+    } finally {
+      setMapBusy(false);
+    }
+  }
+
   const planable = (r) => (r.dispatch_status || "") === "Dispatched";
 
   const filtered = rows.filter((r) => {
+    const isOpenDummy = !!Number(r.is_dummy_po);
+    const orig = (r.original_dummy_poid || "").trim();
+    const currentPoid = (r.name || "").trim();
+    const wasDummyFlag = r.was_dummy_po == 1 || r.was_dummy_po === true || String(r.was_dummy_po || "") === "1";
+    const mappedFromDummy =
+      (wasDummyFlag && !isOpenDummy) || (!!orig && orig !== currentPoid);
+    if (dummyFilter === "dummy" && !isOpenDummy) return false;
+    if (dummyFilter === "mapped_dummy" && !mappedFromDummy) return false;
+    if (dummyFilter === "standard" && isOpenDummy) return false;
     if (modeFilter !== "all" && r.dispatch_mode !== modeFilter) return false;
     if (projectFilter && (r.project_code || "") !== projectFilter) return false;
     if (teamFilter && (r.team || "") !== teamFilter) return false;
@@ -171,6 +332,7 @@ export default function IMDispatch() {
         (r.item_code || "").toLowerCase().includes(q) ||
         (r.site_code || "").toLowerCase().includes(q) ||
         (r.name || "").toLowerCase().includes(q) ||
+        (r.original_dummy_poid || "").toLowerCase().includes(q) ||
         (r.center_area || "").toLowerCase().includes(q) ||
         (r.region_type || "").toLowerCase().includes(q)
       );
@@ -182,7 +344,7 @@ export default function IMDispatch() {
   const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
   const teamOptions = [...new Set(rows.map((r) => r.team).filter(Boolean))].sort();
   const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
-  const hasFilters = search || modeFilter !== "all" || projectFilter || teamFilter || duidFilter || fromDate || toDate;
+  const hasFilters = search || modeFilter !== "all" || dummyFilter !== "all" || projectFilter || teamFilter || duidFilter || fromDate || toDate;
 
   function toggleRow(name) {
     setSelected((prev) => {
@@ -260,7 +422,26 @@ export default function IMDispatch() {
           <h1 className="page-title">My Dispatches</h1>
           <div className="page-subtitle">Dispatch lines assigned to your IM.</div>
         </div>
-        <div className="page-actions">
+        <div className="page-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={openDummyPoModal}
+            disabled={!imName}
+            style={{
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 18px",
+              fontSize: "0.88rem",
+              fontWeight: 700,
+              color: "#fff",
+              cursor: !imName ? "not-allowed" : "pointer",
+              opacity: !imName ? 0.55 : 1,
+              background: "linear-gradient(135deg,#6366f1 0%,#7c3aed 100%)",
+              boxShadow: "0 4px 14px rgba(99,102,241,0.28)",
+            }}
+          >
+            Dummy PO
+          </button>
           <button className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading..." : "Refresh"}
           </button>
@@ -306,6 +487,16 @@ export default function IMDispatch() {
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <select
+            value={dummyFilter}
+            onChange={(e) => setDummyFilter(e.target.value)}
+            style={{ minWidth: 120, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}
+          >
+            <option value="all">All lines</option>
+            <option value="dummy">Open dummy only</option>
+            <option value="mapped_dummy">Mapped from dummy</option>
+            <option value="standard">Exclude open dummy</option>
+          </select>
+          <select
             value={modeFilter}
             onChange={(e) => setModeFilter(e.target.value)}
             style={{ minWidth: 86, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}
@@ -346,7 +537,7 @@ export default function IMDispatch() {
           <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
           <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
           {hasFilters && (
-            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setModeFilter("all"); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
+            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setModeFilter("all"); setDummyFilter("all"); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
               Clear
             </button>
           )}
@@ -474,16 +665,34 @@ export default function IMDispatch() {
       <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.name ? ` - ${detailRow.name}` : ""}`} width={760}>
         {detailRow && (
           <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                POID: {detailRow.name || "—"}
+            <DummyMappingBanner row={detailRow} />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: "1 1 auto" }}>
+                <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                  POID: {detailRow.name || "—"}
+                </div>
+                <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                  Project: {detailRow.project_code || "—"}
+                </div>
+                <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                  IM: {detailRow.im || "—"}
+                </div>
               </div>
-              <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                Project: {detailRow.project_code || "—"}
-              </div>
-              <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                IM: {detailRow.im || "—"}
-              </div>
+              {!!Number(detailRow.is_dummy_po) && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{ fontSize: "0.78rem", padding: "8px 14px" }}
+                  onClick={() => {
+                    const r = detailRow;
+                    setDetailRow(null);
+                    setMapErr(null);
+                    setMapForRow(r);
+                  }}
+                >
+                  Map PO
+                </button>
+              )}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               {Object.entries(detailRow)
@@ -498,6 +707,71 @@ export default function IMDispatch() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={showDummyModal}
+        onClose={() => !dummyBusy && setShowDummyModal(false)}
+        title="Dummy PO"
+        width={420}
+      >
+        {dummyErr && <div className="notice error" style={{ marginBottom: 12 }}>{dummyErr}</div>}
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Project</label>
+          <select
+            value={dummyForm.project_code}
+            onChange={(e) => setDummyForm((f) => ({ ...f, project_code: e.target.value }))}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+          >
+            <option value="">{projectsForDummy.length ? "Select project" : "No projects (check IM link)"}</option>
+            {projectsForDummy.map((p) => (
+              <option key={p.name} value={p.project_code || p.name}>
+                {p.project_code || p.name}{p.project_name ? ` — ${p.project_name}` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button type="button" className="btn-secondary" disabled={dummyBusy} onClick={() => setShowDummyModal(false)}>Cancel</button>
+          <button type="button" className="btn-primary" disabled={dummyBusy} onClick={submitDummyPo}>
+            {dummyBusy ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!mapForRow}
+        onClose={() => !mapBusy && setMapForRow(null)}
+        title={`Map dummy PO — ${mapForRow?.name || ""}`}
+        width={560}
+      >
+        {mapErr && <div className="notice error" style={{ marginBottom: 12 }}>{mapErr}</div>}
+        {mapLinesLoading ? (
+          <div style={{ padding: 20, textAlign: "center", color: "#64748b" }}>Loading PO lines…</div>
+        ) : (
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>PO Intake line</label>
+            <select
+              value={mapLineId}
+              onChange={(e) => setMapLineId(e.target.value)}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+            >
+              <option value="">{mapLines.length ? "Select line" : "No open lines for this project"}</option>
+              {mapLines.map((l) => (
+                <option key={l.name} value={l.name}>
+                  {(l.po_no || l.po_intake || "").slice(0, 40)} · L{l.po_line_no} · {l.item_code || "—"} · {l.po_line_status || ""}
+                  {l.existing_dispatch ? ` · existing ${l.existing_dispatch}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button type="button" className="btn-secondary" disabled={mapBusy} onClick={() => setMapForRow(null)}>Cancel</button>
+          <button type="button" className="btn-primary" disabled={mapBusy || !mapLineId || mapLinesLoading} onClick={submitMapDummy}>
+            {mapBusy ? "Mapping…" : "Confirm map"}
+          </button>
+        </div>
       </Modal>
 
       <div className="page-content">
@@ -538,6 +812,7 @@ export default function IMDispatch() {
                   </th>
                   <th>POID</th>
                   <th>Mode</th>
+                  <th>Dummy POID</th>
                   <th>PO No</th>
                   <th>Project</th>
                   <th>Item</th>
@@ -554,6 +829,9 @@ export default function IMDispatch() {
               <tbody>
                 {filtered.map((row) => {
                   const canPlan = planable(row);
+                  const wasDf = row.was_dummy_po == 1 || row.was_dummy_po === true || String(row.was_dummy_po || "") === "1";
+                  const origCell = (row.original_dummy_poid || "").trim();
+                  const nameCell = (row.name || "").trim();
                   return (
                     <tr
                       key={row.name}
@@ -573,6 +851,43 @@ export default function IMDispatch() {
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                       <td><DispatchModeBadge mode={row.dispatch_mode || "Manual"} /></td>
+                      <td style={{ fontSize: "0.72rem", maxWidth: 160 }}>
+                        {!!Number(row.is_dummy_po) ? (
+                          <span style={{
+                            display: "inline-block",
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            fontWeight: 700,
+                            background: "#fff7ed",
+                            color: "#c2410c",
+                            border: "1px solid #fed7aa",
+                          }}
+                          >
+                            Open
+                          </span>
+                        ) : origCell && origCell !== nameCell ? (
+                          <span style={{ fontFamily: "ui-monospace, monospace", color: "#334155", wordBreak: "break-all" }}>
+                            {origCell}
+                          </span>
+                        ) : wasDf && !Number(row.is_dummy_po) ? (
+                          <span style={{
+                            display: "inline-block",
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            fontWeight: 700,
+                            fontSize: "0.68rem",
+                            color: "#fff",
+                            background: "linear-gradient(135deg,#6366f1 0%,#4f46e5 100%)",
+                            border: "1px solid #6366f1",
+                          }}
+                            title={origCell || "Mapped from dummy PO"}
+                          >
+                            Mapped
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td>{row.po_no}</td>
                       <td>{row.project_code}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.item_code}</td>
@@ -594,6 +909,16 @@ export default function IMDispatch() {
                         <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} onClick={() => setDetailRow(row)}>
                           View
                         </button>
+                        {!!Number(row.is_dummy_po) && (
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: "0.72rem", padding: "4px 10px", marginLeft: 6 }}
+                            onClick={() => { setMapErr(null); setMapForRow(row); }}
+                          >
+                            Map PO
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -601,7 +926,7 @@ export default function IMDispatch() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length} row{filtered.length !== 1 ? "s" : ""}</strong>
                     <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
                       Select rows with status <strong>Dispatched</strong> to create rollout plans.

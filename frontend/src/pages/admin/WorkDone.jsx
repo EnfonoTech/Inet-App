@@ -96,6 +96,7 @@ export default function WorkDone() {
         (r.item_description || "").toLowerCase().includes(q) ||
         (r.site_name || "").toLowerCase().includes(q) ||
         (r.po_dispatch || "").toLowerCase().includes(q) ||
+        (r.original_dummy_poid || "").toLowerCase().includes(q) ||
         (r.project_code || "").toLowerCase().includes(q) ||
         (r.po_no || "").toLowerCase().includes(q) ||
         (r.center_area || "").toLowerCase().includes(q) ||
@@ -138,7 +139,7 @@ export default function WorkDone() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, Item, Project, Team, Center area, Region…"
+          placeholder="Search POID, dummy POID, Item, Project, Team, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -220,6 +221,7 @@ export default function WorkDone() {
               <thead>
                 <tr>
                   <th>POID</th>
+                  <th>Dummy POID</th>
                   <th>Execution</th>
                   <th>Item Code</th>
                   <th>Description</th>
@@ -245,6 +247,11 @@ export default function WorkDone() {
                   return (
                     <tr key={row.name}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.po_dispatch || "—"}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.po_dispatch || "") ? `Original dummy POID: ${row.original_dummy_poid}` : ""}>
+                        {(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.po_dispatch || "")
+                          ? (row.original_dummy_poid || "").trim()
+                          : "—"}
+                      </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.execution || "—"}</td>
                       <td>{row.item_code}</td>
                       <td>{row.item_description || "—"}</td>
@@ -284,7 +291,7 @@ export default function WorkDone() {
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
-                  <td colSpan={10} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
+                  <td colSpan={11} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
                     TOTALS ({filtered.length}{hasFilters && ` of ${rows.length}`} rows)
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px" }}>{fmt.format(totals.qty)}</td>
@@ -328,6 +335,14 @@ export default function WorkDone() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
                 <DetailItem label="Work Done ID" value={detailRow.name} />
                 <DetailItem label="POID" value={detailRow.po_dispatch} />
+                <DetailItem
+                  label="Dummy POID"
+                  value={
+                    (detailRow.original_dummy_poid || "").trim() && String(detailRow.original_dummy_poid) !== String(detailRow.po_dispatch || "")
+                      ? (detailRow.original_dummy_poid || "").trim()
+                      : "—"
+                  }
+                />
                 <DetailItem label="Execution ID" value={detailRow.execution} />
                 <DetailItem label="Execution Date" value={detailRow.execution_date} />
                 <DetailItem label="Item Code" value={detailRow.item_code} />

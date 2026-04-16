@@ -9,6 +9,7 @@ import json
 import os
 
 import frappe
+from inet_app.inet_app.doctype.po_intake.po_intake import normalize_po_intake_status as _normalize_po_intake_status
 from inet_app.region_type import is_hard_region, region_type_from_center_area
 from frappe.utils import (
     add_days,
@@ -693,6 +694,9 @@ def upload_po_file(file_url, customer=None):
     ALIAS = {
         "ID": "source_id",
         "PO Status": "po_status",
+        "PO STATUS": "po_status",
+        "Status": "po_status",
+        "PO status": "po_status",
         "PO NO.": "po_no",
         "PO Line NO.": "po_line_no",
         "Shipment NO.": "shipment_no",
@@ -754,6 +758,8 @@ def upload_po_file(file_url, customer=None):
             std_key = ALIAS.get(raw_header)
             if std_key:
                 row_dict[std_key] = cell_val
+
+        row_dict["po_status"] = _normalize_po_intake_status(row_dict.get("po_status"))
 
         # ---- Validation ------------------------------------------------
         errors = []
@@ -984,11 +990,11 @@ def confirm_po_upload(rows):
         if not new_entries:
             continue
 
+        hdr_status = first.get("po_status") or first.get("status") or first.get("po_intake_status")
+
         if existing_name:
             doc = frappe.get_doc("PO Intake", existing_name)
-            incoming_status = str(first.get("po_status") or "").strip() or "OPEN"
-            if incoming_status:
-                doc.status = incoming_status
+            doc.status = _normalize_po_intake_status(hdr_status)
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
             doc.save(ignore_permissions=True, ignore_links=True)
@@ -996,14 +1002,14 @@ def confirm_po_upload(rows):
             doc = frappe.new_doc("PO Intake")
             doc.po_no = po_no
             doc.customer = resolved_cust
-            doc.status = str(first.get("po_status") or "").strip() or "OPEN"
+            doc.status = _normalize_po_intake_status(hdr_status)
             doc.publish_date = first.get("publish_date")
             doc.center_area = first.get("center_area")
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
-        doc.insert(ignore_permissions=True, ignore_links=True)
-        created += 1
-        names.append(doc.name)
+            doc.insert(ignore_permissions=True, ignore_links=True)
+            created += 1
+            names.append(doc.name)
 
         frappe.db.commit()
         lines_imported += len(new_entries)
@@ -1145,6 +1151,402 @@ def list_po_intake_lines(status="New"):
             line["region_type"] = region_type_from_center_area(line.get("center_area"))
 
     return lines
+
+
+def _require_inet_im_session():
+    user = frappe.session.user
+    if not user or user == "Guest":
+        frappe.throw("Not permitted", frappe.PermissionError)
+    roles = set(frappe.get_roles(user))
+    if (
+        "INET IM" not in roles
+        and "Administrator" not in roles
+        and "System Manager" not in roles
+    ):
+        frappe.throw(
+            "Only Implementation Managers can use this action.",
+            frappe.PermissionError,
+        )
+    _im_resolved, im_identifiers, _ = resolve_im_for_session()
+    if not im_identifiers:
+        frappe.throw(
+            "Could not resolve IM from your user profile.",
+            frappe.ValidationError,
+        )
+    return _im_resolved, im_identifiers
+
+
+def _pcc_im_allows_project(project_code, im_identifiers):
+    if not project_code or not frappe.db.exists("Project Control Center", project_code):
+        return False
+    im_on = frappe.db.get_value(
+        "Project Control Center", project_code, "implementation_manager"
+    )
+    if not im_on:
+        return False
+    return im_on in set(im_identifiers)
+
+
+@frappe.whitelist()
+def create_im_dummy_po_dispatch(payload=None):
+    """
+    Dummy PO Dispatch: only project is required at create time.
+
+    Placeholder DUID / item / qty are set; real details are applied in map_im_dummy_po_to_intake_line.
+
+    payload: {"project_code": required}
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload)
+    payload = payload or {}
+
+    _im_resolved, im_identifiers = _require_inet_im_session()
+
+    project_code = (payload.get("project_code") or "").strip()
+    if not project_code:
+        frappe.throw("project_code is required")
+    if not _pcc_im_allows_project(project_code, im_identifiers):
+        frappe.throw("You are not the Implementation Manager for this project.")
+
+    site_code = None
+    for _attempt in range(40):
+        candidate = f"DUMMY-{frappe.generate_hash(length=14)}"
+        if not frappe.db.exists("DUID Master", candidate):
+            site_code = candidate
+            break
+    if not site_code:
+        frappe.throw("Could not allocate a placeholder DUID — retry.")
+
+    site_name = "Pending — map to PO line"
+    ok_duid, err_duid = ensure_duid_master(site_code, site_name=site_name, center_area=None)
+    if not ok_duid:
+        frappe.throw(err_duid or f"Could not create DUID Master for {site_code}")
+
+    customer = frappe.db.get_value("Project Control Center", project_code, "customer")
+
+    item_code = "PENDING"
+    item_description = "Fill by mapping to PO Intake line"
+    qty = flt(1)
+    rate = flt(0)
+    line_amount = flt(0)
+    center_area = None
+
+    # Unique synthetic PO number until mapped to real intake
+    for _attempt in range(20):
+        po_no = f"EMRG-{now_datetime().strftime('%Y%m%d%H%M%S')}-{frappe.generate_hash(length=4)}"
+        if not frappe.db.exists("PO Dispatch", {"po_no": po_no}):
+            break
+    else:
+        frappe.throw("Could not allocate a unique dummy PO number — retry.")
+
+    poid = _make_poid(po_no, 1, None)
+
+    doc = frappe.new_doc("PO Dispatch")
+    doc.project_code = project_code
+    doc.customer = customer
+    doc.im = _im_resolved
+    doc.po_no = po_no
+    doc.po_line_no = 1
+    doc.item_code = item_code
+    if item_description:
+        doc.item_description = item_description
+    doc.qty = qty
+    doc.rate = rate
+    doc.line_amount = line_amount
+    doc.site_code = site_code
+    doc.site_name = site_name
+    doc.center_area = center_area
+    doc.region_type = region_type_from_center_area(center_area)
+    doc.planning_mode = "Plan"
+    doc.dispatch_status = "Dispatched"
+    doc.dispatch_mode = "Manual"
+    if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
+        doc.is_dummy_po = 1
+
+    final_name = _insert_po_dispatch_with_poid(doc, poid)
+    stamp = {}
+    if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+        stamp["original_dummy_poid"] = final_name
+    if frappe.db.has_column("PO Dispatch", "was_dummy_po"):
+        stamp["was_dummy_po"] = 1
+    if stamp:
+        frappe.db.set_value("PO Dispatch", final_name, stamp, update_modified=False)
+    frappe.db.commit()
+    return {"name": final_name, "po_no": po_no, "poid": final_name}
+
+
+@frappe.whitelist()
+def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length=100):
+    """
+    List PO Dispatch rows using only columns that exist in the database.
+
+    ``frappe.client.get_list(..., fields=[\"*\"])`` expands ``*`` from DocType meta, so new
+    fields in the JSON that are not yet migrated into MySQL cause OperationalError 1054.
+    This endpoint avoids that by selecting physical table columns only.
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters) if filters else {}
+    filters = filters or {}
+    limit_page_length = cint(limit_page_length) or 100
+    fields = list(frappe.db.get_table_columns("PO Dispatch"))
+    return frappe.get_list(
+        "PO Dispatch",
+        filters=filters,
+        fields=fields,
+        order_by=order_by or "modified desc",
+        limit_page_length=limit_page_length,
+    )
+
+
+@frappe.whitelist()
+def list_po_intake_lines_for_im_map(project_code=None):
+    """
+    PO Intake lines for a project — IM only, for mapping a dummy dispatch to a real line.
+    """
+    project_code = (project_code or "").strip()
+    if not project_code:
+        frappe.throw("project_code is required")
+
+    _im_resolved, im_identifiers = _require_inet_im_session()
+    if not _pcc_im_allows_project(project_code, im_identifiers):
+        frappe.throw("Not permitted for this project.")
+
+    line_fields = [
+        "name",
+        "parent",
+        "po_line_no",
+        "poid",
+        "shipment_number",
+        "item_code",
+        "item_description",
+        "qty",
+        "rate",
+        "line_amount",
+        "project_code",
+        "site_code",
+        "site_name",
+        "center_area",
+        "region_type",
+        "po_line_status",
+    ]
+    try:
+        lines = frappe.get_all(
+            "PO Intake Line",
+            filters={"project_code": project_code, "po_line_status": ["!=", "Completed"]},
+            fields=line_fields,
+            order_by="modified desc",
+            limit_page_length=400,
+        )
+    except frappe.db.OperationalError as e:
+        if not frappe.db.is_missing_column(e):
+            raise
+        line_fields.remove("center_area")
+        line_fields.remove("region_type")
+        lines = frappe.get_all(
+            "PO Intake Line",
+            filters={"project_code": project_code, "po_line_status": ["!=", "Completed"]},
+            fields=line_fields,
+            order_by="modified desc",
+            limit_page_length=400,
+        )
+        for row in lines:
+            row["center_area"] = None
+            row["region_type"] = None
+
+    parents = {}
+    for row in lines:
+        pn = row.get("parent")
+        if pn and pn not in parents:
+            parents[pn] = frappe.db.get_value(
+                "PO Intake", pn, ["po_no", "customer"], as_dict=True
+            ) or {}
+        pdata = parents.get(row.get("parent")) or {}
+        row["po_no"] = pdata.get("po_no", "")
+        row["customer"] = pdata.get("customer", "")
+        row["po_intake"] = row.get("parent")
+        drow = _get_dispatch_for_intake_line(row.get("parent"), row.get("po_line_no"))
+        if drow:
+            row["existing_dispatch"] = drow.get("name")
+            row["existing_dispatch_status"] = frappe.db.get_value(
+                "PO Dispatch", drow.get("name"), "dispatch_status"
+            )
+        else:
+            row["existing_dispatch"] = None
+            row["existing_dispatch_status"] = None
+
+    return lines
+
+
+@frappe.whitelist()
+def map_im_dummy_po_to_intake_line(payload=None):
+    """
+    Link a dummy PO Dispatch to a real PO Intake line and rename to business POID.
+
+    payload: {
+        "dummy_po_dispatch": "PO Dispatch name (current POID)",
+        "po_intake_line": "PO Intake Line child row name",
+    }
+
+    If the intake line already has another dispatch from intake/PM dispatch (often Pending or
+    Dispatched) with **no** rollout plans and **no** executions on that dispatch, it is removed
+    so the dummy can take the real POID. If that dispatch has rollouts/executions or is
+    Completed, mapping is blocked.
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload)
+    payload = payload or {}
+
+    dummy_name = (payload.get("dummy_po_dispatch") or "").strip()
+    line_name = (payload.get("po_intake_line") or "").strip()
+    if not dummy_name or not line_name:
+        frappe.throw("dummy_po_dispatch and po_intake_line are required")
+
+    _im_resolved, im_identifiers = _require_inet_im_session()
+
+    if not frappe.db.exists("PO Dispatch", dummy_name):
+        frappe.throw("PO Dispatch not found.")
+
+    d_im = frappe.db.get_value("PO Dispatch", dummy_name, "im")
+    if d_im not in set(im_identifiers):
+        frappe.throw("Not permitted for this dispatch.")
+
+    if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
+        if not cint(frappe.db.get_value("PO Dispatch", dummy_name, "is_dummy_po")):
+            frappe.throw("This dispatch is not marked as dummy PO.")
+
+    if not frappe.db.exists("PO Intake Line", line_name):
+        frappe.throw("PO Intake Line not found.")
+
+    line_row = frappe.db.get_value("PO Intake Line", line_name, "*", as_dict=True)
+    parent_intake = line_row.get("parent")
+    project_line = (line_row.get("project_code") or "").strip()
+    if not parent_intake or not frappe.db.exists("PO Intake", parent_intake):
+        frappe.throw("Invalid PO Intake Line parent.")
+
+    if not _pcc_im_allows_project(project_line, im_identifiers):
+        frappe.throw("Not permitted for this PO line’s project.")
+
+    d_proj = (frappe.db.get_value("PO Dispatch", dummy_name, "project_code") or "").strip()
+    if project_line != d_proj:
+        frappe.throw(
+            "Project on the PO line must match the dummy dispatch project."
+        )
+
+    parent_po_no = frappe.db.get_value("PO Intake", parent_intake, "po_no") or ""
+    customer = frappe.db.get_value("PO Intake", parent_intake, "customer")
+
+    po_line_no = cint(line_row.get("po_line_no") or 0)
+    shipment_number = line_row.get("shipment_number")
+    poid_target = (line_row.get("poid") or "").strip() or _resolve_line_poid(
+        parent_po_no,
+        po_line_no,
+        shipment_number,
+    )
+
+    stub = _get_dispatch_for_intake_line(parent_intake, po_line_no)
+    stub_name = stub.get("name")
+    if stub_name and stub_name != dummy_name:
+        rp_count = frappe.db.count("Rollout Plan", {"po_dispatch": stub_name})
+        ex_count = frappe.db.sql(
+            """
+            SELECT COUNT(*) FROM `tabDaily Execution` de
+            INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+            WHERE rp.po_dispatch = %s
+            """,
+            (stub_name,),
+        )[0][0]
+        if rp_count or ex_count:
+            frappe.throw(
+                f"PO line already has dispatch {stub_name} with rollout or execution activity. "
+                "Finish or cancel that work before mapping this dummy PO."
+            )
+        stub_status = (frappe.db.get_value("PO Dispatch", stub_name, "dispatch_status") or "").strip()
+        if stub_status == "Completed":
+            frappe.throw(
+                f"This PO line is linked to a completed dispatch ({stub_name}). Mapping is not allowed."
+            )
+        frappe.delete_doc("PO Dispatch", stub_name, force=True, ignore_permissions=True)
+
+    center_area = line_row.get("center_area") or line_row.get("area")
+    site_code = (line_row.get("site_code") or "").strip()
+    site_name = line_row.get("site_name")
+    if site_code:
+        ok_duid, err_duid = ensure_duid_master(site_code, site_name, center_area)
+        if not ok_duid:
+            frappe.throw(err_duid or f"Could not ensure DUID Master for {site_code}")
+
+    update_vals = {
+        "po_intake": parent_intake,
+        "po_no": parent_po_no,
+        "po_line_no": po_line_no,
+        "item_code": line_row.get("item_code"),
+        "item_description": line_row.get("item_description"),
+        "qty": flt(line_row.get("qty", 0)),
+        "rate": flt(line_row.get("rate", 0)),
+        "line_amount": flt(line_row.get("line_amount", 0)),
+        "project_code": project_line,
+        "customer": customer or frappe.db.get_value(
+            "Project Control Center", project_line, "customer"
+        ),
+        "center_area": center_area,
+        "region_type": line_row.get("region_type")
+        or region_type_from_center_area(center_area),
+        "site_code": site_code or None,
+        "site_name": site_name,
+    }
+    if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
+        update_vals["is_dummy_po"] = 0
+    if frappe.db.has_column("PO Dispatch", "was_dummy_po"):
+        update_vals["was_dummy_po"] = 1
+    if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+        ex_orig = (
+            frappe.db.get_value("PO Dispatch", dummy_name, "original_dummy_poid") or ""
+        ).strip()
+        if not ex_orig:
+            update_vals["original_dummy_poid"] = dummy_name
+
+    frappe.db.set_value("PO Dispatch", dummy_name, update_vals, update_modified=True)
+
+    final_name = dummy_name
+    if poid_target and poid_target != dummy_name:
+        if frappe.db.exists("PO Dispatch", poid_target):
+            frappe.throw(
+                f"POID {poid_target} already exists — resolve duplicate PO dispatches first."
+            )
+        frappe.rename_doc(
+            "PO Dispatch",
+            dummy_name,
+            poid_target,
+            force=True,
+            merge=False,
+            show_alert=False,
+        )
+        final_name = poid_target
+
+    frappe.db.set_value(
+        "PO Intake Line",
+        line_name,
+        {"po_line_status": "Dispatched", "dispatch_mode": "Manual"},
+        update_modified=True,
+    )
+
+    frappe.db.commit()
+    gv_fields = ["po_no", "po_line_no"]
+    if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+        gv_fields.append("original_dummy_poid")
+    if frappe.db.has_column("PO Dispatch", "was_dummy_po"):
+        gv_fields.append("was_dummy_po")
+    meta = frappe.db.get_value("PO Dispatch", final_name, gv_fields, as_dict=True) or {}
+    return {
+        "name": final_name,
+        "poid": final_name,
+        "po_intake": parent_intake,
+        "po_intake_line": line_name,
+        "original_dummy_poid": (meta.get("original_dummy_poid") or "").strip(),
+        "was_dummy_po": cint(meta.get("was_dummy_po")),
+        "po_no": meta.get("po_no") or parent_po_no,
+        "po_line_no": cint(meta.get("po_line_no") or po_line_no),
+    }
 
 
 @frappe.whitelist()
@@ -1980,6 +2382,8 @@ def list_execution_monitor_rows(filters=None):
             d_fields.append("center_area")
         if frappe.db.has_column("PO Dispatch", "region_type"):
             d_fields.append("region_type")
+        if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+            d_fields.append("original_dummy_poid")
         drows = frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", dispatch_names]},
@@ -2022,6 +2426,11 @@ def list_execution_monitor_rows(filters=None):
                 "photos": ex.photos if ex else None,
                 "gps_location": ex.gps_location if ex else None,
                 "modified": p.modified,
+                "original_dummy_poid": (
+                    (d.get("original_dummy_poid") or "").strip()
+                    if d and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
+                    else None
+                ),
             }
         )
     return out
@@ -2101,6 +2510,8 @@ def list_work_done_rows(filters=None):
             pd_fields_wd.append("center_area")
         if frappe.db.has_column("PO Dispatch", "region_type"):
             pd_fields_wd.append("region_type")
+        if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+            pd_fields_wd.append("original_dummy_poid")
         pd_rows = frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", dispatch_names]},
@@ -2147,6 +2558,11 @@ def list_work_done_rows(filters=None):
                 "execution_status": ex.execution_status if ex else None,
                 "plan_date": rp.plan_date if rp else None,
                 "visit_type": rp.visit_type if rp else None,
+                "original_dummy_poid": (
+                    (pd.get("original_dummy_poid") or "").strip()
+                    if pd and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
+                    else None
+                ),
             }
         )
     return out
@@ -2720,6 +3136,10 @@ def list_im_daily_executions(im=None, execution_status=None):
         im_ex_extras.append("pd.center_area AS center_area")
     else:
         im_ex_extras.append("NULL AS center_area")
+    if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+        im_ex_extras.append("pd.original_dummy_poid AS original_dummy_poid")
+    else:
+        im_ex_extras.append("NULL AS original_dummy_poid")
     im_ex_extra_sql = ", " + ", ".join(im_ex_extras)
     rows = frappe.db.sql(
         f"""

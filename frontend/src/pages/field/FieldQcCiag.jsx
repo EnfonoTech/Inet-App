@@ -49,6 +49,7 @@ export default function FieldQcCiag() {
     return (
       (r.name || "").toLowerCase().includes(q) ||
       (r.po_dispatch || "").toLowerCase().includes(q) ||
+      (r.original_dummy_poid || "").toLowerCase().includes(q) ||
       (r.project_code || "").toLowerCase().includes(q) ||
       (r.site_code || "").toLowerCase().includes(q) ||
       (r.site_name || "").toLowerCase().includes(q) ||
@@ -125,7 +126,7 @@ export default function FieldQcCiag() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input
             type="search"
-            placeholder="Search plan, POID, project, DUID, site, center area..."
+            placeholder="Search plan, POID, dummy POID, project, DUID, site, center area..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 300 }}
@@ -162,6 +163,7 @@ export default function FieldQcCiag() {
                   </th>
                   <th>Plan</th>
                   <th>POID</th>
+                  <th>Dummy POID</th>
                   <th>Project</th>
                   <th>DUID</th>
                   <th>Plan Date</th>
@@ -184,6 +186,11 @@ export default function FieldQcCiag() {
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.po_dispatch || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.po_dispatch || "") ? `Original dummy POID: ${r.original_dummy_poid}` : ""}>
+                      {(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.po_dispatch || "")
+                        ? (r.original_dummy_poid || "").trim()
+                        : "—"}
+                    </td>
                     <td>{r.project_code || "—"}</td>
                     <td>{r.site_code || "—"}</td>
                     <td>{r.plan_date || "—"}</td>
@@ -215,6 +222,11 @@ export default function FieldQcCiag() {
             <h4 style={{ margin: "0 0 12px" }}>QC / CIAG: {editRow.name}</h4>
             <div style={{ marginBottom: 10, fontSize: "0.82rem", color: "#475569" }}>
               POID: <strong>{editRow.po_dispatch || "—"}</strong>
+              {(editRow.original_dummy_poid || "").trim() && String(editRow.original_dummy_poid) !== String(editRow.po_dispatch || "") ? (
+                <span style={{ marginLeft: 8 }}>
+                  Dummy POID: <strong style={{ fontFamily: "ui-monospace, monospace" }}>{(editRow.original_dummy_poid || "").trim()}</strong>
+                </span>
+              ) : null}
             </div>
             <div style={{ marginBottom: 10, fontSize: "0.82rem", color: "#475569" }}>
               Project: <strong>{editRow.project_code || "—"}</strong> · DUID: <strong>{editRow.site_code || "—"}</strong> · Site: <strong>{editRow.site_name || "—"}</strong>

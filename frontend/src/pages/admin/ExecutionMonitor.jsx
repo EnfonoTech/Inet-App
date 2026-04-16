@@ -130,6 +130,7 @@ export default function ExecutionMonitor() {
         (r.project_code || "").toLowerCase().includes(q) ||
         (r.site_name || "").toLowerCase().includes(q) ||
         (r.po_dispatch || "").toLowerCase().includes(q) ||
+        (r.original_dummy_poid || "").toLowerCase().includes(q) ||
         (r.team || "").toLowerCase().includes(q) ||
         (r.plan_date || "").toLowerCase().includes(q) ||
         (r.visit_type || "").toLowerCase().includes(q) ||
@@ -168,7 +169,7 @@ export default function ExecutionMonitor() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, Plan, Team, Date, Center area, Region…"
+          placeholder="Search POID, dummy POID, Plan, Team, Date, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -249,6 +250,7 @@ export default function ExecutionMonitor() {
                 <tr>
                   <th>Plan</th>
                   <th>POID</th>
+                  <th>Dummy POID</th>
                   <th>Item</th>
                   <th>Project / Site</th>
                   <th>Center area</th>
@@ -274,6 +276,11 @@ export default function ExecutionMonitor() {
                     <tr key={row.name}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.po_dispatch || "—"}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.po_dispatch || "") ? `Original dummy POID: ${row.original_dummy_poid}` : ""}>
+                        {(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.po_dispatch || "")
+                          ? (row.original_dummy_poid || "").trim()
+                          : "—"}
+                      </td>
                       <td>
                         <div style={{ fontWeight: 600 }}>{row.item_code || "—"}</div>
                         <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{row.item_description || "—"}</div>
@@ -326,7 +333,7 @@ export default function ExecutionMonitor() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length}</strong>
                     {hasFilters && ` of ${rows.length}`}
                     {" "}record{filtered.length !== 1 ? "s" : ""}
@@ -359,6 +366,14 @@ export default function ExecutionMonitor() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
                 <DetailItem label="Plan ID" value={detailRow.name} />
                 <DetailItem label="POID" value={detailRow.po_dispatch} />
+                <DetailItem
+                  label="Dummy POID"
+                  value={
+                    (detailRow.original_dummy_poid || "").trim() && String(detailRow.original_dummy_poid) !== String(detailRow.po_dispatch || "")
+                      ? (detailRow.original_dummy_poid || "").trim()
+                      : "—"
+                  }
+                />
                 <DetailItem label="Item Code" value={detailRow.item_code} />
                 <DetailItem label="Item Description" value={detailRow.item_description} />
                 <DetailItem label="Project" value={detailRow.project_code} />
