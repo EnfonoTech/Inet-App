@@ -12,6 +12,7 @@ import PODispatch from "./pages/admin/PODispatch";
 import RolloutPlanning from "./pages/admin/RolloutPlanning";
 import ExecutionMonitor from "./pages/admin/ExecutionMonitor";
 import WorkDone from "./pages/admin/WorkDone";
+import IssuesRisks from "./pages/admin/IssuesRisks";
 import Reports from "./pages/admin/Reports";
 import Masters from "./pages/admin/Masters";
 import Projects from "./pages/admin/Projects";
@@ -28,11 +29,14 @@ import IMExecution from "./pages/im/IMExecution";
 import IMReports from "./pages/im/IMReports";
 import IMTimesheets from "./pages/im/IMTimesheets";
 import IMDispatch from "./pages/im/IMDispatch";
+import IMWorkDone from "./pages/im/IMWorkDone";
+import IMIssuesRisks from "./pages/im/IMIssuesRisks";
 import OperationsOverview from "./pages/OperationsOverview";
 
 /* -- Field pages ------------------------------------------------ */
 import TodaysWork from "./pages/field/TodaysWork";
 import ExecutionForm from "./pages/field/ExecutionForm";
+import FieldQcCiag from "./pages/field/FieldQcCiag";
 import FieldHistory from "./pages/field/FieldHistory";
 import FieldTimesheet from "./pages/field/Timesheet";
 
@@ -85,6 +89,7 @@ function AppContent() {
             <Route path="/planning" element={<RolloutPlanning />} />
             <Route path="/execution" element={<ExecutionMonitor />} />
             <Route path="/work-done" element={<WorkDone />} />
+            <Route path="/issues-risks" element={<IssuesRisks />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/timesheets" element={<AdminTimesheets />} />
             <Route path="/masters" element={<Masters />} />
@@ -101,6 +106,8 @@ function AppContent() {
             <Route path="/im-dispatch" element={<IMDispatch />} />
             <Route path="/im-planning" element={<IMPlanning />} />
             <Route path="/im-execution" element={<IMExecution />} />
+            <Route path="/im-work-done" element={<IMWorkDone />} />
+            <Route path="/im-issues-risks" element={<IMIssuesRisks />} />
             <Route path="/im-reports" element={<IMReports />} />
             <Route path="/im-timesheets" element={<IMTimesheets />} />
           </>
@@ -112,6 +119,7 @@ function AppContent() {
             <Route path="/today" element={<TodaysWork />} />
             <Route path="/field-execute" element={<ExecutionForm />} />
             <Route path="/field-execute/:id" element={<ExecutionForm />} />
+            <Route path="/field-qc-ciag" element={<FieldQcCiag />} />
             <Route path="/field-history" element={<FieldHistory />} />
             <Route path="/field-timesheet" element={<FieldTimesheet />} />
           </>

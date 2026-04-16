@@ -429,67 +429,69 @@ export default function PODispatch() {
 
       {/* Toolbar */}
       <div className="toolbar">
-        {/* Search filter */}
-        <input
-          type="search"
-          placeholder="Filter by POID, PO No, Item, Project, DUID..."
-          value={tableSearch}
-          onChange={e => setTableSearch(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
-        />
-        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Projects</option>
-          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select value={imFilter} onChange={(e) => setImFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All IMs</option>
-          {imOptions.map((im) => <option key={im} value={im}>{im}</option>)}
-        </select>
-        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
-          <option value="">All DUIDs</option>
-          {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
-        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-        {hasFilters && (
-          <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter(""); setImFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
-            Clear
-          </button>
-        )}
-
-        <div style={{ flex: 1 }} />
-
-        {/* Dispatched tab: auto-convert buttons */}
-        {activeTab === "Dispatched" && autoRows.length > 0 && (
-          <>
-            <button className="btn-primary" style={{ fontSize: "0.8rem" }}
-              onClick={() => { setConvertProject(""); setConvertIm(""); setShowProjectConvertModal(true); }} disabled={converting}>
-              Convert by Project
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {/* Search filter */}
+          <input
+            type="search"
+            placeholder="Filter by POID, PO No, Item, Project, DUID..."
+            value={tableSearch}
+            onChange={e => setTableSearch(e.target.value)}
+            style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
+          />
+          <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+            <option value="">All Projects</option>
+            {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select value={imFilter} onChange={(e) => setImFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+            <option value="">All IMs</option>
+            {imOptions.map((im) => <option key={im} value={im}>{im}</option>)}
+          </select>
+          <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
+            <option value="">All DUIDs</option>
+            {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+          {hasFilters && (
+            <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter(""); setImFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
+              Clear
             </button>
-            {selected.size > 0 && (
+          )}
+        </div>
+
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {/* Dispatched tab: auto-convert buttons */}
+          {activeTab === "Dispatched" && autoRows.length > 0 && (
+            <>
               <button className="btn-primary" style={{ fontSize: "0.8rem" }}
-                onClick={() => openConvertModal("lines", [...selected], null)} disabled={converting}>
-                Convert {selected.size} → Manual
+                onClick={() => { setConvertProject(""); setConvertIm(""); setShowProjectConvertModal(true); }} disabled={converting}>
+                Convert by Project
               </button>
-            )}
-          </>
-        )}
+              {selected.size > 0 && (
+                <button className="btn-primary" style={{ fontSize: "0.8rem" }}
+                  onClick={() => openConvertModal("lines", [...selected], null)} disabled={converting}>
+                  Convert {selected.size} → Manual
+                </button>
+              )}
+            </>
+          )}
 
-        {/* Pending tab: dispatch button */}
-        {activeTab === "New" && (
-          <>
-            {selected.size > 0 && (
-              <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{selected.size} selected</span>
-            )}
-            <button
-              className="btn-primary"
-              onClick={() => { setAssignIm(""); setShowDispatchModal(true); }}
-              disabled={selected.size === 0}
-            >
-              Dispatch Selected ({selected.size})
-            </button>
-          </>
-        )}
+          {/* Pending tab: dispatch button */}
+          {activeTab === "New" && (
+            <>
+              {selected.size > 0 && (
+                <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{selected.size} selected</span>
+              )}
+              <button
+                className="btn-primary"
+                onClick={() => { setAssignIm(""); setShowDispatchModal(true); }}
+                disabled={selected.size === 0}
+              >
+                Dispatch Selected ({selected.size})
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Table */}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { pmApi } from "../../services/api";
+import { fetchPortalSession, getCsrf } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import {
   elapsedSecondsFromServerEpoch,
@@ -16,8 +17,6 @@ const EXECUTION_STATUSES = [
   "Postponed",
 ];
 
-const TEAM_QC_OPTIONS = ["Pending", "Pass", "Fail"];
-const TEAM_CIAG_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
 
 function DetailRow({ label, value }) {
   if (!value) return null;
@@ -27,6 +26,30 @@ function DetailRow({ label, value }) {
       <div className="detail-value">{value}</div>
     </div>
   );
+}
+
+function parsePhotoList(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.filter(Boolean).map((v) => String(v).trim()).filter(Boolean);
+  const text = String(raw).trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const arr = JSON.parse(text);
+      if (Array.isArray(arr)) return arr.filter(Boolean).map((v) => String(v).trim()).filter(Boolean);
+    } catch {
+      // fallback to newline parsing
+    }
+  }
+  return text.split(/\r?\n|,/).map((v) => v.trim()).filter(Boolean);
+}
+
+function buildUploadForm(file) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  form.append("is_private", "1");
+  form.append("folder", "Home");
+  return form;
 }
 
 export default function ExecutionForm() {
@@ -65,10 +88,9 @@ export default function ExecutionForm() {
   const timerSkewMsRef = useRef(0);
 
   const [existingExec, setExistingExec] = useState(null);
-  const [teamQc, setTeamQc] = useState("Pending");
-  const [teamCiag, setTeamCiag] = useState("Open");
-  const [teamStatusBusy, setTeamStatusBusy] = useState(false);
-  const [teamStatusMsg, setTeamStatusMsg] = useState(null);
+  const [attachments, setAttachments] = useState([]);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [attachmentErr, setAttachmentErr] = useState(null);
 
   useEffect(() => {
     const iv = setInterval(() => timerTick((x) => x + 1), 1000);
@@ -172,15 +194,26 @@ export default function ExecutionForm() {
     pmApi.getFieldExecutionForRollout(id).then((ex) => {
       if (cancelled) return;
       setExistingExec(ex || null);
-      if (ex) {
-        setTeamQc(ex.qc_status || "Pending");
-        setTeamCiag(ex.ciag_status || "Open");
-      }
+      if (ex) setAttachments(parsePhotoList(ex.photos));
     }).catch(() => {
       if (!cancelled) setExistingExec(null);
     });
     return () => { cancelled = true; };
   }, [id, teamId, success]);
+
+  useEffect(() => {
+    if (!plan) return;
+    if (String(achievedQty || "").trim() !== "") return;
+    const defaultQty =
+      plan.qty ??
+      plan.requested_qty ??
+      plan.target_qty ??
+      plan.due_qty ??
+      null;
+    if (defaultQty !== null && defaultQty !== undefined && String(defaultQty).trim() !== "") {
+      setAchievedQty(String(defaultQty));
+    }
+  }, [plan, achievedQty]);
 
   function handleActivityChange(code) {
     setActivityCode(code);
@@ -189,6 +222,41 @@ export default function ExecutionForm() {
       setActivityCost(found ? found.base_cost_sar : null);
     } else {
       setActivityCost(null);
+    }
+  }
+
+  async function uploadAttachment(file) {
+    if (!file) return;
+    setAttachmentBusy(true);
+    setAttachmentErr(null);
+    try {
+      await fetchPortalSession().catch(() => {});
+      let token = getCsrf();
+      const doFetch = (formBody) =>
+        fetch("/api/method/upload_file", {
+          method: "POST",
+          credentials: "include",
+          headers: { "X-Frappe-CSRF-Token": token },
+          body: formBody,
+        });
+
+      let res = await doFetch(buildUploadForm(file));
+      let json = await res.json();
+      const errText = `${json.message || ""} ${json.exc || ""}`.toLowerCase();
+      if ((!res.ok || json.exc) && (errText.includes("invalid request") || errText.includes("csrf"))) {
+        await fetchPortalSession().catch(() => {});
+        token = getCsrf();
+        res = await doFetch(buildUploadForm(file));
+        json = await res.json();
+      }
+      if (!res.ok || json.exc) throw new Error(json.message || "Attachment upload failed");
+      const fileUrl = json.message?.file_url;
+      if (!fileUrl) throw new Error("No uploaded file URL received");
+      setAttachments((prev) => [...prev, fileUrl]);
+    } catch (err) {
+      setAttachmentErr(err.message || "Attachment upload failed");
+    } finally {
+      setAttachmentBusy(false);
     }
   }
 
@@ -208,26 +276,6 @@ export default function ExecutionForm() {
       setTimerError(e.message || "Could not start timer");
     } finally {
       setTimerBusy(false);
-    }
-  }
-
-  async function saveTeamQcCiag() {
-    if (!existingExec?.name) return;
-    setTeamStatusBusy(true);
-    setTeamStatusMsg(null);
-    try {
-      await pmApi.updateExecution({
-        name: existingExec.name,
-        qc_status: teamQc,
-        ciag_status: teamCiag,
-      });
-      setTeamStatusMsg("QC / CIAG saved.");
-      const ex = await pmApi.getFieldExecutionForRollout(id);
-      setExistingExec(ex || null);
-    } catch (err) {
-      setTeamStatusMsg(err.message || "Could not save");
-    } finally {
-      setTeamStatusBusy(false);
     }
   }
 
@@ -284,6 +332,7 @@ export default function ExecutionForm() {
         gps_location: gpsLocation,
         remarks,
         activity_code: activityCode || undefined,
+        photos: attachments.length ? attachments.join("\n") : undefined,
       };
 
       await pmApi.updateExecution(payload);
@@ -496,45 +545,6 @@ export default function ExecutionForm() {
           </div>
         )}
 
-        {existingExec && (
-          <div className="detail-panel" style={{ marginBottom: 20, border: "1px solid rgba(99,102,241,0.25)" }}>
-            <div style={{
-              fontSize: "0.72rem",
-              fontWeight: 700,
-              color: "var(--text-label)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              marginBottom: 12,
-            }}>
-              Team QC &amp; CIAG
-            </div>
-            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0 0 12px" }}>
-              Your team can update QC and CIAG on this execution. Final billing (Work Done) is created by the IM after QC Pass.
-            </p>
-            <div className="form-grid two-col">
-              <div className="form-group">
-                <label>QC status</label>
-                <select value={teamQc} onChange={(e) => setTeamQc(e.target.value)}>
-                  {TEAM_QC_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>CIAG status</label>
-                <select value={teamCiag} onChange={(e) => setTeamCiag(e.target.value)}>
-                  {TEAM_CIAG_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-            </div>
-            {teamStatusMsg && (
-              <div className="notice info" style={{ marginBottom: 10, fontSize: "0.84rem" }}>
-                <span>&#x2139;</span> {teamStatusMsg}
-              </div>
-            )}
-            <button type="button" className="btn-primary" disabled={teamStatusBusy} onClick={saveTeamQcCiag}>
-              {teamStatusBusy ? "Saving…" : "Save QC / CIAG"}
-            </button>
-          </div>
-        )}
 
         {plan && (
           <div className="detail-panel" style={{ marginBottom: 20 }}>
@@ -646,6 +656,37 @@ export default function ExecutionForm() {
                 placeholder="Any notes about this execution..."
                 rows={3}
               />
+            </div>
+
+            {/* Attachments */}
+            <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+              <label>Attachments</label>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <input
+                  type="file"
+                  onChange={(e) => uploadAttachment(e.target.files?.[0])}
+                  disabled={attachmentBusy}
+                />
+                {attachmentBusy && <span style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>Uploading...</span>}
+              </div>
+              {attachmentErr && <div style={{ marginTop: 8, fontSize: "0.82rem", color: "#b91c1c" }}>{attachmentErr}</div>}
+              {attachments.length > 0 && (
+                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {attachments.map((url, idx) => (
+                    <div key={`${url}-${idx}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: "0.82rem" }}>{url}</a>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: "0.72rem", padding: "2px 8px" }}
+                        onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

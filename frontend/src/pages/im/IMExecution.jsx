@@ -99,6 +99,21 @@ function DetailItem({ label, value }) {
   );
 }
 
+function parseAttachments(raw) {
+  if (!raw) return [];
+  const text = String(raw).trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const arr = JSON.parse(text);
+      if (Array.isArray(arr)) return arr.map((v) => String(v || "").trim()).filter(Boolean);
+    } catch {
+      // ignore and use fallback
+    }
+  }
+  return text.split(/\r?\n|,/).map((v) => v.trim()).filter(Boolean);
+}
+
 export default function IMExecution() {
   const { imName } = useAuth();
   const [executions, setExecutions] = useState([]);
@@ -114,7 +129,6 @@ export default function IMExecution() {
   const [toDate, setToDate] = useState("");
   const [reopenFor, setReopenFor] = useState(null);
   const [issueCategory, setIssueCategory] = useState("");
-  const [planningRoute, setPlanningRoute] = useState("standard");
   const [reopenBusy, setReopenBusy] = useState(false);
   const [reopenErr, setReopenErr] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
@@ -129,6 +143,7 @@ export default function IMExecution() {
   const [ciagErr, setCiagErr] = useState(null);
   const [wdBusy, setWdBusy] = useState("");
   const [wdErr, setWdErr] = useState(null);
+  const [selectedExecs, setSelectedExecs] = useState(new Set());
 
   useEffect(() => {
     async function load() {
@@ -173,13 +188,15 @@ export default function IMExecution() {
   const duidOptions = [...new Set(executions.map((e) => e.site_code).filter(Boolean))].sort();
   const hasFilters = statusFilter || qcFilter || ciagFilter || search || projectFilter || teamFilter || duidFilter || fromDate || toDate;
   const totalAchieved = filtered.reduce((s, e) => s + (e.achieved_qty || 0), 0);
+  const eligibleForWorkDone = filtered.filter((e) => e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done);
+  const selectedEligible = eligibleForWorkDone.filter((e) => selectedExecs.has(e.name));
 
   async function submitReopen() {
     if (!reopenFor) return;
     setReopenBusy(true);
     setReopenErr(null);
     try {
-      await pmApi.reopenRolloutForRevisit(reopenFor, issueCategory, planningRoute);
+      await pmApi.reopenRolloutForRevisit(reopenFor, issueCategory);
       setReopenFor(null);
       setIssueCategory("");
       const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
@@ -217,12 +234,17 @@ export default function IMExecution() {
     }
   }
 
-  async function createWorkDoneFor(en) {
-    if (!en) return;
-    setWdBusy(en);
+  async function createWorkDoneBulk() {
+    if (selectedEligible.length === 0) return;
+    setWdBusy("bulk");
     setWdErr(null);
     try {
-      await pmApi.generateWorkDone(en);
+      for (const row of selectedEligible) {
+        // Sequentially create to keep error attribution simple.
+        // eslint-disable-next-line no-await-in-loop
+        await pmApi.generateWorkDone(row.name);
+      }
+      setSelectedExecs(new Set());
       const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
       setExecutions(Array.isArray(res) ? res : []);
     } catch (err) {
@@ -275,13 +297,6 @@ export default function IMExecution() {
               <label>Issue category</label>
               <input value={issueCategory} onChange={(e) => setIssueCategory(e.target.value)} placeholder="e.g. PAT Rejection, QC Rejection" style={{ width: "100%", maxWidth: 460, padding: 8 }} />
             </div>
-            <div className="form-group" style={{ marginBottom: 12 }}>
-              <label>Route</label>
-              <select value={planningRoute} onChange={(e) => setPlanningRoute(e.target.value)} style={{ padding: 8 }}>
-                <option value="standard">Planning (standard)</option>
-                <option value="with_issue">Planning with Issue</option>
-              </select>
-            </div>
             <button className="btn-primary" disabled={reopenBusy} onClick={submitReopen}>{reopenBusy ? "…" : "Confirm"}</button>
             <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setReopenFor(null)}>Cancel</button>
           </div>
@@ -314,7 +329,7 @@ export default function IMExecution() {
           <button className="btn-primary" disabled={qcBusy} onClick={submitQc}>{qcBusy ? "…" : "Submit QC"}</button>
           <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setQcFor(null)}>Cancel</button>
           <p style={{ marginTop: 12, fontSize: 12, color: "#64748b" }}>
-            Work Done is not created automatically. After QC Pass, use <strong>Work done</strong> on the execution row.
+            Work Done is not created automatically. After QC Pass, use the top <strong>Create Work Done</strong> action.
           </p>
           </div>
         </div>
@@ -403,6 +418,19 @@ export default function IMExecution() {
             Clear
           </button>
         )}
+        {selectedEligible.length > 0 && (
+          <span style={{ fontSize: "0.78rem", color: "#64748b" }}>
+            {selectedEligible.length} selected for Work Done
+          </span>
+        )}
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={selectedEligible.length === 0 || wdBusy === "bulk"}
+          onClick={createWorkDoneBulk}
+        >
+          {wdBusy === "bulk" ? "Creating…" : `Create Work Done (${selectedEligible.length})`}
+        </button>
       </div>
 
       <div className="page-content">
@@ -423,8 +451,22 @@ export default function IMExecution() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th style={{ width: 36 }}>
+                    <input
+                      type="checkbox"
+                      checked={eligibleForWorkDone.length > 0 && eligibleForWorkDone.every((e) => selectedExecs.has(e.name))}
+                      onChange={() => {
+                        if (eligibleForWorkDone.length > 0 && eligibleForWorkDone.every((e) => selectedExecs.has(e.name))) {
+                          setSelectedExecs(new Set());
+                        } else {
+                          setSelectedExecs(new Set(eligibleForWorkDone.map((e) => e.name)));
+                        }
+                      }}
+                    />
+                  </th>
                   <th>Execution</th>
                   <th>Rollout Plan</th>
+                  <th>POID</th>
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -441,8 +483,24 @@ export default function IMExecution() {
               <tbody>
                 {filtered.map((e) => (
                   <tr key={e.name}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        disabled={!(e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done)}
+                        checked={selectedExecs.has(e.name)}
+                        onChange={() => {
+                          setSelectedExecs((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(e.name)) next.delete(e.name);
+                            else next.add(e.name);
+                            return next;
+                          });
+                        }}
+                      />
+                    </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.system_id || "—"}</td>
                     <td>{e.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={e.center_area || ""}>
                       {e.center_area || "—"}
@@ -455,34 +513,41 @@ export default function IMExecution() {
                       <StatusPill value={e.execution_status} />
                     </td>
                     <td>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (String(e.execution_status || "") !== "Completed") return;
-                          setQcErr(null);
-                          setQcDecision((e.qc_status === "Fail" || e.qc_status === "Pass") ? e.qc_status : "Pass");
-                          setQcIssueCategory("");
-                          setQcFor(e);
-                        }}
-                        style={{ border: "none", background: "none", padding: 0, cursor: String(e.execution_status || "") === "Completed" ? "pointer" : "not-allowed" }}
-                        title={String(e.execution_status || "") === "Completed" ? "Click to set QC" : "QC can be set after execution is Completed"}
-                      >
-                        <StatusPill value={e.qc_status || "Pending"} />
-                      </button>
+                      {String(e.execution_status || "") !== "Completed" ? (
+                        <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQcErr(null);
+                            setQcDecision((e.qc_status === "Fail" || e.qc_status === "Pass") ? e.qc_status : "Pass");
+                            setQcIssueCategory("");
+                            setQcFor(e);
+                          }}
+                          style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
+                          title="Click to set QC"
+                        >
+                          <StatusPill value={e.qc_status || "Pending"} />
+                        </button>
+                      )}
                     </td>
                     <td>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCiagErr(null);
-                          setCiagDecision(e.ciag_status || "Open");
-                          setCiagFor(e);
-                        }}
-                        style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
-                        title="Click to set CIAG"
-                      >
-                        <StatusPill value={e.ciag_status || "Open"} />
-                      </button>
+                      {String(e.execution_status || "") !== "Completed" ? (
+                        <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCiagErr(null);
+                            setCiagDecision(e.ciag_status || "Open");
+                            setCiagFor(e);
+                          }}
+                          style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
+                          title="Click to set CIAG"
+                        >
+                          <StatusPill value={e.ciag_status || "Open"} />
+                        </button>
+                      )}
                     </td>
                     <td style={{ textAlign: "right" }}>{e.achieved_qty || 0}</td>
                     <td>
@@ -502,27 +567,13 @@ export default function IMExecution() {
                       >
                         Re-plan
                       </button>
-                      {e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done && (
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          style={{ fontSize: "0.72rem", padding: "4px 8px", marginLeft: 6 }}
-                          disabled={wdBusy === e.name}
-                          onClick={() => createWorkDoneFor(e.name)}
-                        >
-                          {wdBusy === e.name ? "…" : "Work done"}
-                        </button>
-                      )}
-                      {e.work_done && (
-                        <span style={{ marginLeft: 6, fontSize: "0.7rem", color: "#059669", fontWeight: 600 }}>WD ✓</span>
-                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={13} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     {filtered.length}{hasFilters && ` of ${executions.length}`} rows
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
@@ -563,6 +614,16 @@ export default function IMExecution() {
                   />
                 ))}
               </div>
+              {parseAttachments(detailRow.photos).length > 0 && (
+                <div style={{ marginTop: 12, background: "#fff", borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Attachments</div>
+                  {parseAttachments(detailRow.photos).map((url, idx) => (
+                    <div key={`${url}-${idx}`} style={{ marginBottom: 4 }}>
+                      <a href={url} target="_blank" rel="noreferrer">{url}</a>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

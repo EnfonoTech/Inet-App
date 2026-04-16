@@ -952,13 +952,13 @@ def confirm_po_upload(rows):
 
             append_row = {
                 "source_id": line.get("source_id"),
-                "po_line_no": cint(line.get("po_line_no") or 0),
-                "shipment_number": line.get("shipment_no"),
+                    "po_line_no": cint(line.get("po_line_no") or 0),
+                    "shipment_number": line.get("shipment_no"),
                 "poid": poid,
                 "site_code": site_code,
-                "site_name": line.get("site_name"),
-                "item_code": item_code,
-                "item_description": line.get("item_description"),
+                    "site_name": line.get("site_name"),
+                    "item_code": item_code,
+                    "item_description": line.get("item_description"),
                 "uom": line.get("unit"),
                 "qty": qty,
                 "due_qty": flt(line.get("due_qty", 0)),
@@ -972,7 +972,7 @@ def confirm_po_upload(rows):
                 "line_amount": flt(line.get("line_amount", 0)) or (qty * rate),
                 "tax_rate": line.get("tax_rate"),
                 "payment_terms": line.get("payment_terms"),
-                "project_code": line.get("project_code"),
+                    "project_code": line.get("project_code"),
                 "project_name": line.get("project_name"),
                 "center_area": line_center_area,
                 "region_type": line_region,
@@ -1001,9 +1001,9 @@ def confirm_po_upload(rows):
             doc.center_area = first.get("center_area")
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
-            doc.insert(ignore_permissions=True, ignore_links=True)
-            created += 1
-            names.append(doc.name)
+        doc.insert(ignore_permissions=True, ignore_links=True)
+        created += 1
+        names.append(doc.name)
 
         frappe.db.commit()
         lines_imported += len(new_entries)
@@ -1442,11 +1442,10 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         if qc == "Fail":
             # QC failure returns work to planning; do not close the original plan as Completed.
             updates["plan_status"] = "Planning with Issue"
-        elif qc == "Pass":
-            updates["plan_status"] = "Completed"
         else:
-            # Completed execution but QC still pending IM review.
-            updates["plan_status"] = "In Execution"
+            # Completed execution should reflect as Completed in planning monitor.
+            # QC/CIAG is a follow-up review step and should not revert plan to In Execution.
+            updates["plan_status"] = "Completed"
         if ach_amt > 0:
             updates["achieved_amount"] = ach_amt
         if tgt > 0 and ach_amt >= 0:
@@ -1468,8 +1467,15 @@ def _normalize_execution_status(value):
     s = str(value or "").strip()
     if not s:
         return s
-    if s.lower() == "in progress":
+    sl = s.lower()
+    if sl in ("in progress", "inprogress"):
         return "In Progress"
+    if sl in ("complete", "completed"):
+        return "Completed"
+    if sl in ("cancel", "cancelled", "canceled"):
+        return "Cancelled"
+    if sl in ("postpone", "postponed"):
+        return "Postponed"
     return s
 
 
@@ -1559,7 +1565,7 @@ def get_field_execution_for_rollout(rollout_plan):
     rows = frappe.get_all(
         "Daily Execution",
         filters={"rollout_plan": rollout_plan, "team": team_id},
-        fields=["name", "qc_status", "ciag_status", "execution_status"],
+        fields=["name", "qc_status", "ciag_status", "execution_status", "photos"],
         order_by="modified desc",
         limit_page_length=1,
     )
@@ -1607,38 +1613,47 @@ def update_execution(payload):
                 slim["ciag_status"] = payload.get("ciag_status")
             payload = slim
     else:
-        # Create new
+        # Upsert by rollout_plan: only ONE Daily Execution per plan.
         rollout_plan = payload.get("rollout_plan")
         if not rollout_plan:
             frappe.throw("rollout_plan is required when creating a new Daily Execution.")
 
-        rp = frappe.db.get_value(
-            "Rollout Plan", rollout_plan, ["po_dispatch", "team", "region_type"], as_dict=True
+        existing_exec = frappe.db.get_value(
+            "Daily Execution",
+            {"rollout_plan": rollout_plan},
+            "name",
+            order_by="modified desc",
         )
+        if existing_exec:
+            doc = frappe.get_doc("Daily Execution", existing_exec)
+        else:
+            rp = frappe.db.get_value(
+                "Rollout Plan", rollout_plan, ["po_dispatch", "team", "region_type"], as_dict=True
+            )
 
-        doc = frappe.new_doc("Daily Execution")
-        doc.rollout_plan = rollout_plan
-        doc.system_id = rp.po_dispatch if rp else None
-        doc.team = rp.team if rp else None
-        pd_name = rp.po_dispatch if rp else None
-        im_v = None
-        if pd_name:
-            im_v = frappe.db.get_value("PO Dispatch", pd_name, "im")
-        if im_v and hasattr(doc, "im"):
-            doc.im = im_v
+            doc = frappe.new_doc("Daily Execution")
+            doc.rollout_plan = rollout_plan
+            doc.system_id = rp.po_dispatch if rp else None
+            doc.team = rp.team if rp else None
+            pd_name = rp.po_dispatch if rp else None
+            im_v = None
+            if pd_name:
+                im_v = frappe.db.get_value("PO Dispatch", pd_name, "im")
+            if im_v and hasattr(doc, "im"):
+                doc.im = im_v
 
-        if hasattr(doc, "region_type"):
-            doc.region_type = (rp.get("region_type") if rp else None) or None
-            if not doc.region_type and pd_name:
-                pd_row = frappe.db.get_value(
-                    "PO Dispatch", pd_name, ["region_type", "center_area"], as_dict=True
-                )
-                if pd_row:
-                    doc.region_type = pd_row.get("region_type") or region_type_from_center_area(
-                        pd_row.get("center_area")
+            if hasattr(doc, "region_type"):
+                doc.region_type = (rp.get("region_type") if rp else None) or None
+                if not doc.region_type and pd_name:
+                    pd_row = frappe.db.get_value(
+                        "PO Dispatch", pd_name, ["region_type", "center_area"], as_dict=True
                     )
-            if not doc.region_type:
-                doc.region_type = "Standard"
+                    if pd_row:
+                        doc.region_type = pd_row.get("region_type") or region_type_from_center_area(
+                            pd_row.get("center_area")
+                        )
+                if not doc.region_type:
+                    doc.region_type = "Standard"
 
     # Apply updatable fields
     for field in [
@@ -1659,6 +1674,10 @@ def update_execution(payload):
 
     if hasattr(doc, "execution_status"):
         doc.execution_status = _normalize_execution_status(doc.execution_status)
+
+    # QC / CIAG is only allowed once execution is completed.
+    if ("qc_status" in payload or "ciag_status" in payload) and doc.execution_status != "Completed":
+        frappe.throw("QC and CIAG can only be updated when execution status is Completed.")
 
     # Keep achieved amount server-driven from achieved qty * billing rate.
     if hasattr(doc, "achieved_qty") and hasattr(doc, "achieved_amount"):
@@ -1939,6 +1958,8 @@ def list_execution_monitor_rows(filters=None):
             "achieved_qty",
             "achieved_amount",
             "qc_status",
+            "ciag_status",
+            "photos",
             "gps_location",
             "modified",
         ],
@@ -1997,6 +2018,8 @@ def list_execution_monitor_rows(filters=None):
                 "execution_achieved_qty": flt(ex.achieved_qty or 0) if ex else 0,
                 "execution_achieved_amount": flt(ex.achieved_amount or 0) if ex else 0,
                 "qc_status": ex.qc_status if ex else None,
+                "ciag_status": ex.ciag_status if ex else None,
+                "photos": ex.photos if ex else None,
                 "gps_location": ex.gps_location if ex else None,
                 "modified": p.modified,
             }
@@ -2008,7 +2031,7 @@ def list_execution_monitor_rows(filters=None):
 def list_work_done_rows(filters=None):
     """
     Rich Work Done rows for PM page.
-    filters: { billing_status, from_date, to_date, team, project_code }
+    filters: { billing_status, from_date, to_date, team, project_code, im }
     """
     if isinstance(filters, str):
         filters = frappe.parse_json(filters)
@@ -2073,7 +2096,7 @@ def list_work_done_rows(filters=None):
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
     pd_map = {}
     if dispatch_names:
-        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "item_description"]
+        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_description", "im"]
         if frappe.db.has_column("PO Dispatch", "center_area"):
             pd_fields_wd.append("center_area")
         if frappe.db.has_column("PO Dispatch", "region_type"):
@@ -2097,6 +2120,10 @@ def list_work_done_rows(filters=None):
             continue
         if filters.get("project_code") and project_code != filters["project_code"]:
             continue
+        if filters.get("im"):
+            pd_im = (pd.im if pd and hasattr(pd, "im") else None)
+            if (pd_im or "") != (filters.get("im") or ""):
+                continue
         ex_date = ex.execution_date if ex else None
         if filters.get("from_date") and ex_date and str(ex_date) < str(filters["from_date"]):
             continue
@@ -2109,6 +2136,7 @@ def list_work_done_rows(filters=None):
                 "po_no": pd.po_no if pd else None,
                 "project_code": project_code,
                 "site_name": pd.site_name if pd else None,
+                "site_code": pd.site_code if pd else None,
                 "center_area": pd.get("center_area") if pd else None,
                 "region_type": r.get("region_type")
                 or (rp.get("region_type") if rp else None)
@@ -2119,6 +2147,98 @@ def list_work_done_rows(filters=None):
                 "execution_status": ex.execution_status if ex else None,
                 "plan_date": rp.plan_date if rp else None,
                 "visit_type": rp.visit_type if rp else None,
+            }
+        )
+    return out
+
+
+@frappe.whitelist()
+def list_issue_risk_rows(im=None):
+    """
+    Issue & Risk rows from rollout plans that are in issue state or carry an issue category.
+    - Admin roles can view all rows (or filter by im argument).
+    - IM role is restricted to its own dispatches.
+    """
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+
+    is_admin = (
+        "Administrator" in roles
+        or "System Manager" in roles
+        or "INET Admin" in roles
+    )
+    is_im = "INET IM" in roles
+    if not (is_admin or is_im):
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    im_filter_value = (im or "").strip()
+    if is_im:
+        im_filter_value, _, _ = resolve_im_for_session(im_filter_value)
+        if not im_filter_value:
+            return []
+
+    rows = frappe.db.sql(
+        """
+        SELECT
+            rp.name AS rollout_plan,
+            rp.po_dispatch,
+            rp.plan_status,
+            rp.issue_category,
+            rp.plan_date,
+            rp.visit_type,
+            rp.team,
+            rp.modified,
+            pd.im,
+            pd.po_no,
+            pd.project_code,
+            pd.site_code,
+            pd.site_name,
+            pd.center_area,
+            pd.region_type,
+            de.name AS execution_name,
+            de.execution_status,
+            de.qc_status,
+            de.ciag_status
+        FROM `tabRollout Plan` rp
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
+        WHERE rp.plan_status = 'Planning with Issue'
+        ORDER BY rp.modified DESC
+        LIMIT 1000
+        """,
+        as_dict=True,
+    )
+
+    out = []
+    seen_plans = set()
+    for r in rows or []:
+        rp_name = r.get("rollout_plan")
+        if not rp_name or rp_name in seen_plans:
+            continue
+        if im_filter_value and (r.get("im") or "") != im_filter_value:
+            continue
+        seen_plans.add(rp_name)
+        out.append(
+            {
+                "rollout_plan": rp_name,
+                "po_dispatch": r.get("po_dispatch"),
+                "plan_status": r.get("plan_status"),
+                "issue_category": r.get("issue_category"),
+                "plan_date": r.get("plan_date"),
+                "visit_type": r.get("visit_type"),
+                "team": r.get("team"),
+                "im": r.get("im"),
+                "po_no": r.get("po_no"),
+                "project_code": r.get("project_code"),
+                "site_code": r.get("site_code"),
+                "site_name": r.get("site_name"),
+                "center_area": r.get("center_area"),
+                "region_type": r.get("region_type"),
+                "execution_name": r.get("execution_name"),
+                "execution_status": r.get("execution_status"),
+                "qc_status": r.get("qc_status"),
+                "ciag_status": r.get("ciag_status"),
+                "modified": r.get("modified"),
             }
         )
     return out
@@ -2605,8 +2725,8 @@ def list_im_daily_executions(im=None, execution_status=None):
         f"""
         SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan, de.team, de.execution_date,
                de.execution_status, de.achieved_qty, de.achieved_amount, de.gps_location,
-               de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag,
-               pd.im AS dispatch_im, pd.site_code, pd.po_no,
+               de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag, de.photos,
+               pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
                (SELECT wd.name FROM `tabWork Done` wd WHERE wd.execution = de.name LIMIT 1) AS work_done
                {im_ex_extra_sql}
         FROM `tabDaily Execution` de
@@ -2694,20 +2814,16 @@ def get_duid_overview(duid=None, po_no=None):
 
 
 @frappe.whitelist()
-def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route="standard"):
+def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route=None):
     """
-    Re-visit workflow: move job back to planning. planning_route:
-    'standard' -> plan_status Planned; 'with_issue' -> Planning with Issue.
+    Re-visit workflow: move job back to planning with issue.
     Non-completed executions for this plan are cancelled.
     """
     if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
         frappe.throw("Invalid Rollout Plan")
 
-    route = (planning_route or "standard").lower().replace(" ", "_")
-    if route in ("with_issue", "planning_with_issue", "issue"):
-        new_status = "Planning with Issue"
-    else:
-        new_status = "Planned"
+    # Route selection removed: all re-plans are tracked as issue/risk.
+    new_status = "Planning with Issue"
 
     source = frappe.get_doc("Rollout Plan", rollout_plan)
     existing_revisit = frappe.db.get_value(

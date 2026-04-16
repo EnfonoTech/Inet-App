@@ -95,6 +95,7 @@ const adminNav = [
   { to: "/planning",   label: "Planning",    icon: "calendar" },
   { to: "/execution",  label: "Execution",   icon: "eye" },
   { to: "/work-done",  label: "Work Done",   icon: "checkCircle" },
+  { to: "/issues-risks", label: "Issues & Risks", icon: "clipboard" },
   { to: "/reports",    label: "Reports",     icon: "barChart" },
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/overview",   label: "Search / Overview", icon: "search" },
@@ -108,6 +109,8 @@ const imNav = [
   { to: "/im-dispatch",  label: "Dispatches",   icon: "send" },
   { to: "/im-planning",  label: "Planning",     icon: "calendar" },
   { to: "/im-execution", label: "Execution",    icon: "eye" },
+  { to: "/im-work-done", label: "Work Done",    icon: "checkCircle" },
+  { to: "/im-issues-risks", label: "Issues & Risks", icon: "clipboard" },
   { to: "/im-reports",   label: "Reports",      icon: "barChart" },
   { to: "/im-timesheets", label: "Time logs",   icon: "clock" },
 ];
@@ -115,6 +118,7 @@ const imNav = [
 const fieldNav = [
   { to: "/today",        label: "Today's Work", icon: "clipboard" },
   { to: "/field-execute", label: "Execute",     icon: "tool" },
+  { to: "/field-qc-ciag", label: "QC / CIAG", icon: "eye" },
   { to: "/field-history",    label: "History",     icon: "checkCircle" },
   { to: "/field-timesheet", label: "Time log",    icon: "clock" },
 ];

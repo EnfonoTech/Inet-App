@@ -52,6 +52,21 @@ function Pill({ label, value, tone = "blue" }) {
   );
 }
 
+function parseAttachments(raw) {
+  if (!raw) return [];
+  const text = String(raw).trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const arr = JSON.parse(text);
+      if (Array.isArray(arr)) return arr.map((v) => String(v || "").trim()).filter(Boolean);
+    } catch {
+      // ignore and fallback
+    }
+  }
+  return text.split(/\r?\n|,/).map((v) => v.trim()).filter(Boolean);
+}
+
 export default function ExecutionMonitor() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -361,6 +376,16 @@ export default function ExecutionMonitor() {
                 <DetailItem label="QC Status" value={detailRow.qc_status} />
                 <DetailItem label="GPS" value={detailRow.gps_location} />
               </div>
+              {parseAttachments(detailRow.photos).length > 0 && (
+                <div style={{ marginTop: 12, borderRadius: 8, background: "#fff", padding: 10 }}>
+                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Attachments</div>
+                  {parseAttachments(detailRow.photos).map((url, idx) => (
+                    <div key={`${url}-${idx}`} style={{ marginBottom: 4 }}>
+                      <a href={url} target="_blank" rel="noreferrer">{url}</a>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

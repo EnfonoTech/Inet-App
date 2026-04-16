@@ -164,11 +164,10 @@ export const pmApi = {
     }),
   getDuidOverview:      (duid, poNo) =>
     call("inet_app.api.command_center.get_duid_overview", { duid: duid || "", po_no: poNo || "" }),
-  reopenRolloutForRevisit: (rolloutPlan, issueCategory, planningRoute) =>
+  reopenRolloutForRevisit: (rolloutPlan, issueCategory) =>
     call("inet_app.api.command_center.reopen_rollout_for_revisit", {
       rollout_plan: rolloutPlan,
       issue_category: issueCategory || "",
-      planning_route: planningRoute || "standard",
     }),
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
   uploadPOFile:         (file_url, customer)  => call("inet_app.api.command_center.upload_po_file", { file_url, customer: customer || "" }),
@@ -191,6 +190,7 @@ export const pmApi = {
   listActivityCosts:    ()              => call("inet_app.api.command_center.list_activity_costs"),
   listExecutionMonitorRows: (filters)   => call("inet_app.api.command_center.list_execution_monitor_rows", { filters: JSON.stringify(filters || {}) }),
   listWorkDoneRows:        (filters)    => call("inet_app.api.command_center.list_work_done_rows", { filters: JSON.stringify(filters || {}) }),
+  listIssueRiskRows:       (im)         => call("inet_app.api.command_center.list_issue_risk_rows", { im: im || "" }),
 
   // ── Execution Time Log (field work time on rollout; not ERPNext Timesheet) ──
   startExecutionTimer:        (rollout_plan) =>
