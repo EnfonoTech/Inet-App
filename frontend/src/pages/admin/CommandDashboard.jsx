@@ -10,7 +10,8 @@ const fmt = new Intl.NumberFormat("en-US");
 
 function fmtTimestamp(ts) {
   if (!ts) return "";
-  const d = new Date(ts.replace(" ", "T"));
+  const d = new Date(String(ts).replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) return String(ts);
   const day = d.getDate();
   const mon = d.toLocaleString("en-US", { month: "short" });
   const year = d.getFullYear();
@@ -74,14 +75,18 @@ function LoadingState() {
 export default function CommandDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
   const intervalRef = useRef(null);
 
   async function fetchData() {
     try {
+      setFetchError(null);
       const res = await pmApi.getCommandDashboard();
       setData(res);
     } catch (err) {
       console.error("Command Dashboard fetch error:", err);
+      setFetchError(err.message || "Failed to load dashboard");
+      setData((prev) => prev);
     } finally {
       setLoading(false);
     }
@@ -99,9 +104,41 @@ export default function CommandDashboard() {
     return () => clearInterval(intervalRef.current);
   }, []);
 
-  if (loading || !data) return <LoadingState />;
+  if (loading && !data) return <LoadingState />;
 
-  const { operational, inet, subcon, company, top_teams, im_performance, team_status, watchlist, last_updated } = data;
+  if (!data) {
+    return (
+      <div className="dashboard">
+        <div className="notice error" style={{ margin: "24px 28px" }}>
+          <span>⚠</span> {fetchError || "Dashboard could not be loaded."}
+          {" "}
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ marginLeft: 12 }}
+            onClick={() => {
+              setLoading(true);
+              fetchData();
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const {
+    operational = {},
+    inet = {},
+    subcon = {},
+    company = {},
+    top_teams = [],
+    im_performance = [],
+    team_status = {},
+    watchlist = [],
+    last_updated = null,
+  } = data;
 
   /* ── Top 5 Teams table config ────────────────────────────── */
   const top5 = (top_teams || []).slice(0, 5);
@@ -148,7 +185,7 @@ export default function CommandDashboard() {
         <h1>INet Telecom Operations Command Dashboard</h1>
         <div className="subtitle">
           <span className="live-dot" />
-          <span className="dash-timestamp">Last updated: {fmtTimestamp(last_updated)}</span>
+          <span className="dash-timestamp">Last updated: {last_updated ? fmtTimestamp(last_updated) : "—"}</span>
         </div>
       </div>
 
@@ -181,7 +218,7 @@ export default function CommandDashboard() {
         <KPICard label="Target" value={subcon.sub_target} />
         <KPICard label="Revenue" value={subcon.sub_revenue} colorClass="text-green" />
         <KPICard label="Expense" value={subcon.sub_expense} />
-        <KPICard label="INET Margin" value={subcon.inet_margin_sub} colorClass={subcon.inet_margin_sub >= 0 ? "text-green" : "text-red"} />
+        <KPICard label="INET Margin" value={subcon.inet_margin_sub} colorClass={(subcon.inet_margin_sub ?? 0) >= 0 ? "text-green" : "text-red"} />
         <KPICard label="Gap" value={subcon.sub_gap} colorClass="text-red" />
       </div>
 
@@ -192,8 +229,8 @@ export default function CommandDashboard() {
         <KPICard label="Achieved" value={company.total_achieved} colorClass="text-green" />
         <KPICard label="Gap" value={company.company_gap} colorClass="text-red" />
         <KPICard label="Total Cost" value={company.total_cost} />
-        <KPICard label="Profit / Loss" value={company.profit_loss} colorClass={company.profit_loss >= 0 ? "text-green" : "text-red"} />
-        <KPICard label="Coverage %" value={`${company.coverage_pct}%`} colorClass={company.coverage_pct >= 50 ? "text-green" : company.coverage_pct >= 20 ? "text-amber" : "text-red"} />
+        <KPICard label="Profit / Loss" value={company.profit_loss} colorClass={(company.profit_loss ?? 0) >= 0 ? "text-green" : "text-red"} />
+        <KPICard label="Coverage %" value={`${Number(company.coverage_pct ?? 0).toFixed(1)}%`} colorClass={(company.coverage_pct ?? 0) >= 50 ? "text-green" : (company.coverage_pct ?? 0) >= 20 ? "text-amber" : "text-red"} />
       </div>
 
       {/* ── Bottom Grid: 4 Panels ──────────────────────────── */}

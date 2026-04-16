@@ -4,121 +4,6 @@ import { useAuth } from "../../context/AuthContext";
 import KPICard from "../../components/KPICard";
 import { BarChart, DonutChart } from "../../components/Charts";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-
-function statusTone(status) {
-  const s = String(status || "").toLowerCase();
-  if (s.includes("risk")) return "red";
-  if (s.includes("hold")) return "amber";
-  if (s.includes("active")) return "green";
-  return "blue";
-}
-
-function StatusBadge({ status }) {
-  const tone = statusTone(status);
-  const styles = {
-    red:   { bg: "#fef2f2", fg: "#991b1b", bd: "#fecaca" },
-    amber: { bg: "#fffbeb", fg: "#92400e", bd: "#fde68a" },
-    green: { bg: "#ecfdf5", fg: "#065f46", bd: "#a7f3d0" },
-    blue:  { bg: "#eff6ff", fg: "#1e40af", bd: "#bfdbfe" },
-  }[tone];
-
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "3px 10px",
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 800,
-        textTransform: "uppercase",
-        letterSpacing: "0.04em",
-        background: styles.bg,
-        color: styles.fg,
-        border: `1px solid ${styles.bd}`,
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span style={{ width: 6, height: 6, borderRadius: 999, background: styles.fg, opacity: 0.7 }} />
-      {status || "—"}
-    </span>
-  );
-}
-
-function SetupGuide({ debug, imName }) {
-  const resolved    = debug?.im_resolved || imName || "—";
-  const identifiers = debug?.im_identifiers || [resolved];
-  const teamsFound  = debug?.teams_found ?? 0;
-  const projectsFound = debug?.projects_found ?? 0;
-
-  return (
-    <div style={{
-      margin: "20px 28px",
-      background: "rgba(99,102,241,0.08)",
-      border: "1px solid rgba(99,102,241,0.3)",
-      borderRadius: 12,
-      padding: "20px 24px",
-    }}>
-      <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 12, color: "#6366f1" }}>
-        IM Account Diagnostic
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 16 }}>
-        {[
-          { label: "Resolved as",    value: resolved,       ok: resolved !== "—" },
-          { label: "Teams linked",   value: teamsFound,     ok: teamsFound > 0 },
-          { label: "Projects linked",value: projectsFound,  ok: projectsFound > 0 },
-        ].map((item) => (
-          <div key={item.label} style={{
-            background: "rgba(15,30,55,0.4)",
-            borderRadius: 8, padding: "10px 14px",
-            border: `1px solid ${item.ok ? "rgba(74,222,128,0.3)" : "rgba(248,113,113,0.3)"}`,
-          }}>
-            <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginBottom: 4 }}>{item.label}</div>
-            <div style={{ fontWeight: 700, fontSize: "0.95rem", color: item.ok ? "#4ade80" : "#f87171", fontFamily: "monospace" }}>
-              {String(item.value)}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Identifiers list */}
-      <div style={{ marginBottom: 14, padding: "10px 14px", background: "rgba(15,30,55,0.4)", borderRadius: 8, fontSize: "0.82rem" }}>
-        <span style={{ color: "#94a3b8" }}>Searching teams &amp; projects using: </span>
-        {identifiers.map((id) => (
-          <code key={id} style={{ marginRight: 8, color: "#fbbf24", background: "rgba(251,191,36,0.1)", padding: "2px 6px", borderRadius: 4 }}>{id}</code>
-        ))}
-        <span style={{ color: "#64748b", fontSize: "0.72rem" }}>
-          — make sure INET Team → Implementation Manager matches one of these exactly
-        </span>
-      </div>
-
-      <div style={{ fontSize: "0.82rem", color: "#94a3b8", lineHeight: 1.8 }}>
-        <strong style={{ color: "#e8ecf4" }}>Setup checklist:</strong>
-        <ol style={{ margin: "8px 0 0 16px", padding: 0 }}>
-          <li>
-            <strong style={{ color: "#e8ecf4" }}>IM Master</strong> —{" "}
-            <a href="/app/im-master" target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>Open your IM Master record</a>{" "}
-            → set <code style={{ color: "#fbbf24" }}>User Account</code> to your login email
-          </li>
-          <li>
-            <strong style={{ color: "#e8ecf4" }}>INET Teams</strong> —{" "}
-            <a href="/app/inet-team" target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>Open each INET Team</a>{" "}
-            → set <code style={{ color: "#fbbf24" }}>Implementation Manager</code> by selecting your IM Master record (<strong>{resolved}</strong>)
-          </li>
-          <li>
-            <strong style={{ color: "#e8ecf4" }}>Projects</strong> —{" "}
-            <a href="/app/project-control-center" target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>Open each Project</a>{" "}
-            → set <code style={{ color: "#fbbf24" }}>Implementation Manager</code> by selecting your IM Master record (<strong>{resolved}</strong>)
-          </li>
-        </ol>
-      </div>
-    </div>
-  );
-}
-
 function LoadingState() {
   return (
     <div className="dashboard">
@@ -163,20 +48,36 @@ export default function IMDashboard() {
       <div className="dashboard">
         <div className="notice error" style={{ margin: "24px 28px" }}>
           <span>⚠</span> {error}
+          {" "}
+          <button type="button" className="btn-secondary" style={{ marginLeft: 12 }} onClick={() => { setLoading(true); loadData(); }}>
+            Retry
+          </button>
         </div>
-        <SetupGuide debug={null} imName={imName} />
       </div>
     );
   }
 
-  const kpis     = data?.kpi || data?.kpis || {};
-  const teams    = data?.teams    || [];
-  const debug    = data?.debug    || null;
-  const message  = data?.message  || null;
-  const action   = data?.action_items || {};
+  if (!data) {
+    return (
+      <div className="dashboard">
+        <div className="notice error" style={{ margin: "24px 28px" }}>
+          <span>⚠</span> No dashboard payload.
+          {" "}
+          <button type="button" className="btn-secondary" style={{ marginLeft: 12 }} onClick={() => { setLoading(true); loadData(); }}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-  // Show setup guide when there is no data at all
-  const isEmpty = teams.length === 0 && projects.length === 0;
+  const kpis = data?.kpi || data?.kpis || {};
+  const message = data?.message || null;
+  const action = data?.action_items || {};
+  /* Always define these — get_im_dashboard returns them; stale bundles or partial edits
+   * must not hit a bare `projects` / `teams` ReferenceError in render. */
+  const teams = Array.isArray(data?.teams) ? data.teams : [];
+  const projects = Array.isArray(data?.projects) ? data.projects : [];
 
   const monthPct = (() => {
     const target = kpis.monthly_target || 0;
@@ -213,6 +114,12 @@ export default function IMDashboard() {
         <div className="subtitle">
           <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
             {data?.im || imName || "Installation Manager"}
+            {(teams.length > 0 || projects.length > 0) && (
+              <span style={{ marginLeft: 10, opacity: 0.9 }}>
+                · {teams.length} team{teams.length !== 1 ? "s" : ""} · {projects.length} project
+                {projects.length !== 1 ? "s" : ""}
+              </span>
+            )}
           </span>
         </div>
       </div>
@@ -223,9 +130,6 @@ export default function IMDashboard() {
           <span>ℹ</span> {message}
         </div>
       )}
-
-      {/* ── Setup guide if no data ──────────────────────────── */}
-      {isEmpty && <SetupGuide debug={debug} imName={imName} />}
 
       {/* ── KPI Row ─────────────────────────────────────────── */}
       <div className="section-label">INET Teams Performance</div>

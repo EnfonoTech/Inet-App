@@ -2754,9 +2754,11 @@ def get_command_dashboard():
         "SELECT COALESCE(SUM(monthly_target), 0) AS total FROM `tabProject Control Center` WHERE active_flag = 'Yes'",
         as_dict=True,
     )
-    inet_monthly_target = flt(pcc_targets[0].total if pcc_targets else 0) or 465000.0
+    inet_monthly_target = flt(pcc_targets[0].total if pcc_targets else 0)
 
-    inet_target_today = (inet_monthly_target * day_of_month) / days_in_month
+    inet_target_today = (
+        (inet_monthly_target * day_of_month) / days_in_month if days_in_month else 0.0
+    )
 
     inet_achieved_rows = frappe.db.sql(
         """
@@ -2780,7 +2782,22 @@ def get_command_dashboard():
         fields=["name", "team_id"],
     )
     active_sub_teams = len(sub_teams)
-    sub_target = 354000.0  # default from Excel
+    # Real MTD target: sum of rollout plan target_amount for active SUB teams this month
+    sub_target = 0.0
+    if sub_teams:
+        sub_names = [t.name for t in sub_teams]
+        sub_ph = ", ".join(["%s"] * len(sub_names))
+        sub_tgt_rows = frappe.db.sql(
+            f"""
+            SELECT COALESCE(SUM(rp.target_amount), 0) AS total
+            FROM `tabRollout Plan` rp
+            WHERE rp.team IN ({sub_ph})
+            AND rp.plan_date BETWEEN %s AND %s
+            """,
+            tuple(sub_names) + (first_day, last_day),
+            as_dict=True,
+        )
+        sub_target = flt(sub_tgt_rows[0].total if sub_tgt_rows else 0)
 
     sub_revenue_rows = frappe.db.sql(
         """
@@ -2825,11 +2842,23 @@ def get_command_dashboard():
         (first_day, last_day),
         as_dict=True,
     )
+    team_rollout_targets = frappe.db.sql(
+        """
+        SELECT team AS team, COALESCE(SUM(target_amount), 0) AS target
+        FROM `tabRollout Plan`
+        WHERE plan_date BETWEEN %s AND %s
+        AND team IS NOT NULL AND team != ''
+        GROUP BY team
+        """,
+        (first_day, last_day),
+        as_dict=True,
+    )
+    target_by_team = {r.team: flt(r.target) for r in (team_rollout_targets or [])}
     for _row in top_teams:
         tid = _row.get("team")
         _row["team_name"] = frappe.db.get_value("INET Team", tid, "team_name") or tid or "—"
         _row["achieved"] = flt(_row.get("revenue", 0))
-        _row["target"] = 0.0
+        _row["target"] = target_by_team.get(tid, 0.0)
 
     # ---- IM performance ----------------------------------------------------
     im_perf = frappe.db.sql(
@@ -3444,8 +3473,10 @@ def get_im_dashboard(im=None):
         tuple(im_identifiers),
         as_dict=True,
     )
-    monthly_target = flt(monthly_target_rows[0].total if monthly_target_rows else 0) or 465000.0
-    target_today = (monthly_target * day_of_month) / days_in_month
+    monthly_target = flt(monthly_target_rows[0].total if monthly_target_rows else 0)
+    target_today = (
+        (monthly_target * day_of_month) / days_in_month if days_in_month else 0.0
+    )
     gap_today = target_today - revenue
 
     # Active teams today
@@ -3491,6 +3522,193 @@ def get_im_dashboard(im=None):
         },
         "debug": debug_info,
         "last_updated": frappe.utils.now(),
+    }
+
+
+@frappe.whitelist()
+def get_im_reports():
+    """
+    IM-scoped report bundle for the portal (single round-trip).
+    Same IM resolution as get_im_dashboard; no hardcoded placeholders.
+    """
+    im_resolved, im_identifiers = _require_inet_im_session()
+    first_day, last_day, _today_str = _month_bounds()
+    im_ph = ", ".join(["%s"] * len(im_identifiers))
+
+    disp_rows = frappe.db.sql(
+        f"""
+        SELECT dispatch_status, COALESCE(project_code, '') AS project_code,
+               COALESCE(line_amount, 0) AS line_amount, dispatch_mode
+        FROM `tabPO Dispatch`
+        WHERE im IN ({im_ph})
+        LIMIT 2000
+        """,
+        tuple(im_identifiers),
+        as_dict=True,
+    ) or []
+    total_lines = len(disp_rows)
+    total_amount = sum(flt(r.get("line_amount")) for r in disp_rows)
+    by_status = {}
+    by_project = {}
+    by_mode = {}
+    for r in disp_rows:
+        st = (r.get("dispatch_status") or "").strip() or "(No status)"
+        by_status[st] = by_status.get(st, 0) + 1
+        pk = (r.get("project_code") or "").strip() or "(No project)"
+        by_project[pk] = by_project.get(pk, 0) + flt(r.get("line_amount"))
+        md = (r.get("dispatch_mode") or "").strip() or "(No mode)"
+        by_mode[md] = by_mode.get(md, 0) + 1
+
+    teams = frappe.get_all(
+        "INET Team",
+        filters={"im": ["in", im_identifiers], "status": "Active"},
+        fields=["name", "team_id", "team_name"],
+    )
+    team_ids = [t.name for t in teams]
+
+    rollout_status_counts = []
+    rollouts_recent = []
+    exec_status_counts = []
+    executions_recent = []
+    wd_mtd = {"count": 0, "revenue_sar": 0.0, "by_billing": {}}
+
+    if team_ids:
+        tph = ", ".join(["%s"] * len(team_ids))
+        rollout_status_counts = (
+            frappe.db.sql(
+                f"""
+                SELECT rp.plan_status AS status_key, COUNT(*) AS cnt
+                FROM `tabRollout Plan` rp
+                WHERE rp.team IN ({tph})
+                GROUP BY rp.plan_status
+                ORDER BY cnt DESC
+                """,
+                tuple(team_ids),
+                as_dict=True,
+            )
+            or []
+        )
+
+        rollouts_recent = (
+            frappe.db.sql(
+                f"""
+                SELECT rp.name, rp.plan_date, rp.plan_status, rp.team, rp.po_dispatch,
+                       rp.visit_type, rp.target_amount
+                FROM `tabRollout Plan` rp
+                WHERE rp.team IN ({tph})
+                ORDER BY rp.modified DESC
+                LIMIT 80
+                """,
+                tuple(team_ids),
+                as_dict=True,
+            )
+            or []
+        )
+        for r in rollouts_recent:
+            tid = r.get("team")
+            r["team_name"] = frappe.db.get_value("INET Team", tid, "team_name") or tid
+
+        exec_status_counts = (
+            frappe.db.sql(
+                f"""
+                SELECT de.execution_status AS status_key, COUNT(*) AS cnt
+                FROM `tabDaily Execution` de
+                WHERE de.team IN ({tph})
+                AND de.execution_date BETWEEN %s AND %s
+                GROUP BY de.execution_status
+                ORDER BY cnt DESC
+                """,
+                tuple(team_ids) + (first_day, last_day),
+                as_dict=True,
+            )
+            or []
+        )
+
+        executions_recent = (
+            frappe.db.sql(
+                f"""
+                SELECT de.name, de.rollout_plan, de.execution_date, de.execution_status,
+                       de.qc_status, de.team, rp.po_dispatch
+                FROM `tabDaily Execution` de
+                LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+                WHERE de.team IN ({tph})
+                AND de.execution_date BETWEEN %s AND %s
+                ORDER BY de.modified DESC
+                LIMIT 60
+                """,
+                tuple(team_ids) + (first_day, last_day),
+                as_dict=True,
+            )
+            or []
+        )
+
+        wd_rows = (
+            frappe.db.sql(
+                f"""
+                SELECT wd.billing_status AS billing_status,
+                       COUNT(*) AS c,
+                       COALESCE(SUM(wd.revenue_sar), 0) AS rev
+                FROM `tabWork Done` wd
+                INNER JOIN `tabDaily Execution` exe ON exe.name = wd.execution
+                WHERE exe.team IN ({tph})
+                AND exe.execution_date BETWEEN %s AND %s
+                GROUP BY wd.billing_status
+                """,
+                tuple(team_ids) + (first_day, last_day),
+                as_dict=True,
+            )
+            or []
+        )
+        by_billing = {}
+        total_rev = 0.0
+        total_cnt = 0
+        for w in wd_rows:
+            bs = (w.get("billing_status") or "").strip() or "Pending"
+            c = cint(w.get("c"))
+            rev = flt(w.get("rev"))
+            by_billing[bs] = {"count": c, "revenue_sar": rev}
+            total_cnt += c
+            total_rev += rev
+        wd_mtd = {"count": total_cnt, "revenue_sar": total_rev, "by_billing": by_billing}
+
+    projects = frappe.get_all(
+        "Project Control Center",
+        filters={"implementation_manager": ["in", im_identifiers]},
+        fields=[
+            "name",
+            "project_code",
+            "project_name",
+            "project_status",
+            "completion_percentage",
+            "budget_amount",
+            "actual_cost",
+        ],
+        order_by="modified desc",
+        limit_page_length=50,
+    )
+    for p in projects:
+        p["completion_pct"] = p.get("completion_percentage") or 0
+        p["budget"] = flt(p.get("budget_amount"))
+        p["status"] = p.get("project_status") or "Active"
+
+    return {
+        "im": im_resolved,
+        "last_updated": frappe.utils.now(),
+        "period": {"from": first_day, "to": last_day},
+        "dispatch_summary": {
+            "total_lines": total_lines,
+            "total_amount": total_amount,
+            "by_status": by_status,
+            "by_project": by_project,
+            "by_dispatch_mode": by_mode,
+        },
+        "rollout_status_counts": rollout_status_counts,
+        "rollouts_recent": rollouts_recent,
+        "execution_status_counts": exec_status_counts,
+        "executions_recent": executions_recent,
+        "work_done_mtd": wd_mtd,
+        "projects": projects,
+        "teams": teams,
     }
 
 

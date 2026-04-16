@@ -1,6 +1,6 @@
 {
  "charts": [],
- "content": "[{\"id\":\"AV_pouvtqI\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">PMS</span>\",\"col\":12}},{\"id\":\"S0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Control Center\",\"col\":3}},{\"id\":\"S1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"PO Intake\",\"col\":3}},{\"id\":\"S2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"PO Dispatch\",\"col\":3}},{\"id\":\"S3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Rollout Plan\",\"col\":3}},{\"id\":\"S4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Execution\",\"col\":3}},{\"id\":\"S5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Work Done\",\"col\":3}},{\"id\":\"S6\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Execution Time Log\",\"col\":3}},{\"id\":\"H2\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Masters</span>\",\"col\":12}},{\"id\":\"S7\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"IM Master\",\"col\":3}},{\"id\":\"S8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"INET Team\",\"col\":3}},{\"id\":\"S9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Domain\",\"col\":3}},{\"id\":\"S10\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Huawei IM\",\"col\":3}},{\"id\":\"S11\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer Item Master\",\"col\":3}},{\"id\":\"S12\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Activity Cost Master\",\"col\":3}},{\"id\":\"S13\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Work Update\",\"col\":3}}]",
+ "content": "[{\"id\":\"AV_pouvtqI\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">PMS</span>\",\"col\":12}},{\"id\":\"Sportal\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"INET PMS\",\"col\":3}},{\"id\":\"S0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Control Center\",\"col\":3}},{\"id\":\"S1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"PO Intake\",\"col\":3}},{\"id\":\"S2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"PO Dispatch\",\"col\":3}},{\"id\":\"S3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Rollout Plan\",\"col\":3}},{\"id\":\"S4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Execution\",\"col\":3}},{\"id\":\"S5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Work Done\",\"col\":3}},{\"id\":\"S6\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Execution Time Log\",\"col\":3}},{\"id\":\"H2\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Masters</span>\",\"col\":12}},{\"id\":\"S7\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"IM Master\",\"col\":3}},{\"id\":\"S8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"INET Team\",\"col\":3}},{\"id\":\"S9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Domain\",\"col\":3}},{\"id\":\"S10\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Huawei IM\",\"col\":3}},{\"id\":\"S11\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer Item Master\",\"col\":3}},{\"id\":\"S12\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Activity Cost Master\",\"col\":3}},{\"id\":\"S13\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Work Update\",\"col\":3}}]",
  "creation": "2026-04-08 09:37:46.910739",
  "custom_blocks": [],
  "docstatus": 0,
@@ -13,7 +13,7 @@
  "is_hidden": 0,
  "label": "PMS",
  "links": [],
- "modified": "2026-04-12 13:23:02.675041",
+ "modified": "2026-04-16 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "PMS",
@@ -25,6 +25,12 @@
  "roles": [],
  "sequence_id": 34.0,
  "shortcuts": [
+  {
+   "color": "Green",
+   "label": "INET PMS",
+   "type": "URL",
+   "url": "/pms/dashboard"
+  },
   {
    "color": "Grey",
    "doc_view": "List",

@@ -124,7 +124,7 @@ export default function Reports() {
                   <tr key={idx}>
                     {(columns || []).map((col) => (
                       <td key={col.fieldname || col.label}>
-                        {row?.[col.fieldname] ?? "-"}
+                        {row?.[col.fieldname || col.name] ?? "—"}
                       </td>
                     ))}
                   </tr>

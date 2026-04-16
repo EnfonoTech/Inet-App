@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 // Correct Frappe doctype names + actual field names from each doctype JSON
 const MASTER_DOCTYPES = [
@@ -28,6 +29,24 @@ const MASTER_DOCTYPES = [
     color: "#8b5cf6",
     fields: ["name", "full_name", "email", "monthly_cost_sar", "daily_cost_sar", "status"],
     displayCols: ["full_name", "email", "monthly_cost_sar", "daily_cost_sar", "status"],
+  },
+  {
+    label: "Project Domain",
+    doctype: "Project Domain",
+    description: "Project domain categories",
+    icon: "🌐",
+    color: "#0d9488",
+    fields: ["name", "domain_name", "status", "description"],
+    displayCols: ["domain_name", "status", "description"],
+  },
+  {
+    label: "Huawei IM",
+    doctype: "Huawei IM",
+    description: "Huawei implementation manager contacts",
+    icon: "📱",
+    color: "#ea580c",
+    fields: ["name", "full_name", "email", "phone", "status"],
+    displayCols: ["full_name", "email", "phone", "status"],
   },
   {
     label: "Subcontractor",
@@ -303,8 +322,20 @@ function RecordsTable({ doctype, fields, displayCols }) {
 }
 
 export default function Masters() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [counts, setCounts] = useState({});
   const [expandedDoctype, setExpandedDoctype] = useState(null);
+
+  useEffect(() => {
+    const raw = searchParams.get("expand");
+    if (!raw) {
+      setExpandedDoctype(null);
+      return;
+    }
+    const decoded = decodeURIComponent(raw);
+    const ok = MASTER_DOCTYPES.some((m) => m.doctype === decoded);
+    setExpandedDoctype(ok ? decoded : null);
+  }, [searchParams]);
 
   useEffect(() => {
     const loadCounts = async () => {
@@ -320,7 +351,10 @@ export default function Masters() {
   }, []);
 
   function toggleExpand(doctype) {
-    setExpandedDoctype((prev) => (prev === doctype ? null : doctype));
+    const next = expandedDoctype === doctype ? null : doctype;
+    setExpandedDoctype(next);
+    if (next) setSearchParams({ expand: next }, { replace: true });
+    else setSearchParams({}, { replace: true });
   }
 
   const expanded = MASTER_DOCTYPES.find((m) => m.doctype === expandedDoctype);
@@ -387,7 +421,10 @@ export default function Masters() {
                 <button
                   className="btn-secondary"
                   style={{ fontSize: "0.78rem", padding: "4px 14px" }}
-                  onClick={() => setExpandedDoctype(null)}
+                  onClick={() => {
+                    setExpandedDoctype(null);
+                    setSearchParams({}, { replace: true });
+                  }}
                 >
                   Close
                 </button>

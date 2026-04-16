@@ -169,7 +169,7 @@ export default function IMProjects() {
             <div className="empty-state">
               <div className="empty-icon">👤</div>
               <h3>IM account not set up</h3>
-              <p>Your user is not linked to an IM Master record. See dashboard for setup guide.</p>
+              <p>Your user is not linked to an IM Master record. Link IM Master → User Account to your login, and set Implementation Manager on INET Teams and projects.</p>
             </div>
           ) : filtered.length === 0 ? (
             <div className="empty-state">

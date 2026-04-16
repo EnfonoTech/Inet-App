@@ -152,6 +152,7 @@ export const pmApi = {
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
   getCommandDashboard:  ()          => call("inet_app.api.command_center.get_command_dashboard"),
   getIMDashboard:       (im)        => call("inet_app.api.command_center.get_im_dashboard", { im }),
+  getIMReports:         ()          => call("inet_app.api.command_center.get_im_reports"),
   listIMRolloutPlans:   (im, planStatus) =>
     call("inet_app.api.command_center.list_im_rollout_plans", {
       im: im || "",
