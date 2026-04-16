@@ -1231,9 +1231,10 @@ def create_im_dummy_po_dispatch(payload=None):
     line_amount = flt(0)
     center_area = None
 
-    # Unique synthetic PO number until mapped to real intake
-    for _attempt in range(20):
-        po_no = f"EMRG-{now_datetime().strftime('%Y%m%d%H%M%S')}-{frappe.generate_hash(length=4)}"
+    # Placeholder PO until map: DUMMY-yymmdd-XXXXXX (6 hex) → short POID e.g. DUMMY-260416-A3B4C5-1
+    dt = now_datetime()
+    for _attempt in range(30):
+        po_no = f"DUMMY-{dt.strftime('%y%m%d')}-{frappe.generate_hash(length=6).upper()}"
         if not frappe.db.exists("PO Dispatch", {"po_no": po_no}):
             break
     else:

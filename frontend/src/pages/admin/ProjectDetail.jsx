@@ -43,7 +43,6 @@ const TABS = [
   { key: "plans", label: "Rollout", countKey: "plan_count" },
   { key: "executions", label: "Execution", countKey: "execution_count" },
   { key: "work_done", label: "Work Done", countKey: "work_done_count" },
-  { key: "teams", label: "Teams", countKey: null },
 ];
 
 const ROLLOUT_MODAL_TABS = [
@@ -337,132 +336,6 @@ function RolloutDuidModal({ group, onClose, onOpenDetail }) {
   );
 }
 
-/* ── Assign Team Modal ─────────────────────────────────── */
-function AssignTeamModal({ projectCode, existingTeamIds, onClose, onSaved }) {
-  const [allTeams, setAllTeams] = useState([]);
-  const [form, setForm] = useState({
-    team_id: "",
-    role_in_project: "",
-    assignment_date: new Date().toISOString().split("T")[0],
-    end_date: "",
-    daily_cost: "",
-    utilization_percentage: "100",
-  });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    pmApi.listINETTeams({ status: "Active" }).then(teams => {
-      setAllTeams(teams || []);
-    }).catch(() => {});
-  }, []);
-
-  const availableTeams = allTeams.filter(t => !existingTeamIds.includes(t.team_id));
-
-  function setField(key, val) { setForm(prev => ({ ...prev, [key]: val })); }
-
-  function handleTeamChange(teamId) {
-    setField("team_id", teamId);
-    const team = allTeams.find(t => t.team_id === teamId);
-    if (team && team.daily_cost) {
-      setField("daily_cost", String(team.daily_cost));
-    }
-  }
-
-  async function handleSave(e) {
-    e.preventDefault();
-    if (!form.team_id) { setError("Please select a team"); return; }
-    setSaving(true);
-    setError(null);
-    try {
-      await pmApi.upsertAssignment({
-        team_id: form.team_id,
-        project: projectCode,
-        role_in_project: form.role_in_project || undefined,
-        assignment_date: form.assignment_date,
-        end_date: form.end_date || undefined,
-        daily_cost: form.daily_cost ? parseFloat(form.daily_cost) : undefined,
-        utilization_percentage: form.utilization_percentage ? parseFloat(form.utilization_percentage) : 100,
-        status: "Active",
-      });
-      onSaved();
-    } catch (err) {
-      setError(err.message || "Failed to assign team");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const inputStyle = {
-    width: "100%", padding: "9px 12px", border: "1px solid var(--border)",
-    borderRadius: "var(--radius-sm)", fontSize: 13, background: "var(--bg-white)", color: "var(--text)",
-  };
-  const labelStyle = { display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--text-label)" };
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">Assign Team to Project</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-        <div className="modal-body">
-          {error && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: 6, padding: "8px 12px", fontSize: 13, marginBottom: 14 }}>{error}</div>}
-          <form onSubmit={handleSave}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={labelStyle}>Team *</label>
-                <select style={inputStyle} value={form.team_id} onChange={e => handleTeamChange(e.target.value)} required>
-                  <option value="">-- Select a Team --</option>
-                  {availableTeams.map(t => (
-                    <option key={t.team_id} value={t.team_id}>
-                      {t.team_id} — {t.team_name} ({t.im || "No IM"}) [{t.team_type}]
-                    </option>
-                  ))}
-                </select>
-                {availableTeams.length === 0 && allTeams.length > 0 && (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>All active teams are already assigned.</div>
-                )}
-              </div>
-              <div>
-                <label style={labelStyle}>Role in Project</label>
-                <select style={inputStyle} value={form.role_in_project} onChange={e => setField("role_in_project", e.target.value)}>
-                  <option value="">-- Select --</option>
-                  <option value="Installation">Installation</option>
-                  <option value="Commissioning">Commissioning</option>
-                  <option value="Survey">Survey</option>
-                  <option value="Maintenance">Maintenance</option>
-                  <option value="Support">Support</option>
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Daily Cost (SAR)</label>
-                <input style={inputStyle} type="number" min="0" step="0.01" value={form.daily_cost} onChange={e => setField("daily_cost", e.target.value)} />
-              </div>
-              <div>
-                <label style={labelStyle}>Assignment Date *</label>
-                <input style={inputStyle} type="date" value={form.assignment_date} onChange={e => setField("assignment_date", e.target.value)} required />
-              </div>
-              <div>
-                <label style={labelStyle}>End Date</label>
-                <input style={inputStyle} type="date" value={form.end_date} onChange={e => setField("end_date", e.target.value)} />
-              </div>
-              <div>
-                <label style={labelStyle}>Utilization %</label>
-                <input style={inputStyle} type="number" min="0" max="100" value={form.utilization_percentage} onChange={e => setField("utilization_percentage", e.target.value)} />
-              </div>
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
-              <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-              <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Assigning..." : "Assign Team"}</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ── Edit Form for Overview tab ─────────────────────────── */
 function EditOverview({ project, onSave, onCancel }) {
   const [form, setForm] = useState({
@@ -588,7 +461,6 @@ export default function ProjectDetail() {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [editing, setEditing] = useState(false);
-  const [showAssignTeam, setShowAssignTeam] = useState(false);
   const [detailModal, setDetailModal] = useState(null);
   const [rolloutModalGroup, setRolloutModalGroup] = useState(null);
 
@@ -625,7 +497,6 @@ export default function ProjectDetail() {
     plans,
     executions,
     work_done,
-    teams,
     financial_summary: fin,
     rollout_by_duid: rolloutByDuid = [],
   } = data;
@@ -672,18 +543,6 @@ export default function ProjectDetail() {
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Work Done Details", row })}>View</button> },
   ];
 
-  const teamColumns = [
-    { key: "team_id", label: "Team ID", mono: true },
-    { key: "team_name", label: "Team Name" },
-    { key: "im", label: "IM" },
-    { key: "team_type", label: "Type" },
-    { key: "role_in_project", label: "Role" },
-    { key: "assignment_date", label: "Assigned" },
-    { key: "status", label: "Status", render: v => <Badge value={v} /> },
-    { key: "daily_cost", label: "Daily Cost (SAR)", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
-  ];
-
-  const teamCount = teams ? teams.length : 0;
   const marginColor = fin.total_margin >= 0 ? "#065f46" : "#991b1b";
   const marginAccent = fin.total_margin >= 0 ? "green" : "red";
 
@@ -734,7 +593,7 @@ export default function ProjectDetail() {
       {/* Tabs */}
       <div className="project-tabs">
         {TABS.map(tab => {
-          const count = tab.countKey ? fin[tab.countKey] : (tab.key === "teams" ? teamCount : null);
+          const count = tab.countKey ? fin[tab.countKey] : null;
           const isActive = activeTab === tab.key;
           return (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)} className={`project-tab${isActive ? ' active' : ''}`}>
@@ -853,24 +712,6 @@ export default function ProjectDetail() {
       )}
       {activeTab === "executions" && <DataTable columns={executionColumns} rows={executions} emptyMsg="No execution records for this project yet." />}
       {activeTab === "work_done" && <DataTable columns={workDoneColumns} rows={work_done} emptyMsg="No work done records for this project yet." />}
-      {activeTab === "teams" && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-            <button className="btn-primary" onClick={() => setShowAssignTeam(true)} style={{ fontSize: 13 }}>
-              + Assign Team
-            </button>
-          </div>
-          <DataTable columns={teamColumns} rows={teams} emptyMsg="No teams assigned to this project yet." />
-          {showAssignTeam && (
-            <AssignTeamModal
-              projectCode={project.project_code}
-              existingTeamIds={(teams || []).map(t => t.team_id)}
-              onClose={() => setShowAssignTeam(false)}
-              onSaved={() => { setShowAssignTeam(false); loadData(); }}
-            />
-          )}
-        </div>
-      )}
 
       {rolloutModalGroup && (
         <RolloutDuidModal
