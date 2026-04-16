@@ -559,14 +559,16 @@ export default function IMExecution() {
                       >
                         View
                       </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        style={{ fontSize: "0.72rem", padding: "4px 8px" }}
-                        onClick={() => setReopenFor(e.rollout_plan)}
-                      >
-                        Re-plan
-                      </button>
+                      {!e.work_done && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: "0.72rem", padding: "4px 8px" }}
+                          onClick={() => setReopenFor(e.rollout_plan)}
+                        >
+                          Re-plan
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
