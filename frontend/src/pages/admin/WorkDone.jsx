@@ -100,14 +100,22 @@ export default function WorkDone() {
         (r.project_code || "").toLowerCase().includes(q) ||
         (r.po_no || "").toLowerCase().includes(q) ||
         (r.center_area || "").toLowerCase().includes(q) ||
-        (r.region_type || "").toLowerCase().includes(q)
+        (r.region_type || "").toLowerCase().includes(q) ||
+        (r.team_name || "").toLowerCase().includes(q) ||
+        (r.im || "").toLowerCase().includes(q) ||
+        (r.im_full_name || "").toLowerCase().includes(q)
       );
     }
     return true;
   });
 
   const hasFilters = search || billingFilter || teamFilter || projectFilter || duidFilter || fromDate || toDate;
-  const teams = [...new Set(rows.map((r) => r.team).filter(Boolean))].sort();
+  const teams = [...new Set(rows.map((r) => r.team).filter(Boolean))]
+    .sort()
+    .map((tid) => {
+      const hit = rows.find((r) => r.team === tid);
+      return { id: tid, label: hit?.team_name || tid };
+    });
   const projects = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
   const duids = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
 
@@ -139,7 +147,7 @@ export default function WorkDone() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, dummy POID, Item, Project, Team, Center area, Region…"
+          placeholder="Search POID, dummy POID, Item, Project, Team, IM, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -164,7 +172,7 @@ export default function WorkDone() {
         >
           <option value="">All Teams</option>
           {teams.map((s) => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s.id} value={s.id}>{s.label}</option>
           ))}
         </select>
         <select
@@ -230,6 +238,7 @@ export default function WorkDone() {
                   <th>Center area</th>
                   <th>Region</th>
                   <th>Team</th>
+                  <th>IM</th>
                   <th>Exec Date</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
@@ -261,7 +270,8 @@ export default function WorkDone() {
                         {row.center_area || "—"}
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
-                      <td>{row.team || "—"}</td>
+                      <td>{row.team_name || row.team || "—"}</td>
+                      <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.execution_date || "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.executed_qty}</td>
                       <td style={{ textAlign: "right", color: "var(--green)" }}>{fmt.format(revenue)}</td>
@@ -291,7 +301,7 @@ export default function WorkDone() {
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
-                  <td colSpan={11} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
+                  <td colSpan={12} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
                     TOTALS ({filtered.length}{hasFilters && ` of ${rows.length}`} rows)
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px" }}>{fmt.format(totals.qty)}</td>
@@ -351,7 +361,8 @@ export default function WorkDone() {
                 <DetailItem label="Site" value={detailRow.site_name} />
                 <DetailItem label="Center area" value={detailRow.center_area} />
                 <DetailItem label="Region type" value={detailRow.region_type} />
-                <DetailItem label="Team" value={detailRow.team} />
+                <DetailItem label="Team" value={detailRow.team_name || detailRow.team} />
+                <DetailItem label="IM" value={detailRow.im_full_name || detailRow.im} />
                 <DetailItem label="Visit Type" value={detailRow.visit_type} />
                 <DetailItem label="Executed Qty" value={fmt.format(detailRow.executed_qty || 0)} />
                 <DetailItem label="Revenue (SAR)" value={fmt.format(detailRow.revenue_sar || 0)} />

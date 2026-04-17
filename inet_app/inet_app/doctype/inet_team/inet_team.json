@@ -11,6 +11,7 @@
   "team_type",
   "subcontractor",
   "field_user",
+  "isdp_account",
   "column_break_feex",
   "status",
   "daily_cost_applies",
@@ -69,6 +70,11 @@
    "in_standard_filter": 1,
    "label": "Field App User (Team Lead / PMS login)",
    "options": "User"
+  },
+  {
+   "fieldname": "isdp_account",
+   "fieldtype": "Data",
+   "label": "ISDP Account"
   },
   {
    "fieldname": "section_team_members",

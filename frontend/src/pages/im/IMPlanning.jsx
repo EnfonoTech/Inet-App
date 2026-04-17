@@ -75,7 +75,14 @@ export default function IMPlanning() {
 
   const visitTypes = [...new Set(plans.map((p) => p.visit_type).filter(Boolean))].sort();
   const projectOptions = [...new Set(plans.map((p) => p.project_code).filter(Boolean))].sort();
-  const teamOptions = [...new Set(plans.map((p) => p.team).filter(Boolean))].sort();
+  const teamEntries = useMemo(() => {
+    const m = new Map();
+    plans.forEach((p) => {
+      if (!p.team) return;
+      m.set(p.team, p.team_name || p.team);
+    });
+    return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
+  }, [plans]);
   const duidOptions = [...new Set(plans.map((p) => p.site_code).filter(Boolean))].sort();
 
   const filtered = useMemo(
@@ -93,6 +100,9 @@ export default function IMPlanning() {
             (p.name || "").toLowerCase().includes(q) ||
             (p.po_dispatch || "").toLowerCase().includes(q) ||
             (p.team || "").toLowerCase().includes(q) ||
+            (p.team_name || "").toLowerCase().includes(q) ||
+            (p.im_full_name || "").toLowerCase().includes(q) ||
+            (p.dispatch_im || "").toLowerCase().includes(q) ||
             (p.plan_date || "").toLowerCase().includes(q) ||
             (p.visit_type || "").toLowerCase().includes(q) ||
             (p.site_code || "").toLowerCase().includes(q) ||
@@ -205,7 +215,9 @@ export default function IMPlanning() {
           </select>
           <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
             <option value="">All Teams</option>
-            {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+            {teamEntries.map(([id, label]) => (
+              <option key={id} value={id}>{label}</option>
+            ))}
           </select>
           <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
             <option value="">All DUIDs</option>
@@ -273,6 +285,7 @@ export default function IMPlanning() {
                   <th>Region</th>
                   <th>PO</th>
                   <th>Team</th>
+                  <th>IM</th>
                   <th>Plan Date</th>
                   <th>Visit</th>
                   <th>Status</th>
@@ -303,7 +316,8 @@ export default function IMPlanning() {
                     </td>
                     <td style={{ fontSize: "0.82rem" }}>{p.region_type || "—"}</td>
                     <td>{p.po_no || "—"}</td>
-                    <td>{p.team}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{p.team_name || p.team || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{p.im_full_name || p.dispatch_im || "—"}</td>
                     <td>{p.plan_date}</td>
                     <td>{p.visit_type}</td>
                     <td>
@@ -328,7 +342,7 @@ export default function IMPlanning() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     <strong>{filtered.length}</strong>
                     {hasFilters && ` of ${plans.length}`}
                     {" "}plan{filtered.length !== 1 ? "s" : ""}
@@ -371,7 +385,7 @@ export default function IMPlanning() {
                   POID: {detailRow.po_dispatch || "—"}
                 </div>
                 <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Team: {detailRow.team || "—"}
+                  Team: {detailRow.team_name || detailRow.team || "—"}
                 </div>
                 <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
                   DUID: {detailRow.site_code || "—"}

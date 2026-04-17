@@ -247,7 +247,7 @@ export const pmApi = {
     call("inet_app.api.command_center.get_doctype_fields", { doctype }),
 
   // ── List APIs (Command Center doctypes) ────────────────────
-  listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost"], limit_page_length: 100 }),
+  listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost", "isdp_account"], limit_page_length: 100 }),
   listPODispatches:  (filters) =>
     call("inet_app.api.command_center.list_po_dispatches", {
       filters: filters || {},

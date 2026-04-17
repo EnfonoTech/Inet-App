@@ -167,13 +167,16 @@ export default function RolloutPlanning() {
       (r.item_code || "").toLowerCase().includes(q) ||
       (r.project_code || "").toLowerCase().includes(q) ||
       (r.im || "").toLowerCase().includes(q) ||
+      (r.im_full_name || "").toLowerCase().includes(q) ||
       (r.site_code || "").toLowerCase().includes(q) ||
       (r.center_area || "").toLowerCase().includes(q) ||
       (r.region_type || "").toLowerCase().includes(q)
     );
   });
   const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
-  const imOptions = [...new Set(rows.map((r) => r.im).filter(Boolean))].sort();
+  const imOptionRows = [...new Map(rows.filter((r) => r.im).map((r) => [r.im, r])).values()].sort((a, b) =>
+    String(a.im_full_name || a.im || "").localeCompare(String(b.im_full_name || b.im || ""), undefined, { sensitivity: "base" }),
+  );
   const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
   const hasFilters = search || projectFilter || imFilter || duidFilter || fromDate || toDate;
 
@@ -274,7 +277,9 @@ export default function RolloutPlanning() {
           </select>
           <select value={imFilter} onChange={(e) => setImFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
             <option value="">All IMs</option>
-            {imOptions.map((im) => <option key={im} value={im}>{im}</option>)}
+            {imOptionRows.map((r) => (
+              <option key={r.im} value={r.im}>{r.im_full_name || r.im}</option>
+            ))}
           </select>
           <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
             <option value="">All DUIDs</option>
@@ -389,7 +394,7 @@ export default function RolloutPlanning() {
                       {row.center_area || "—"}
                     </td>
                     <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
-                    <td>{row.im}</td>
+                    <td>{row.im_full_name || row.im || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>
                       {row.target_month
                         ? new Date(row.target_month).toLocaleDateString("en", { month: "short", year: "numeric" })
@@ -470,7 +475,11 @@ export default function RolloutPlanning() {
                   {selected.size} dispatch line{selected.size !== 1 ? "s" : ""} · SAR {fmt.format(selectedAmt)}
                   {createPlanIms.length > 0 && (
                     <span style={{ marginLeft: 10 }}>
-                      IM: {createPlanIms.length === 1 ? createPlanIms[0] : `${createPlanIms.length} IMs`}
+                      IM:
+                      {" "}
+                      {createPlanIms.length === 1
+                        ? (rows.find((x) => x.im === createPlanIms[0])?.im_full_name || createPlanIms[0])
+                        : `${createPlanIms.length} IMs`}
                     </span>
                   )}
                 </div>
@@ -599,7 +608,7 @@ export default function RolloutPlanning() {
               <DetailItem label="Project" value={detailRow.project_code} />
               <DetailItem label="DUID" value={detailRow.site_code} />
               <DetailItem label="Site Name" value={detailRow.site_name} />
-              <DetailItem label="IM" value={detailRow.im} />
+              <DetailItem label="IM" value={detailRow.im_full_name || detailRow.im} />
               <DetailItem label="Dispatch Status" value={detailRow.dispatch_status} />
               <DetailItem label="Planning Mode" value={detailRow.planning_mode} />
               <DetailItem label="Dispatch Mode" value={detailRow.dispatch_mode} />

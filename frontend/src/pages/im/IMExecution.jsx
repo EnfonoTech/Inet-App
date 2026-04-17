@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
 
@@ -173,8 +173,15 @@ export default function IMExecution() {
       (e.name || "").toLowerCase().includes(q) ||
       (e.rollout_plan || "").toLowerCase().includes(q) ||
       (e.team || "").toLowerCase().includes(q) ||
+      (e.team_name || "").toLowerCase().includes(q) ||
+      (e.im_full_name || "").toLowerCase().includes(q) ||
+      (e.dispatch_im || "").toLowerCase().includes(q) ||
       (e.execution_date || "").toLowerCase().includes(q) ||
       (e.site_code || "").toLowerCase().includes(q) ||
+      (e.site_name || "").toLowerCase().includes(q) ||
+      (e.item_code || "").toLowerCase().includes(q) ||
+      (e.item_description || "").toLowerCase().includes(q) ||
+      (e.project_code || "").toLowerCase().includes(q) ||
       (e.po_no || "").toLowerCase().includes(q) ||
       (e.center_area || "").toLowerCase().includes(q) ||
       (e.region_type || "").toLowerCase().includes(q)
@@ -184,7 +191,14 @@ export default function IMExecution() {
   const qcOptions = [...new Set(executions.map((e) => e.qc_status).filter(Boolean))].sort();
   const ciagOptions = [...new Set(executions.map((e) => e.ciag_status).filter(Boolean))].sort();
   const projectOptions = [...new Set(executions.map((e) => e.project_code).filter(Boolean))].sort();
-  const teamOptions = [...new Set(executions.map((e) => e.team).filter(Boolean))].sort();
+  const teamEntries = useMemo(() => {
+    const m = new Map();
+    executions.forEach((e) => {
+      if (!e.team) return;
+      m.set(e.team, e.team_name || e.team);
+    });
+    return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
+  }, [executions]);
   const duidOptions = [...new Set(executions.map((e) => e.site_code).filter(Boolean))].sort();
   const hasFilters = statusFilter || qcFilter || ciagFilter || search || projectFilter || teamFilter || duidFilter || fromDate || toDate;
   const totalAchieved = filtered.reduce((s, e) => s + (e.achieved_qty || 0), 0);
@@ -401,7 +415,9 @@ export default function IMExecution() {
         </select>
         <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
           <option value="">All Teams</option>
-          {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+          {teamEntries.map(([id, label]) => (
+            <option key={id} value={id}>{label}</option>
+          ))}
         </select>
         <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
           <option value="">All DUIDs</option>
@@ -468,11 +484,15 @@ export default function IMExecution() {
                   <th>Rollout Plan</th>
                   <th>POID</th>
                   <th>Dummy POID</th>
+                  <th>Item code</th>
+                  <th>Description</th>
+                  <th>Project</th>
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
                   <th>PO</th>
                   <th>Team</th>
+                  <th>IM</th>
                   <th>Date</th>
                   <th>Status</th>
                   <th>QC</th>
@@ -507,13 +527,17 @@ export default function IMExecution() {
                         ? (e.original_dummy_poid || "").trim()
                         : "—"}
                     </td>
-                    <td>{e.site_code || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.item_code || "—"}</td>
+                    <td style={{ fontSize: "0.82rem", maxWidth: 200 }}>{e.item_description || "—"}</td>
+                    <td>{e.project_code || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={e.site_name || ""}>{e.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={e.center_area || ""}>
                       {e.center_area || "—"}
                     </td>
                     <td style={{ fontSize: "0.82rem" }}>{e.region_type || "—"}</td>
                     <td>{e.po_no || "—"}</td>
-                    <td>{e.team}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{e.team_name || e.team || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{e.im_full_name || e.dispatch_im || "—"}</td>
                     <td>{e.execution_date}</td>
                     <td>
                       <StatusPill value={e.execution_status} />
@@ -581,7 +605,7 @@ export default function IMExecution() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={18} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     {filtered.length}{hasFilters && ` of ${executions.length}`} rows
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
@@ -610,7 +634,7 @@ export default function IMExecution() {
                   PO: {detailRow.po_no || "—"}
                 </div>
                 <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Team: {detailRow.team || "—"}
+                  Team: {detailRow.team_name || detailRow.team || "—"}
                 </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>

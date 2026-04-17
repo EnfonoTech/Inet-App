@@ -59,7 +59,9 @@ export default function IssuesRisks() {
       (r.project_code || "").toLowerCase().includes(q) ||
       (r.site_code || "").toLowerCase().includes(q) ||
       (r.team || "").toLowerCase().includes(q) ||
-      (r.im || "").toLowerCase().includes(q)
+      (r.team_name || "").toLowerCase().includes(q) ||
+      (r.im || "").toLowerCase().includes(q) ||
+      (r.im_full_name || "").toLowerCase().includes(q)
     );
   });
 
@@ -169,8 +171,8 @@ export default function IssuesRisks() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.rollout_plan || "—"}</td>
                     <td>{r.issue_category || "Uncategorized"}</td>
                     <td>{r.plan_status || "—"}</td>
-                    <td>{r.im || "—"}</td>
-                    <td>{r.team || "—"}</td>
+                    <td>{r.im_full_name || r.im || "—"}</td>
+                    <td>{r.team_name || r.team || "—"}</td>
                     <td>{r.project_code || "—"}</td>
                     <td>{r.site_code || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.execution_name || "—"}</td>

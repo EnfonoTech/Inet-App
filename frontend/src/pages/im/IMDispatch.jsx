@@ -334,7 +334,9 @@ export default function IMDispatch() {
         (r.name || "").toLowerCase().includes(q) ||
         (r.original_dummy_poid || "").toLowerCase().includes(q) ||
         (r.center_area || "").toLowerCase().includes(q) ||
-        (r.region_type || "").toLowerCase().includes(q)
+        (r.region_type || "").toLowerCase().includes(q) ||
+        (r.im_full_name || "").toLowerCase().includes(q) ||
+        (r.im || "").toLowerCase().includes(q)
       );
     }
     return true;
@@ -675,7 +677,7 @@ export default function IMDispatch() {
                   Project: {detailRow.project_code || "—"}
                 </div>
                 <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  IM: {detailRow.im || "—"}
+                  IM: {detailRow.im_full_name || detailRow.im || "—"}
                 </div>
               </div>
               {!!Number(detailRow.is_dummy_po) && (
@@ -893,7 +895,7 @@ export default function IMDispatch() {
                       <td style={{ fontSize: "0.82rem" }}>{row.item_code}</td>
                       <td style={{ textAlign: "right" }}>{row.qty}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
-                      <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.im || "—"}</td>
+                      <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.site_code}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>
                         {row.center_area || "—"}

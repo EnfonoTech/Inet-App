@@ -110,7 +110,12 @@ export default function ExecutionMonitor() {
 
   const visitTypes = [...new Set(rows.map((r) => r.visit_type).filter(Boolean))].sort();
   const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
-  const teamOptions = [...new Set(rows.map((r) => r.team).filter(Boolean))].sort();
+  const teamOptions = [...new Set(rows.map((r) => r.team).filter(Boolean))]
+    .sort()
+    .map((tid) => {
+      const hit = rows.find((r) => r.team === tid);
+      return { id: tid, label: hit?.team_name || tid };
+    });
   const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
 
   const filtered = rows.filter((r) => {
@@ -128,10 +133,14 @@ export default function ExecutionMonitor() {
         (r.item_code || "").toLowerCase().includes(q) ||
         (r.item_description || "").toLowerCase().includes(q) ||
         (r.project_code || "").toLowerCase().includes(q) ||
+        (r.site_code || "").toLowerCase().includes(q) ||
         (r.site_name || "").toLowerCase().includes(q) ||
         (r.po_dispatch || "").toLowerCase().includes(q) ||
         (r.original_dummy_poid || "").toLowerCase().includes(q) ||
         (r.team || "").toLowerCase().includes(q) ||
+        (r.team_name || "").toLowerCase().includes(q) ||
+        (r.im || "").toLowerCase().includes(q) ||
+        (r.im_full_name || "").toLowerCase().includes(q) ||
         (r.plan_date || "").toLowerCase().includes(q) ||
         (r.visit_type || "").toLowerCase().includes(q) ||
         (r.center_area || "").toLowerCase().includes(q) ||
@@ -169,7 +178,7 @@ export default function ExecutionMonitor() {
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Search POID, dummy POID, Plan, Team, Date, Center area, Region…"
+          placeholder="Search POID, dummy POID, Plan, Team, IM, Date, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -203,7 +212,7 @@ export default function ExecutionMonitor() {
         </select>
         <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
           <option value="">All Teams</option>
-          {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+          {teamOptions.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
         <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
           <option value="">All DUIDs</option>
@@ -251,11 +260,14 @@ export default function ExecutionMonitor() {
                   <th>Plan</th>
                   <th>POID</th>
                   <th>Dummy POID</th>
-                  <th>Item</th>
-                  <th>Project / Site</th>
+                  <th>Item code</th>
+                  <th>Description</th>
+                  <th>Project</th>
+                  <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
                   <th>Team</th>
+                  <th>IM</th>
                   <th>Plan Date</th>
                   <th>Visit Type</th>
                   <th style={{ textAlign: "right" }}>Target</th>
@@ -281,19 +293,16 @@ export default function ExecutionMonitor() {
                           ? (row.original_dummy_poid || "").trim()
                           : "—"}
                       </td>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{row.item_code || "—"}</div>
-                        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{row.item_description || "—"}</div>
-                      </td>
-                      <td>
-                        <div>{row.project_code || "—"}</div>
-                        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{row.site_name || row.site_code || "—"}</div>
-                      </td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.item_code || "—"}</td>
+                      <td style={{ fontSize: "0.82rem", maxWidth: 220 }}>{row.item_description || "—"}</td>
+                      <td>{row.project_code || "—"}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={row.site_name || ""}>{row.site_code || "—"}</td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 120 }} title={row.center_area || ""}>
                         {row.center_area || "—"}
                       </td>
                       <td style={{ fontSize: "0.78rem" }}>{row.region_type || "—"}</td>
-                      <td>{row.team}</td>
+                      <td>{row.team_name || row.team || "—"}</td>
+                      <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.plan_date}</td>
                       <td>{row.visit_type}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(target)}</td>
@@ -333,7 +342,7 @@ export default function ExecutionMonitor() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={18} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{filtered.length}</strong>
                     {hasFilters && ` of ${rows.length}`}
                     {" "}record{filtered.length !== 1 ? "s" : ""}
@@ -377,10 +386,12 @@ export default function ExecutionMonitor() {
                 <DetailItem label="Item Code" value={detailRow.item_code} />
                 <DetailItem label="Item Description" value={detailRow.item_description} />
                 <DetailItem label="Project" value={detailRow.project_code} />
-                <DetailItem label="Site" value={detailRow.site_name || detailRow.site_code} />
+                <DetailItem label="DUID" value={detailRow.site_code} />
+                <DetailItem label="Site name" value={detailRow.site_name} />
                 <DetailItem label="Center area" value={detailRow.center_area} />
                 <DetailItem label="Region type" value={detailRow.region_type} />
-                <DetailItem label="Team" value={detailRow.team} />
+                <DetailItem label="Team" value={detailRow.team_name || detailRow.team} />
+                <DetailItem label="IM" value={detailRow.im_full_name || detailRow.im} />
                 <DetailItem label="Visit Type" value={detailRow.visit_type} />
                 <DetailItem label="Plan Date" value={detailRow.plan_date} />
                 <DetailItem label="Execution Date" value={detailRow.execution_date} />

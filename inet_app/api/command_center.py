@@ -1366,13 +1366,30 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
     filters = filters or {}
     limit_page_length = cint(limit_page_length) or 100
     fields = list(frappe.db.get_table_columns("PO Dispatch"))
-    return frappe.get_list(
+    rows = frappe.get_list(
         "PO Dispatch",
         filters=filters,
         fields=fields,
         order_by=order_by or "modified desc",
         limit_page_length=limit_page_length,
     )
+    if not rows:
+        return rows
+    im_names = list({r.get("im") for r in rows if r.get("im")})
+    im_names = [n for n in im_names if n]
+    im_labels = {}
+    if im_names:
+        for imm in frappe.get_all(
+            "IM Master",
+            filters={"name": ["in", im_names]},
+            fields=["name", "full_name"],
+            limit_page_length=len(im_names) + 1,
+        ):
+            im_labels[imm.name] = imm.full_name or imm.name
+    for r in rows:
+        imn = r.get("im")
+        r["im_full_name"] = im_labels.get(imn) if imn else None
+    return rows
 
 
 @frappe.whitelist()
@@ -2388,6 +2405,36 @@ def _ensure_work_done_for_execution(execution_name):
 # ---------------------------------------------------------------------------
 
 
+def _batch_inet_team_names(team_ids):
+    ids = list({t for t in (team_ids or []) if t})
+    if not ids:
+        return {}
+    out = {}
+    for row in frappe.get_all(
+        "INET Team",
+        filters={"name": ["in", ids]},
+        fields=["name", "team_name"],
+        limit_page_length=len(ids) + 1,
+    ):
+        out[row.name] = row.team_name or row.name
+    return out
+
+
+def _batch_im_master_full_names(im_ids):
+    ids = list({n for n in (im_ids or []) if n})
+    if not ids:
+        return {}
+    out = {}
+    for row in frappe.get_all(
+        "IM Master",
+        filters={"name": ["in", ids]},
+        fields=["name", "full_name"],
+        limit_page_length=len(ids) + 1,
+    ):
+        out[row.name] = row.full_name or row.name
+    return out
+
+
 @frappe.whitelist()
 def list_execution_monitor_rows(filters=None):
     """
@@ -2434,6 +2481,8 @@ def list_execution_monitor_rows(filters=None):
     ]
     if frappe.db.has_column("Rollout Plan", "region_type"):
         rp_fields.append("region_type")
+    if frappe.db.has_column("Rollout Plan", "im"):
+        rp_fields.append("im")
     plans = frappe.get_all(
         "Rollout Plan",
         filters=rp_filters,
@@ -2474,8 +2523,16 @@ def list_execution_monitor_rows(filters=None):
     dispatch_map = {}
     if dispatch_names:
         d_fields = [
-            "name", "po_no", "item_code", "item_description", "project_code", "site_name", "site_code",
+            "name",
+            "po_no",
+            "item_code",
+            "item_description",
+            "project_code",
+            "site_name",
+            "site_code",
         ]
+        if frappe.db.has_column("PO Dispatch", "im"):
+            d_fields.append("im")
         if frappe.db.has_column("PO Dispatch", "center_area"):
             d_fields.append("center_area")
         if frappe.db.has_column("PO Dispatch", "region_type"):
@@ -2490,10 +2547,24 @@ def list_execution_monitor_rows(filters=None):
         )
         dispatch_map = {d.name: d for d in drows}
 
+    team_ids = [p.team for p in plans if p.team]
+    im_keys = []
+    for p in plans:
+        if p.get("im"):
+            im_keys.append(p.im)
+    for d in dispatch_map.values():
+        if d.get("im"):
+            im_keys.append(d.im)
+    team_name_map = _batch_inet_team_names(team_ids)
+    im_name_map = _batch_im_master_full_names(im_keys)
+
     out = []
     for p in plans:
         ex = latest_exec_by_plan.get(p.name)
         d = dispatch_map.get(p.po_dispatch) if p.po_dispatch else None
+        pd_im = d.get("im") if d else None
+        rp_im = p.get("im") if frappe.db.has_column("Rollout Plan", "im") else None
+        im_key = rp_im or pd_im
         out.append(
             {
                 "name": p.name,
@@ -2508,6 +2579,9 @@ def list_execution_monitor_rows(filters=None):
                 "center_area": (d.get("center_area") if d else None),
                 "region_type": (p.get("region_type") or (d.get("region_type") if d else None)),
                 "team": p.team,
+                "team_name": team_name_map.get(p.team) if p.team else None,
+                "im": im_key,
+                "im_full_name": im_name_map.get(im_key) if im_key else None,
                 "plan_date": p.plan_date,
                 "visit_type": p.visit_type,
                 "target_amount": flt(p.target_amount or 0),
@@ -2592,6 +2666,8 @@ def list_work_done_rows(filters=None):
         rp_fields_wd = ["name", "po_dispatch", "plan_date", "visit_type", "team"]
         if frappe.db.has_column("Rollout Plan", "region_type"):
             rp_fields_wd.append("region_type")
+        if frappe.db.has_column("Rollout Plan", "im"):
+            rp_fields_wd.append("im")
         rp_rows = frappe.get_all(
             "Rollout Plan",
             filters={"name": ["in", plan_names]},
@@ -2603,7 +2679,9 @@ def list_work_done_rows(filters=None):
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
     pd_map = {}
     if dispatch_names:
-        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_description", "im"]
+        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_description"]
+        if frappe.db.has_column("PO Dispatch", "im"):
+            pd_fields_wd.append("im")
         if frappe.db.has_column("PO Dispatch", "center_area"):
             pd_fields_wd.append("center_area")
         if frappe.db.has_column("PO Dispatch", "region_type"):
@@ -2618,6 +2696,24 @@ def list_work_done_rows(filters=None):
         )
         pd_map = {p.name: p for p in pd_rows}
 
+    team_prefetch = set()
+    for ex in ex_map.values():
+        if ex.team:
+            team_prefetch.add(ex.team)
+    for rp in rp_map.values():
+        if rp.team:
+            team_prefetch.add(rp.team)
+    im_prefetch = set()
+    for pd in pd_map.values():
+        if pd.get("im"):
+            im_prefetch.add(pd.im)
+    if frappe.db.has_column("Rollout Plan", "im"):
+        for rp in rp_map.values():
+            if rp.get("im"):
+                im_prefetch.add(rp.im)
+    team_name_map_wd = _batch_inet_team_names(list(team_prefetch))
+    im_name_map_wd = _batch_im_master_full_names(list(im_prefetch))
+
     out = []
     for r in rows:
         ex = ex_map.get(r.execution)
@@ -2630,14 +2726,19 @@ def list_work_done_rows(filters=None):
         if filters.get("project_code") and project_code != filters["project_code"]:
             continue
         if filters.get("im"):
-            pd_im = (pd.im if pd and hasattr(pd, "im") else None)
-            if (pd_im or "") != (filters.get("im") or ""):
+            rp_im_f = rp.get("im") if rp and frappe.db.has_column("Rollout Plan", "im") else None
+            pd_im_f = pd.get("im") if pd else None
+            im_for_filter = rp_im_f or pd_im_f
+            if (im_for_filter or "") != (filters.get("im") or ""):
                 continue
         ex_date = ex.execution_date if ex else None
         if filters.get("from_date") and ex_date and str(ex_date) < str(filters["from_date"]):
             continue
         if filters.get("to_date") and ex_date and str(ex_date) > str(filters["to_date"]):
             continue
+        rp_im_row = rp.get("im") if rp and frappe.db.has_column("Rollout Plan", "im") else None
+        pd_im_row = pd.get("im") if pd else None
+        im_row = rp_im_row or pd_im_row
         out.append(
             {
                 **r,
@@ -2651,6 +2752,9 @@ def list_work_done_rows(filters=None):
                 or (rp.get("region_type") if rp else None)
                 or (pd.get("region_type") if pd else None),
                 "team": team,
+                "team_name": team_name_map_wd.get(team) if team else None,
+                "im": im_row,
+                "im_full_name": im_name_map_wd.get(im_row) if im_row else None,
                 "item_description": pd.item_description if pd else None,
                 "execution_date": ex_date,
                 "execution_status": ex.execution_status if ex else None,
@@ -2691,8 +2795,14 @@ def list_issue_risk_rows(im=None):
         if not im_filter_value:
             return []
 
+    rp_im_join_ir = ""
+    im_full_sql_ir = "im_pd.full_name AS im_full_name"
+    if frappe.db.has_column("Rollout Plan", "im"):
+        rp_im_join_ir = "\n        LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
+        im_full_sql_ir = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
+    ciag_sel_ir = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL AS ciag_status"
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT
             rp.name AS rollout_plan,
             rp.po_dispatch,
@@ -2701,6 +2811,8 @@ def list_issue_risk_rows(im=None):
             rp.plan_date,
             rp.visit_type,
             rp.team,
+            it.team_name AS team_name,
+            {im_full_sql_ir},
             rp.modified,
             pd.im,
             pd.po_no,
@@ -2712,9 +2824,12 @@ def list_issue_risk_rows(im=None):
             de.name AS execution_name,
             de.execution_status,
             de.qc_status,
-            de.ciag_status
+            {ciag_sel_ir}
         FROM `tabRollout Plan` rp
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        {rp_im_join_ir}
+        LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         LEFT JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
         WHERE rp.plan_status = 'Planning with Issue'
         ORDER BY rp.modified DESC
@@ -2741,7 +2856,9 @@ def list_issue_risk_rows(im=None):
                 "plan_date": r.get("plan_date"),
                 "visit_type": r.get("visit_type"),
                 "team": r.get("team"),
+                "team_name": r.get("team_name"),
                 "im": r.get("im"),
+                "im_full_name": r.get("im_full_name"),
                 "po_no": r.get("po_no"),
                 "project_code": r.get("project_code"),
                 "site_code": r.get("site_code"),
@@ -3222,15 +3339,25 @@ def list_im_rollout_plans(im=None, plan_status=None):
     else:
         im_plan_extras.append("NULL AS center_area")
     im_plan_extra_sql = ", " + ", ".join(im_plan_extras)
+    rp_im_join = ""
+    im_full_sql = "im_pd.full_name AS im_full_name"
+    if frappe.db.has_column("Rollout Plan", "im"):
+        rp_im_join = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
+        im_full_sql = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
     rows = frappe.db.sql(
         f"""
         SELECT rp.name, rp.po_dispatch AS system_id, rp.po_dispatch, rp.team, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount, rp.achieved_amount,
                rp.completion_pct, rp.plan_status,
-               pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code
+               pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
+               it.team_name AS team_name,
+               {im_full_sql}
                {im_plan_extra_sql}
         FROM `tabRollout Plan` rp
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        {rp_im_join}
+        LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         WHERE pd.im IN ({ph}){status_clause}
         ORDER BY rp.plan_date DESC, rp.modified DESC
         LIMIT 500
@@ -3268,17 +3395,27 @@ def list_im_daily_executions(im=None, execution_status=None):
     else:
         im_ex_extras.append("NULL AS original_dummy_poid")
     im_ex_extra_sql = ", " + ", ".join(im_ex_extras)
+    rp_im_join_ex = ""
+    im_full_sql_ex = "im_pd.full_name AS im_full_name"
+    if frappe.db.has_column("Rollout Plan", "im"):
+        rp_im_join_ex = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
+        im_full_sql_ex = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
     rows = frappe.db.sql(
         f"""
         SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan, de.team, de.execution_date,
                de.execution_status, de.achieved_qty, de.achieved_amount, de.gps_location,
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag, de.photos,
                pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
-               (SELECT wd.name FROM `tabWork Done` wd WHERE wd.execution = de.name LIMIT 1) AS work_done
+               (SELECT wd.name FROM `tabWork Done` wd WHERE wd.execution = de.name LIMIT 1) AS work_done,
+               it.team_name AS team_name,
+               {im_full_sql_ex}
                {im_ex_extra_sql}
         FROM `tabDaily Execution` de
         INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabINET Team` it ON it.name = de.team
+        {rp_im_join_ex}
+        LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         WHERE pd.im IN ({ph}){status_clause}
         ORDER BY de.execution_date DESC, de.modified DESC
         LIMIT 500
