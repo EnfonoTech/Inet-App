@@ -13,6 +13,48 @@ function keyFromLabel(label, i) {
   return base || `col_${i}`;
 }
 
+/** Column whose cells hold the DocType `name` used to fetch dynamic fields (skip checkbox-only headers). */
+function resolveLinkSourceKey(headRow, columns) {
+  if (!headRow || !Array.isArray(columns) || !columns.length) return columns[0]?.key;
+  const ths = Array.from(headRow.children);
+  const labelIsLink = (raw) => {
+    const s = String(raw || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!s) return false;
+    return (
+      s === "plan id"
+      || s === "name"
+      || s === "id"
+      || s === "poid"
+      || s.includes("plan id")
+      || (s.includes("dispatch") && s.includes("id"))
+      || s.includes("rollout")
+      || s === "execution"
+    );
+  };
+  for (let i = 0; i < ths.length && i < columns.length; i++) {
+    const th = ths[i];
+    const raw = String(th.textContent || "").replace(/\s+/g, " ").trim();
+    const onlyCheckbox = th.querySelector('input[type="checkbox"]') && raw.length === 0;
+    if (onlyCheckbox) continue;
+    if (labelIsLink(raw)) return columns[i].key;
+  }
+  for (let i = 0; i < ths.length && i < columns.length; i++) {
+    const th = ths[i];
+    const raw = String(th.textContent || "").replace(/\s+/g, " ").trim();
+    const onlyCheckbox = th.querySelector('input[type="checkbox"]') && raw.length === 0;
+    if (onlyCheckbox) continue;
+    if (raw) return columns[i].key;
+  }
+  return columns[0]?.key;
+}
+
+function escAttr(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
 function detectTableDoctype(pathname, tIdx) {
   const key = `${pathname}:${tIdx + 1}`;
   const map = {
@@ -130,14 +172,27 @@ export default function DataTablePro() {
         };
 
         const ensureDynamicColumns = async () => {
+          const headerTr = table.querySelector("thead tr");
           for (const dyn of state.dynamic_fields) {
-            if (!dyn?.doctype || !dyn?.fieldname || !dyn?.source_key || !dyn?.key) continue;
+            if (!dyn?.doctype || !dyn?.fieldname || !dyn?.key) continue;
 
+            let sourceKey = dyn.source_key;
             const bodyRows = Array.from(table.querySelectorAll("tbody tr"));
-            const names = bodyRows
-              .map((row) => Array.from(row.children).find((c) => c.dataset.colKey === dyn.source_key))
-              .map((cell) => String(cell?.textContent || "").trim())
-              .filter(Boolean);
+            const collectNames = (sk) =>
+              bodyRows
+                .map((row) => Array.from(row.children).find((c) => c.dataset.colKey === sk))
+                .map((cell) => String(cell?.textContent || "").trim())
+                .filter(Boolean);
+
+            let names = collectNames(sourceKey);
+            if (!names.length && headerTr) {
+              const fallback = resolveLinkSourceKey(headerTr, columns);
+              if (fallback && fallback !== sourceKey) {
+                sourceKey = fallback;
+                dyn.source_key = fallback;
+                names = collectNames(sourceKey);
+              }
+            }
             if (!names.length) continue;
 
             let values = {};
@@ -163,7 +218,7 @@ export default function DataTablePro() {
                 td.dataset.colKey = dyn.key;
                 row.appendChild(td);
               }
-              const sourceCell = Array.from(row.children).find((c) => c.dataset.colKey === dyn.source_key);
+              const sourceCell = Array.from(row.children).find((c) => c.dataset.colKey === sourceKey);
               const sourceName = String(sourceCell?.textContent || "").trim();
               td.textContent = values[sourceName] == null || values[sourceName] === "" ? "—" : String(values[sourceName]);
             });
@@ -231,12 +286,31 @@ export default function DataTablePro() {
           const headerCells = Array.from(table.querySelectorAll("thead tr:first-child > th"));
           headerCells.forEach((th) => {
             const key = th.dataset.colKey;
-            const width = state.widths[key];
+            const width = key ? state.widths[key] : null;
             if (width) {
-              th.style.width = `${width}px`;
-              th.style.minWidth = `${Math.min(width, 120)}px`;
-              th.style.maxWidth = `${Math.max(width, 120)}px`;
+              const px = `${width}px`;
+              th.style.width = px;
+              th.style.minWidth = px;
+              th.style.maxWidth = "";
+            } else {
+              th.style.width = "";
+              th.style.minWidth = "";
+              th.style.maxWidth = "";
             }
+          });
+          table.querySelectorAll("tbody tr").forEach((row) => {
+            Array.from(row.children).forEach((td) => {
+              const key = td.dataset.colKey;
+              const width = key ? state.widths[key] : null;
+              if (width) {
+                const px = `${width}px`;
+                td.style.width = px;
+                td.style.minWidth = px;
+              } else {
+                td.style.width = "";
+                td.style.minWidth = "";
+              }
+            });
           });
         };
 
@@ -308,18 +382,6 @@ export default function DataTablePro() {
           });
         };
 
-        const applyAll = async () => {
-          normalizeRowCells();
-          await ensureDynamicColumns();
-          normalizeRowCells();
-          applyOrder();
-          applyHidden();
-          applyFooterColspan();
-          applyWidths();
-          ensureFilterRow();
-          applyFilters();
-        };
-
         const addResizeHandles = () => {
           const headerCells = Array.from(table.querySelectorAll("thead tr:first-child > th"));
           headerCells.forEach((th) => {
@@ -337,6 +399,15 @@ export default function DataTablePro() {
             const onUp = () => {
               document.removeEventListener("mousemove", onMove);
               document.removeEventListener("mouseup", onUp);
+              const snap = {
+                order: [...state.order],
+                hidden: Array.from(state.hidden),
+                widths: { ...state.widths },
+                filters: { ...state.filters },
+                show_filters: state.show_filters ? 1 : 0,
+                dynamic_fields: state.dynamic_fields.map((d) => ({ ...d })),
+              };
+              void prefsApi.saveImmediate(tableId, snap);
               persist();
             };
             handle.addEventListener("mousedown", (ev) => {
@@ -351,6 +422,19 @@ export default function DataTablePro() {
           });
         };
 
+        const applyAll = async () => {
+          normalizeRowCells();
+          await ensureDynamicColumns();
+          normalizeRowCells();
+          applyOrder();
+          applyHidden();
+          applyFooterColspan();
+          applyWidths();
+          ensureFilterRow();
+          applyFilters();
+          addResizeHandles();
+        };
+
         const toolbar = document.createElement("div");
         toolbar.className = "tablepro-toolbar";
         toolbar.innerHTML = `
@@ -359,6 +443,7 @@ export default function DataTablePro() {
           <button type="button" class="btn-secondary tablepro-btn-reset">Reset</button>
         `;
         wrapper.parentElement?.insertBefore(toolbar, wrapper);
+        tracked.push({ table, toolbar });
 
         const panel = document.createElement("div");
         panel.className = "tablepro-panel";
@@ -371,17 +456,17 @@ export default function DataTablePro() {
           addField.className = "tablepro-panel-addfield";
           addField.innerHTML = `
             <div class="tablepro-panel-title">Add Doctype Field Column</div>
-            <div class="tablepro-help">${tableDoctype ? `Doctype: ${tableDoctype}` : "Doctype: not mapped for this table"}</div>
+            <div class="tablepro-help">${tableDoctype ? `Doctype: ${escAttr(tableDoctype)}` : "Doctype: not mapped for this table"}</div>
             <select class="tablepro-input-field">
               <option value="">Select field...</option>
-              ${availableFields.map((f) => `<option value="${f.fieldname}">${f.label}</option>`).join("")}
+              ${availableFields.map((f) => `<option value="${escAttr(f.fieldname)}">${escAttr(f.label)}</option>`).join("")}
             </select>
             <button type="button" class="btn-secondary tablepro-btn-addfield">Add Field Column</button>
           `;
           panel.appendChild(addField);
           addField.querySelector(".tablepro-btn-addfield")?.addEventListener("click", async () => {
             const fieldname = addField.querySelector(".tablepro-input-field")?.value?.trim();
-            const source_key = columns[0]?.key; // use first column as source doc name
+            const source_key = resolveLinkSourceKey(headRow, columns);
             if (!tableDoctype || !fieldname || !source_key) return;
             const label = availableFields.find((f) => f.fieldname === fieldname)?.label || fieldname;
             const key = `dyn_${tableDoctype.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${fieldname.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
@@ -400,7 +485,7 @@ export default function DataTablePro() {
             const row = document.createElement("div");
             row.className = "tablepro-panel-row";
             row.innerHTML = `
-              <label><input type="checkbox" ${state.hidden.has(key) ? "" : "checked"}> ${col.label}</label>
+              <label><input type="checkbox" ${state.hidden.has(key) ? "" : "checked"}> ${escAttr(col.label)}</label>
               <div class="tablepro-panel-actions">
                 <button type="button" class="btn-secondary up">↑</button>
                 <button type="button" class="btn-secondary down">↓</button>
@@ -412,7 +497,7 @@ export default function DataTablePro() {
             cb?.addEventListener("change", (e) => {
               if (e.target.checked) state.hidden.delete(key);
               else state.hidden.add(key);
-              applyAll();
+              void applyAll();
               persist();
             });
             up?.addEventListener("click", () => {
@@ -421,7 +506,7 @@ export default function DataTablePro() {
               state.order[idx - 1] = state.order[idx];
               state.order[idx] = tmp;
               renderPanel();
-              applyAll();
+              void applyAll();
               persist();
             });
             down?.addEventListener("click", () => {
@@ -430,7 +515,7 @@ export default function DataTablePro() {
               state.order[idx + 1] = state.order[idx];
               state.order[idx] = tmp;
               renderPanel();
-              applyAll();
+              void applyAll();
               persist();
             });
             panel.appendChild(row);
@@ -466,7 +551,6 @@ export default function DataTablePro() {
         };
         document.addEventListener("mousedown", onDocClick);
 
-        addResizeHandles();
         await applyAll();
 
         table.dataset.tableproCleanup = "1";

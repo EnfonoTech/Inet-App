@@ -33,6 +33,17 @@ export default function useTablePreferences() {
       }, delay);
       timersRef.current.set(tableId, timer);
     },
+
+    /** Persist now (e.g. column resize) so a quick refresh does not lose widths. */
+    saveImmediate(tableId, config) {
+      if (!tableId) return Promise.resolve();
+      const old = timersRef.current.get(tableId);
+      if (old) clearTimeout(old);
+      timersRef.current.delete(tableId);
+      const payload = config || {};
+      cacheRef.current.set(tableId, payload);
+      return pmApi.saveTablePreferences(tableId, payload).catch(() => {});
+    },
   }), []);
 
   return api;
