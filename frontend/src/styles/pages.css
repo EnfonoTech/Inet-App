@@ -67,6 +67,31 @@
   table-layout: auto;
 }
 
+/* DataTablePro: avoid min-width:max-content + nowrap (explodes width); fill wrapper unless JS sets a wider min-width for scroll */
+.data-table.data-table--tablepro {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 100%;
+}
+.data-table.data-table--tablepro > thead > tr:first-child > th {
+  resize: none;
+  text-overflow: ellipsis;
+}
+.data-table.data-table--tablepro > tbody > tr > td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* TablePro: narrow fixed row-select column */
+.data-table.data-table--tablepro > thead > tr:first-child > th:first-child:has(input[type="checkbox"]),
+.data-table.data-table--tablepro > tbody > tr > td:first-child:has(input[type="checkbox"]) {
+  box-sizing: border-box;
+  padding: 8px 6px;
+  text-align: center;
+  vertical-align: middle;
+}
+
 .data-table th {
   text-align: left;
   color: var(--text-muted);

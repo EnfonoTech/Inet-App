@@ -413,6 +413,7 @@ def get_table_field_values(doctype, fieldname, names):
         filters={"name": ["in", [str(n) for n in names if str(n).strip()]]},
         fields=["name", fieldname],
         limit_page_length=max(1, len(names)),
+        ignore_permissions=True,
     )
     out = {r.get("name"): r.get(fieldname) for r in rows}
     return {"values": out}

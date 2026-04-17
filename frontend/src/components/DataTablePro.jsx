@@ -4,6 +4,9 @@ import { useAuth } from "../context/AuthContext";
 import useTablePreferences from "../hooks/useTablePreferences";
 import { pmApi } from "../services/api";
 
+/** Row-select checkbox column: fixed width, not resizable / not reorderable in Manage Table. */
+const TABLEPRO_SELECT_COL_PX = 44;
+
 function keyFromLabel(label, i) {
   const base = String(label || "")
     .trim()
@@ -101,6 +104,7 @@ export default function DataTablePro() {
         const table = tables[tIdx];
         if (table.dataset.tableproInitialized === "1") continue;
         table.dataset.tableproInitialized = "1";
+        table.classList.add("data-table--tablepro");
 
         const wrapper = table.closest(".data-table-wrapper");
         if (!wrapper || !wrapper.parentElement) {
@@ -117,18 +121,31 @@ export default function DataTablePro() {
           th.dataset.colKey = key;
           return { key, label: String(th.textContent || "").trim() || `Column ${i + 1}` };
         });
+        const baseColumnKeys = columns.map((c) => c.key);
 
         const userKey = String(user?.email || "user").replace(/[:/\\]+/g, "_");
         const tableId = `${userKey}:${role || "user"}:${pathname}:table:${tIdx + 1}`;
         const tableDoctype = detectTableDoctype(pathname, tIdx);
         const saved = await prefsApi.load(tableId);
+        const savedDyn = Array.isArray(saved.dynamic_fields) ? saved.dynamic_fields : [];
+        // Merge saved dynamic columns into `columns` before restoring order, or saved.order
+        // filters them out and refresh drops added fields from Manage Table + layout.
+        savedDyn.forEach((d) => {
+          if (!d?.key) return;
+          if (!columns.some((c) => c.key === d.key)) {
+            columns.push({
+              key: d.key,
+              label: String(d.label || d.fieldname || d.key).trim() || d.key,
+            });
+          }
+        });
         const state = {
           order: Array.isArray(saved.order) ? saved.order.filter((k) => columns.some((c) => c.key === k)) : columns.map((c) => c.key),
           hidden: new Set(Array.isArray(saved.hidden) ? saved.hidden : []),
           widths: { ...(saved.widths || {}) },
           filters: { ...(saved.filters || {}) },
           show_filters: !!saved.show_filters,
-          dynamic_fields: Array.isArray(saved.dynamic_fields) ? saved.dynamic_fields : [],
+          dynamic_fields: savedDyn,
         };
         let availableFields = [];
         if (tableDoctype) {
@@ -139,10 +156,30 @@ export default function DataTablePro() {
             availableFields = [];
           }
         }
+        // Recover order if prefs had dynamic_fields but an older bug stripped keys from order
+        state.dynamic_fields.forEach((d) => {
+          if (d?.key && !state.order.includes(d.key)) state.order.push(d.key);
+        });
         // Append new columns not in saved order
         columns.forEach((c) => {
           if (!state.order.includes(c.key)) state.order.push(c.key);
         });
+
+        const thSelect = headRow.querySelector(":scope > th:first-child");
+        const selectColumnKey =
+          thSelect?.querySelector?.('input[type="checkbox"]') != null ? thSelect.dataset.colKey || null : null;
+        if (selectColumnKey) delete state.widths[selectColumnKey];
+        if (selectColumnKey) state.hidden.delete(selectColumnKey);
+
+        const pinSelectColumnFirst = () => {
+          if (selectColumnKey) state.hidden.delete(selectColumnKey);
+          if (!selectColumnKey || !state.order.includes(selectColumnKey)) return;
+          const i = state.order.indexOf(selectColumnKey);
+          if (i > 0) {
+            state.order.splice(i, 1);
+            state.order.unshift(selectColumnKey);
+          }
+        };
 
         const persist = () => {
           prefsApi.saveDebounced(tableId, {
@@ -282,36 +319,61 @@ export default function DataTablePro() {
           });
         };
 
+        /** Wider than wrapper only when saved column px widths need horizontal scroll (not max-content text blow-up). */
+        const syncTableScrollWidth = () => {
+          const wrap = table.closest(".data-table-wrapper");
+          if (!wrap) return;
+          let sum = 0;
+          state.order.forEach((k) => {
+            if (state.hidden.has(k)) return;
+            if (selectColumnKey && k === selectColumnKey) {
+              sum += TABLEPRO_SELECT_COL_PX;
+              return;
+            }
+            const w = state.widths[k];
+            if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) sum += Number(w);
+          });
+          const cw = wrap.clientWidth || 0;
+          if (sum > cw && sum > 0) table.style.minWidth = `${Math.ceil(sum)}px`;
+          else table.style.minWidth = "";
+        };
+
         const applyWidths = () => {
+          const setCellPx = (cell, width) => {
+            if (width) {
+              const px = `${width}px`;
+              cell.style.width = px;
+              cell.style.minWidth = px;
+              cell.style.maxWidth = px;
+            } else {
+              cell.style.width = "";
+              cell.style.minWidth = "";
+              cell.style.maxWidth = "";
+            }
+          };
+          const widthForKey = (key) => {
+            if (selectColumnKey && key === selectColumnKey) return TABLEPRO_SELECT_COL_PX;
+            return key ? state.widths[key] : null;
+          };
           const headerCells = Array.from(table.querySelectorAll("thead tr:first-child > th"));
           headerCells.forEach((th) => {
             const key = th.dataset.colKey;
-            const width = key ? state.widths[key] : null;
-            if (width) {
-              const px = `${width}px`;
-              th.style.width = px;
-              th.style.minWidth = px;
-              th.style.maxWidth = "";
-            } else {
-              th.style.width = "";
-              th.style.minWidth = "";
-              th.style.maxWidth = "";
-            }
+            setCellPx(th, widthForKey(key));
           });
+          const filterRow = table.querySelector("thead tr.tablepro-filter-row");
+          if (filterRow) {
+            Array.from(filterRow.children).forEach((th) => {
+              const key = th.dataset.colKey;
+              setCellPx(th, widthForKey(key));
+            });
+          }
           table.querySelectorAll("tbody tr").forEach((row) => {
             Array.from(row.children).forEach((td) => {
               const key = td.dataset.colKey;
-              const width = key ? state.widths[key] : null;
-              if (width) {
-                const px = `${width}px`;
-                td.style.width = px;
-                td.style.minWidth = px;
-              } else {
-                td.style.width = "";
-                td.style.minWidth = "";
-              }
+              setCellPx(td, widthForKey(key));
             });
           });
+          syncTableScrollWidth();
         };
 
         const applyFilters = () => {
@@ -387,14 +449,34 @@ export default function DataTablePro() {
           headerCells.forEach((th) => {
             if (th.querySelector(".tablepro-resize-handle")) return;
             const key = th.dataset.colKey;
+            if (selectColumnKey && key === selectColumnKey) return;
             const handle = document.createElement("span");
             handle.className = "tablepro-resize-handle";
             let startX = 0;
             let startW = 0;
             const onMove = (ev) => {
               const next = Math.max(60, startW + (ev.clientX - startX));
-              th.style.width = `${next}px`;
+              const px = `${next}px`;
+              // Keep min/max in sync with width while dragging; stale minWidth blocked shrinking.
+              th.style.width = px;
+              th.style.minWidth = px;
+              th.style.maxWidth = px;
               state.widths[key] = next;
+              table.querySelectorAll("tbody td").forEach((td) => {
+                if (td.dataset.colKey !== key) return;
+                td.style.width = px;
+                td.style.minWidth = px;
+                td.style.maxWidth = px;
+              });
+              const fr = table.querySelector("thead tr.tablepro-filter-row");
+              if (fr) {
+                Array.from(fr.children).forEach((fth) => {
+                  if (fth.dataset.colKey !== key) return;
+                  fth.style.width = px;
+                  fth.style.minWidth = px;
+                  fth.style.maxWidth = px;
+                });
+              }
             };
             const onUp = () => {
               document.removeEventListener("mousemove", onMove);
@@ -409,6 +491,7 @@ export default function DataTablePro() {
               };
               void prefsApi.saveImmediate(tableId, snap);
               persist();
+              syncTableScrollWidth();
             };
             handle.addEventListener("mousedown", (ev) => {
               ev.preventDefault();
@@ -423,6 +506,16 @@ export default function DataTablePro() {
         };
 
         const applyAll = async () => {
+          pinSelectColumnFirst();
+          const allowed = new Set(state.order);
+          table.querySelectorAll("thead tr, tbody tr, tfoot tr").forEach((row) => {
+            Array.from(row.children).forEach((cell) => {
+              const k = cell.dataset.colKey;
+              if (k && !allowed.has(k)) cell.remove();
+            });
+          });
+          columns = columns.filter((c) => allowed.has(c.key));
+
           normalizeRowCells();
           await ensureDynamicColumns();
           normalizeRowCells();
@@ -449,6 +542,16 @@ export default function DataTablePro() {
         panel.className = "tablepro-panel";
         panel.style.display = "none";
         toolbar.appendChild(panel);
+
+        const getColumnMeta = (key) => {
+          const col = columns.find((c) => c.key === key);
+          if (col) return col;
+          const dyn = state.dynamic_fields.find((d) => d.key === key);
+          if (dyn) {
+            return { key: dyn.key, label: String(dyn.label || dyn.fieldname || dyn.key).trim() || dyn.key };
+          }
+          return null;
+        };
 
         const renderPanel = () => {
           panel.innerHTML = "";
@@ -480,18 +583,25 @@ export default function DataTablePro() {
           });
 
           state.order.forEach((key, idx) => {
-            const col = columns.find((c) => c.key === key);
+            const col = getColumnMeta(key);
             if (!col) return;
             const row = document.createElement("div");
             row.className = "tablepro-panel-row";
-            row.innerHTML = `
+            const isSelectCol = selectColumnKey && key === selectColumnKey;
+            if (isSelectCol) {
+              row.innerHTML = `
+                <label class="tablepro-panel-select-col"><input type="checkbox" checked disabled> ${escAttr(col.label)}</label>
+              `;
+            } else {
+              row.innerHTML = `
               <label><input type="checkbox" ${state.hidden.has(key) ? "" : "checked"}> ${escAttr(col.label)}</label>
               <div class="tablepro-panel-actions">
                 <button type="button" class="btn-secondary up">↑</button>
                 <button type="button" class="btn-secondary down">↓</button>
               </div>
             `;
-            const cb = row.querySelector("input");
+            }
+            const cb = row.querySelector("label.tablepro-panel-select-col") ? null : row.querySelector("input");
             const up = row.querySelector(".up");
             const down = row.querySelector(".down");
             cb?.addEventListener("change", (e) => {
@@ -521,10 +631,10 @@ export default function DataTablePro() {
             panel.appendChild(row);
           });
         };
-        renderPanel();
 
         toolbar.querySelector(".tablepro-btn-columns")?.addEventListener("click", () => {
           panel.style.display = panel.style.display === "none" ? "block" : "none";
+          if (panel.style.display === "block") renderPanel();
         });
         toolbar.querySelector(".tablepro-btn-filters")?.addEventListener("click", () => {
           state.show_filters = !state.show_filters;
@@ -532,7 +642,8 @@ export default function DataTablePro() {
           persist();
         });
         toolbar.querySelector(".tablepro-btn-reset")?.addEventListener("click", async () => {
-          state.order = columns.map((c) => c.key);
+          columns = columns.filter((c) => baseColumnKeys.includes(c.key));
+          state.order = [...baseColumnKeys];
           state.hidden = new Set();
           state.widths = {};
           state.filters = {};
@@ -552,10 +663,19 @@ export default function DataTablePro() {
         document.addEventListener("mousedown", onDocClick);
 
         await applyAll();
+        renderPanel();
+
+        const wrapEl = table.closest(".data-table-wrapper");
+        let wrapResizeObs = null;
+        if (wrapEl && typeof ResizeObserver !== "undefined") {
+          wrapResizeObs = new ResizeObserver(() => syncTableScrollWidth());
+          wrapResizeObs.observe(wrapEl);
+        }
 
         table.dataset.tableproCleanup = "1";
         table._tableproCleanup = () => {
           document.removeEventListener("mousedown", onDocClick);
+          wrapResizeObs?.disconnect();
         };
       }
     };
@@ -574,7 +694,10 @@ export default function DataTablePro() {
           /* ignore */
         }
         toolbar?.remove();
-        if (table) delete table.dataset.tableproInitialized;
+        if (table) {
+          table.classList.remove("data-table--tablepro");
+          delete table.dataset.tableproInitialized;
+        }
       }
     };
   }, [pathname, role, prefsApi, user?.email]);
