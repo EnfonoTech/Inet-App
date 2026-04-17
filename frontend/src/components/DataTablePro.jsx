@@ -34,13 +34,25 @@ function detectTableDoctype(pathname, tIdx) {
 
 export default function DataTablePro() {
   const { pathname } = useLocation();
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const prefsApi = useTablePreferences();
 
   useEffect(() => {
     let destroyed = false;
+    /** @type {{ table: HTMLTableElement, toolbar: HTMLDivElement }[]} */
+    const tracked = [];
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     const init = async () => {
+      let attempts = 0;
+      while (!destroyed && attempts < 60) {
+        const found = document.querySelectorAll(".data-table-wrapper > table.data-table").length;
+        if (found > 0) break;
+        attempts += 1;
+        await sleep(80);
+      }
+      if (destroyed) return;
+
       const tables = Array.from(document.querySelectorAll(".data-table-wrapper > table.data-table"));
       for (let tIdx = 0; tIdx < tables.length; tIdx += 1) {
         if (destroyed) return;
@@ -49,7 +61,10 @@ export default function DataTablePro() {
         table.dataset.tableproInitialized = "1";
 
         const wrapper = table.closest(".data-table-wrapper");
-        if (!wrapper) continue;
+        if (!wrapper || !wrapper.parentElement) {
+          delete table.dataset.tableproInitialized;
+          continue;
+        }
         const headRow = table.querySelector("thead tr");
         if (!headRow) continue;
         const headers = Array.from(headRow.children);
@@ -61,7 +76,8 @@ export default function DataTablePro() {
           return { key, label: String(th.textContent || "").trim() || `Column ${i + 1}` };
         });
 
-        const tableId = `${role || "user"}:${pathname}:table:${tIdx + 1}`;
+        const userKey = String(user?.email || "user").replace(/[:/\\]+/g, "_");
+        const tableId = `${userKey}:${role || "user"}:${pathname}:table:${tIdx + 1}`;
         const tableDoctype = detectTableDoctype(pathname, tIdx);
         const saved = await prefsApi.load(tableId);
         const state = {
@@ -460,19 +476,24 @@ export default function DataTablePro() {
       }
     };
 
-    const timer = setTimeout(init, 120);
+    init();
     return () => {
       destroyed = true;
-      clearTimeout(timer);
-      const tables = Array.from(document.querySelectorAll(".data-table-wrapper > table.data-table"));
-      tables.forEach((t) => {
-        if (typeof t._tableproCleanup === "function") {
-          t._tableproCleanup();
-          delete t._tableproCleanup;
+      while (tracked.length) {
+        const { table, toolbar } = tracked.pop();
+        try {
+          if (typeof table?._tableproCleanup === "function") {
+            table._tableproCleanup();
+            delete table._tableproCleanup;
+          }
+        } catch {
+          /* ignore */
         }
-      });
+        toolbar?.remove();
+        if (table) delete table.dataset.tableproInitialized;
+      }
     };
-  }, [pathname, role, prefsApi]);
+  }, [pathname, role, prefsApi, user?.email]);
 
   return null;
 }

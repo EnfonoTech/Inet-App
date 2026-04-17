@@ -255,6 +255,32 @@ def _sanitize_table_pref_config(config):
         out["filters"] = clean_filters
 
     out["show_filters"] = 1 if cint(config.get("show_filters")) else 0
+
+    dyn = config.get("dynamic_fields")
+    if isinstance(dyn, list):
+        clean_dyn = []
+        for item in dyn[:40]:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or "").strip()[:120]
+            if not key or not key.startswith("dyn_"):
+                continue
+            dt = str(item.get("doctype") or "").strip()[:120]
+            fn = str(item.get("fieldname") or "").strip()[:120]
+            sk = str(item.get("source_key") or "").strip()[:120]
+            if not dt or not fn or not sk:
+                continue
+            clean_dyn.append(
+                {
+                    "key": key,
+                    "doctype": dt,
+                    "fieldname": fn,
+                    "source_key": sk,
+                    "label": str(item.get("label") or fn)[:200],
+                }
+            )
+        out["dynamic_fields"] = clean_dyn
+
     return out
 
 
@@ -273,6 +299,14 @@ def _get_all_table_prefs_for_user(user):
 
 
 def _save_all_table_prefs_for_user(user, prefs):
+    """Persist portal table prefs into User.user_settings (session user only).
+
+    Uses a direct SQL update so portal roles without User write permission can still save.
+    """
+    if not user or user == "Guest":
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if user != frappe.session.user:
+        frappe.throw("Not permitted", frappe.PermissionError)
     raw = frappe.db.get_value("User", user, "user_settings")
     try:
         parsed = frappe.parse_json(raw) if raw else {}
@@ -281,7 +315,11 @@ def _save_all_table_prefs_for_user(user, prefs):
     if not isinstance(parsed, dict):
         parsed = {}
     parsed["inet_table_preferences"] = prefs
-    frappe.db.set_value("User", user, "user_settings", json.dumps(parsed), update_modified=False)
+    payload = json.dumps(parsed)
+    frappe.db.sql(
+        "UPDATE `tabUser` SET `user_settings`=%s WHERE `name`=%s",
+        (payload, user),
+    )
 
 
 @frappe.whitelist()
@@ -302,7 +340,7 @@ def save_table_preferences(table_id, config=None):
     table_id = str(table_id or "").strip()
     if not table_id:
         frappe.throw("table_id is required")
-    if len(table_id) > 180:
+    if len(table_id) > 400:
         frappe.throw("table_id is too long")
 
     user = frappe.session.user
@@ -1958,10 +1996,31 @@ def _user_execution_update_mode(user, doc):
 
 @frappe.whitelist()
 def get_field_execution_for_rollout(rollout_plan):
-    """Latest Daily Execution for this rollout and the logged-in field user's team (for QC/CIAG updates)."""
+    """Latest Daily Execution for this rollout.
+
+    Field team: scoped to the logged-in user's INET team (QC/CIAG flow).
+    IM / desk admin: any team on that rollout so IM can record execution without a field_user.
+    """
     rollout_plan = (rollout_plan or "").strip()
     if not rollout_plan:
         return None
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+    im_scope = (
+        "Administrator" in roles
+        or "System Manager" in roles
+        or "INET Admin" in roles
+        or "INET IM" in roles
+    )
+    if im_scope:
+        rows = frappe.get_all(
+            "Daily Execution",
+            filters={"rollout_plan": rollout_plan},
+            fields=["name", "qc_status", "ciag_status", "execution_status", "photos"],
+            order_by="modified desc",
+            limit_page_length=1,
+        )
+        return rows[0] if rows else None
     team_id = _session_inet_field_team_id()
     if not team_id:
         return None

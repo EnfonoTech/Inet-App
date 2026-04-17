@@ -8,6 +8,7 @@ import {
   formatElapsedSeconds,
   makeSkewMs,
 } from "../../utils/executionTimerDisplay";
+import { defaultAchievedQtyFromPlan } from "../../utils/planDefaultQty";
 
 const EXECUTION_STATUSES = [
   "In Progress",
@@ -53,9 +54,11 @@ function buildUploadForm(file) {
 }
 
 export default function ExecutionForm() {
-  const { id } = useParams();
+  const { id: idParam } = useParams();
+  const id = idParam ? decodeURIComponent(idParam) : undefined;
   const navigate = useNavigate();
-  const { teamId } = useAuth();
+  const { teamId, role } = useAuth();
+  const isFieldPortal = role === "field";
 
   const [inExecPlans, setInExecPlans] = useState([]);
   const [loadingInExec, setLoadingInExec] = useState(false);
@@ -105,7 +108,7 @@ export default function ExecutionForm() {
   }, [runningHere?.log_name, runningElsewhere?.log_name, runningHere?.server_time_ms, runningElsewhere?.server_time_ms]);
 
   useEffect(() => {
-    if (!id || !teamId) return;
+    if (!id || !isFieldPortal || !teamId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -131,7 +134,7 @@ export default function ExecutionForm() {
       }
     })();
     return () => { cancelled = true; };
-  }, [id, teamId, success]);
+  }, [id, teamId, success, isFieldPortal]);
 
   useEffect(() => {
     async function loadPlan() {
@@ -159,14 +162,17 @@ export default function ExecutionForm() {
 
   useEffect(() => {
     async function loadInExecution() {
-      if (!teamId || id) return;
+      if (id) return;
       setLoadingInExec(true);
       setInExecError(null);
       try {
-        const list = await pmApi.listRolloutPlans({
-          team: teamId,
-          plan_status: "In Execution",
-        });
+        let list = [];
+        if (teamId) {
+          list = await pmApi.listRolloutPlans({
+            team: teamId,
+            plan_status: "In Execution",
+          });
+        }
         setInExecPlans(Array.isArray(list) ? list : []);
       } catch (e) {
         setInExecPlans([]);
@@ -186,7 +192,11 @@ export default function ExecutionForm() {
   }, []);
 
   useEffect(() => {
-    if (!id || !teamId || success) {
+    if (!id || success) {
+      setExistingExec(null);
+      return;
+    }
+    if (isFieldPortal && !teamId) {
       setExistingExec(null);
       return;
     }
@@ -199,21 +209,18 @@ export default function ExecutionForm() {
       if (!cancelled) setExistingExec(null);
     });
     return () => { cancelled = true; };
-  }, [id, teamId, success]);
+  }, [id, teamId, success, isFieldPortal]);
 
   useEffect(() => {
-    if (!plan) return;
+    setAchievedQty("");
+  }, [id]);
+
+  useEffect(() => {
+    if (!plan || success) return;
+    if (String(plan.name || "") !== String(id || "")) return;
     if (String(achievedQty || "").trim() !== "") return;
-    const defaultQty =
-      plan.qty ??
-      plan.requested_qty ??
-      plan.target_qty ??
-      plan.due_qty ??
-      null;
-    if (defaultQty !== null && defaultQty !== undefined && String(defaultQty).trim() !== "") {
-      setAchievedQty(String(defaultQty));
-    }
-  }, [plan, achievedQty]);
+    setAchievedQty(defaultAchievedQtyFromPlan(plan));
+  }, [plan, achievedQty, success, id]);
 
   function handleActivityChange(code) {
     setActivityCode(code);
@@ -261,7 +268,7 @@ export default function ExecutionForm() {
   }
 
   async function handleStartTimer() {
-    if (!id) return;
+    if (!id || !isFieldPortal) return;
     setTimerBusy(true);
     setTimerError(null);
     try {
@@ -413,7 +420,7 @@ export default function ExecutionForm() {
                   value=""
                   onChange={(e) => {
                     const v = e.target.value;
-                    if (v) navigate(`/field-execute/${v}`);
+                    if (v) navigate(`/field-execute/${encodeURIComponent(v)}`);
                   }}
                 >
                   <option value="">— Select —</option>
@@ -447,8 +454,8 @@ export default function ExecutionForm() {
               </div>
             )}
           </div>
-          <button className="btn-primary" onClick={() => navigate(-1)}>
-            Back to Today's Work
+          <button className="btn-primary" onClick={() => navigate("/today")}>
+            Back to Today&apos;s Work
           </button>
         </div>
       </div>
@@ -479,7 +486,7 @@ export default function ExecutionForm() {
         )}
 
         {/* Plan Details */}
-        {teamId && plan && !["Completed", "Cancelled"].includes(plan.plan_status) && (
+        {isFieldPortal && teamId && plan && !["Completed", "Cancelled"].includes(plan.plan_status) && (
           <div
             style={{
               marginBottom: 20,
