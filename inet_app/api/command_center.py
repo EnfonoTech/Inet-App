@@ -284,42 +284,73 @@ def _sanitize_table_pref_config(config):
     return out
 
 
+# Frappe stores list-view prefs in `__UserSettings` (user, doctype, data) — not on `tabUser`.
+# Use a dedicated synthetic doctype key so portal table layouts persist reliably.
+_PORTAL_TABLE_PREFS_DOCTYPE = "INET PMS Table Prefs"
+
+
 def _get_all_table_prefs_for_user(user):
-    raw = frappe.db.get_value("User", user, "user_settings")
-    if not raw:
+    if not user or user == "Guest":
         return {}
     try:
-        parsed = frappe.parse_json(raw) if isinstance(raw, str) else raw
+        rows = frappe.db.sql(
+            "select `data` from `__UserSettings` where `user`=%s and `doctype`=%s",
+            (user, _PORTAL_TABLE_PREFS_DOCTYPE),
+        )
     except Exception:
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    prefs = parsed.get("inet_table_preferences") or {}
-    return prefs if isinstance(prefs, dict) else {}
+        rows = None
+    if rows and rows[0] and rows[0][0]:
+        try:
+            blob = rows[0][0]
+            parsed = frappe.parse_json(blob) if isinstance(blob, str) else blob
+        except Exception:
+            parsed = {}
+        if isinstance(parsed, dict):
+            inner = parsed.get("inet_table_preferences")
+            if isinstance(inner, dict):
+                return inner
+    # Legacy: some sites may still have JSON on User (if column exists)
+    if frappe.db.has_column("User", "user_settings"):
+        try:
+            raw = frappe.db.get_value("User", user, "user_settings")
+        except Exception:
+            raw = None
+        if raw:
+            try:
+                parsed = frappe.parse_json(raw) if isinstance(raw, str) else raw
+            except Exception:
+                parsed = {}
+            if isinstance(parsed, dict):
+                inner = parsed.get("inet_table_preferences") or {}
+                if isinstance(inner, dict):
+                    return inner
+    return {}
 
 
 def _save_all_table_prefs_for_user(user, prefs):
-    """Persist portal table prefs into User.user_settings (session user only).
-
-    Uses a direct SQL update so portal roles without User write permission can still save.
-    """
+    """Persist portal table prefs for the session user (same mechanism as Desk __UserSettings)."""
     if not user or user == "Guest":
         frappe.throw("Not permitted", frappe.PermissionError)
     if user != frappe.session.user:
         frappe.throw("Not permitted", frappe.PermissionError)
-    raw = frappe.db.get_value("User", user, "user_settings")
-    try:
-        parsed = frappe.parse_json(raw) if raw else {}
-    except Exception:
-        parsed = {}
-    if not isinstance(parsed, dict):
-        parsed = {}
-    parsed["inet_table_preferences"] = prefs
-    payload = json.dumps(parsed)
-    frappe.db.sql(
-        "UPDATE `tabUser` SET `user_settings`=%s WHERE `name`=%s",
-        (payload, user),
+    payload = json.dumps({"inet_table_preferences": prefs})
+    frappe.db.multisql(
+        {
+            "mariadb": (
+                "INSERT INTO `__UserSettings`(`user`, `doctype`, `data`) "
+                "VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE `data`=%s"
+            ),
+            "postgres": (
+                'INSERT INTO "__UserSettings" ("user", "doctype", "data") '
+                'VALUES (%s, %s, %s) ON CONFLICT ("user", "doctype") DO UPDATE SET "data"=%s'
+            ),
+        },
+        (user, _PORTAL_TABLE_PREFS_DOCTYPE, payload, payload),
     )
+    try:
+        frappe.cache.hset("_user_settings", f"{_PORTAL_TABLE_PREFS_DOCTYPE}::{user}", None)
+    except Exception:
+        pass
 
 
 @frappe.whitelist()
@@ -342,6 +373,12 @@ def save_table_preferences(table_id, config=None):
         frappe.throw("table_id is required")
     if len(table_id) > 400:
         frappe.throw("table_id is too long")
+
+    if isinstance(config, str):
+        try:
+            config = frappe.parse_json(config) if (config or "").strip() else {}
+        except Exception:
+            config = {}
 
     user = frappe.session.user
     prefs = _get_all_table_prefs_for_user(user)
