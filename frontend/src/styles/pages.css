@@ -43,6 +43,9 @@
   overflow-x: auto;
   overflow-y: auto;
   max-height: 72vh;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0; /* allow shrink inside flex / overflow-x parents so inner scroll works */
   box-shadow: var(--shadow-sm);
   /* nice scrollbar */
   scrollbar-width: thin;
@@ -76,6 +79,8 @@
 .data-table.data-table--tablepro > thead > tr:first-child > th {
   resize: none;
   text-overflow: ellipsis;
+  overflow-x: visible;
+  overflow-y: hidden;
 }
 .data-table.data-table--tablepro > tbody > tr > td {
   overflow: hidden;
@@ -606,11 +611,13 @@
 .tablepro-resize-handle {
   position: absolute;
   top: 0;
-  right: 0;
-  width: 6px;
+  right: -6px;
+  width: 16px;
   height: 100%;
   cursor: col-resize;
   user-select: none;
+  z-index: 12;
+  touch-action: none;
 }
 
 /* ── Card Grid (for field team items) ───────────────────────── */

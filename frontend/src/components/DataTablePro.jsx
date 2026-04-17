@@ -6,6 +6,8 @@ import { pmApi } from "../services/api";
 
 /** Row-select checkbox column: fixed width, not resizable / not reorderable in Manage Table. */
 const TABLEPRO_SELECT_COL_PX = 44;
+/** Floor width for visible columns without a saved width — min table width so many columns can scroll horizontally. */
+const TABLEPRO_DEFAULT_COL_MIN_PX = 120;
 
 function keyFromLabel(label, i) {
   const base = String(label || "")
@@ -86,23 +88,68 @@ export default function DataTablePro() {
     let destroyed = false;
     /** @type {{ table: HTMLTableElement, toolbar: HTMLDivElement }[]} */
     const tracked = [];
+    /** @type {{ wrapper: Element, mo: MutationObserver }[]} */
+    const wrapperMoList = [];
+    let reinitTimer = null;
+    let initLock = false;
+    let initAgain = false;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    const init = async () => {
-      let attempts = 0;
-      while (!destroyed && attempts < 60) {
-        const found = document.querySelectorAll(".data-table-wrapper > table.data-table").length;
-        if (found > 0) break;
-        attempts += 1;
-        await sleep(80);
+    const pruneDisconnected = () => {
+      for (let i = tracked.length - 1; i >= 0; i -= 1) {
+        const { table, toolbar } = tracked[i];
+        if (table?.isConnected) continue;
+        try {
+          if (typeof table?._tableproCleanup === "function") {
+            table._tableproCleanup();
+            delete table._tableproCleanup;
+          }
+        } catch {
+          /* ignore */
+        }
+        toolbar?.remove();
+        if (table) {
+          table.classList.remove("data-table--tablepro");
+          delete table.dataset.tableproInitialized;
+        }
+        tracked.splice(i, 1);
       }
-      if (destroyed) return;
+    };
 
-      const tables = Array.from(document.querySelectorAll(".data-table-wrapper > table.data-table"));
-      for (let tIdx = 0; tIdx < tables.length; tIdx += 1) {
+    const scheduleReinitFromDom = () => {
+      if (destroyed) return;
+      if (reinitTimer) clearTimeout(reinitTimer);
+      reinitTimer = setTimeout(() => {
+        reinitTimer = null;
         if (destroyed) return;
-        const table = tables[tIdx];
-        if (table.dataset.tableproInitialized === "1") continue;
+        pruneDisconnected();
+        if (!document.querySelector(".data-table-wrapper > table.data-table")) return;
+        void init();
+      }, 120);
+    };
+
+    async function init() {
+      if (initLock) {
+        initAgain = true;
+        return;
+      }
+      initLock = true;
+      try {
+        pruneDisconnected();
+        let attempts = 0;
+        while (!destroyed && attempts < 60) {
+          const found = document.querySelectorAll(".data-table-wrapper > table.data-table").length;
+          if (found > 0) break;
+          attempts += 1;
+          await sleep(80);
+        }
+        if (destroyed) return;
+
+        const tables = Array.from(document.querySelectorAll(".data-table-wrapper > table.data-table"));
+        for (let tIdx = 0; tIdx < tables.length; tIdx += 1) {
+          if (destroyed) return;
+          const table = tables[tIdx];
+          if (table.dataset.tableproInitialized === "1") continue;
         table.dataset.tableproInitialized = "1";
         table.classList.add("data-table--tablepro");
 
@@ -319,10 +366,16 @@ export default function DataTablePro() {
           });
         };
 
-        /** Wider than wrapper only when saved column px widths need horizontal scroll (not max-content text blow-up). */
+        /**
+         * Set table min-width so the wrapper can scroll horizontally when needed.
+         * Uses saved px widths plus a floor for unsized columns (saved-only sum was almost always < wrapper → no scroll).
+         */
         const syncTableScrollWidth = () => {
           const wrap = table.closest(".data-table-wrapper");
           if (!wrap) return;
+          const cw = wrap.clientWidth || 0;
+          if (cw < 1) return;
+
           let sum = 0;
           state.order.forEach((k) => {
             if (state.hidden.has(k)) return;
@@ -332,10 +385,28 @@ export default function DataTablePro() {
             }
             const w = state.widths[k];
             if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) sum += Number(w);
+            else sum += TABLEPRO_DEFAULT_COL_MIN_PX;
           });
-          const cw = wrap.clientWidth || 0;
-          if (sum > cw && sum > 0) table.style.minWidth = `${Math.ceil(sum)}px`;
-          else table.style.minWidth = "";
+
+          if (sum > cw) {
+            table.style.minWidth = `${Math.ceil(sum)}px`;
+            table.style.width = `${Math.ceil(sum)}px`;
+          } else {
+            table.style.minWidth = "";
+            table.style.width = "";
+          }
+        };
+
+        /** Snapshot current header pixel widths into state so table-layout:fixed does not steal width from unspecified columns while resizing one. */
+        const materializeColumnWidthsFromDom = () => {
+          const headerCells = Array.from(table.querySelectorAll("thead tr:first-child > th"));
+          headerCells.forEach((h) => {
+            const k = h.dataset.colKey;
+            if (!k) return;
+            if (selectColumnKey && k === selectColumnKey) return;
+            const w = Math.round(h.getBoundingClientRect().width);
+            state.widths[k] = Math.max(60, w || 60);
+          });
         };
 
         const applyWidths = () => {
@@ -455,6 +526,7 @@ export default function DataTablePro() {
             let startX = 0;
             let startW = 0;
             const onMove = (ev) => {
+              ev.preventDefault();
               const next = Math.max(60, startW + (ev.clientX - startX));
               const px = `${next}px`;
               // Keep min/max in sync with width while dragging; stale minWidth blocked shrinking.
@@ -479,8 +551,9 @@ export default function DataTablePro() {
               }
             };
             const onUp = () => {
-              document.removeEventListener("mousemove", onMove);
-              document.removeEventListener("mouseup", onUp);
+              document.removeEventListener("mousemove", onMove, true);
+              document.removeEventListener("mouseup", onUp, true);
+              applyWidths();
               const snap = {
                 order: [...state.order],
                 hidden: Array.from(state.hidden),
@@ -495,10 +568,13 @@ export default function DataTablePro() {
             };
             handle.addEventListener("mousedown", (ev) => {
               ev.preventDefault();
+              ev.stopPropagation();
+              materializeColumnWidthsFromDom();
+              applyWidths();
               startX = ev.clientX;
               startW = th.getBoundingClientRect().width;
-              document.addEventListener("mousemove", onMove);
-              document.addEventListener("mouseup", onUp);
+              document.addEventListener("mousemove", onMove, true);
+              document.addEventListener("mouseup", onUp, true);
             });
             th.style.position = "relative";
             th.appendChild(handle);
@@ -537,6 +613,11 @@ export default function DataTablePro() {
         `;
         wrapper.parentElement?.insertBefore(toolbar, wrapper);
         tracked.push({ table, toolbar });
+        if (!wrapperMoList.some((e) => e.wrapper === wrapper)) {
+          const mo = new MutationObserver(() => scheduleReinitFromDom());
+          mo.observe(wrapper, { childList: true });
+          wrapperMoList.push({ wrapper, mo });
+        }
 
         const panel = document.createElement("div");
         panel.className = "tablepro-panel";
@@ -677,12 +758,28 @@ export default function DataTablePro() {
           document.removeEventListener("mousedown", onDocClick);
           wrapResizeObs?.disconnect();
         };
+        }
+      } finally {
+        initLock = false;
+        if (initAgain) {
+          initAgain = false;
+          void init();
+        }
       }
-    };
+    }
 
     init();
     return () => {
       destroyed = true;
+      if (reinitTimer) clearTimeout(reinitTimer);
+      wrapperMoList.forEach(({ mo }) => {
+        try {
+          mo.disconnect();
+        } catch {
+          /* ignore */
+        }
+      });
+      wrapperMoList.length = 0;
       while (tracked.length) {
         const { table, toolbar } = tracked.pop();
         try {
