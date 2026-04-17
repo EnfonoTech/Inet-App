@@ -192,8 +192,8 @@ export default function CommandDashboard() {
       {/* ── Row 1: Operational Overview ─────────────────────── */}
       <div className="section-label">Operational Overview</div>
       <div className="kpi-row kpi-row-top">
-        <KPICard label="Total Open PO" value={operational.total_open_po} />
-        <KPICard label="Active Teams" value={operational.active_teams} colorClass="text-green" />
+        <KPICard label="Open PO lines" value={operational.total_open_po_lines ?? 0} />
+        <KPICard label="Open PO line value (SAR)" value={operational.total_open_po_line_value ?? operational.total_open_po ?? 0} />
         <KPICard label="Idle Teams" value={operational.idle_teams} colorClass="text-amber" />
         <KPICard label="Planned Activities" value={operational.planned_activities} />
         <KPICard label="Closed Activities" value={operational.closed_activities} colorClass="text-green" />

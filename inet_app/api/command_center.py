@@ -2907,13 +2907,17 @@ def get_command_dashboard():
     # ---- Operational KPIs --------------------------------------------------
     open_po_result = frappe.db.sql(
         """
-        SELECT COALESCE(SUM(line_amount), 0) AS total
+        SELECT COALESCE(SUM(line_amount), 0) AS total_value, COUNT(*) AS line_count
         FROM `tabPO Dispatch`
         WHERE dispatch_status NOT IN ('Completed', 'Cancelled')
         """,
         as_dict=True,
     )
-    total_open_po = flt(open_po_result[0].total if open_po_result else 0)
+    _open_po_row = open_po_result[0] if open_po_result else None
+    total_open_po_line_value = flt(_open_po_row.total_value if _open_po_row else 0)
+    total_open_po_lines = cint(_open_po_row.line_count if _open_po_row else 0)
+    # Legacy key: same as total open line amount (SAR)
+    total_open_po = total_open_po_line_value
 
     # Teams with at least one execution today
     active_team_rows = frappe.db.sql(
@@ -3189,6 +3193,8 @@ def get_command_dashboard():
 
     return {
         "operational": {
+            "total_open_po_lines": total_open_po_lines,
+            "total_open_po_line_value": total_open_po_line_value,
             "total_open_po": total_open_po,
             "active_teams": active_teams_count,
             "idle_teams": idle_teams_count,

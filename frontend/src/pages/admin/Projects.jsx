@@ -239,7 +239,7 @@ export default function Projects() {
       </div>
 
       {/* Filters */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+      <div className="toolbar">
         <input
           type="text"
           placeholder="Search by code or name..."
@@ -247,7 +247,8 @@ export default function Projects() {
           onChange={e => setSearch(e.target.value)}
           style={{
             padding: "9px 14px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-            background: "var(--bg-white)", fontSize: 13, width: 260, color: "var(--text)",
+            background: "var(--bg-white)", fontSize: 13, color: "var(--text)",
+            flex: "1 1 200px", minWidth: 0, maxWidth: "100%", width: "min(100%, 360px)",
           }}
         />
         <select
@@ -256,6 +257,7 @@ export default function Projects() {
           style={{
             padding: "9px 14px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
             background: "var(--bg-white)", fontSize: 13, color: "var(--text)",
+            flex: "0 1 auto", minWidth: 0, maxWidth: "100%",
           }}
         >
           <option value="">All Status</option>
@@ -270,6 +272,7 @@ export default function Projects() {
           style={{
             padding: "9px 14px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
             background: "var(--bg-white)", fontSize: 13, color: "var(--text)",
+            flex: "0 1 auto", minWidth: 0, maxWidth: "100%",
           }}
         >
           <option value="">All Domains</option>
@@ -277,8 +280,9 @@ export default function Projects() {
         </select>
       </div>
 
-      {/* Table */}
-      <div style={{ background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
+      {/* Table — scrollable on narrow viewports (data-table-wrapper) */}
+      <div className="page-content">
+        <div className="data-table-wrapper">
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading projects...</div>
         ) : projects.length === 0 ? (
@@ -330,6 +334,7 @@ export default function Projects() {
             </tbody>
           </table>
         )}
+        </div>
       </div>
 
       <CreateProjectModal

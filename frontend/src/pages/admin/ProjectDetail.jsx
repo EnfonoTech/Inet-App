@@ -350,6 +350,7 @@ function EditOverview({ project, onSave, onCancel }) {
   });
   const [ims, setIms] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [domains, setDomains] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -358,6 +359,7 @@ function EditOverview({ project, onSave, onCancel }) {
       setIms(res || []);
     }).catch(() => {});
     pmApi.listCustomers({ limit: 200 }).then(res => setCustomers(res || [])).catch(() => {});
+    pmApi.listProjectDomains().then(res => setDomains(res || [])).catch(() => {});
   }, []);
 
   const inputStyle = {
@@ -424,7 +426,15 @@ function EditOverview({ project, onSave, onCancel }) {
           </div>
           <div>
             <label style={labelStyle}>Domain</label>
-            <input style={inputStyle} value={form.project_domain} onChange={e => setField("project_domain", e.target.value)} />
+            <select style={inputStyle} value={form.project_domain} onChange={e => setField("project_domain", e.target.value)}>
+              <option value="">-- Select Domain --</option>
+              {form.project_domain && !domains.some((d) => d.name === form.project_domain) && (
+                <option value={form.project_domain}>{form.project_domain}</option>
+              )}
+              {domains.map((d) => (
+                <option key={d.name} value={d.name}>{d.name}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label style={labelStyle}>Budget Amount (SAR)</label>

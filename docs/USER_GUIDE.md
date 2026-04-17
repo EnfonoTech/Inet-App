@@ -50,9 +50,9 @@ Operations wall screen. **Refreshes every 60 seconds.**
 
 | KPI | Meaning |
 |-----|--------|
-| Total Open PO | Sum of **line amount** (SAR) on PO Dispatch rows not in *Completed* / *Cancelled* |
-| Active Teams | Teams currently active |
-| Idle Teams | Idle teams |
+| Open PO lines | Count of **PO Dispatch** rows not in *Completed* / *Cancelled* |
+| Open PO line value (SAR) | Sum of **line amount** on those open dispatch lines |
+| Idle Teams | Active **INET Team** headcount minus teams with a non-cancelled execution today |
 | Planned Activities | Rollout plans in *Planned* (approx.) |
 | Closed Activities | Closed activity count |
 | ReVisits | Re-visit count |
