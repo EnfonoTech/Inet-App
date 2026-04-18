@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import FieldGlobalTimerBar from "./FieldGlobalTimerBar";
@@ -116,11 +116,11 @@ const imNav = [
 ];
 
 const fieldNav = [
-  { to: "/today",        label: "Today's Work", icon: "clipboard" },
-  { to: "/field-execute", label: "Execute",     icon: "tool" },
-  { to: "/field-qc-ciag", label: "QC / CIAG", icon: "eye" },
-  { to: "/field-history",    label: "History",     icon: "checkCircle" },
-  { to: "/field-timesheet", label: "Time log",    icon: "clock" },
+  { to: "/today", label: "Today's Work", shortLabel: "Today", icon: "clipboard" },
+  { to: "/field-execute", label: "Execute", shortLabel: "Execute", icon: "tool" },
+  { to: "/field-qc-ciag", label: "QC / CIAG", shortLabel: "QC", icon: "eye" },
+  { to: "/field-history", label: "History", shortLabel: "History", icon: "checkCircle" },
+  { to: "/field-timesheet", label: "Time log", shortLabel: "Time", icon: "clock" },
 ];
 
 /* ── Chevron SVG ───────────────────────────────────────────── */
@@ -138,7 +138,12 @@ export default function AppShell() {
   const { user, role, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const menuRef = useRef(null);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
 
   /* Pick nav items based on role */
   const navItems = useMemo(() => {
@@ -173,7 +178,30 @@ export default function AppShell() {
   const sidebarWidth = collapsed ? 64 : 260;
 
   return (
-    <div className="app-layout">
+    <div
+      className={`app-layout${mobileNavOpen ? " app-layout--mobile-nav-open" : ""}`}
+      data-role={role || ""}
+    >
+      <button
+        type="button"
+        className="sidebar-backdrop"
+        aria-label="Close navigation"
+        tabIndex={-1}
+        onClick={() => setMobileNavOpen(false)}
+      />
+      <button
+        type="button"
+        className="mobile-menu-btn"
+        aria-label="Open navigation menu"
+        aria-expanded={mobileNavOpen}
+        onClick={() => setMobileNavOpen((v) => !v)}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <line x1="4" y1="7" x2="20" y2="7" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="17" x2="20" y2="17" />
+        </svg>
+      </button>
       {/* ── Sidebar ─────────────────────────────────────────── */}
       <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
         {/* Toggle button */}
@@ -211,6 +239,7 @@ export default function AppShell() {
               className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
               to={item.to}
               data-tooltip={item.label}
+              onClick={() => setMobileNavOpen(false)}
             >
               <span className="nav-icon">{icons[item.icon]}</span>
               <span className="nav-text">{item.label}</span>
@@ -273,6 +302,22 @@ export default function AppShell() {
           <Outlet />
         </div>
       </main>
+
+      {role === "field" && (
+        <nav className="field-dock" aria-label="Quick navigation">
+          {fieldNav.map((item) => (
+            <NavLink
+              key={item.to}
+              className={({ isActive }) => `field-dock-link${isActive ? " active" : ""}`}
+              to={item.to}
+              onClick={() => setMobileNavOpen(false)}
+            >
+              <span className="field-dock-icon">{icons[item.icon]}</span>
+              <span className="field-dock-label">{item.shortLabel}</span>
+            </NavLink>
+          ))}
+        </nav>
+      )}
     </div>
   );
 }

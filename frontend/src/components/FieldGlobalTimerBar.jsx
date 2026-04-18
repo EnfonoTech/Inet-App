@@ -7,20 +7,19 @@ import {
   makeSkewMs,
 } from "../utils/executionTimerDisplay";
 
-/**
- * Sticky bar (Next PMS–style) when a field user has a running execution timer.
- */
 export default function FieldGlobalTimerBar({ role }) {
   const navigate = useNavigate();
   const [running, setRunning] = useState(null);
+  const [stopping, setStopping] = useState(false);
   const skewRef = useRef(0);
   const [, tick] = useState(0);
   const baseElapsedRef = useRef(0);
   const baseAtRef = useRef(0);
 
   useEffect(() => {
-    if (role !== "field") return undefined;
+    if (role !== "field") return;
     let cancelled = false;
+
     async function poll() {
       try {
         const r = await pmApi.getRunningExecutionTimer();
@@ -35,13 +34,14 @@ export default function FieldGlobalTimerBar({ role }) {
             baseAtRef.current = Date.now();
           }
           setRunning(r);
-          return;
+        } else {
+          setRunning(null);
         }
-        setRunning(null);
       } catch {
         if (!cancelled) setRunning(null);
       }
     }
+
     poll();
     const iv = setInterval(poll, 30000);
     const onChanged = () => poll();
@@ -57,19 +57,21 @@ export default function FieldGlobalTimerBar({ role }) {
   }, [role]);
 
   useEffect(() => {
-    if (!running?.log_name) return undefined;
+    if (!running?.log_name) return;
     const id = setInterval(() => tick((x) => x + 1), 1000);
     return () => clearInterval(id);
   }, [running?.log_name]);
 
-  async function handleStop() {
-    if (!running?.log_name) return;
+  async function handleStop(e) {
+    e.stopPropagation();
+    if (!running?.log_name || stopping) return;
+    setStopping(true);
     try {
       await pmApi.stopExecutionTimer(running.log_name);
       setRunning(null);
-    } catch {
-      /* ignore */
-    }
+      window.dispatchEvent(new Event("inet-timer-changed"));
+    } catch { /* ignore */ }
+    finally { setStopping(false); }
   }
 
   if (role !== "field" || !running?.log_name) return null;
@@ -79,46 +81,42 @@ export default function FieldGlobalTimerBar({ role }) {
       ? elapsedSecondsFromServerEpoch(running.start_time_ms, skewRef.current)
       : baseElapsedRef.current + Math.max(0, Math.floor((Date.now() - baseAtRef.current) / 1000));
 
+  const label = running.item_description || running.rollout_plan || "";
+
   return (
     <div
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 50,
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "center",
-        gap: 12,
-        padding: "10px 20px",
-        background: "linear-gradient(90deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%)",
-        borderBottom: "1px solid rgba(99,102,241,0.45)",
-        boxShadow: "0 4px 14px rgba(15,23,42,0.35)",
-      }}
+      className="field-timer-strip"
+      onClick={() => navigate(`/field-execute/${encodeURIComponent(running.rollout_plan)}`)}
+      title={`Go to execution · ${label}`}
     >
-      <span style={{ fontSize: "0.65rem", fontWeight: 800, color: "#94a3b8", letterSpacing: "0.12em" }}>
-        TIMER
-      </span>
-      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "1.35rem", fontWeight: 700, color: "#7dd3fc", minWidth: "7.5ch" }}>
-        {formatElapsedSeconds(sec)}
-      </span>
-      <span style={{ fontSize: "0.8rem", color: "#e2e8f0", flex: "1 1 160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {running.item_description || running.rollout_plan}
-      </span>
+      {/* Pulsing live dot */}
+      <span className="field-timer-dot" />
+
+      {/* Clock */}
+      <span className="field-timer-clock">{formatElapsedSeconds(sec)}</span>
+
+      {/* Description — fills available space */}
+      {label && (
+        <span className="field-timer-label">{label}</span>
+      )}
+
+      {/* Stop button */}
       <button
         type="button"
-        className="btn-secondary"
-        style={{ fontSize: "0.78rem", padding: "6px 12px", borderColor: "#64748b", color: "#e2e8f0" }}
-        onClick={() => navigate(`/field-execute/${running.rollout_plan}`)}
-      >
-        Open execution
-      </button>
-      <button
-        type="button"
-        className="btn-primary"
-        style={{ fontSize: "0.78rem", padding: "6px 14px", background: "#dc2626", borderColor: "#dc2626" }}
+        className="field-timer-stop"
         onClick={handleStop}
+        disabled={stopping}
+        title="Stop timer"
       >
-        Stop
+        {stopping ? (
+          <svg viewBox="0 0 20 20" fill="currentColor" width="12" height="12" style={{ animation: "spin 0.7s linear infinite" }}>
+            <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z" clipRule="evenodd" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 20 20" fill="currentColor" width="12" height="12">
+            <rect x="4" y="4" width="12" height="12" rx="2" />
+          </svg>
+        )}
       </button>
     </div>
   );

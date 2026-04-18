@@ -625,6 +625,11 @@ tbody tr:last-child td {
   to   { transform: translateX(0);    opacity: 1; }
 }
 
+@keyframes modal-slide-up {
+  from { transform: translateY(100%); opacity: 0.7; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
 .modal-overlay-center {
   align-items: flex-start;
   justify-content: center;
@@ -1108,11 +1113,276 @@ body.dashboard-fullscreen .content {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Responsive */
+/* Responsive — login */
 @media (max-width: 768px) {
   .login-brand-panel { display: none; }
   .login-form-panel { padding: 2rem 1.25rem; }
   .login-card { box-shadow: none; border-color: var(--border); }
-  .sidebar { display: none; }
-  .content { margin-left: 0 !important; width: 100% !important; }
+}
+
+/* ── Field Timer Strip ──────────────────────────────────────── */
+.field-timer-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 36px;
+  background: #0f172a;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.18);
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.field-timer-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  flex-shrink: 0;
+  animation: timer-pulse 1.4s ease-in-out infinite;
+}
+
+.field-timer-clock {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #7dd3fc;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.field-timer-label {
+  font-size: 0.72rem;
+  color: #64748b;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.field-timer-stop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #f87171;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.field-timer-stop:active {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.field-timer-stop:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Mobile & PWA-friendly app shell (drawer nav, safe areas) ─ */
+@media (max-width: 900px) {
+  .mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: max(8px, env(safe-area-inset-top, 0px));
+    right: max(10px, env(safe-area-inset-right, 0px));
+    z-index: 260;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+    color: var(--text-secondary);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .mobile-menu-btn:active {
+    background: var(--bg-accent);
+    color: var(--blue);
+  }
+
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 210;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: rgba(15, 23, 42, 0.48);
+    cursor: pointer;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+  }
+
+  .app-layout--mobile-nav-open .sidebar-backdrop {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  .app-layout .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100dvh;
+    height: 100vh;
+    width: min(288px, 86vw);
+    max-width: 300px;
+    z-index: 220;
+    transform: translateX(-102%);
+    transition: transform 0.22s ease;
+    box-shadow: 8px 0 40px rgba(0, 0, 0, 0.28);
+  }
+
+  .app-layout--mobile-nav-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .content {
+    margin-left: 0 !important;
+    width: 100% !important;
+    padding: calc(52px + env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(14px, env(safe-area-inset-left, 0px));
+  }
+
+  /* Field role: thumb-zone dock + room above home indicator */
+  .app-layout[data-role="field"] .content {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .sidebar-toggle {
+    display: none;
+  }
+
+  .sidebar.collapsed {
+    width: min(288px, 86vw);
+  }
+
+  .sidebar.collapsed .nav-text,
+  .sidebar.collapsed .sidebar-logo-text,
+  .sidebar.collapsed .nav-section-label,
+  .sidebar.collapsed .sidebar-actions {
+    opacity: 1;
+    width: auto;
+    overflow: visible;
+  }
+
+  .sidebar.collapsed .nav-link {
+    justify-content: flex-start;
+    padding: 9px 12px;
+  }
+
+  .sidebar.collapsed .nav-icon {
+    margin: 0;
+  }
+
+  .sidebar.collapsed .nav-text {
+    opacity: 1 !important;
+    width: auto !important;
+  }
+
+  .sidebar.collapsed .nav-link::after {
+    content: none !important;
+  }
+}
+
+@media (min-width: 901px) {
+  .mobile-menu-btn,
+  .sidebar-backdrop {
+    display: none !important;
+  }
+}
+
+/* Field bottom dock (mobile / narrow — fateh-style quick nav) */
+.field-dock {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .app-layout[data-role="field"] .field-dock {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 200;
+    justify-content: space-around;
+    align-items: stretch;
+    gap: 2px;
+    padding: 6px max(4px, env(safe-area-inset-left, 0px)) calc(6px + env(safe-area-inset-bottom, 0px))
+      max(4px, env(safe-area-inset-right, 0px));
+    background: rgba(15, 23, 42, 0.96);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 -6px 28px rgba(0, 0, 0, 0.18);
+  }
+
+  .field-dock-link {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 4px 2px;
+    min-height: 48px;
+    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  .field-dock-link.active {
+    color: #bfdbfe;
+    background: rgba(59, 130, 246, 0.22);
+  }
+
+  .field-dock-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+  }
+
+  .field-dock-icon svg {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+@media (min-width: 901px) {
+  .field-dock {
+    display: none !important;
+  }
+}
+
+button,
+[role="button"],
+.nav-link,
+.mobile-menu-btn {
+  touch-action: manipulation;
 }
