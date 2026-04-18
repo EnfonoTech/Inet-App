@@ -1,5 +1,8 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { pmApi } from "../../services/api";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -86,6 +89,7 @@ const inputStyle = {
 const labelStyle = { display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 5, color: "#475569" };
 
 export default function PODispatch() {
+  const { rowLimit } = useTableRowLimit();
   const [activeTab, setActiveTab] = useState("New");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -93,6 +97,7 @@ export default function PODispatch() {
   const [imList, setImList] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [tableSearch, setTableSearch] = useState("");
+  const tableSearchDebounced = useDebounced(tableSearch, 300);
   const [projectFilter, setProjectFilter] = useState("");
   const [imFilter, setImFilter] = useState("");
   const [duidFilter, setDuidFilter] = useState("");
@@ -118,6 +123,11 @@ export default function PODispatch() {
   const [successMsg, setSuccessMsg] = useState(null);
   const [errMsg, setErrMsg] = useState(null);
 
+  useResetOnRowLimitChange(() => {
+    setRows([]);
+    setLoading(true);
+  });
+
   const showNotice = useCallback((type, msg) => {
     if (type === "ok") { setSuccessMsg(msg); setErrMsg(null); }
     else { setErrMsg(msg); setSuccessMsg(null); }
@@ -128,11 +138,17 @@ export default function PODispatch() {
     setLoading(true);
     setError(null);
     setSelected(new Set());
-    setTableSearch("");
     try {
       const status = tab ?? activeTab;
+      const portal = { intake_tab: String(status || "").toLowerCase() };
+      if (tableSearchDebounced.trim()) portal.search = tableSearchDebounced.trim();
+      if (projectFilter) portal.project_code = projectFilter;
+      if (imFilter) portal.dispatched_im = imFilter;
+      if (duidFilter) portal.site_code = duidFilter;
+      if (fromDate) portal.from_date = fromDate;
+      if (toDate) portal.to_date = toDate;
       const [poLines, ims] = await Promise.all([
-        pmApi.listPOIntakeLines(status),
+        pmApi.listPOIntakeLines(status, rowLimit, portal),
         pmApi.listIMMasters({ status: "Active" }),
       ]);
       setRows(Array.isArray(poLines) ? poLines : []);
@@ -144,7 +160,18 @@ export default function PODispatch() {
     }
   }
 
-  useEffect(() => { loadData(activeTab); }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    loadData(activeTab);
+  }, [
+    activeTab,
+    rowLimit,
+    tableSearchDebounced,
+    projectFilter,
+    imFilter,
+    duidFilter,
+    fromDate,
+    toDate,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function switchTab(tab) { setActiveTab(tab); setSelected(new Set()); }
 
@@ -156,31 +183,25 @@ export default function PODispatch() {
     });
   }
 
-  const filtered = rows.filter(r => {
-    if (projectFilter && (r.project_code || "") !== projectFilter) return false;
-    if (imFilter && (r.dispatched_im || "") !== imFilter) return false;
-    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
-    if (fromDate && (r.dispatch_target_month || "").slice(0, 10) < fromDate) return false;
-    if (toDate && (r.dispatch_target_month || "").slice(0, 10) > toDate) return false;
-    if (!tableSearch) return true;
-    const q = tableSearch.toLowerCase();
-    return (
-      (r.poid || "").toLowerCase().includes(q) ||
-      (r.po_no || "").toLowerCase().includes(q) ||
-      (r.item_code || "").toLowerCase().includes(q) ||
-      (r.project_code || "").toLowerCase().includes(q) ||
-      (r.site_code || "").toLowerCase().includes(q) ||
-      (r.center_area || "").toLowerCase().includes(q) ||
-      (r.region_type || "").toLowerCase().includes(q)
-    );
-  });
   const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
-  const imOptions = [...new Set(rows.map((r) => r.dispatched_im).filter(Boolean))].sort();
   const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  const imLabelById = useMemo(() => {
+    const m = {};
+    for (const im of imList) {
+      if (im?.name) m[im.name] = im.full_name || im.im_id || im.name;
+    }
+    return m;
+  }, [imList]);
+  const imSelectOptions = useMemo(
+    () => [...imList].sort((a, b) =>
+      String(a.full_name || a.name || "").localeCompare(String(b.full_name || b.name || ""), undefined, { sensitivity: "base" }),
+    ),
+    [imList],
+  );
   const hasFilters = tableSearch || projectFilter || imFilter || duidFilter || fromDate || toDate;
 
   function toggleAll() {
-    setSelected(selected.size === filtered.length ? new Set() : new Set(filtered.map(r => r.name)));
+    setSelected(selected.size === rows.length ? new Set() : new Set(rows.map((r) => r.name)));
   }
 
   // ── Dispatch ─────────────────────────────────────────────────────────────
@@ -376,7 +397,7 @@ export default function PODispatch() {
                 Project: {detailRow.project_code || "—"}
               </div>
               <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                IM: {detailRow.dispatched_im || "—"}
+                IM: {detailRow.dispatched_im_full_name || imLabelById[detailRow.dispatched_im] || detailRow.dispatched_im || "—"}
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
@@ -444,7 +465,9 @@ export default function PODispatch() {
           </select>
           <select value={imFilter} onChange={(e) => setImFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
             <option value="">All IMs</option>
-            {imOptions.map((im) => <option key={im} value={im}>{im}</option>)}
+            {imSelectOptions.map((im) => (
+              <option key={im.name} value={im.name}>{im.full_name || im.im_id || im.name}</option>
+            ))}
           </select>
           <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
             <option value="">All DUIDs</option>
@@ -501,7 +524,7 @@ export default function PODispatch() {
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading PO lines...</div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📋</div>
               <h3>{tableSearch ? "No results match filter" : activeTab === "New" ? "No lines pending dispatch" : "No records"}</h3>
@@ -513,7 +536,7 @@ export default function PODispatch() {
                 <tr>
                   <th style={{ width: 36 }}>
                     <input type="checkbox"
-                      checked={selected.size === filtered.length && filtered.length > 0}
+                      checked={selected.size === rows.length && rows.length > 0}
                       onChange={toggleAll}
                     />
                   </th>
@@ -541,7 +564,7 @@ export default function PODispatch() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(row => {
+                {rows.map(row => {
                   const isAuto = row.dispatch_mode === "Auto";
                   return (
                     <tr key={row.name}
@@ -573,7 +596,9 @@ export default function PODispatch() {
                       {showDispatched && (
                         <>
                           <td><DispatchModeBadge mode={row.dispatch_mode} /></td>
-                          <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.dispatched_im || "—"}</td>
+                          <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }} title={row.dispatched_im || ""}>
+                            {row.dispatched_im_full_name || imLabelById[row.dispatched_im] || row.dispatched_im || "—"}
+                          </td>
                           <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>
                             {row.dispatch_target_month
                               ? new Date(row.dispatch_target_month).toLocaleDateString("en", { month: "short", year: "numeric" })
@@ -596,8 +621,7 @@ export default function PODispatch() {
                 <tr>
                   <td colSpan={showDispatched ? 18 : 15}
                     style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
-                    <strong>{filtered.length}</strong> row{filtered.length !== 1 ? "s" : ""}
-                    {tableSearch && rows.length !== filtered.length && ` (filtered from ${rows.length})`}
+                    <strong>{rows.length}</strong> row{rows.length !== 1 ? "s" : ""}
                     {activeTab === "Dispatched" && autoRows.length > 0 && (
                       <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600 }}>
                         Auto: {autoRows.length} · Manual: {rows.length - autoRows.length}
@@ -609,6 +633,12 @@ export default function PODispatch() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={rows.length}
+          filteredCount={rows.length}
+          filterActive={!!tableSearch || !!projectFilter || !!imFilter || !!duidFilter || !!fromDate || !!toDate}
+        />
       </div>
     </div>
   );

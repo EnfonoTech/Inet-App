@@ -153,16 +153,28 @@ export const pmApi = {
   getCommandDashboard:  ()          => call("inet_app.api.command_center.get_command_dashboard"),
   getIMDashboard:       (im)        => call("inet_app.api.command_center.get_im_dashboard", { im }),
   getIMReports:         ()          => call("inet_app.api.command_center.get_im_reports"),
-  listIMRolloutPlans:   (im, planStatus) =>
-    call("inet_app.api.command_center.list_im_rollout_plans", {
+  listIMRolloutPlans:   (im, planStatus, limit, portalFilters) => {
+    const args = {
       im: im || "",
       ...(planStatus ? { plan_status: planStatus } : {}),
-    }),
-  listIMDailyExecutions:(im, execStatus) =>
-    call("inet_app.api.command_center.list_im_daily_executions", {
+      ...(limit != null ? { limit } : {}),
+    };
+    if (portalFilters && typeof portalFilters === "object" && Object.keys(portalFilters).length > 0) {
+      args.portal_filters = JSON.stringify(portalFilters);
+    }
+    return call("inet_app.api.command_center.list_im_rollout_plans", args);
+  },
+  listIMDailyExecutions:(im, execStatus, limit, portalFilters) => {
+    const args = {
       im: im || "",
       ...(execStatus ? { execution_status: execStatus } : {}),
-    }),
+      ...(limit != null ? { limit } : {}),
+    };
+    if (portalFilters && typeof portalFilters === "object" && Object.keys(portalFilters).length > 0) {
+      args.portal_filters = JSON.stringify(portalFilters);
+    }
+    return call("inet_app.api.command_center.list_im_daily_executions", args);
+  },
   getDuidOverview:      (duid, poNo) =>
     call("inet_app.api.command_center.get_duid_overview", { duid: duid || "", po_no: poNo || "" }),
   reopenRolloutForRevisit: (rolloutPlan, issueCategory) =>
@@ -185,7 +197,13 @@ export const pmApi = {
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
   uploadPOFile:         (file_url, customer)  => call("inet_app.api.command_center.upload_po_file", { file_url, customer: customer || "" }),
   confirmPOUpload:      (rows)      => call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(rows) }),
-  listPOIntakeLines:    (status)    => call("inet_app.api.command_center.list_po_intake_lines", { status: status || "New" }),
+  listPOIntakeLines:    (status, limit, portalFilters) => {
+    const args = { status: status || "New", limit: limit == null ? null : limit };
+    if (portalFilters && typeof portalFilters === "object" && Object.keys(portalFilters).length > 0) {
+      args.portal_filters = JSON.stringify(portalFilters);
+    }
+    return call("inet_app.api.command_center.list_po_intake_lines", args);
+  },
   dispatchPOLines:      (payload)   => call("inet_app.api.command_center.dispatch_po_lines", { payload: JSON.stringify(payload) }),
   convertDispatchMode:  (payload)   => call("inet_app.api.command_center.convert_dispatch_mode", { payload: JSON.stringify(payload) }),
   createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
@@ -201,9 +219,27 @@ export const pmApi = {
 
   // ── Activity Cost Master ───────────────────────────────────
   listActivityCosts:    ()              => call("inet_app.api.command_center.list_activity_costs"),
-  listExecutionMonitorRows: (filters)   => call("inet_app.api.command_center.list_execution_monitor_rows", { filters: JSON.stringify(filters || {}) }),
-  listWorkDoneRows:        (filters)    => call("inet_app.api.command_center.list_work_done_rows", { filters: JSON.stringify(filters || {}) }),
-  listIssueRiskRows:       (im)         => call("inet_app.api.command_center.list_issue_risk_rows", { im: im || "" }),
+  listExecutionMonitorRows: (filters, limit) =>
+    call("inet_app.api.command_center.list_execution_monitor_rows", {
+      filters: JSON.stringify(filters || {}),
+      ...(limit != null ? { limit } : {}),
+    }),
+  listWorkDoneRows: (filters, limit) =>
+    call("inet_app.api.command_center.list_work_done_rows", {
+      filters: JSON.stringify(filters || {}),
+      ...(limit != null ? { limit } : {}),
+    }),
+  listIssueRiskRows: (im, limit, search, portalFilters) => {
+    const args = {
+      im: im || "",
+      ...(limit != null ? { limit } : {}),
+      ...(search ? { search } : {}),
+    };
+    if (portalFilters && typeof portalFilters === "object" && Object.keys(portalFilters).length > 0) {
+      args.portal_filters = JSON.stringify(portalFilters);
+    }
+    return call("inet_app.api.command_center.list_issue_risk_rows", args);
+  },
 
   // ── Execution Time Log (field work time on rollout; not ERPNext Timesheet) ──
   startExecutionTimer:        (rollout_plan) =>
@@ -248,12 +284,24 @@ export const pmApi = {
 
   // ── List APIs (Command Center doctypes) ────────────────────
   listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost", "isdp_account"], limit_page_length: 100 }),
-  listPODispatches:  (filters) =>
-    call("inet_app.api.command_center.list_po_dispatches", {
+  listPODispatches:  (filters, limitPageLength, portalFilters) => {
+    const args = {
       filters: filters || {},
       order_by: "modified desc",
-      limit_page_length: 100,
-    }),
+      limit_page_length: limitPageLength ?? 100,
+    };
+    if (portalFilters && typeof portalFilters === "object" && Object.keys(portalFilters).length > 0) {
+      args.portal_filters = JSON.stringify(portalFilters);
+    }
+    return call("inet_app.api.command_center.list_po_dispatches", args);
+  },
+  getPODispatchStats: (filters, portalFilters) => {
+    const args = { filters: filters || {} };
+    if (portalFilters && typeof portalFilters === "object" && Object.keys(portalFilters).length > 0) {
+      args.portal_filters = JSON.stringify(portalFilters);
+    }
+    return call("inet_app.api.command_center.get_po_dispatch_stats", args);
+  },
   listRolloutPlans:  (filters) => call("frappe.client.get_list", { doctype: "Rollout Plan", filters: filters || {}, fields: ["*"], order_by: "plan_date desc", limit_page_length: 100 }),
   listProjectDomains:(filters) => call("frappe.client.get_list", { doctype: "Project Domain", filters: filters || { status: "Active" }, fields: ["name", "domain_name", "status"], order_by: "domain_name asc", limit_page_length: 100 }),
   listHuaweiIMs:     (filters) => call("frappe.client.get_list", { doctype: "Huawei IM", filters: filters || { status: "Active" }, fields: ["name", "full_name", "email", "phone"], order_by: "full_name asc", limit_page_length: 100 }),

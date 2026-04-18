@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 
 function todayDate() {
@@ -8,9 +11,11 @@ function todayDate() {
 
 export default function IMIssuesRisks() {
   const { imName } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
   const [planDate, setPlanDate] = useState(todayDate());
@@ -23,10 +28,19 @@ export default function IMIssuesRisks() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
 
+  useResetOnRowLimitChange(() => {
+    setRows([]);
+    setLoading(true);
+  });
+
   async function loadData() {
     setLoading(true);
     try {
-      const res = await pmApi.listIssueRiskRows(imName || "");
+      const res = await pmApi.listIssueRiskRows(
+        imName || "",
+        rowLimit,
+        searchDebounced.trim() || undefined,
+      );
       setRows(Array.isArray(res) ? res : []);
     } catch {
       setRows([]);
@@ -35,7 +49,7 @@ export default function IMIssuesRisks() {
     }
   }
 
-  useEffect(() => { loadData(); }, [imName]);
+  useEffect(() => { loadData(); }, [imName, rowLimit, searchDebounced]);
 
   useEffect(() => {
     if (!showModal || !imName) return;
@@ -51,19 +65,6 @@ export default function IMIssuesRisks() {
     return () => { cancelled = true; };
   }, [showModal, imName]);
 
-  const filtered = rows.filter((r) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (r.rollout_plan || "").toLowerCase().includes(q) ||
-      (r.po_dispatch || "").toLowerCase().includes(q) ||
-      (r.issue_category || "").toLowerCase().includes(q) ||
-      (r.project_code || "").toLowerCase().includes(q) ||
-      (r.site_code || "").toLowerCase().includes(q) ||
-      (r.team || "").toLowerCase().includes(q)
-    );
-  });
-
   function toggleRow(name) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -74,10 +75,10 @@ export default function IMIssuesRisks() {
   }
 
   function toggleAll() {
-    if (filtered.length > 0 && filtered.every((r) => selected.has(r.rollout_plan))) {
+    if (rows.length > 0 && rows.every((r) => selected.has(r.rollout_plan))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filtered.map((r) => r.rollout_plan)));
+      setSelected(new Set(rows.map((r) => r.rollout_plan)));
     }
   }
 
@@ -140,7 +141,7 @@ export default function IMIssuesRisks() {
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading issues…</div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state"><h3>No issue/risk rows</h3></div>
           ) : (
             <table className="data-table">
@@ -149,7 +150,7 @@ export default function IMIssuesRisks() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={filtered.length > 0 && filtered.every((r) => selected.has(r.rollout_plan))}
+                      checked={rows.length > 0 && rows.every((r) => selected.has(r.rollout_plan))}
                       onChange={toggleAll}
                     />
                   </th>
@@ -157,7 +158,7 @@ export default function IMIssuesRisks() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {rows.map((r) => (
                   <tr key={`${r.rollout_plan}-${r.execution_name || ""}`}>
                     <td>
                       <input
@@ -180,6 +181,12 @@ export default function IMIssuesRisks() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={rows.length}
+          filteredCount={rows.length}
+          filterActive={!!search}
+        />
       </div>
       {showModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowModal(false)}>

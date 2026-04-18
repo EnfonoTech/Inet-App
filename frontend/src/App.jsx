@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { TableRowLimitProvider } from "./context/TableRowLimitContext";
 import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
 import inetLogo from "./assets/inet-logo.png";
@@ -138,7 +139,14 @@ export default function App() {
     <AuthProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/*" element={<AppContent />} />
+        <Route
+          path="/*"
+          element={
+            <TableRowLimitProvider>
+              <AppContent />
+            </TableRowLimitProvider>
+          }
+        />
       </Routes>
     </AuthProvider>
   );

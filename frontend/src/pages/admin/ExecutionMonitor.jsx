@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { pmApi } from "../../services/api";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -68,6 +70,7 @@ function parseAttachments(raw) {
 }
 
 export default function ExecutionMonitor() {
+  const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -84,10 +87,25 @@ export default function ExecutionMonitor() {
   const [toDate, setToDate] = useState("");
   const [detailRow, setDetailRow] = useState(null);
 
-  async function loadData() {
+  useResetOnRowLimitChange(() => {
+    setRows([]);
+    setLoading(true);
+  });
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
-      const list = await pmApi.listExecutionMonitorRows({});
+      const filters = {};
+      if (statusFilter) filters.status = statusFilter;
+      if (visitFilter) filters.visit_type = visitFilter;
+      if (teamFilter) filters.team = teamFilter;
+      if (projectFilter) filters.project_code = projectFilter;
+      if (duidFilter) filters.site_code = duidFilter;
+      if (fromDate) filters.from_date = fromDate;
+      if (toDate) filters.to_date = toDate;
+      if (search.trim()) filters.search = search.trim();
+      const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
       setRows(Array.isArray(list) ? list : []);
       setLastRefresh(new Date());
     } catch (err) {
@@ -95,13 +113,13 @@ export default function ExecutionMonitor() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [rowLimit, search, statusFilter, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate]);
 
   useEffect(() => {
     loadData();
     intervalRef.current = setInterval(loadData, 30_000);
     return () => clearInterval(intervalRef.current);
-  }, []);
+  }, [loadData]);
 
   function formatTime(d) {
     if (!d) return "";
@@ -117,38 +135,6 @@ export default function ExecutionMonitor() {
       return { id: tid, label: hit?.team_name || tid };
     });
   const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
-
-  const filtered = rows.filter((r) => {
-    if (statusFilter && r.plan_status !== statusFilter) return false;
-    if (visitFilter && r.visit_type !== visitFilter) return false;
-    if (projectFilter && (r.project_code || "") !== projectFilter) return false;
-    if (teamFilter && (r.team || "") !== teamFilter) return false;
-    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
-    if (fromDate && (r.plan_date || "").slice(0, 10) < fromDate) return false;
-    if (toDate && (r.plan_date || "").slice(0, 10) > toDate) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        (r.name || "").toLowerCase().includes(q) ||
-        (r.item_code || "").toLowerCase().includes(q) ||
-        (r.item_description || "").toLowerCase().includes(q) ||
-        (r.project_code || "").toLowerCase().includes(q) ||
-        (r.site_code || "").toLowerCase().includes(q) ||
-        (r.site_name || "").toLowerCase().includes(q) ||
-        (r.po_dispatch || "").toLowerCase().includes(q) ||
-        (r.original_dummy_poid || "").toLowerCase().includes(q) ||
-        (r.team || "").toLowerCase().includes(q) ||
-        (r.team_name || "").toLowerCase().includes(q) ||
-        (r.im || "").toLowerCase().includes(q) ||
-        (r.im_full_name || "").toLowerCase().includes(q) ||
-        (r.plan_date || "").toLowerCase().includes(q) ||
-        (r.visit_type || "").toLowerCase().includes(q) ||
-        (r.center_area || "").toLowerCase().includes(q) ||
-        (r.region_type || "").toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
 
   const hasFilters = search || statusFilter || visitFilter || projectFilter || teamFilter || duidFilter || fromDate || toDate;
 
@@ -239,11 +225,11 @@ export default function ExecutionMonitor() {
         )}
 
         <div className="data-table-wrapper">
-          {loading && rows.length === 0 ? (
+          {loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading execution data…
             </div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📊</div>
               <h3>{hasFilters ? "No results match your filters" : "No active executions"}</h3>
@@ -278,7 +264,7 @@ export default function ExecutionMonitor() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => {
+                {rows.map((row) => {
                   const target = row.target_amount || 0;
                   const achieved = row.execution_achieved_amount || row.achieved_amount || 0;
                   const pct = target > 0
@@ -343,15 +329,20 @@ export default function ExecutionMonitor() {
               <tfoot>
                 <tr>
                   <td colSpan={18} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    <strong>{filtered.length}</strong>
-                    {hasFilters && ` of ${rows.length}`}
-                    {" "}record{filtered.length !== 1 ? "s" : ""}
+                    <strong>{rows.length}</strong>
+                    {" "}record{rows.length !== 1 ? "s" : ""}
                   </td>
                 </tr>
               </tfoot>
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={rows.length}
+          filteredCount={rows.length}
+          filterActive={hasFilters}
+        />
       </div>
       {detailRow && (
         <div

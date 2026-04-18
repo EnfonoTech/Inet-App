@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
 // Correct Frappe doctype names + actual field names from each doctype JSON
 const MASTER_DOCTYPES = [
@@ -135,11 +137,13 @@ async function fetchCount(doctype) {
   }
 }
 
-async function fetchRecords(doctype, fields) {
+async function fetchRecords(doctype, fields, limit) {
   const fieldParam = encodeURIComponent(JSON.stringify(fields));
+  const n = Number(limit);
+  const lim = n === 0 ? 0 : n > 0 ? Math.min(n, 10000) : 200;
   try {
     const res = await fetch(
-      `/api/resource/${encodeURIComponent(doctype)}?fields=${fieldParam}&limit_page_length=200&order_by=modified+desc`,
+      `/api/resource/${encodeURIComponent(doctype)}?fields=${fieldParam}&limit_page_length=${lim}&order_by=modified+desc`,
       { credentials: "include" }
     );
     const json = await res.json();
@@ -232,17 +236,23 @@ function MasterCard({ label, description, icon, color, count, isExpanded, onTogg
   );
 }
 
-function RecordsTable({ doctype, fields, displayCols }) {
+function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
   const [records, setRecords] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [prevRowLimit, setPrevRowLimit] = useState(rowLimit);
+  if (prevRowLimit !== rowLimit) {
+    setPrevRowLimit(rowLimit);
+    setRecords(null);
+    setLoading(true);
+  }
 
   useEffect(() => {
     setLoading(true);
-    fetchRecords(doctype, fields).then((rows) => {
+    fetchRecords(doctype, fields, rowLimit).then((rows) => {
       setRecords(rows);
       setLoading(false);
     });
-  }, [doctype]);
+  }, [doctype, rowLimit]);
 
   if (loading) {
     return (
@@ -263,6 +273,7 @@ function RecordsTable({ doctype, fields, displayCols }) {
   const cols = displayCols && displayCols.length > 0 ? displayCols : fields.filter((f) => f !== "name");
 
   return (
+    <>
     <div className="data-table-wrapper" style={{ marginTop: 0 }}>
       <table className="data-table">
         <thead>
@@ -318,10 +329,13 @@ function RecordsTable({ doctype, fields, displayCols }) {
         </tbody>
       </table>
     </div>
+    <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />
+    </>
   );
 }
 
 export default function Masters() {
+  const { rowLimit } = useTableRowLimit();
   const [searchParams, setSearchParams] = useSearchParams();
   const [counts, setCounts] = useState({});
   const [expandedDoctype, setExpandedDoctype] = useState(null);
@@ -430,7 +444,7 @@ export default function Masters() {
                 </button>
               </div>
             </div>
-            <RecordsTable doctype={expanded.doctype} fields={expanded.fields} displayCols={expanded.displayCols} />
+            <RecordsTable doctype={expanded.doctype} fields={expanded.fields} displayCols={expanded.displayCols} rowLimit={rowLimit} />
           </div>
         )}
       </div>

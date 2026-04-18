@@ -37,6 +37,49 @@ def _parse_rows(rows):
     return rows or []
 
 
+def _portal_row_limit(limit, default=500):
+    """
+    Normalize portal list size.
+
+    - ``0`` = unlimited (omit ``LIMIT`` in raw SQL; use ``limit_page_length=0`` / ``page_length=0``
+      in Frappe list APIs so no row cap is applied).
+    - Positive values are clamped to 1..10000.
+    - Missing/invalid uses ``default`` (must be >= 1).
+    """
+    try:
+        lim = cint(limit)
+    except Exception:
+        lim = -1
+    if lim == 0:
+        return 0
+    if lim < 1:
+        lim = cint(default) or 500
+    return int(min(max(lim, 1), 10000))
+
+
+def _sql_limit_suffix(limit_val):
+    """Append to SQL; empty string when ``limit_val`` is 0 (unlimited)."""
+    if not limit_val:
+        return ""
+    return f" LIMIT {int(limit_val)}"
+
+
+def _portal_filters_dict(portal_filters):
+    """Parse optional portal_filters JSON from the SPA into a dict."""
+    if isinstance(portal_filters, str):
+        portal_filters = frappe.parse_json(portal_filters) if portal_filters else {}
+    return portal_filters if isinstance(portal_filters, dict) else {}
+
+
+def _sql_like_pattern(term):
+    """Build a LIKE pattern with % wildcards; escape % and _ in user input."""
+    t = (term or "").strip()
+    if not t:
+        return None
+    t = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{t}%"
+
+
 def _make_poid(po_no, po_line_no, shipment_number):
     """Build POID: PO No - PO Line No - Shipment No."""
     parts = [str(po_no or "").strip(), str(cint(po_line_no) if po_line_no else 0)]
@@ -1150,14 +1193,29 @@ def _get_dispatch_for_intake_line(parent_name, po_line_no):
 
 
 @frappe.whitelist()
-def list_po_intake_lines(status="New"):
+def list_po_intake_lines(status="New", limit=None, portal_filters=None):
     """
     Return PO Intake child lines that match given po_line_status (or all when status='all').
     Each row is enriched with parent PO Intake fields and, for dispatched lines, dispatch info.
+
+    ``portal_filters`` (JSON dict) may include: search, project_code, site_code, dispatched_im (or im),
+    from_date, to_date (dispatch ``target_month`` when a dispatch row exists),
+    intake_tab (e.g. ``New`` — skips IM-on-dispatch filter so undispatched lines are not dropped).
     """
     filters = {}
     if status and status.lower() != "all":
         filters["po_line_status"] = status
+
+    limit_page_length = _portal_row_limit(limit, 500)
+    pf = _portal_filters_dict(portal_filters)
+
+    def _portal_active():
+        if not pf:
+            return False
+        for k in ("search", "q", "project_code", "site_code", "dispatched_im", "im", "from_date", "to_date"):
+            if (pf.get(k) or "").strip() if isinstance(pf.get(k), str) else pf.get(k):
+                return True
+        return False
 
     line_fields_full = [
         "name", "parent", "po_line_no", "poid", "shipment_number",
@@ -1171,27 +1229,95 @@ def list_po_intake_lines(status="New"):
         "project_code", "site_code", "site_name", "area",
         "po_line_status", "activity_code", "dispatch_mode",
     ]
-    try:
-        lines = frappe.get_all(
-            "PO Intake Line",
-            filters=filters,
-            fields=line_fields_full,
-            order_by="parent desc, idx asc",
-            limit_page_length=500,
+
+    lines = []
+    if _portal_active():
+        wheres = ["1=1"]
+        params = []
+        if filters.get("po_line_status"):
+            wheres.append("pil.po_line_status = %s")
+            params.append(filters["po_line_status"])
+        if pf.get("project_code"):
+            wheres.append("IFNULL(pil.project_code,'') = %s")
+            params.append((pf.get("project_code") or "").strip())
+        if pf.get("site_code"):
+            wheres.append("IFNULL(pil.site_code,'') = %s")
+            params.append((pf.get("site_code") or "").strip())
+        im_v = (pf.get("dispatched_im") or pf.get("im") or "").strip()
+        intake_tab = (pf.get("intake_tab") or "").strip().lower()
+        if im_v and intake_tab != "new":
+            wheres.append("IFNULL(pd.im,'') = %s")
+            params.append(im_v)
+        if pf.get("from_date") and pf.get("to_date"):
+            wheres.append(
+                "(pd.name IS NULL OR (pd.target_month BETWEEN %s AND %s))"
+            )
+            params.extend([pf["from_date"], pf["to_date"]])
+        elif pf.get("from_date"):
+            wheres.append("(pd.name IS NULL OR pd.target_month >= %s)")
+            params.append(pf["from_date"])
+        elif pf.get("to_date"):
+            wheres.append("(pd.name IS NULL OR pd.target_month <= %s)")
+            params.append(pf["to_date"])
+        like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
+        if like_pat:
+            wheres.append(
+                "(CONCAT_WS(' ', IFNULL(pil.name,''), IFNULL(pil.poid,''), IFNULL(pil.item_code,''), "
+                "IFNULL(pil.project_code,''), IFNULL(pil.site_code,''), IFNULL(pi.po_no,''), "
+                "IFNULL(pi.customer,''), IFNULL(pil.center_area,''), IFNULL(pil.region_type,'')) LIKE %s)"
+            )
+            params.append(like_pat)
+        id_sql = (
+            "SELECT pil.name AS line_id "
+            "FROM `tabPO Intake Line` pil "
+            "INNER JOIN `tabPO Intake` pi ON pi.name = pil.parent "
+            "LEFT JOIN `tabPO Dispatch` pd ON pd.po_intake = pil.parent AND pd.po_line_no = pil.po_line_no "
+            f"WHERE {' AND '.join(wheres)} "
+            "ORDER BY pil.parent DESC, pil.idx ASC "
+            f"{_sql_limit_suffix(limit_page_length)}"
         )
-    except frappe.db.OperationalError as e:
-        if not frappe.db.is_missing_column(e):
-            raise
-        lines = frappe.get_all(
-            "PO Intake Line",
+        id_rows = frappe.db.sql(id_sql, tuple(params), as_dict=True)
+        line_ids = [r.line_id for r in (id_rows or []) if r.get("line_id")]
+        if not line_ids:
+            lines = []
+        else:
+            order_index = {n: i for i, n in enumerate(line_ids)}
+            try:
+                lines = frappe.get_all(
+                    "PO Intake Line",
+                    filters={"name": ["in", line_ids]},
+                    fields=line_fields_full,
+                    limit_page_length=len(line_ids) + 1,
+                )
+            except frappe.db.OperationalError as e:
+                if not frappe.db.is_missing_column(e):
+                    raise
+                lines = frappe.get_all(
+                    "PO Intake Line",
+                    filters={"name": ["in", line_ids]},
+                    fields=line_fields_base,
+                    limit_page_length=len(line_ids) + 1,
+                )
+                for row in lines:
+                    row.setdefault("center_area", None)
+                    row.setdefault("region_type", None)
+            lines.sort(key=lambda r: order_index.get(r.name, 10**9))
+    else:
+        ga_kwargs = dict(
             filters=filters,
-            fields=line_fields_base,
             order_by="parent desc, idx asc",
-            limit_page_length=500,
         )
-        for row in lines:
-            row.setdefault("center_area", None)
-            row.setdefault("region_type", None)
+        if limit_page_length:
+            ga_kwargs["limit_page_length"] = limit_page_length
+        try:
+            lines = frappe.get_all("PO Intake Line", fields=line_fields_full, **ga_kwargs)
+        except frappe.db.OperationalError as e:
+            if not frappe.db.is_missing_column(e):
+                raise
+            lines = frappe.get_all("PO Intake Line", fields=line_fields_base, **ga_kwargs)
+            for row in lines:
+                row.setdefault("center_area", None)
+                row.setdefault("region_type", None)
 
     # Enrich each line with PO-level info and dispatch assignment info
     parent_cache = {}
@@ -1225,6 +1351,19 @@ def list_po_intake_lines(status="New"):
 
         if not line.get("region_type"):
             line["region_type"] = region_type_from_center_area(line.get("center_area"))
+
+    im_dispatched_ids = list(
+        {
+            line.get("dispatched_im")
+            for line in lines
+            if line.get("dispatched_im") and line.get("po_line_status") == "Dispatched"
+        }
+    )
+    im_fn_map = _batch_im_master_full_names(im_dispatched_ids)
+    for line in lines:
+        imn = line.get("dispatched_im")
+        if imn:
+            line["dispatched_im_full_name"] = im_fn_map.get(imn)
 
     return lines
 
@@ -1352,27 +1491,157 @@ def create_im_dummy_po_dispatch(payload=None):
     return {"name": final_name, "po_no": po_no, "poid": final_name}
 
 
+def _po_dispatch_portal_pf_active(pf):
+    if not pf:
+        return False
+    if (pf.get("search") or pf.get("q") or "").strip():
+        return True
+    for k in (
+        "project_code",
+        "site_code",
+        "team",
+        "im",
+        "from_date",
+        "to_date",
+        "dispatch_mode",
+        "dummy_preset",
+    ):
+        v = pf.get(k)
+        if v is None or v == "":
+            continue
+        if k == "dummy_preset" and str(v).strip().lower() == "all":
+            continue
+        return True
+    return False
+
+
+def _po_dispatch_portal_sql_where(filters, pf, fields):
+    """Build WHERE clauses + bind values for portal-filtered PO Dispatch queries."""
+    base_fl = (
+        [[k, "=", v] for k, v in filters.items()]
+        if isinstance(filters, dict)
+        else [list(x) for x in (filters or [])]
+    )
+    if pf.get("project_code"):
+        base_fl.append(["project_code", "=", (pf.get("project_code") or "").strip()])
+    if pf.get("site_code"):
+        base_fl.append(["site_code", "=", (pf.get("site_code") or "").strip()])
+    if pf.get("team"):
+        base_fl.append(["team", "=", (pf.get("team") or "").strip()])
+    pim = (pf.get("im") or "").strip()
+    if pim and "im" in fields:
+        base_fl.append(["im", "=", pim])
+    if pf.get("dispatch_mode"):
+        base_fl.append(["dispatch_mode", "=", (pf.get("dispatch_mode") or "").strip()])
+    if pf.get("from_date") and pf.get("to_date"):
+        base_fl.append(["target_month", "between", [pf["from_date"], pf["to_date"]]])
+    elif pf.get("from_date"):
+        base_fl.append(["target_month", ">=", pf["from_date"]])
+    elif pf.get("to_date"):
+        base_fl.append(["target_month", "<=", pf["to_date"]])
+
+    wheres = ["1=1"]
+    params = []
+    for cond in base_fl:
+        if not isinstance(cond, (list, tuple)) or len(cond) != 3:
+            continue
+        k, op, v = cond[0], cond[1], cond[2]
+        if k not in fields:
+            continue
+        op_l = str(op).lower()
+        if op_l == "=":
+            wheres.append(f"`{k}` = %s")
+            params.append(v)
+        elif op_l == "in" and isinstance(v, (list, tuple)) and v:
+            ph = ", ".join(["%s"] * len(v))
+            wheres.append(f"`{k}` IN ({ph})")
+            params.extend(list(v))
+        elif op_l == "between" and isinstance(v, (list, tuple)) and len(v) == 2:
+            wheres.append(f"`{k}` BETWEEN %s AND %s")
+            params.extend([v[0], v[1]])
+        elif op_l in (">=", "<=", ">", "<"):
+            wheres.append(f"`{k}` {op_l} %s")
+            params.append(v)
+
+    dummy_preset = (pf.get("dummy_preset") or "all").strip().lower()
+    if dummy_preset == "dummy" and "is_dummy_po" in fields:
+        wheres.append("IFNULL(`is_dummy_po`, 0) = 1")
+    elif dummy_preset == "standard" and "is_dummy_po" in fields:
+        wheres.append("(IFNULL(`is_dummy_po`, 0) = 0 OR `is_dummy_po` IS NULL)")
+    elif dummy_preset == "mapped_dummy":
+        wheres.append(
+            "((IFNULL(was_dummy_po, 0) = 1 AND IFNULL(is_dummy_po, 0) = 0) OR "
+            "(IFNULL(original_dummy_poid, '') != '' AND TRIM(original_dummy_poid) != IFNULL(TRIM(name), '')))"
+        )
+
+    like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
+    if like_pat:
+        like_cols = [
+            c
+            for c in (
+                "name",
+                "po_no",
+                "item_code",
+                "project_code",
+                "site_code",
+                "im",
+                "center_area",
+                "region_type",
+                "original_dummy_poid",
+            )
+            if c in fields
+        ]
+        if like_cols:
+            wheres.append(
+                "(" + " OR ".join(f"IFNULL(`{c}`, '') LIKE %s" for c in like_cols) + ")"
+            )
+            params.extend([like_pat] * len(like_cols))
+
+    return wheres, params
+
+
 @frappe.whitelist()
-def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length=100):
+def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length=100, portal_filters=None):
     """
     List PO Dispatch rows using only columns that exist in the database.
 
     ``frappe.client.get_list(..., fields=[\"*\"])`` expands ``*`` from DocType meta, so new
     fields in the JSON that are not yet migrated into MySQL cause OperationalError 1054.
     This endpoint avoids that by selecting physical table columns only.
+
+    ``portal_filters`` (JSON dict) applies **before** ``limit_page_length`` so search / UI
+    filters operate on the full dataset: search, project_code, site_code, team, im,
+    from_date, to_date (on ``target_month``), dispatch_mode, dummy_preset
+    (``all`` | ``dummy`` | ``standard`` | ``mapped_dummy``).
     """
     if isinstance(filters, str):
         filters = frappe.parse_json(filters) if filters else {}
     filters = filters or {}
-    limit_page_length = cint(limit_page_length) or 100
+    pf = _portal_filters_dict(portal_filters)
+    limit_page_length = _portal_row_limit(limit_page_length, 100)
     fields = list(frappe.db.get_table_columns("PO Dispatch"))
-    rows = frappe.get_list(
-        "PO Dispatch",
-        filters=filters,
-        fields=fields,
-        order_by=order_by or "modified desc",
-        limit_page_length=limit_page_length,
-    )
+
+    if not _po_dispatch_portal_pf_active(pf):
+        gl_pd = dict(
+            filters=filters,
+            fields=fields,
+            order_by=order_by or "modified desc",
+        )
+        if limit_page_length:
+            gl_pd["limit_page_length"] = limit_page_length
+        rows = frappe.get_list("PO Dispatch", **gl_pd)
+    else:
+        wheres, params = _po_dispatch_portal_sql_where(filters, pf, fields)
+        ob = (order_by or "modified desc").strip()
+        if not ob.replace(" ", "").replace(",", "").replace("_", "").isalnum():
+            ob = "modified desc"
+        cols_sql = ", ".join(f"`{c}`" for c in fields)
+        sql = (
+            f"SELECT {cols_sql} FROM `tabPO Dispatch` "
+            f"WHERE {' AND '.join(wheres)} ORDER BY {ob}{_sql_limit_suffix(limit_page_length)}"
+        )
+        rows = frappe.db.sql(sql, tuple(params), as_dict=True)
+
     if not rows:
         return rows
     im_names = list({r.get("im") for r in rows if r.get("im")})
@@ -1390,6 +1659,75 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
         imn = r.get("im")
         r["im_full_name"] = im_labels.get(imn) if imn else None
     return rows
+
+
+@frappe.whitelist()
+def get_po_dispatch_stats(filters=None, portal_filters=None):
+    """
+    Return aggregate counters for PO Dispatch rows matching the given filters.
+    These counters are independent of any row/page limit so UI KPI cards stay
+    stable no matter how many rows the table is currently rendering.
+
+    Optional ``portal_filters`` uses the same rules as ``list_po_dispatches`` so
+    KPI counts stay aligned when the UI applies search / IM / project / dummy
+    presets (still no row limit).
+
+    Response shape:
+        { "total": int, "auto": int, "manual": int, "dispatched": int }
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters) if filters else {}
+    filters = filters or {}
+    pf = _portal_filters_dict(portal_filters)
+    fields = list(frappe.db.get_table_columns("PO Dispatch"))
+
+    if _po_dispatch_portal_pf_active(pf):
+        wheres, params = _po_dispatch_portal_sql_where(filters, pf, fields)
+        base_sql = f"FROM `tabPO Dispatch` WHERE {' AND '.join(wheres)}"
+
+        def _cnt(extra_sql="", extra_params=None):
+            xp = list(extra_params or ())
+            if extra_sql:
+                q = f"SELECT COUNT(*) {base_sql} AND ({extra_sql})"
+            else:
+                q = f"SELECT COUNT(*) {base_sql}"
+            row = frappe.db.sql(q, tuple(params) + tuple(xp))
+            return int(row[0][0]) if row else 0
+
+        total = _cnt()
+        auto = _cnt("`dispatch_mode` = %s", ["Auto"])
+        manual = _cnt("`dispatch_mode` = %s", ["Manual"])
+        dispatched = _cnt("`dispatch_status` = %s", ["Dispatched"])
+        return {
+            "total": total,
+            "auto": auto,
+            "manual": manual,
+            "dispatched": dispatched,
+        }
+
+    total = frappe.db.count("PO Dispatch", filters=filters) or 0
+
+    def _count_with(extra):
+        merged_filters = list(filters) if isinstance(filters, list) else dict(filters)
+        if isinstance(merged_filters, list):
+            for k, v in extra.items():
+                merged_filters.append([k, "=", v])
+        else:
+            merged_filters.update(extra)
+        try:
+            return frappe.db.count("PO Dispatch", filters=merged_filters) or 0
+        except Exception:
+            return 0
+
+    auto = _count_with({"dispatch_mode": "Auto"})
+    manual = _count_with({"dispatch_mode": "Manual"})
+    dispatched = _count_with({"dispatch_status": "Dispatched"})
+    return {
+        "total": int(total),
+        "auto": int(auto),
+        "manual": int(manual),
+        "dispatched": int(dispatched),
+    }
 
 
 @frappe.whitelist()
@@ -2436,7 +2774,7 @@ def _batch_im_master_full_names(im_ids):
 
 
 @frappe.whitelist()
-def list_execution_monitor_rows(filters=None):
+def list_execution_monitor_rows(filters=None, limit=500):
     """
     Rich rows for PM Execution Monitor (Rollout + latest execution + dispatch context).
 
@@ -2447,25 +2785,16 @@ def list_execution_monitor_rows(filters=None):
         "team": "...",
         "from_date": "YYYY-MM-DD",
         "to_date": "YYYY-MM-DD",
+        "search": "free text (matches plan, dispatch, team, IM, …)",
+        "project_code": "exact project",
+        "site_code": "exact DUID / site code",
+        "execution_status": "Daily Execution.execution_status (e.g. Completed for Field QC)",
+        "execution_team": "Daily Execution.team when filtering by execution_status",
       }
     """
     if isinstance(filters, str):
         filters = frappe.parse_json(filters)
     filters = filters or {}
-
-    rp_filters = {}
-    if filters.get("status"):
-        rp_filters["plan_status"] = filters["status"]
-    if filters.get("visit_type"):
-        rp_filters["visit_type"] = filters["visit_type"]
-    if filters.get("team"):
-        rp_filters["team"] = filters["team"]
-    if filters.get("from_date") and filters.get("to_date"):
-        rp_filters["plan_date"] = ["between", [filters["from_date"], filters["to_date"]]]
-    elif filters.get("from_date"):
-        rp_filters["plan_date"] = [">=", filters["from_date"]]
-    elif filters.get("to_date"):
-        rp_filters["plan_date"] = ["<=", filters["to_date"]]
 
     rp_fields = [
         "name",
@@ -2483,19 +2812,125 @@ def list_execution_monitor_rows(filters=None):
         rp_fields.append("region_type")
     if frappe.db.has_column("Rollout Plan", "im"):
         rp_fields.append("im")
-    plans = frappe.get_all(
-        "Rollout Plan",
-        filters=rp_filters,
-        fields=rp_fields,
-        order_by="modified desc",
-        limit_page_length=500,
+    lim = _portal_row_limit(limit, 500)
+
+    wheres = ["1=1"]
+    params = []
+    if filters.get("status"):
+        wheres.append("rp.plan_status = %s")
+        params.append(filters["status"])
+    if filters.get("visit_type"):
+        wheres.append("rp.visit_type = %s")
+        params.append(filters["visit_type"])
+    if filters.get("team"):
+        wheres.append("rp.team = %s")
+        params.append(filters["team"])
+    if filters.get("from_date") and filters.get("to_date"):
+        wheres.append("rp.plan_date BETWEEN %s AND %s")
+        params.extend([filters["from_date"], filters["to_date"]])
+    elif filters.get("from_date"):
+        wheres.append("rp.plan_date >= %s")
+        params.append(filters["from_date"])
+    elif filters.get("to_date"):
+        wheres.append("rp.plan_date <= %s")
+        params.append(filters["to_date"])
+    if filters.get("project_code"):
+        wheres.append("IFNULL(pd.project_code,'') = %s")
+        params.append((filters.get("project_code") or "").strip())
+    if filters.get("site_code"):
+        wheres.append("IFNULL(pd.site_code,'') = %s")
+        params.append((filters.get("site_code") or "").strip())
+
+    if filters.get("execution_status"):
+        ex_sql = (
+            "EXISTS (SELECT 1 FROM `tabDaily Execution` de0 "
+            "WHERE de0.rollout_plan = rp.name AND de0.execution_status = %s"
+        )
+        params.append(filters["execution_status"])
+        if filters.get("execution_team"):
+            ex_sql += " AND de0.team = %s"
+            params.append(filters["execution_team"])
+        ex_sql += " LIMIT 1)"
+        wheres.append(ex_sql)
+
+    like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
+    if like_pat:
+        concat_parts = [
+            "IFNULL(rp.name,'')",
+            "IFNULL(rp.team,'')",
+            "CAST(rp.plan_date AS CHAR)",
+            "IFNULL(rp.visit_type,'')",
+            "IFNULL(rp.plan_status,'')",
+            "IFNULL(rp.po_dispatch,'')",
+            "IFNULL(pd.po_no,'')",
+            "IFNULL(pd.item_code,'')",
+            "IFNULL(pd.item_description,'')",
+            "IFNULL(pd.project_code,'')",
+            "IFNULL(pd.site_code,'')",
+            "IFNULL(pd.site_name,'')",
+            "IFNULL(pd.center_area,'')",
+            "IFNULL(pd.region_type,'')",
+            "IFNULL(pd.original_dummy_poid,'')",
+            "IFNULL(it.team_name,'')",
+            "IFNULL(pd.im,'')",
+        ]
+        if frappe.db.has_column("Rollout Plan", "region_type"):
+            concat_parts.append("IFNULL(rp.region_type,'')")
+        rp_im_join = ""
+        if frappe.db.has_column("Rollout Plan", "im"):
+            rp_im_join = "LEFT JOIN `tabIM Master` rim_rp ON rim_rp.name = rp.im"
+            concat_parts.append("IFNULL(rim_rp.full_name,'')")
+        pd_im_join = ""
+        if frappe.db.has_column("PO Dispatch", "im"):
+            pd_im_join = "LEFT JOIN `tabIM Master` rim_pd ON rim_pd.name = pd.im"
+            concat_parts.append("IFNULL(rim_pd.full_name,'')")
+        concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
+        wheres.append(f"({concat_expr} LIKE %s)")
+        params.append(like_pat)
+    else:
+        rp_im_join = (
+            "LEFT JOIN `tabIM Master` rim_rp ON rim_rp.name = rp.im"
+            if frappe.db.has_column("Rollout Plan", "im")
+            else ""
+        )
+        pd_im_join = (
+            "LEFT JOIN `tabIM Master` rim_pd ON rim_pd.name = pd.im"
+            if frappe.db.has_column("PO Dispatch", "im")
+            else ""
+        )
+
+    sql_from = (
+        "FROM `tabRollout Plan` rp "
+        "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+        "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
+        f"{rp_im_join} {pd_im_join}"
     )
-    if not plans:
+    id_sql = (
+        "SELECT rp.name AS plan_id "
+        f"{sql_from} "
+        f"WHERE {' AND '.join(wheres)} "
+        "ORDER BY rp.modified DESC "
+        f"{_sql_limit_suffix(lim)}"
+    )
+    plan_rows = frappe.db.sql(id_sql, tuple(params), as_dict=True)
+    plan_names = [r.plan_id for r in (plan_rows or []) if r.get("plan_id")]
+    if not plan_names:
         return []
 
-    plan_names = [p.name for p in plans]
+    order_index = {n: i for i, n in enumerate(plan_names)}
+    plans = frappe.get_all(
+        "Rollout Plan",
+        filters={"name": ["in", plan_names]},
+        fields=rp_fields,
+        limit_page_length=len(plan_names) + 1,
+    )
+    plans.sort(key=lambda x: order_index.get(x.name, 10**9))
     dispatch_names = [p.po_dispatch for p in plans if p.po_dispatch]
 
+    if lim:
+        exec_cap = min(max(len(plan_names) * 25, lim), 5000)
+    else:
+        exec_cap = min(max(len(plan_names) * 25, 500), 50000)
     execution_rows = frappe.get_all(
         "Daily Execution",
         filters={"rollout_plan": ["in", plan_names]},
@@ -2513,7 +2948,7 @@ def list_execution_monitor_rows(filters=None):
             "modified",
         ],
         order_by="modified desc",
-        limit_page_length=2000,
+        limit_page_length=exec_cap,
     )
     latest_exec_by_plan = {}
     for ex in execution_rows:
@@ -2609,18 +3044,17 @@ def list_execution_monitor_rows(filters=None):
 
 
 @frappe.whitelist()
-def list_work_done_rows(filters=None):
+def list_work_done_rows(filters=None, limit=500):
     """
     Rich Work Done rows for PM page.
-    filters: { billing_status, from_date, to_date, team, project_code, im }
+    filters: {
+      billing_status, from_date, to_date, team, project_code, site_code, im,
+      search (free text across work done, execution, dispatch, team, IM),
+    }
     """
     if isinstance(filters, str):
         filters = frappe.parse_json(filters)
     filters = filters or {}
-
-    wd_filters = {}
-    if filters.get("billing_status"):
-        wd_filters["billing_status"] = filters["billing_status"]
 
     wd_fields = [
         "name",
@@ -2639,16 +3073,104 @@ def list_work_done_rows(filters=None):
     ]
     if frappe.db.has_column("Work Done", "region_type"):
         wd_fields.append("region_type")
-    rows = frappe.get_all(
-        "Work Done",
-        filters=wd_filters,
-        fields=wd_fields,
-        order_by="modified desc",
-        limit_page_length=500,
+    lim = _portal_row_limit(limit, 500)
+
+    wheres = ["1=1"]
+    params = []
+    if filters.get("billing_status"):
+        wheres.append("wd.billing_status = %s")
+        params.append(filters["billing_status"])
+    if filters.get("team"):
+        wheres.append("IFNULL(rp.team, de.team) = %s")
+        params.append(filters["team"])
+    if filters.get("project_code"):
+        wheres.append("IFNULL(pd.project_code,'') = %s")
+        params.append((filters.get("project_code") or "").strip())
+    if filters.get("site_code"):
+        wheres.append("IFNULL(pd.site_code,'') = %s")
+        params.append((filters.get("site_code") or "").strip())
+    if filters.get("im"):
+        imv = (filters.get("im") or "").strip()
+        rp_im_col = frappe.db.has_column("Rollout Plan", "im")
+        if rp_im_col:
+            wheres.append("(IFNULL(pd.im,'') = %s OR IFNULL(rp.im,'') = %s)")
+            params.extend([imv, imv])
+        else:
+            wheres.append("IFNULL(pd.im,'') = %s")
+            params.append(imv)
+    if filters.get("from_date"):
+        wheres.append("de.execution_date >= %s")
+        params.append(filters["from_date"])
+    if filters.get("to_date"):
+        wheres.append("de.execution_date <= %s")
+        params.append(filters["to_date"])
+
+    like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
+    rp_im_join_wd = (
+        "LEFT JOIN `tabIM Master` rim_rp ON rim_rp.name = rp.im"
+        if frappe.db.has_column("Rollout Plan", "im")
+        else ""
     )
-    if not rows:
+    pd_im_join_wd = (
+        "LEFT JOIN `tabIM Master` rim_pd ON rim_pd.name = pd.im"
+        if frappe.db.has_column("PO Dispatch", "im")
+        else ""
+    )
+    if like_pat:
+        concat_parts = [
+            "IFNULL(wd.name,'')",
+            "IFNULL(wd.execution,'')",
+            "IFNULL(wd.system_id,'')",
+            "IFNULL(wd.item_code,'')",
+            "CAST(wd.executed_qty AS CHAR)",
+            "IFNULL(pd.po_no,'')",
+            "IFNULL(pd.project_code,'')",
+            "IFNULL(pd.site_code,'')",
+            "IFNULL(pd.site_name,'')",
+            "IFNULL(pd.item_description,'')",
+            "IFNULL(pd.center_area,'')",
+            "IFNULL(pd.region_type,'')",
+            "IFNULL(pd.original_dummy_poid,'')",
+            "IFNULL(it.team_name,'')",
+            "IFNULL(pd.im,'')",
+        ]
+        if frappe.db.has_column("Work Done", "region_type"):
+            concat_parts.append("IFNULL(wd.region_type,'')")
+        if frappe.db.has_column("Rollout Plan", "im"):
+            concat_parts.append("IFNULL(rim_rp.full_name,'')")
+        if frappe.db.has_column("PO Dispatch", "im"):
+            concat_parts.append("IFNULL(rim_pd.full_name,'')")
+        concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
+        wheres.append(f"({concat_expr} LIKE %s)")
+        params.append(like_pat)
+
+    id_sql = (
+        "SELECT wd.name AS wd_name "
+        "FROM `tabWork Done` wd "
+        "INNER JOIN `tabDaily Execution` de ON de.name = wd.execution "
+        "LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
+        "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+        "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
+        f"{rp_im_join_wd} {pd_im_join_wd} "
+        f"WHERE {' AND '.join(wheres)} "
+        "ORDER BY wd.modified DESC "
+        f"{_sql_limit_suffix(lim)}"
+    )
+    wd_id_rows = frappe.db.sql(id_sql, tuple(params), as_dict=True)
+    wd_ids = [r.wd_name for r in (wd_id_rows or []) if r.get("wd_name")]
+    if not wd_ids:
         return []
 
+    order_index = {n: i for i, n in enumerate(wd_ids)}
+    rows = frappe.get_all(
+        "Work Done",
+        filters={"name": ["in", wd_ids]},
+        fields=wd_fields,
+        limit_page_length=len(wd_ids) + 1,
+    )
+    rows.sort(key=lambda r: order_index.get(r.name, 10**9))
+
+    rel_cap = min(max(len(rows) * 4, 200), 8000)
     exec_names = [r.execution for r in rows if r.execution]
     ex_map = {}
     if exec_names:
@@ -2656,7 +3178,7 @@ def list_work_done_rows(filters=None):
             "Daily Execution",
             filters={"name": ["in", exec_names]},
             fields=["name", "rollout_plan", "execution_date", "execution_status", "team"],
-            limit_page_length=1000,
+            limit_page_length=rel_cap,
         )
         ex_map = {e.name: e for e in ex_rows}
 
@@ -2672,7 +3194,7 @@ def list_work_done_rows(filters=None):
             "Rollout Plan",
             filters={"name": ["in", plan_names]},
             fields=rp_fields_wd,
-            limit_page_length=1000,
+            limit_page_length=rel_cap,
         )
         rp_map = {r.name: r for r in rp_rows}
 
@@ -2692,7 +3214,7 @@ def list_work_done_rows(filters=None):
             "PO Dispatch",
             filters={"name": ["in", dispatch_names]},
             fields=pd_fields_wd,
-            limit_page_length=1000,
+            limit_page_length=rel_cap,
         )
         pd_map = {p.name: p for p in pd_rows}
 
@@ -2721,21 +3243,7 @@ def list_work_done_rows(filters=None):
         pd = pd_map.get(rp.po_dispatch) if rp and rp.po_dispatch else None
         team = (rp.team if rp else None) or (ex.team if ex else None)
         project_code = pd.project_code if pd else None
-        if filters.get("team") and team != filters["team"]:
-            continue
-        if filters.get("project_code") and project_code != filters["project_code"]:
-            continue
-        if filters.get("im"):
-            rp_im_f = rp.get("im") if rp and frappe.db.has_column("Rollout Plan", "im") else None
-            pd_im_f = pd.get("im") if pd else None
-            im_for_filter = rp_im_f or pd_im_f
-            if (im_for_filter or "") != (filters.get("im") or ""):
-                continue
         ex_date = ex.execution_date if ex else None
-        if filters.get("from_date") and ex_date and str(ex_date) < str(filters["from_date"]):
-            continue
-        if filters.get("to_date") and ex_date and str(ex_date) > str(filters["to_date"]):
-            continue
         rp_im_row = rp.get("im") if rp and frappe.db.has_column("Rollout Plan", "im") else None
         pd_im_row = pd.get("im") if pd else None
         im_row = rp_im_row or pd_im_row
@@ -2771,11 +3279,16 @@ def list_work_done_rows(filters=None):
 
 
 @frappe.whitelist()
-def list_issue_risk_rows(im=None):
+def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
     """
     Issue & Risk rows from rollout plans that are in issue state or carry an issue category.
     - Admin roles can view all rows (or filter by im argument).
     - IM role is restricted to its own dispatches.
+    ``search`` matches rollout / dispatch / project / team / IM fields across the full dataset
+    before the row limit is applied.
+
+    ``portal_filters`` (JSON dict) may set exact ``project_code``, ``site_code``, ``team``
+    (rollout plan team id) — applied in SQL before the row limit.
     """
     user = frappe.session.user
     roles = set(frappe.get_roles(user))
@@ -2801,6 +3314,67 @@ def list_issue_risk_rows(im=None):
         rp_im_join_ir = "\n        LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
         im_full_sql_ir = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
     ciag_sel_ir = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL AS ciag_status"
+    lim_ir = _portal_row_limit(limit, 1000)
+
+    wheres = ["rp.plan_status = 'Planning with Issue'"]
+    params = []
+    if im_filter_value:
+        if frappe.db.has_column("Rollout Plan", "im"):
+            wheres.append("(IFNULL(pd.im,'') = %s OR IFNULL(rp.im,'') = %s)")
+            params.extend([im_filter_value, im_filter_value])
+        else:
+            wheres.append("IFNULL(pd.im,'') = %s")
+            params.append(im_filter_value)
+
+    pf_ir = _portal_filters_dict(portal_filters)
+    if (pf_ir.get("project_code") or "").strip():
+        wheres.append("IFNULL(pd.project_code,'') = %s")
+        params.append(pf_ir["project_code"].strip())
+    if (pf_ir.get("site_code") or "").strip():
+        wheres.append("IFNULL(pd.site_code,'') = %s")
+        params.append(pf_ir["site_code"].strip())
+    if (pf_ir.get("team") or "").strip():
+        wheres.append("IFNULL(rp.team,'') = %s")
+        params.append(pf_ir["team"].strip())
+
+    like_pat = _sql_like_pattern(search or "")
+    if like_pat:
+        concat_parts = [
+            "IFNULL(rp.name,'')",
+            "IFNULL(rp.po_dispatch,'')",
+            "IFNULL(rp.issue_category,'')",
+            "IFNULL(rp.team,'')",
+            "IFNULL(it.team_name,'')",
+            "IFNULL(pd.po_no,'')",
+            "IFNULL(pd.project_code,'')",
+            "IFNULL(pd.site_code,'')",
+            "IFNULL(pd.site_name,'')",
+            "IFNULL(pd.im,'')",
+            "IFNULL(im_pd.full_name,'')",
+        ]
+        if frappe.db.has_column("Rollout Plan", "im"):
+            concat_parts.append("IFNULL(im_rp.full_name,'')")
+        concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
+        wheres.append(f"({concat_expr} LIKE %s)")
+        params.append(like_pat)
+
+    id_sql = (
+        "SELECT rp.name AS plan_id "
+        "FROM `tabRollout Plan` rp "
+        "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+        "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
+        f"{rp_im_join_ir}"
+        "\n        LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im"
+        f"\n        WHERE {' AND '.join(wheres)} "
+        "ORDER BY rp.modified DESC "
+        f"{_sql_limit_suffix(lim_ir)}"
+    )
+    plan_rows = frappe.db.sql(id_sql, tuple(params), as_dict=True)
+    plan_ids = [r.plan_id for r in (plan_rows or []) if r.get("plan_id")]
+    if not plan_ids:
+        return []
+
+    ph = ", ".join(["%s"] * len(plan_ids))
     rows = frappe.db.sql(
         f"""
         SELECT
@@ -2831,10 +3405,10 @@ def list_issue_risk_rows(im=None):
         {rp_im_join_ir}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         LEFT JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
-        WHERE rp.plan_status = 'Planning with Issue'
-        ORDER BY rp.modified DESC
-        LIMIT 1000
+        WHERE rp.name IN ({ph})
+        ORDER BY rp.modified DESC, de.modified DESC
         """,
+        tuple(plan_ids),
         as_dict=True,
     )
 
@@ -2843,8 +3417,6 @@ def list_issue_risk_rows(im=None):
     for r in rows or []:
         rp_name = r.get("rollout_plan")
         if not rp_name or rp_name in seen_plans:
-            continue
-        if im_filter_value and (r.get("im") or "") != im_filter_value:
             continue
         seen_plans.add(rp_name)
         out.append(
@@ -3324,17 +3896,60 @@ def im_action_counts(im_identifiers):
 
 
 @frappe.whitelist()
-def list_im_rollout_plans(im=None, plan_status=None):
+def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=None):
     """Rollout plans for this IM (join PO Dispatch — works before im backfill on Rollout Plan)."""
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
         return []
+    pf = _portal_filters_dict(portal_filters)
     ph = ", ".join(["%s"] * len(im_identifiers))
     params = list(im_identifiers)
     status_clause = ""
     if plan_status:
         status_clause = " AND rp.plan_status = %s"
         params.append(plan_status)
+    portal_clause = ""
+    if pf.get("visit_type"):
+        portal_clause += " AND rp.visit_type = %s"
+        params.append(pf["visit_type"])
+    if pf.get("project_code"):
+        portal_clause += " AND IFNULL(pd.project_code,'') = %s"
+        params.append((pf.get("project_code") or "").strip())
+    if pf.get("site_code"):
+        portal_clause += " AND IFNULL(pd.site_code,'') = %s"
+        params.append((pf.get("site_code") or "").strip())
+    if pf.get("team"):
+        portal_clause += " AND IFNULL(rp.team,'') = %s"
+        params.append((pf.get("team") or "").strip())
+    if pf.get("from_date") and pf.get("to_date"):
+        portal_clause += " AND rp.plan_date BETWEEN %s AND %s"
+        params.extend([pf["from_date"], pf["to_date"]])
+    elif pf.get("from_date"):
+        portal_clause += " AND rp.plan_date >= %s"
+        params.append(pf["from_date"])
+    elif pf.get("to_date"):
+        portal_clause += " AND rp.plan_date <= %s"
+        params.append(pf["to_date"])
+    like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
+    if like_pat:
+        concat_parts = [
+            "IFNULL(rp.name,'')",
+            "IFNULL(rp.po_dispatch,'')",
+            "CAST(rp.plan_date AS CHAR)",
+            "IFNULL(rp.visit_type,'')",
+            "IFNULL(rp.team,'')",
+            "IFNULL(it.team_name,'')",
+            "IFNULL(pd.po_no,'')",
+            "IFNULL(pd.project_code,'')",
+            "IFNULL(pd.site_code,'')",
+            "IFNULL(pd.item_code,'')",
+            "IFNULL(pd.im,'')",
+            "IFNULL(im_pd.full_name,'')",
+        ]
+        if frappe.db.has_column("Rollout Plan", "im"):
+            concat_parts.append("IFNULL(im_rp.full_name,'')")
+        portal_clause += " AND (CONCAT_WS(' ', " + ", ".join(concat_parts) + ") LIKE %s)"
+        params.append(like_pat)
     im_plan_extras = []
     if frappe.db.has_column("Rollout Plan", "region_type"):
         im_plan_extras.append("rp.region_type AS region_type")
@@ -3350,6 +3965,7 @@ def list_im_rollout_plans(im=None, plan_status=None):
     if frappe.db.has_column("Rollout Plan", "im"):
         rp_im_join = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
         im_full_sql = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
+    lim_rp = _portal_row_limit(limit, 500)
     rows = frappe.db.sql(
         f"""
         SELECT rp.name, rp.po_dispatch AS system_id, rp.po_dispatch, rp.team, rp.plan_date, rp.visit_type,
@@ -3364,9 +3980,9 @@ def list_im_rollout_plans(im=None, plan_status=None):
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
         {rp_im_join}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
-        WHERE pd.im IN ({ph}){status_clause}
+        WHERE pd.im IN ({ph}){status_clause}{portal_clause}
         ORDER BY rp.plan_date DESC, rp.modified DESC
-        LIMIT 500
+        {_sql_limit_suffix(lim_rp)}
         """,
         tuple(params),
         as_dict=True,
@@ -3375,17 +3991,68 @@ def list_im_rollout_plans(im=None, plan_status=None):
 
 
 @frappe.whitelist()
-def list_im_daily_executions(im=None, execution_status=None):
+def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_filters=None):
     """Daily executions for this IM's dispatches."""
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
         return []
+    pf = _portal_filters_dict(portal_filters)
     ph = ", ".join(["%s"] * len(im_identifiers))
     params = list(im_identifiers)
     status_clause = ""
     if execution_status:
         status_clause = " AND de.execution_status = %s"
         params.append(_normalize_execution_status(execution_status))
+    portal_clause = ""
+    if pf.get("qc_status"):
+        portal_clause += " AND IFNULL(de.qc_status,'') = %s"
+        params.append((pf.get("qc_status") or "").strip())
+    if frappe.db.has_column("Daily Execution", "ciag_status") and pf.get("ciag_status"):
+        portal_clause += " AND IFNULL(de.ciag_status,'') = %s"
+        params.append((pf.get("ciag_status") or "").strip())
+    if pf.get("project_code"):
+        portal_clause += " AND IFNULL(pd.project_code,'') = %s"
+        params.append((pf.get("project_code") or "").strip())
+    if pf.get("site_code"):
+        portal_clause += " AND IFNULL(pd.site_code,'') = %s"
+        params.append((pf.get("site_code") or "").strip())
+    if pf.get("team"):
+        portal_clause += " AND IFNULL(de.team,'') = %s"
+        params.append((pf.get("team") or "").strip())
+    if pf.get("from_date") and pf.get("to_date"):
+        portal_clause += " AND de.execution_date BETWEEN %s AND %s"
+        params.extend([pf["from_date"], pf["to_date"]])
+    elif pf.get("from_date"):
+        portal_clause += " AND de.execution_date >= %s"
+        params.append(pf["from_date"])
+    elif pf.get("to_date"):
+        portal_clause += " AND de.execution_date <= %s"
+        params.append(pf["to_date"])
+    like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
+    if like_pat:
+        concat_parts = [
+            "IFNULL(de.name,'')",
+            "IFNULL(de.rollout_plan,'')",
+            "CAST(de.execution_date AS CHAR)",
+            "IFNULL(de.team,'')",
+            "IFNULL(it.team_name,'')",
+            "IFNULL(de.execution_status,'')",
+            "IFNULL(de.qc_status,'')",
+            "IFNULL(pd.po_no,'')",
+            "IFNULL(pd.project_code,'')",
+            "IFNULL(pd.site_code,'')",
+            "IFNULL(pd.site_name,'')",
+            "IFNULL(pd.item_code,'')",
+            "IFNULL(pd.item_description,'')",
+            "IFNULL(pd.im,'')",
+            "IFNULL(im_pd.full_name,'')",
+        ]
+        if frappe.db.has_column("Daily Execution", "ciag_status"):
+            concat_parts.append("IFNULL(de.ciag_status,'')")
+        if frappe.db.has_column("Rollout Plan", "im"):
+            concat_parts.append("IFNULL(im_rp.full_name,'')")
+        portal_clause += " AND (CONCAT_WS(' ', " + ", ".join(concat_parts) + ") LIKE %s)"
+        params.append(like_pat)
     ciag_sel = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL"
     im_ex_extras = []
     if frappe.db.has_column("Daily Execution", "region_type"):
@@ -3406,6 +4073,7 @@ def list_im_daily_executions(im=None, execution_status=None):
     if frappe.db.has_column("Rollout Plan", "im"):
         rp_im_join_ex = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
         im_full_sql_ex = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
+    lim_de = _portal_row_limit(limit, 500)
     rows = frappe.db.sql(
         f"""
         SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan, de.team, de.execution_date,
@@ -3422,9 +4090,9 @@ def list_im_daily_executions(im=None, execution_status=None):
         LEFT JOIN `tabINET Team` it ON it.name = de.team
         {rp_im_join_ex}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
-        WHERE pd.im IN ({ph}){status_clause}
+        WHERE pd.im IN ({ph}){status_clause}{portal_clause}
         ORDER BY de.execution_date DESC, de.modified DESC
-        LIMIT 500
+        {_sql_limit_suffix(lim_de)}
         """,
         tuple(params),
         as_dict=True,
@@ -4563,7 +5231,9 @@ def save_execution_time_log_manual(rollout_plan, start_time, end_time, notes=Non
 def list_execution_time_logs(filters=None, limit=100, offset=0):
     """
     List execution time logs with role-based scoping.
-    filters (JSON): team_id, im, user, rollout_plan, from_date, to_date, is_running
+    filters (JSON): team_id, im, user, rollout_plan, from_date, to_date, is_running,
+    search (or q) — free-text match across log, user, rollout, PO dispatch fields;
+    applied server-side on the full dataset before limit/offset.
     """
     if isinstance(filters, str):
         filters = frappe.parse_json(filters or "{}")
@@ -4620,28 +5290,124 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
     elif to_date:
         db_filters["start_time"] = ["<=", f"{to_date} 23:59:59"]
 
-    total = frappe.db.count("Execution Time Log", db_filters)
+    like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
+    lim_etl = _portal_row_limit(limit, 100)
+    off_etl = cint(offset)
 
-    logs = frappe.get_all(
-        "Execution Time Log",
-        filters=db_filters,
-        fields=[
-            "name",
-            "rollout_plan",
-            "team_id",
-            "user",
-            "start_time",
-            "end_time",
-            "duration_hours",
-            "duration_minutes",
-            "is_running",
-            "notes",
-        ],
-        order_by="start_time desc",
-        limit_page_length=min(cint(limit) or 100, 500),
-        limit_start=cint(offset),
-        ignore_permissions=True,
-    )
+    if like_pat:
+        wheres = ["1=1"]
+        params = []
+        joins = (
+            "LEFT JOIN `tabRollout Plan` rp ON rp.name = etl.rollout_plan "
+            "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+            "LEFT JOIN `tabUser` u ON u.name = etl.user"
+        )
+        if filters.get("rollout_plan"):
+            wheres.append("etl.rollout_plan = %s")
+            params.append(filters["rollout_plan"])
+        if filters.get("is_running") is not None and filters.get("is_running") != "":
+            wheres.append("etl.is_running = %s")
+            params.append(cint(filters["is_running"]))
+
+        if is_desk_admin:
+            if filters.get("team_id"):
+                wheres.append("etl.team_id = %s")
+                params.append(filters["team_id"])
+            if filters.get("user"):
+                wheres.append("etl.user = %s")
+                params.append(filters["user"])
+        elif is_im:
+            team_ids_sq = _im_team_ids_for_filter(filters.get("im"))
+            if filters.get("team_id"):
+                if filters["team_id"] not in team_ids_sq:
+                    return {"logs": [], "total": 0}
+                wheres.append("etl.team_id = %s")
+                params.append(filters["team_id"])
+            else:
+                if not team_ids_sq:
+                    return {"logs": [], "total": 0}
+                ph_sq = ", ".join(["%s"] * len(team_ids_sq))
+                wheres.append(f"etl.team_id IN ({ph_sq})")
+                params.extend(team_ids_sq)
+            if filters.get("user"):
+                wheres.append("etl.user = %s")
+                params.append(filters["user"])
+        elif is_field:
+            wheres.append("etl.user = %s")
+            params.append(user)
+            ft_team_sq = _session_inet_field_team_id()
+            if ft_team_sq:
+                wheres.append("etl.team_id = %s")
+                params.append(ft_team_sq)
+
+        if from_date and to_date:
+            wheres.append("etl.start_time BETWEEN %s AND %s")
+            params.extend([f"{from_date} 00:00:00", f"{to_date} 23:59:59"])
+        elif from_date:
+            wheres.append("etl.start_time >= %s")
+            params.append(f"{from_date} 00:00:00")
+        elif to_date:
+            wheres.append("etl.start_time <= %s")
+            params.append(f"{to_date} 23:59:59")
+
+        concat_etl = (
+            "CONCAT_WS(' ', IFNULL(etl.name,''), IFNULL(etl.rollout_plan,''), IFNULL(etl.team_id,''), "
+            "IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.notes,''), IFNULL(pd.project_code,''), "
+            "IFNULL(pd.item_description,''), IFNULL(pd.site_name,''), IFNULL(pd.po_no,''))"
+        )
+        wheres.append(f"({concat_etl} LIKE %s)")
+        params.append(like_pat)
+
+        wc = " AND ".join(wheres)
+        total = int(
+            frappe.db.sql(
+                f"SELECT COUNT(*) FROM `tabExecution Time Log` etl {joins} WHERE {wc}",
+                tuple(params),
+            )[0][0]
+        )
+        if lim_etl:
+            etl_page_sql = f" LIMIT {int(lim_etl)} OFFSET {int(off_etl)}"
+        elif off_etl:
+            etl_page_sql = f" LIMIT 18446744073709551615 OFFSET {int(off_etl)}"
+        else:
+            etl_page_sql = ""
+        logs = frappe.db.sql(
+            f"""
+            SELECT etl.name, etl.rollout_plan, etl.team_id, etl.user, etl.start_time, etl.end_time,
+                   etl.duration_hours, etl.duration_minutes, etl.is_running, etl.notes
+            FROM `tabExecution Time Log` etl
+            {joins}
+            WHERE {wc}
+            ORDER BY etl.start_time DESC
+            {etl_page_sql}
+            """,
+            tuple(params),
+            as_dict=True,
+        ) or []
+    else:
+        total = frappe.db.count("Execution Time Log", db_filters) or 0
+
+        ga_etl = dict(
+            filters=db_filters,
+            fields=[
+                "name",
+                "rollout_plan",
+                "team_id",
+                "user",
+                "start_time",
+                "end_time",
+                "duration_hours",
+                "duration_minutes",
+                "is_running",
+                "notes",
+            ],
+            order_by="start_time desc",
+            limit_start=off_etl,
+            ignore_permissions=True,
+        )
+        if lim_etl:
+            ga_etl["limit_page_length"] = lim_etl
+        logs = frappe.get_all("Execution Time Log", **ga_etl)
 
     for row in logs:
         raw_start = row.get("start_time")

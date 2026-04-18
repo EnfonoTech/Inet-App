@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
+import { useTableRowLimit, useResetOnRowLimitChange, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -195,6 +197,7 @@ function CreateProjectModal({ open, onClose, onCreated }) {
 
 export default function Projects() {
   const navigate = useNavigate();
+  const { rowLimit } = useTableRowLimit();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -202,6 +205,11 @@ export default function Projects() {
   const [domainFilter, setDomainFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [allDomains, setAllDomains] = useState([]);
+
+  useResetOnRowLimitChange(() => {
+    setProjects([]);
+    setLoading(true);
+  });
 
   useEffect(() => {
     pmApi.listProjectDomains().then(res => setAllDomains(res || [])).catch(() => {});
@@ -211,7 +219,7 @@ export default function Projects() {
     setLoading(true);
     try {
       const res = await pmApi.listProjects({
-        limit: 200,
+        limit: rowLimit,
         search: search || undefined,
         status: statusFilter || undefined,
         domain: domainFilter || undefined,
@@ -224,14 +232,19 @@ export default function Projects() {
     }
   }
 
-  useEffect(() => { loadProjects(); }, [search, statusFilter, domainFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadProjects(); }, [search, statusFilter, domainFilter, rowLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
       <div className="page-header">
         <div>
           <h1 className="page-title">Projects</h1>
-          <div className="page-subtitle">Manage all INET telecom projects ({projects.length} total)</div>
+          <div className="page-subtitle">
+            Manage all INET telecom projects
+            {" "}
+            (<strong>{projects.length}</strong> loaded
+            {rowLimit === TABLE_ROW_LIMIT_ALL ? " · all rows (no limit)" : ` · max ${rowLimit} rows`})
+          </div>
         </div>
         <div className="page-actions">
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New Project</button>
@@ -335,6 +348,7 @@ export default function Projects() {
           </table>
         )}
         </div>
+        <TableRowsLimitFooter placement="tableCard" loadedCount={projects.length} />
       </div>
 
       <CreateProjectModal

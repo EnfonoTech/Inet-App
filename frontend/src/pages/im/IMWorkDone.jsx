@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -15,14 +18,23 @@ function billingBadgeClass(status) {
 
 export default function IMWorkDone() {
   const { imName } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
+
+  useResetOnRowLimitChange(() => {
+    setRows([]);
+    setLoading(true);
+  });
 
   async function loadData() {
     setLoading(true);
     try {
-      const list = await pmApi.listWorkDoneRows({ im: imName || "" });
+      const filters = { im: imName || "" };
+      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      const list = await pmApi.listWorkDoneRows(filters, rowLimit);
       setRows(Array.isArray(list) ? list : []);
     } catch {
       setRows([]);
@@ -31,21 +43,7 @@ export default function IMWorkDone() {
     }
   }
 
-  useEffect(() => { loadData(); }, [imName]);
-
-  const filtered = rows.filter((r) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (r.po_dispatch || "").toLowerCase().includes(q) ||
-      (r.original_dummy_poid || "").toLowerCase().includes(q) ||
-      (r.execution || "").toLowerCase().includes(q) ||
-      (r.project_code || "").toLowerCase().includes(q) ||
-      (r.site_code || "").toLowerCase().includes(q) ||
-      (r.item_code || "").toLowerCase().includes(q) ||
-      (r.item_description || "").toLowerCase().includes(q)
-    );
-  });
+  useEffect(() => { loadData(); }, [imName, rowLimit, searchDebounced]);
 
   return (
     <div>
@@ -71,7 +69,7 @@ export default function IMWorkDone() {
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading work done…</div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state"><h3>No work done rows</h3></div>
           ) : (
             <table className="data-table">
@@ -89,7 +87,7 @@ export default function IMWorkDone() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {rows.map((r) => (
                   <tr key={r.name}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.po_dispatch || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.po_dispatch || "") ? `Original dummy POID: ${r.original_dummy_poid}` : ""}>
@@ -115,6 +113,12 @@ export default function IMWorkDone() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={rows.length}
+          filteredCount={rows.length}
+          filterActive={!!search}
+        />
       </div>
     </div>
   );

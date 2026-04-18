@@ -12,6 +12,12 @@
   gap: 16px;
   padding: 24px 28px 20px;
   margin-bottom: 0;
+  /* Stick below viewport top while scrolling long pages */
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--bg);
+  box-shadow: 0 1px 0 rgba(226, 232, 240, 0.9);
 }
 
 .page-title {
@@ -50,6 +56,26 @@
   /* nice scrollbar */
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
+}
+
+/* Row-limit bar docked as table card footer (rendered in-page by
+   <TableRowsLimitFooter placement="tableCard" />). The footer itself
+   carries the card-looking styles via its placement prop. */
+.data-table-wrapper + .table-rowlimit-footer {
+  margin-top: -1px;
+  border: 1px solid var(--border);
+  border-top: 1px solid var(--border-light);
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: var(--shadow-sm);
+  width: 100%;
+  max-width: 100%;
+}
+
+/* When footer is attached, remove the bottom radius of the table card
+   so the two visually fuse into a single card. */
+.data-table-wrapper:has(+ .table-rowlimit-footer) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .data-table-wrapper::-webkit-scrollbar {
@@ -441,6 +467,11 @@
   margin-bottom: 0;
   background: var(--bg-white);
   border-bottom: 1px solid var(--border-light);
+  position: sticky;
+  /* Sit below typical one-line page header (title + subtitle) */
+  top: 5.5rem;
+  z-index: 35;
+  box-shadow: 0 1px 0 rgba(226, 232, 240, 0.85);
 }
 
 /* ── Page Content Wrapper ───────────────────────────────────── */

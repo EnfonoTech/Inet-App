@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 
 const TEAM_QC_OPTIONS = ["Pending", "Pass", "Fail"];
@@ -15,9 +18,11 @@ function statusBadgeClass(status) {
 
 export default function FieldQcCiag() {
   const { teamId } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [selectedPlans, setSelectedPlans] = useState(new Set());
   const [editRow, setEditRow] = useState(null);
   const [executionName, setExecutionName] = useState("");
@@ -26,13 +31,20 @@ export default function FieldQcCiag() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
 
+  useResetOnRowLimitChange(() => {
+    setRows([]);
+    setLoading(true);
+  });
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!teamId) return;
       setLoading(true);
       try {
-        const list = await pmApi.listExecutionMonitorRows({ status: "Completed", team: teamId });
+        const filters = { status: "Completed", team: teamId };
+        if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
         if (!cancelled) setRows(Array.isArray(list) ? list : []);
       } catch {
         if (!cancelled) setRows([]);
@@ -41,21 +53,7 @@ export default function FieldQcCiag() {
       }
     })();
     return () => { cancelled = true; };
-  }, [teamId]);
-
-  const filtered = rows.filter((r) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (r.name || "").toLowerCase().includes(q) ||
-      (r.po_dispatch || "").toLowerCase().includes(q) ||
-      (r.original_dummy_poid || "").toLowerCase().includes(q) ||
-      (r.project_code || "").toLowerCase().includes(q) ||
-      (r.site_code || "").toLowerCase().includes(q) ||
-      (r.site_name || "").toLowerCase().includes(q) ||
-      (r.center_area || "").toLowerCase().includes(q)
-    );
-  });
+  }, [teamId, rowLimit, searchDebounced]);
 
   async function openEditor(row) {
     setEditRow(row);
@@ -77,7 +75,7 @@ export default function FieldQcCiag() {
   }
 
   function openSelectedEditor() {
-    const first = filtered.find((r) => selectedPlans.has(r.name));
+    const first = rows.find((r) => selectedPlans.has(r.name));
     if (!first) return;
     const row = first;
     if (row) openEditor(row);
@@ -93,10 +91,10 @@ export default function FieldQcCiag() {
   }
 
   function toggleAll() {
-    if (filtered.length > 0 && filtered.every((r) => selectedPlans.has(r.name))) {
+    if (rows.length > 0 && rows.every((r) => selectedPlans.has(r.name))) {
       setSelectedPlans(new Set());
     } else {
-      setSelectedPlans(new Set(filtered.map((r) => r.name)));
+      setSelectedPlans(new Set(rows.map((r) => r.name)));
     }
   }
 
@@ -148,7 +146,7 @@ export default function FieldQcCiag() {
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading completed plans...</div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state"><h3>No completed plans found</h3></div>
           ) : (
             <table className="data-table">
@@ -157,7 +155,7 @@ export default function FieldQcCiag() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={filtered.length > 0 && filtered.every((r) => selectedPlans.has(r.name))}
+                      checked={rows.length > 0 && rows.every((r) => selectedPlans.has(r.name))}
                       onChange={toggleAll}
                     />
                   </th>
@@ -175,7 +173,7 @@ export default function FieldQcCiag() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {rows.map((r) => (
                   <tr key={r.name}>
                     <td>
                       <input
@@ -215,6 +213,12 @@ export default function FieldQcCiag() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={rows.length}
+          filteredCount={rows.length}
+          filterActive={!!search}
+        />
       </div>
       {editRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setEditRow(null)}>

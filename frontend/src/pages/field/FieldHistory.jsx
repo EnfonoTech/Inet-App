@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 export default function FieldHistory() {
   const { teamId } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  useResetOnRowLimitChange(() => {
+    setRecords([]);
+    setLoading(true);
+  });
 
   useEffect(() => {
     async function load() {
@@ -15,7 +23,7 @@ export default function FieldHistory() {
         const res = await fetch(
           `/api/resource/Daily Execution?filters=${encodeURIComponent(JSON.stringify(filters))}` +
           `&fields=${encodeURIComponent(JSON.stringify(["name","rollout_plan","execution_date","execution_status","achieved_qty","gps_location","remarks"]))}` +
-          `&limit_page_length=100&order_by=execution_date+desc`,
+          `&limit_page_length=${rowLimit}&order_by=execution_date+desc`,
           { credentials: "include" }
         );
         const json = await res.json();
@@ -24,7 +32,7 @@ export default function FieldHistory() {
       setLoading(false);
     }
     load();
-  }, [teamId]);
+  }, [teamId, rowLimit]);
 
   return (
     <div>
@@ -81,6 +89,7 @@ export default function FieldHistory() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />
       </div>
     </div>
   );

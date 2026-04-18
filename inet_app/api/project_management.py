@@ -18,7 +18,16 @@ def _make_poid(po_no, po_line_no, shipment_number):
 
 
 @frappe.whitelist()
-def list_projects(limit=20, offset=0, search=None, status=None, domain=None, area=None):
+def list_projects(
+    limit=20,
+    offset=0,
+    search=None,
+    status=None,
+    domain=None,
+    area=None,
+    implementation_manager=None,
+):
+    """List projects; ``limit=0`` loads all rows (no cap). Other limits are clamped to 1..10000."""
     filters = {}
     if status:
         filters["project_status"] = status
@@ -26,11 +35,18 @@ def list_projects(limit=20, offset=0, search=None, status=None, domain=None, are
         filters["project_domain"] = domain
     if area:
         filters["center_area"] = area
+    im = (implementation_manager or "").strip()
+    if im:
+        filters["implementation_manager"] = im
 
     or_filters = []
     if search:
         like = f"%{search}%"
-        or_filters = [["project_code", "like", like], ["project_name", "like", like]]
+        or_filters = [
+            ["project_code", "like", like],
+            ["project_name", "like", like],
+            ["customer", "like", like],
+        ]
 
     proj_fields = [
         "name",
@@ -47,15 +63,24 @@ def list_projects(limit=20, offset=0, search=None, status=None, domain=None, are
     ]
     if frappe.db.has_column("Project Control Center", "region_type"):
         proj_fields.insert(proj_fields.index("center_area") + 1, "region_type")
-    rows = frappe.get_list(
-        "Project Control Center",
+    page_len = cint(limit) if limit is not None else 20
+    if page_len < 0:
+        page_len = 20
+    elif page_len == 0:
+        page_len = 0
+    elif page_len > 10000:
+        page_len = 10000
+
+    gl_kwargs = dict(
         filters=filters,
         or_filters=or_filters,
         fields=proj_fields,
         order_by="modified desc",
         start=cint(offset),
-        page_length=min(cint(limit) or 20, 100),
     )
+    if page_len:
+        gl_kwargs["page_length"] = page_len
+    rows = frappe.get_list("Project Control Center", **gl_kwargs)
     return rows
 
 

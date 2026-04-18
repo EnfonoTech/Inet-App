@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -18,13 +21,20 @@ function shortDt(v) {
 }
 
 export default function Timesheets() {
+  const { rowLimit } = useTableRowLimit();
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [teamFilter, setTeamFilter] = useState("");
+
+  useResetOnRowLimitChange(() => {
+    setLogs([]);
+    setLoading(true);
+  });
 
   async function loadLogs() {
     setLoading(true);
@@ -33,7 +43,8 @@ export default function Timesheets() {
       if (dateFrom) filters.from_date = dateFrom;
       if (dateTo) filters.to_date = dateTo;
       if (teamFilter.trim()) filters.team_id = teamFilter.trim();
-      const res = await pmApi.listExecutionTimeLogs(filters, 500, 0);
+      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
       setLogs(res?.logs || []);
       setTotal(res?.total ?? (res?.logs || []).length);
     } catch {
@@ -46,22 +57,9 @@ export default function Timesheets() {
 
   useEffect(() => {
     loadLogs();
-  }, [dateFrom, dateTo, teamFilter]);
+  }, [dateFrom, dateTo, teamFilter, rowLimit, searchDebounced]);
 
-  const filtered = logs.filter((row) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (row.name || "").toLowerCase().includes(q) ||
-      (row.user_full_name || "").toLowerCase().includes(q) ||
-      (row.rollout_plan || "").toLowerCase().includes(q) ||
-      (row.team_id || "").toLowerCase().includes(q) ||
-      (row.project_code || "").toLowerCase().includes(q) ||
-      (row.item_description || "").toLowerCase().includes(q)
-    );
-  });
-
-  const totalHours = filtered.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
+  const totalHours = logs.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
   const hasFilters = dateFrom || dateTo || teamFilter || search;
 
   return (
@@ -70,7 +68,7 @@ export default function Timesheets() {
         <div>
           <h1 className="page-title">Execution time logs</h1>
           <div className="page-subtitle">
-            Field time on rollouts · {filtered.length} rows · {fmt.format(totalHours)} h
+            Field time on rollouts · {searchDebounced.trim() ? `${total} matching · ` : ""}{logs.length} loaded · {fmt.format(totalHours)} h
           </div>
         </div>
       </div>
@@ -78,7 +76,7 @@ export default function Timesheets() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14, margin: "0 28px 20px" }}>
         <div className="summary-card accent-blue">
           <div className="card-label">Log lines</div>
-          <div className="card-value">{filtered.length}</div>
+          <div className="card-value">{searchDebounced.trim() ? total : logs.length}</div>
         </div>
         <div className="summary-card accent-green">
           <div className="card-label">Total hours</div>
@@ -147,7 +145,7 @@ export default function Timesheets() {
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-          ) : filtered.length === 0 ? (
+          ) : logs.length === 0 ? (
             <div className="empty-state" style={{ marginTop: 20 }}>
               <div className="empty-icon">&#x1F553;</div>
               <h3>{hasFilters ? "No results" : "No execution time logs"}</h3>
@@ -169,7 +167,7 @@ export default function Timesheets() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
+                {logs.map((row) => (
                   <tr key={row.name}>
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
                     <td>{row.user_full_name || row.user}</td>
@@ -214,7 +212,7 @@ export default function Timesheets() {
                       fontSize: "0.78rem",
                     }}
                   >
-                    TOTALS ({filtered.length}
+                    TOTALS ({logs.length}
                     {hasFilters && ` of ${logs.length}`} / {total} in range)
                   </td>
                   <td
@@ -234,6 +232,12 @@ export default function Timesheets() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={logs.length}
+          filteredCount={searchDebounced.trim() ? total : logs.length}
+          filterActive={!!(search || dateFrom || dateTo || teamFilter)}
+        />
       </div>
     </div>
   );

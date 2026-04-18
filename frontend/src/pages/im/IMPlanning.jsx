@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import IMPlanningExecutionModal from "./IMPlanningExecutionModal";
 
@@ -35,15 +38,16 @@ function canImExecuteFromPlan(status) {
   return ["Planned", "In Execution", "Planning with Issue", "Ready for Execution"].includes(s);
 }
 
-/** Single plan object when exactly one row is selected in the filtered list, else null. */
-function singleSelectedPlan(filtered, selected) {
+/** Single plan object when exactly one row is selected in the list, else null. */
+function singleSelectedPlan(planList, selected) {
   if (selected.size !== 1) return null;
   const name = Array.from(selected)[0];
-  return filtered.find((p) => p.name === name) || null;
+  return planList.find((p) => p.name === name) || null;
 }
 
 export default function IMPlanning() {
   const { imName } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("Planned");
@@ -54,20 +58,46 @@ export default function IMPlanning() {
   const [duidFilter, setDuidFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [detailRow, setDetailRow] = useState(null);
   const [executionModalOpen, setExecutionModalOpen] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
 
+  useResetOnRowLimitChange(() => {
+    setPlans([]);
+    setLoading(true);
+  });
+
   const loadPlans = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await pmApi.listIMRolloutPlans(imName, statusFilter || undefined);
+      const portal = {};
+      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+      if (visitFilter) portal.visit_type = visitFilter;
+      if (projectFilter) portal.project_code = projectFilter;
+      if (teamFilter) portal.team = teamFilter;
+      if (duidFilter) portal.site_code = duidFilter;
+      if (fromDate) portal.from_date = fromDate;
+      if (toDate) portal.to_date = toDate;
+      const portalArg = Object.keys(portal).length ? portal : undefined;
+      const res = await pmApi.listIMRolloutPlans(imName, statusFilter || undefined, rowLimit, portalArg);
       setPlans(Array.isArray(res) ? res : []);
     } catch {
       setPlans([]);
     }
     setLoading(false);
-  }, [imName, statusFilter]);
+  }, [
+    imName,
+    statusFilter,
+    rowLimit,
+    searchDebounced,
+    visitFilter,
+    projectFilter,
+    teamFilter,
+    duidFilter,
+    fromDate,
+    toDate,
+  ]);
 
   useEffect(() => {
     loadPlans();
@@ -85,38 +115,7 @@ export default function IMPlanning() {
   }, [plans]);
   const duidOptions = [...new Set(plans.map((p) => p.site_code).filter(Boolean))].sort();
 
-  const filtered = useMemo(
-    () =>
-      plans.filter((p) => {
-        if (visitFilter && p.visit_type !== visitFilter) return false;
-        if (projectFilter && (p.project_code || "") !== projectFilter) return false;
-        if (teamFilter && (p.team || "") !== teamFilter) return false;
-        if (duidFilter && (p.site_code || "") !== duidFilter) return false;
-        if (fromDate && (p.plan_date || "").slice(0, 10) < fromDate) return false;
-        if (toDate && (p.plan_date || "").slice(0, 10) > toDate) return false;
-        if (search) {
-          const q = search.toLowerCase();
-          return (
-            (p.name || "").toLowerCase().includes(q) ||
-            (p.po_dispatch || "").toLowerCase().includes(q) ||
-            (p.team || "").toLowerCase().includes(q) ||
-            (p.team_name || "").toLowerCase().includes(q) ||
-            (p.im_full_name || "").toLowerCase().includes(q) ||
-            (p.dispatch_im || "").toLowerCase().includes(q) ||
-            (p.plan_date || "").toLowerCase().includes(q) ||
-            (p.visit_type || "").toLowerCase().includes(q) ||
-            (p.site_code || "").toLowerCase().includes(q) ||
-            (p.po_no || "").toLowerCase().includes(q) ||
-            (p.center_area || "").toLowerCase().includes(q) ||
-            (p.region_type || "").toLowerCase().includes(q)
-          );
-        }
-        return true;
-      }),
-    [plans, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, search],
-  );
-
-  const visibleNames = useMemo(() => new Set(filtered.map((p) => p.name)), [filtered]);
+  const visibleNames = useMemo(() => new Set(plans.map((p) => p.name)), [plans]);
 
   useEffect(() => {
     setSelected((prev) => {
@@ -136,20 +135,20 @@ export default function IMPlanning() {
   }
 
   function toggleAll() {
-    if (selected.size === filtered.length && filtered.length > 0) {
+    if (selected.size === plans.length && plans.length > 0) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filtered.map((p) => p.name)));
+      setSelected(new Set(plans.map((p) => p.name)));
     }
   }
 
   const hasFilters = visitFilter || search || projectFilter || teamFilter || duidFilter || fromDate || toDate;
-  const totalAmt = filtered.reduce((s, p) => s + (p.target_amount || 0), 0);
-  const selectedAmt = filtered
+  const totalAmt = plans.reduce((s, p) => s + (p.target_amount || 0), 0);
+  const selectedAmt = plans
     .filter((p) => selected.has(p.name))
     .reduce((s, p) => s + (p.target_amount || 0), 0);
 
-  const oneSelected = useMemo(() => singleSelectedPlan(filtered, selected), [filtered, selected]);
+  const oneSelected = useMemo(() => singleSelectedPlan(plans, selected), [plans, selected]);
   const executionSelectionOk = oneSelected && canImExecuteFromPlan(oneSelected.plan_status);
 
   function recordExecutionTitle() {
@@ -257,7 +256,7 @@ export default function IMPlanning() {
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : filtered.length === 0 ? (
+          ) : plans.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📅</div>
               <h3>{hasFilters ? "No results match your filters" : "No rollout plans yet"}</h3>
@@ -274,7 +273,7 @@ export default function IMPlanning() {
                   <th>
                     <input
                       type="checkbox"
-                      checked={selected.size === filtered.length && filtered.length > 0}
+                      checked={selected.size === plans.length && plans.length > 0}
                       onChange={toggleAll}
                     />
                   </th>
@@ -294,7 +293,7 @@ export default function IMPlanning() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((p) => (
+                {plans.map((p) => (
                   <tr
                     key={p.name}
                     className={selected.has(p.name) ? "row-selected" : ""}
@@ -343,9 +342,8 @@ export default function IMPlanning() {
               <tfoot>
                 <tr>
                   <td colSpan={12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                    <strong>{filtered.length}</strong>
-                    {hasFilters && ` of ${plans.length}`}
-                    {" "}plan{filtered.length !== 1 ? "s" : ""}
+                    <strong>{plans.length}</strong>
+                    {" "}plan{plans.length !== 1 ? "s" : ""}
                     {selected.size > 0 && (
                       <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600, fontSize: "0.82rem" }}>
                         {selected.size} selected
@@ -361,6 +359,12 @@ export default function IMPlanning() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={plans.length}
+          filteredCount={plans.length}
+          filterActive={!!hasFilters}
+        />
       </div>
       <IMPlanningExecutionModal
         open={executionModalOpen}

@@ -260,7 +260,13 @@ export default function AppShell() {
       </aside>
 
       {/* ── Main Content ────────────────────────────────────── */}
-      <main className="content" style={{ marginLeft: sidebarWidth, width: `calc(100% - ${sidebarWidth}px)` }}>
+      <main
+        className="content"
+        style={{
+          marginLeft: sidebarWidth,
+          width: `calc(100% - ${sidebarWidth}px)`,
+        }}
+      >
         <FieldGlobalTimerBar role={role} />
         <DataTablePro />
         <Outlet />

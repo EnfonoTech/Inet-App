@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { pmApi } from "../../services/api";
+import { useTableRowLimit, useResetOnRowLimitChange, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -87,10 +90,13 @@ function Pill({ label, value, tone = "blue" }) {
 }
 
 export default function RolloutPlanning() {
+  const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
+  const [metaRows, setMetaRows] = useState([]);
   const [projectFilter, setProjectFilter] = useState("");
   const [imFilter, setImFilter] = useState("");
   const [duidFilter, setDuidFilter] = useState("");
@@ -112,20 +118,42 @@ export default function RolloutPlanning() {
   const [createError, setCreateError] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
 
-  async function loadData() {
+  useResetOnRowLimitChange(() => {
+    setRows([]);
+    setLoading(true);
+  });
+
+  const loadMeta = useCallback(async () => {
+    try {
+      const list = await pmApi.listPODispatches({ dispatch_status: "Dispatched" }, TABLE_ROW_LIMIT_ALL, {});
+      setMetaRows(Array.isArray(list) ? list : []);
+    } catch {
+      setMetaRows([]);
+    }
+  }, []);
+
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const list = await pmApi.listPODispatches({ dispatch_status: "Dispatched" });
+      const portal = {};
+      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+      if (projectFilter) portal.project_code = projectFilter;
+      if (imFilter) portal.im = imFilter;
+      if (duidFilter) portal.site_code = duidFilter;
+      if (fromDate) portal.from_date = fromDate;
+      if (toDate) portal.to_date = toDate;
+      const list = await pmApi.listPODispatches({ dispatch_status: "Dispatched" }, rowLimit, portal);
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       setError(err.message || "Failed to load dispatches");
     } finally {
       setLoading(false);
     }
-  }
+  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate]);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadMeta(); }, [loadMeta]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -153,38 +181,28 @@ export default function RolloutPlanning() {
     });
   }
 
-  const filtered = rows.filter((r) => {
-    if (projectFilter && (r.project_code || "") !== projectFilter) return false;
-    if (imFilter && (r.im || "") !== imFilter) return false;
-    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
-    if (fromDate && (r.target_month || "").slice(0, 10) < fromDate) return false;
-    if (toDate && (r.target_month || "").slice(0, 10) > toDate) return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (r.name || "").toLowerCase().includes(q) ||
-      (r.po_no || "").toLowerCase().includes(q) ||
-      (r.item_code || "").toLowerCase().includes(q) ||
-      (r.project_code || "").toLowerCase().includes(q) ||
-      (r.im || "").toLowerCase().includes(q) ||
-      (r.im_full_name || "").toLowerCase().includes(q) ||
-      (r.site_code || "").toLowerCase().includes(q) ||
-      (r.center_area || "").toLowerCase().includes(q) ||
-      (r.region_type || "").toLowerCase().includes(q)
-    );
-  });
-  const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
-  const imOptionRows = [...new Map(rows.filter((r) => r.im).map((r) => [r.im, r])).values()].sort((a, b) =>
-    String(a.im_full_name || a.im || "").localeCompare(String(b.im_full_name || b.im || ""), undefined, { sensitivity: "base" }),
+  const projectOptions = useMemo(
+    () => [...new Set(metaRows.map((r) => r.project_code).filter(Boolean))].sort(),
+    [metaRows],
   );
-  const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  const imOptionRows = useMemo(
+    () => [...new Map(metaRows.filter((r) => r.im).map((r) => [r.im, r])).values()].sort((a, b) =>
+      String(a.im_full_name || a.im || "").localeCompare(String(b.im_full_name || b.im || ""), undefined, { sensitivity: "base" }),
+    ),
+    [metaRows],
+  );
+  const duidOptions = useMemo(
+    () => [...new Set(metaRows.map((r) => r.site_code).filter(Boolean))].sort(),
+    [metaRows],
+  );
   const hasFilters = search || projectFilter || imFilter || duidFilter || fromDate || toDate;
+  const filterActiveForFooter = !!(searchDebounced.trim() || projectFilter || imFilter || duidFilter || fromDate || toDate);
 
   function toggleAll() {
-    if (selected.size === filtered.length && filtered.length > 0) {
+    if (selected.size === rows.length && rows.length > 0) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filtered.map((r) => r.name)));
+      setSelected(new Set(rows.map((r) => r.name)));
     }
   }
 
@@ -222,7 +240,7 @@ export default function RolloutPlanning() {
       setSuccessMsg(`Created ${count} rollout plan${count !== 1 ? "s" : ""} successfully.`);
       setSelected(new Set());
       setShowModal(false);
-      await loadData();
+      await Promise.all([loadData(), loadMeta()]);
     } catch (err) {
       setCreateError(err.message || "Failed to create plans");
     } finally {
@@ -230,8 +248,8 @@ export default function RolloutPlanning() {
     }
   }
 
-  const totalAmt = filtered.reduce((s, r) => s + (r.line_amount || 0), 0);
-  const selectedAmt = filtered
+  const totalAmt = rows.reduce((s, r) => s + (r.line_amount || 0), 0);
+  const selectedAmt = rows
     .filter((r) => selected.has(r.name))
     .reduce((s, r) => s + (r.line_amount || 0), 0);
 
@@ -249,7 +267,11 @@ export default function RolloutPlanning() {
           </div>
         </div>
         <div className="page-actions">
-          <button className="btn-secondary" onClick={loadData} disabled={loading}>
+          <button
+            className="btn-secondary"
+            onClick={() => { void loadMeta(); void loadData(); }}
+            disabled={loading}
+          >
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
@@ -338,12 +360,12 @@ export default function RolloutPlanning() {
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading dispatches…
             </div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📦</div>
-              <h3>{search ? "No results match your search" : "No dispatched lines ready for planning"}</h3>
+              <h3>{searchDebounced.trim() ? "No results match your search" : "No dispatched lines ready for planning"}</h3>
               <p>
-                {search
+                {searchDebounced.trim()
                   ? "Try a different search term."
                   : "Dispatch PO Intake lines first before creating rollout plans."}
               </p>
@@ -355,7 +377,7 @@ export default function RolloutPlanning() {
                   <th>
                     <input
                       type="checkbox"
-                      checked={selected.size === filtered.length && filtered.length > 0}
+                      checked={selected.size === rows.length && rows.length > 0}
                       onChange={toggleAll}
                     />
                   </th>
@@ -372,7 +394,7 @@ export default function RolloutPlanning() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
+                {rows.map((row) => (
                   <tr
                     key={row.name}
                     className={selected.has(row.name) ? "row-selected" : ""}
@@ -417,9 +439,8 @@ export default function RolloutPlanning() {
               <tfoot>
                 <tr>
                   <td colSpan={9} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    <strong>{filtered.length}</strong>
-                    {hasFilters && ` of ${rows.length}`}
-                    {" "}row{filtered.length !== 1 ? "s" : ""}
+                    <strong>{rows.length}</strong>
+                    {" "}row{rows.length !== 1 ? "s" : ""}
                     {selected.size > 0 && (
                       <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600, fontSize: "0.82rem" }}>
                         {selected.size} selected
@@ -435,6 +456,12 @@ export default function RolloutPlanning() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={rows.length}
+          filteredCount={rows.length}
+          filterActive={filterActiveForFooter}
+        />
       </div>
 
       {/* ── Create Plans Modal ────────────────────────────────── */}

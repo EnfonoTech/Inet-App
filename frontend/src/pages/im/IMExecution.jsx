@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -116,6 +119,7 @@ function parseAttachments(raw) {
 
 export default function IMExecution() {
   const { imName } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [executions, setExecutions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
@@ -127,6 +131,7 @@ export default function IMExecution() {
   const [duidFilter, setDuidFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [reopenFor, setReopenFor] = useState(null);
   const [issueCategory, setIssueCategory] = useState("");
   const [reopenBusy, setReopenBusy] = useState(false);
@@ -145,48 +150,53 @@ export default function IMExecution() {
   const [wdErr, setWdErr] = useState(null);
   const [selectedExecs, setSelectedExecs] = useState(new Set());
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      try {
-        const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
-        setExecutions(Array.isArray(res) ? res : []);
-      } catch {
-        setExecutions([]);
-      }
+  useResetOnRowLimitChange(() => {
+    setExecutions([]);
+    setLoading(true);
+  });
+
+  const loadExecutions = useCallback(async () => {
+    if (!imName) {
+      setExecutions([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const portal = {};
+      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+      if (qcFilter) portal.qc_status = qcFilter;
+      if (ciagFilter) portal.ciag_status = ciagFilter;
+      if (projectFilter) portal.project_code = projectFilter;
+      if (teamFilter) portal.team = teamFilter;
+      if (duidFilter) portal.site_code = duidFilter;
+      if (fromDate) portal.from_date = fromDate;
+      if (toDate) portal.to_date = toDate;
+      const portalArg = Object.keys(portal).length ? portal : undefined;
+      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined, rowLimit, portalArg);
+      setExecutions(Array.isArray(res) ? res : []);
+    } catch {
+      setExecutions([]);
+    } finally {
       setLoading(false);
     }
-    load();
-  }, [imName, statusFilter]);
+  }, [
+    imName,
+    statusFilter,
+    rowLimit,
+    searchDebounced,
+    qcFilter,
+    ciagFilter,
+    projectFilter,
+    teamFilter,
+    duidFilter,
+    fromDate,
+    toDate,
+  ]);
 
-  const filtered = executions.filter((e) => {
-    if (qcFilter && (e.qc_status || "") !== qcFilter) return false;
-    if (ciagFilter && (e.ciag_status || "") !== ciagFilter) return false;
-    if (projectFilter && (e.project_code || "") !== projectFilter) return false;
-    if (teamFilter && (e.team || "") !== teamFilter) return false;
-    if (duidFilter && (e.site_code || "") !== duidFilter) return false;
-    if (fromDate && (e.execution_date || "").slice(0, 10) < fromDate) return false;
-    if (toDate && (e.execution_date || "").slice(0, 10) > toDate) return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (e.name || "").toLowerCase().includes(q) ||
-      (e.rollout_plan || "").toLowerCase().includes(q) ||
-      (e.team || "").toLowerCase().includes(q) ||
-      (e.team_name || "").toLowerCase().includes(q) ||
-      (e.im_full_name || "").toLowerCase().includes(q) ||
-      (e.dispatch_im || "").toLowerCase().includes(q) ||
-      (e.execution_date || "").toLowerCase().includes(q) ||
-      (e.site_code || "").toLowerCase().includes(q) ||
-      (e.site_name || "").toLowerCase().includes(q) ||
-      (e.item_code || "").toLowerCase().includes(q) ||
-      (e.item_description || "").toLowerCase().includes(q) ||
-      (e.project_code || "").toLowerCase().includes(q) ||
-      (e.po_no || "").toLowerCase().includes(q) ||
-      (e.center_area || "").toLowerCase().includes(q) ||
-      (e.region_type || "").toLowerCase().includes(q)
-    );
-  });
+  useEffect(() => {
+    loadExecutions();
+  }, [loadExecutions]);
 
   const qcOptions = [...new Set(executions.map((e) => e.qc_status).filter(Boolean))].sort();
   const ciagOptions = [...new Set(executions.map((e) => e.ciag_status).filter(Boolean))].sort();
@@ -201,8 +211,8 @@ export default function IMExecution() {
   }, [executions]);
   const duidOptions = [...new Set(executions.map((e) => e.site_code).filter(Boolean))].sort();
   const hasFilters = statusFilter || qcFilter || ciagFilter || search || projectFilter || teamFilter || duidFilter || fromDate || toDate;
-  const totalAchieved = filtered.reduce((s, e) => s + (e.achieved_qty || 0), 0);
-  const eligibleForWorkDone = filtered.filter((e) => e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done);
+  const totalAchieved = executions.reduce((s, e) => s + (e.achieved_qty || 0), 0);
+  const eligibleForWorkDone = executions.filter((e) => e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done);
   const selectedEligible = eligibleForWorkDone.filter((e) => selectedExecs.has(e.name));
 
   async function submitReopen() {
@@ -213,8 +223,7 @@ export default function IMExecution() {
       await pmApi.reopenRolloutForRevisit(reopenFor, issueCategory);
       setReopenFor(null);
       setIssueCategory("");
-      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
-      setExecutions(Array.isArray(res) ? res : []);
+      await loadExecutions();
     } catch (err) {
       setReopenErr(err.message || "Failed");
     } finally {
@@ -239,8 +248,7 @@ export default function IMExecution() {
       });
       setQcFor(null);
       setQcIssueCategory("");
-      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
-      setExecutions(Array.isArray(res) ? res : []);
+      await loadExecutions();
     } catch (err) {
       setQcErr(err.message || "Failed to update QC");
     } finally {
@@ -259,8 +267,7 @@ export default function IMExecution() {
         await pmApi.generateWorkDone(row.name);
       }
       setSelectedExecs(new Set());
-      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
-      setExecutions(Array.isArray(res) ? res : []);
+      await loadExecutions();
     } catch (err) {
       setWdErr(err.message || "Could not create Work Done");
     } finally {
@@ -278,8 +285,7 @@ export default function IMExecution() {
         ciag_status: ciagDecision,
       });
       setCiagFor(null);
-      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined);
-      setExecutions(Array.isArray(res) ? res : []);
+      await loadExecutions();
     } catch (err) {
       setCiagErr(err.message || "Failed to update CIAG");
     } finally {
@@ -453,7 +459,7 @@ export default function IMExecution() {
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : filtered.length === 0 ? (
+          ) : executions.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📊</div>
               <h3>{hasFilters ? "No results match your filters" : "No execution records"}</h3>
@@ -502,7 +508,7 @@ export default function IMExecution() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((e) => (
+                {executions.map((e) => (
                   <tr key={e.name}>
                     <td>
                       <input
@@ -606,7 +612,7 @@ export default function IMExecution() {
               <tfoot>
                 <tr>
                   <td colSpan={18} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                    {filtered.length}{hasFilters && ` of ${executions.length}`} rows
+                    {executions.length} row{executions.length !== 1 ? "s" : ""}
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     {fmt.format(totalAchieved)}
@@ -617,6 +623,12 @@ export default function IMExecution() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={executions.length}
+          filteredCount={executions.length}
+          filterActive={!!hasFilters}
+        />
       </div>
       {detailRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDetailRow(null)}>

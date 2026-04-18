@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
+import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -47,53 +51,64 @@ function statusStyle(status) {
 
 export default function IMProjects() {
   const { imName } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [statusFilter, setStatusFilter] = useState("");
   const [domainFilter, setDomainFilter] = useState("");
   const [detailRow, setDetailRow] = useState(null);
+  const [metaProjects, setMetaProjects] = useState([]);
+
+  useResetOnRowLimitChange(() => {
+    setProjects([]);
+    setLoading(true);
+  });
+
+  useEffect(() => {
+    if (!imName) {
+      setMetaProjects([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await pmApi.listProjects({
+          limit: 5000,
+          implementation_manager: imName,
+        });
+        if (!cancelled) setMetaProjects(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setMetaProjects([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName]);
 
   useEffect(() => {
     async function load() {
       if (!imName) { setLoading(false); return; }
       setLoading(true);
       try {
-        const fields = JSON.stringify([
-          "name", "project_code", "project_name", "customer",
-          "project_status", "project_domain", "completion_percentage",
-          "budget_amount", "implementation_manager",
-        ]);
-        const filters = JSON.stringify([["implementation_manager", "=", imName]]);
-        const res = await fetch(
-          `/api/resource/Project Control Center?filters=${encodeURIComponent(filters)}` +
-          `&fields=${encodeURIComponent(fields)}&limit_page_length=200&order_by=modified+desc`,
-          { credentials: "include" }
-        );
-        const json = await res.json();
-        setProjects(json?.data || []);
+        const list = await pmApi.listProjects({
+          limit: rowLimit,
+          implementation_manager: imName,
+          search: searchDebounced.trim() || undefined,
+          status: statusFilter || undefined,
+          domain: domainFilter || undefined,
+        });
+        setProjects(Array.isArray(list) ? list : []);
       } catch {
         setProjects([]);
       }
       setLoading(false);
     }
     load();
-  }, [imName]);
+  }, [imName, rowLimit, searchDebounced, statusFilter, domainFilter]);
 
-  const filtered = projects.filter((p) => {
-    if (statusFilter && (p.project_status || "") !== statusFilter) return false;
-    if (domainFilter && (p.project_domain || "") !== domainFilter) return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (p.project_code || "").toLowerCase().includes(q) ||
-      (p.project_name || "").toLowerCase().includes(q) ||
-      (p.customer     || "").toLowerCase().includes(q)
-    );
-  });
-
-  const statuses = [...new Set(projects.map((p) => p.project_status).filter(Boolean))].sort();
-  const domains = [...new Set(projects.map((p) => p.project_domain).filter(Boolean))].sort();
+  const statuses = [...new Set(metaProjects.map((p) => p.project_status).filter(Boolean))].sort();
+  const domains = [...new Set(metaProjects.map((p) => p.project_domain).filter(Boolean))].sort();
   const hasFilters = search || statusFilter || domainFilter;
 
   return (
@@ -107,7 +122,7 @@ export default function IMProjects() {
         </div>
         <div className="page-actions">
           <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
-            {filtered.length} project{filtered.length !== 1 ? "s" : ""}
+            {projects.length} project{projects.length !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
@@ -171,7 +186,7 @@ export default function IMProjects() {
               <h3>IM account not set up</h3>
               <p>Your user is not linked to an IM Master record. Link IM Master → User Account to your login, and set Implementation Manager on INET Teams and projects.</p>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : projects.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📋</div>
               <h3>{search ? "No results" : "No projects assigned"}</h3>
@@ -196,7 +211,7 @@ export default function IMProjects() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((p) => (
+                {projects.map((p) => (
                   <tr key={p.name}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{p.project_code}</td>
                     <td style={{ fontWeight: 600 }}>{p.project_name}</td>
@@ -241,16 +256,15 @@ export default function IMProjects() {
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={8} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.78rem" }}>
-                    <strong>{filtered.length}</strong>{search && ` of ${projects.length}`} project{filtered.length !== 1 ? "s" : ""}
-                  </td>
-                </tr>
-              </tfoot>
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={projects.length}
+          filteredCount={projects.length}
+          filterActive={!!(search || statusFilter || domainFilter)}
+        />
       </div>
       {detailRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDetailRow(null)}>

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import {
   elapsedSecondsFromServerEpoch,
   formatElapsedSeconds,
@@ -25,6 +27,7 @@ function shortDt(v) {
 
 export default function Timesheet() {
   const { teamId } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -42,6 +45,11 @@ export default function Timesheet() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+
+  useResetOnRowLimitChange(() => {
+    setLogs([]);
+    setLoading(true);
+  });
 
   useEffect(() => {
     if (!running?.log_name) return undefined;
@@ -72,7 +80,7 @@ export default function Timesheet() {
   async function loadLogs() {
     setLoading(true);
     try {
-      const res = await pmApi.listExecutionTimeLogs({}, 200, 0);
+      const res = await pmApi.listExecutionTimeLogs({}, rowLimit, 0);
       setLogs(res?.logs || []);
       setTotal(res?.total ?? (res?.logs || []).length);
     } catch {
@@ -86,7 +94,7 @@ export default function Timesheet() {
   useEffect(() => {
     loadLogs();
     refreshRunning();
-  }, [teamId]);
+  }, [teamId, rowLimit]);
 
   useEffect(() => {
     if (!showManual) return;
@@ -322,6 +330,7 @@ export default function Timesheet() {
             </tbody>
           </table>
         )}
+        <TableRowsLimitFooter placement="tableCard" loadedCount={logs.length} />
       </div>
     </div>
   );

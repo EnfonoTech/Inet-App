@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -130,6 +133,7 @@ function DetailItem({ label, value }) {
 
 export default function IMDispatch() {
   const { imName } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -140,6 +144,7 @@ export default function IMDispatch() {
   const [duidFilter, setDuidFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
   const [planDate, setPlanDate] = useState(todayDate());
@@ -167,9 +172,70 @@ export default function IMDispatch() {
   const [mapErr, setMapErr] = useState(null);
   const [mapLinesLoading, setMapLinesLoading] = useState(false);
 
+  // Aggregate KPI counts — computed server-side so the cards never
+  // change when the user picks a different row-limit preset.
+  const [stats, setStats] = useState({ total: 0, auto: 0, manual: 0, dispatched: 0 });
+
+  useResetOnRowLimitChange(() => {
+    setRows([]);
+    setLoading(true);
+  });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (!imName) {
+        setRows([]);
+        setStats({ total: 0, auto: 0, manual: 0, dispatched: 0 });
+        setLoading(false);
+        return;
+      }
+      const filters = [["im", "=", imName]];
+      const portal = {};
+      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+      if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
+      if (dummyFilter !== "all") portal.dummy_preset = dummyFilter;
+      if (projectFilter) portal.project_code = projectFilter;
+      if (teamFilter) portal.team = teamFilter;
+      if (duidFilter) portal.site_code = duidFilter;
+      if (fromDate) portal.from_date = fromDate;
+      if (toDate) portal.to_date = toDate;
+      const portalArg = Object.keys(portal).length ? portal : undefined;
+      const [res, agg] = await Promise.all([
+        pmApi.listPODispatches(filters, rowLimit, portalArg),
+        pmApi.getPODispatchStats(filters, portalArg).catch(() => null),
+      ]);
+      setRows(Array.isArray(res) ? res : []);
+      if (agg && typeof agg === "object") {
+        setStats({
+          total: Number(agg.total) || 0,
+          auto: Number(agg.auto) || 0,
+          manual: Number(agg.manual) || 0,
+          dispatched: Number(agg.dispatched) || 0,
+        });
+      }
+    } catch (err) {
+      setError(err.message || "Failed to load dispatches");
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    imName,
+    rowLimit,
+    searchDebounced,
+    modeFilter,
+    dummyFilter,
+    projectFilter,
+    teamFilter,
+    duidFilter,
+    fromDate,
+    toDate,
+  ]);
+
   useEffect(() => {
     load();
-  }, [imName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [load]);
 
   useEffect(() => {
     if (!showModal || !imName) return;
@@ -215,25 +281,6 @@ export default function IMDispatch() {
     })();
     return () => { cancelled = true; };
   }, [mapForRow]);
-
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      if (!imName) {
-        setRows([]);
-        setLoading(false);
-        return;
-      }
-      const filters = [["im", "=", imName]];
-      const res = await pmApi.listPODispatches(filters);
-      setRows(Array.isArray(res) ? res : []);
-    } catch (err) {
-      setError(err.message || "Failed to load dispatches");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function openDummyPoModal() {
     setDummyErr(null);
@@ -308,41 +355,7 @@ export default function IMDispatch() {
 
   const planable = (r) => (r.dispatch_status || "") === "Dispatched";
 
-  const filtered = rows.filter((r) => {
-    const isOpenDummy = !!Number(r.is_dummy_po);
-    const orig = (r.original_dummy_poid || "").trim();
-    const currentPoid = (r.name || "").trim();
-    const wasDummyFlag = r.was_dummy_po == 1 || r.was_dummy_po === true || String(r.was_dummy_po || "") === "1";
-    const mappedFromDummy =
-      (wasDummyFlag && !isOpenDummy) || (!!orig && orig !== currentPoid);
-    if (dummyFilter === "dummy" && !isOpenDummy) return false;
-    if (dummyFilter === "mapped_dummy" && !mappedFromDummy) return false;
-    if (dummyFilter === "standard" && isOpenDummy) return false;
-    if (modeFilter !== "all" && r.dispatch_mode !== modeFilter) return false;
-    if (projectFilter && (r.project_code || "") !== projectFilter) return false;
-    if (teamFilter && (r.team || "") !== teamFilter) return false;
-    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
-    if (fromDate && (r.target_month || "").slice(0, 10) < fromDate) return false;
-    if (toDate && (r.target_month || "").slice(0, 10) > toDate) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        (r.po_no || "").toLowerCase().includes(q) ||
-        (r.project_code || "").toLowerCase().includes(q) ||
-        (r.item_code || "").toLowerCase().includes(q) ||
-        (r.site_code || "").toLowerCase().includes(q) ||
-        (r.name || "").toLowerCase().includes(q) ||
-        (r.original_dummy_poid || "").toLowerCase().includes(q) ||
-        (r.center_area || "").toLowerCase().includes(q) ||
-        (r.region_type || "").toLowerCase().includes(q) ||
-        (r.im_full_name || "").toLowerCase().includes(q) ||
-        (r.im || "").toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
-
-  const planableRows = filtered.filter(planable);
+  const planableRows = rows.filter(planable);
   const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
   const teamOptions = [...new Set(rows.map((r) => r.team).filter(Boolean))].sort();
   const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
@@ -406,15 +419,18 @@ export default function IMDispatch() {
     }
   }
 
-  const autoCount = rows.filter((r) => r.dispatch_mode === "Auto").length;
-  const manualCount = rows.filter((r) => r.dispatch_mode === "Manual").length;
-  const dispatchedCount = rows.filter((r) => planable(r)).length;
+  // KPI card counts come from the server aggregate (stats) so they
+  // reflect the full dataset regardless of the row-limit preset.
+  const autoCount = stats.auto;
+  const manualCount = stats.manual;
+  const dispatchedCount = stats.dispatched;
+  const hasAnyDispatches = stats.total > 0 || rows.length > 0;
 
-  const selectedAmt = filtered
+  const selectedAmt = rows
     .filter((r) => selected.has(r.name))
     .reduce((s, r) => s + (r.line_amount || 0), 0);
 
-  const createPlanSelRows = filtered.filter((r) => selected.has(r.name));
+  const createPlanSelRows = rows.filter((r) => selected.has(r.name));
   const createPlanDuids = [...new Set(createPlanSelRows.map((r) => r.site_code || r.name).filter(Boolean))];
 
   return (
@@ -456,7 +472,7 @@ export default function IMDispatch() {
         </div>
       )}
 
-      {!loading && rows.length > 0 && (
+      {!loading && hasAnyDispatches && (
         <div style={{ display: "flex", gap: 10, margin: "0 28px 14px", flexWrap: "wrap" }}>
           <div style={{
             flex: "0 1 180px", minWidth: 140, padding: "10px 12px", borderRadius: 10,
@@ -788,15 +804,15 @@ export default function IMDispatch() {
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
               Loading dispatches...
             </div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📋</div>
               <h3>{!imName ? "IM account not linked" : "No dispatch records found"}</h3>
               <p>
                 {!imName
                   ? "Link your user to IM Master so dispatches can load."
-                  : modeFilter !== "all"
-                    ? `No ${modeFilter} dispatch records match.`
+                  : hasFilters
+                    ? "No rows match your search or filters (they apply across all dispatches, not only loaded rows)."
                     : "No PO lines have been dispatched to you yet."}
               </p>
             </div>
@@ -829,7 +845,7 @@ export default function IMDispatch() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => {
+                {rows.map((row) => {
                   const canPlan = planable(row);
                   const wasDf = row.was_dummy_po == 1 || row.was_dummy_po === true || String(row.was_dummy_po || "") === "1";
                   const origCell = (row.original_dummy_poid || "").trim();
@@ -929,7 +945,7 @@ export default function IMDispatch() {
               <tfoot>
                 <tr>
                   <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    <strong>{filtered.length} row{filtered.length !== 1 ? "s" : ""}</strong>
+                    <strong>{rows.length} row{rows.length !== 1 ? "s" : ""}</strong>
                     <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
                       Select rows with status <strong>Dispatched</strong> to create rollout plans.
                     </span>
@@ -939,6 +955,12 @@ export default function IMDispatch() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={rows.length}
+          filteredCount={rows.length}
+          filterActive={!!hasFilters}
+        />
       </div>
     </div>
   );

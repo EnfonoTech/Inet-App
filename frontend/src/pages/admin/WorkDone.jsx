@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -52,6 +54,7 @@ function Pill({ label, value, tone = "blue" }) {
 }
 
 export default function WorkDone() {
+  const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -65,49 +68,33 @@ export default function WorkDone() {
   const [toDate, setToDate] = useState("");
   const [detailRow, setDetailRow] = useState(null);
 
-  async function loadData() {
+  useResetOnRowLimitChange(() => {
+    setRows([]);
+    setLoading(true);
+  });
+
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const list = await pmApi.listWorkDoneRows({});
+      const filters = {};
+      if (billingFilter) filters.billing_status = billingFilter;
+      if (teamFilter) filters.team = teamFilter;
+      if (projectFilter) filters.project_code = projectFilter;
+      if (duidFilter) filters.site_code = duidFilter;
+      if (fromDate) filters.from_date = fromDate;
+      if (toDate) filters.to_date = toDate;
+      if (search.trim()) filters.search = search.trim();
+      const list = await pmApi.listWorkDoneRows(filters, rowLimit);
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       setError(err.message || "Failed to load work done data");
     } finally {
       setLoading(false);
     }
-  }
+  }, [rowLimit, search, billingFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate]);
 
-  useEffect(() => { loadData(); }, []);
-
-  const filtered = rows.filter((r) => {
-    if (billingFilter && (r.billing_status || "Pending") !== billingFilter) return false;
-    if (teamFilter && (r.team || "") !== teamFilter) return false;
-    if (projectFilter && (r.project_code || "") !== projectFilter) return false;
-    if (duidFilter && (r.site_code || "") !== duidFilter) return false;
-    if (fromDate && (r.execution_date || "").slice(0, 10) < fromDate) return false;
-    if (toDate && (r.execution_date || "").slice(0, 10) > toDate) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        (r.name || "").toLowerCase().includes(q) ||
-        (r.execution || "").toLowerCase().includes(q) ||
-        (r.item_code || "").toLowerCase().includes(q) ||
-        (r.item_description || "").toLowerCase().includes(q) ||
-        (r.site_name || "").toLowerCase().includes(q) ||
-        (r.po_dispatch || "").toLowerCase().includes(q) ||
-        (r.original_dummy_poid || "").toLowerCase().includes(q) ||
-        (r.project_code || "").toLowerCase().includes(q) ||
-        (r.po_no || "").toLowerCase().includes(q) ||
-        (r.center_area || "").toLowerCase().includes(q) ||
-        (r.region_type || "").toLowerCase().includes(q) ||
-        (r.team_name || "").toLowerCase().includes(q) ||
-        (r.im || "").toLowerCase().includes(q) ||
-        (r.im_full_name || "").toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
+  useEffect(() => { loadData(); }, [loadData]);
 
   const hasFilters = search || billingFilter || teamFilter || projectFilter || duidFilter || fromDate || toDate;
   const teams = [...new Set(rows.map((r) => r.team).filter(Boolean))]
@@ -119,7 +106,7 @@ export default function WorkDone() {
   const projects = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
   const duids = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
 
-  const totals = filtered.reduce(
+  const totals = rows.reduce(
     (acc, r) => ({
       qty: acc.qty + (parseFloat(r.executed_qty) || 0),
       revenue: acc.revenue + (parseFloat(r.revenue_sar || r.revenue || r.line_amount) || 0),
@@ -214,7 +201,7 @@ export default function WorkDone() {
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading work done records…
             </div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">✅</div>
               <h3>{hasFilters ? "No results match your filters" : "No completed work records"}</h3>
@@ -249,7 +236,7 @@ export default function WorkDone() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => {
+                {rows.map((row) => {
                   const revenue = parseFloat(row.revenue_sar || row.revenue || row.line_amount) || 0;
                   const cost = parseFloat(row.total_cost_sar || row.cost) || 0;
                   const margin = parseFloat(row.margin_sar || row.margin) || revenue - cost;
@@ -302,7 +289,7 @@ export default function WorkDone() {
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
                   <td colSpan={12} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
-                    TOTALS ({filtered.length}{hasFilters && ` of ${rows.length}`} rows)
+                    TOTALS ({rows.length} rows)
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px" }}>{fmt.format(totals.qty)}</td>
                   <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "10px 16px" }}>
@@ -322,6 +309,12 @@ export default function WorkDone() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={rows.length}
+          filteredCount={rows.length}
+          filterActive={!!hasFilters}
+        />
       </div>
       {detailRow && (
         <div

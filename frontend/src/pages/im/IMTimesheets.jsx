@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -45,13 +48,20 @@ function shortDt(v) {
 
 export default function IMTimesheets() {
   const { imName } = useAuth();
+  const { rowLimit } = useTableRowLimit();
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [detailRow, setDetailRow] = useState(null);
+
+  useResetOnRowLimitChange(() => {
+    setLogs([]);
+    setLoading(true);
+  });
 
   async function loadLogs() {
     setLoading(true);
@@ -59,7 +69,8 @@ export default function IMTimesheets() {
       const filters = { im: imName };
       if (dateFrom) filters.from_date = dateFrom;
       if (dateTo) filters.to_date = dateTo;
-      const res = await pmApi.listExecutionTimeLogs(filters, 500, 0);
+      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
       setLogs(res?.logs || []);
       setTotal(res?.total ?? (res?.logs || []).length);
     } catch {
@@ -77,20 +88,9 @@ export default function IMTimesheets() {
       setTotal(0);
       setLoading(false);
     }
-  }, [dateFrom, dateTo, imName]);
+  }, [dateFrom, dateTo, imName, rowLimit, searchDebounced]);
 
-  const filtered = logs.filter((row) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (row.name || "").toLowerCase().includes(q) ||
-      (row.user_full_name || "").toLowerCase().includes(q) ||
-      (row.rollout_plan || "").toLowerCase().includes(q) ||
-      (row.team_id || "").toLowerCase().includes(q)
-    );
-  });
-
-  const totalHours = filtered.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
+  const totalHours = logs.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
   const hasFilters = dateFrom || dateTo || search;
 
   return (
@@ -99,7 +99,7 @@ export default function IMTimesheets() {
         <div>
           <h1 className="page-title">Team time logs</h1>
           <div className="page-subtitle">
-            Execution time for your teams · {filtered.length} rows · {fmt.format(totalHours)} h
+            Execution time for your teams · {searchDebounced.trim() ? `${total} matching · ` : ""}{logs.length} loaded · {fmt.format(totalHours)} h
           </div>
         </div>
       </div>
@@ -151,7 +151,7 @@ export default function IMTimesheets() {
         <div className="data-table-wrapper">
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-          ) : filtered.length === 0 ? (
+          ) : logs.length === 0 ? (
             <div className="empty-state" style={{ marginTop: 20 }}>
               <div className="empty-icon">&#x1F553;</div>
               <h3>{hasFilters ? "No results" : "No time logs for your teams"}</h3>
@@ -173,7 +173,7 @@ export default function IMTimesheets() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
+                {logs.map((row) => (
                   <tr key={row.name}>
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
                     <td>{row.user_full_name || row.user}</td>
@@ -212,6 +212,12 @@ export default function IMTimesheets() {
             </table>
           )}
         </div>
+        <TableRowsLimitFooter
+          placement="tableCard"
+          loadedCount={logs.length}
+          filteredCount={searchDebounced.trim() ? total : logs.length}
+          filterActive={!!hasFilters}
+        />
       </div>
       {detailRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDetailRow(null)}>
