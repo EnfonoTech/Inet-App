@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
@@ -295,7 +296,7 @@ export default function Projects() {
 
       {/* Table — scrollable on narrow viewports (data-table-wrapper) */}
       <div className="page-content">
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading projects...</div>
         ) : projects.length === 0 ? (
@@ -347,7 +348,7 @@ export default function Projects() {
             </tbody>
           </table>
         )}
-        </div>
+        </DataTableWrapper>
         <TableRowsLimitFooter placement="tableCard" loadedCount={projects.length} />
       </div>
 

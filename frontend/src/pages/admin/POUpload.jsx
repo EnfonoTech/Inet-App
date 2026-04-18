@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import FileUpload from "../../components/FileUpload";
 
@@ -430,7 +431,7 @@ export default function POUpload() {
                     </span>
                   )}
                 </div>
-                <div className="data-table-wrapper">
+                <DataTableWrapper>
                   <table className="data-table">
                     <thead>
                       <tr>
@@ -472,7 +473,7 @@ export default function POUpload() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </DataTableWrapper>
               </div>
             )}
 
@@ -489,7 +490,7 @@ export default function POUpload() {
                 }}>
                   Error Rows ({errorRows.length})
                 </div>
-                <div className="data-table-wrapper">
+                <DataTableWrapper>
                   <table className="data-table">
                     <thead>
                       <tr>
@@ -522,7 +523,7 @@ export default function POUpload() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </DataTableWrapper>
               </div>
             )}
 

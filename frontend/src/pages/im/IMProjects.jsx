@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -177,7 +178,7 @@ export default function IMProjects() {
       </div>
 
       <div className="page-content">
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
           ) : !imName ? (
@@ -258,7 +259,7 @@ export default function IMProjects() {
               </tbody>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={projects.length}

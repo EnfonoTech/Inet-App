@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -521,7 +522,7 @@ export default function PODispatch() {
       <div className="page-content">
         {error && <div className="notice error" style={{ marginBottom: 16 }}><span>!</span> {error}</div>}
 
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading PO lines...</div>
           ) : rows.length === 0 ? (
@@ -632,7 +633,7 @@ export default function PODispatch() {
               </tfoot>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={rows.length}

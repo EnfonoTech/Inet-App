@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
 
@@ -136,7 +137,7 @@ export default function IMTeams() {
       </div>
 
       <div className="page-content">
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
           ) : filtered.length === 0 ? (
@@ -192,7 +193,7 @@ export default function IMTeams() {
               </tfoot>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
       </div>
       {detailRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDetailRow(null)}>

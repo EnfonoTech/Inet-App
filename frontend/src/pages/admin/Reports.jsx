@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 
 const REPORTS = [
@@ -97,7 +98,7 @@ export default function Reports() {
           </div>
         )}
 
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading report…
@@ -132,7 +133,7 @@ export default function Reports() {
               </tbody>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
       </div>
     </div>
   );

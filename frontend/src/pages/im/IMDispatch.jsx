@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -799,7 +800,7 @@ export default function IMDispatch() {
           </div>
         )}
 
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
               Loading dispatches...
@@ -954,7 +955,7 @@ export default function IMDispatch() {
               </tfoot>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={rows.length}

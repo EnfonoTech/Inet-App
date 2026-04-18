@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { useParams, useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 
@@ -94,7 +95,7 @@ function DataTable({ columns, rows, emptyMsg }) {
   if (!rows || rows.length === 0) return <EmptyState message={emptyMsg} />;
   return (
     <div className="table-section">
-      <div className="data-table-wrapper">
+      <DataTableWrapper>
         <table className="data-table">
           <thead>
             <tr>
@@ -118,7 +119,7 @@ function DataTable({ columns, rows, emptyMsg }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </DataTableWrapper>
     </div>
   );
 }

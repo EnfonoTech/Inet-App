@@ -1,4 +1,5 @@
 import { useState } from "react";
+import DataTableWrapper from "../components/DataTableWrapper";
 import { pmApi } from "../services/api";
 
 /**
@@ -120,7 +121,7 @@ export default function OperationsOverview() {
             {data.dispatches && (
               <section style={{ margin: "0 28px" }}>
                 <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>PO line / Dispatch</h3>
-                <div className="data-table-wrapper">
+                <DataTableWrapper>
                   {data.dispatches.length === 0 ? (
                     <p style={{ padding: 24, color: "#94a3b8" }}>No dispatch rows.</p>
                   ) : (
@@ -149,13 +150,13 @@ export default function OperationsOverview() {
                       </tbody>
                     </table>
                   )}
-                </div>
+                </DataTableWrapper>
               </section>
             )}
             {data.rollout_plans && (
               <section style={{ margin: "0 28px" }}>
                 <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Planned activity</h3>
-                <div className="data-table-wrapper">
+                <DataTableWrapper>
                   {data.rollout_plans.length === 0 ? (
                     <p style={{ padding: 24, color: "#94a3b8" }}>No rollout plans.</p>
                   ) : (
@@ -182,13 +183,13 @@ export default function OperationsOverview() {
                       </tbody>
                     </table>
                   )}
-                </div>
+                </DataTableWrapper>
               </section>
             )}
             {data.executions && (
               <section style={{ margin: "0 28px" }}>
                 <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Execution &amp; QC</h3>
-                <div className="data-table-wrapper">
+                <DataTableWrapper>
                   {data.executions.length === 0 ? (
                     <p style={{ padding: 24, color: "#94a3b8" }}>No executions.</p>
                   ) : (
@@ -215,7 +216,7 @@ export default function OperationsOverview() {
                       </tbody>
                     </table>
                   )}
-                </div>
+                </DataTableWrapper>
               </section>
             )}
             {data.expenses && data.expenses.length === 0 && data.dispatches?.length > 0 && (

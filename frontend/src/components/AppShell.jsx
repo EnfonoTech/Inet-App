@@ -269,7 +269,9 @@ export default function AppShell() {
       >
         <FieldGlobalTimerBar role={role} />
         <DataTablePro />
-        <Outlet />
+        <div className="content-outlet">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

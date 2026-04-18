@@ -1,4 +1,5 @@
 import { useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 
 function todayISO() {
@@ -143,7 +144,7 @@ export default function PODump() {
       )}
 
       <div className="page-content">
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {!rows.length && !loading ? (
             <div className="empty-state">
               <div className="empty-icon">📄</div>
@@ -192,7 +193,7 @@ export default function PODump() {
               </tbody>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
       </div>
       <DetailModal row={detailRow} onClose={() => setDetailRow(null)} />
     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -142,7 +143,7 @@ export default function Timesheets() {
       </div>
 
       <div className="page-content">
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
           ) : logs.length === 0 ? (
@@ -231,7 +232,7 @@ export default function Timesheets() {
               </tfoot>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={logs.length}

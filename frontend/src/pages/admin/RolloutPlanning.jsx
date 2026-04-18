@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -355,7 +356,7 @@ export default function RolloutPlanning() {
           </div>
         )}
 
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading dispatches…
@@ -455,7 +456,7 @@ export default function RolloutPlanning() {
               </tfoot>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={rows.length}

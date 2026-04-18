@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -252,7 +253,7 @@ export default function ExecutionMonitor() {
           </div>
         )}
 
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading execution data…
@@ -364,7 +365,7 @@ export default function ExecutionMonitor() {
               </tfoot>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={rows.length}

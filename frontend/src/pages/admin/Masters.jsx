@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { useSearchParams } from "react-router-dom";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -274,7 +275,7 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
 
   return (
     <>
-    <div className="data-table-wrapper" style={{ marginTop: 0 }}>
+    <DataTableWrapper style={{ marginTop: 0 }}>
       <table className="data-table">
         <thead>
           <tr>
@@ -328,7 +329,7 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
           ))}
         </tbody>
       </table>
-    </div>
+    </DataTableWrapper>
     <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />
     </>
   );

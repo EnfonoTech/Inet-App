@@ -3,6 +3,7 @@ import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import {
   elapsedSecondsFromServerEpoch,
   formatElapsedSeconds,
@@ -287,48 +288,50 @@ export default function Timesheet() {
             <p>Use Start timer on an execution, or add a manual entry for today&apos;s rollout.</p>
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Rollout</th>
-                <th>Work</th>
-                <th>Start</th>
-                <th>End</th>
-                <th style={{ textAlign: "right" }}>Hours</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((row) => (
-                <tr key={row.name}>
-                  <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
-                  <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
-                  <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || row.project_code || "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{shortDt(row.start_time)}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{row.is_running ? "…" : shortDt(row.end_time)}</td>
-                  <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>
-                    {row.is_running ? "—" : fmt.format(row.duration_hours || 0)}
-                  </td>
-                  <td>
-                    <span style={{
-                      display: "inline-block",
-                      padding: "3px 10px",
-                      borderRadius: 12,
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      background: row.is_running ? "#fef3c7" : "#ecfdf5",
-                      color: row.is_running ? "#92400e" : "#065f46",
-                    }}
-                    >
-                      {row.is_running ? "Running" : "Done"}
-                    </span>
-                  </td>
+          <DataTableWrapper className="data-table-wrapper--nested">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Rollout</th>
+                  <th>Work</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th style={{ textAlign: "right" }}>Hours</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {logs.map((row) => (
+                  <tr key={row.name}>
+                    <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
+                    <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || row.project_code || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{shortDt(row.start_time)}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{row.is_running ? "…" : shortDt(row.end_time)}</td>
+                    <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>
+                      {row.is_running ? "—" : fmt.format(row.duration_hours || 0)}
+                    </td>
+                    <td>
+                      <span style={{
+                        display: "inline-block",
+                        padding: "3px 10px",
+                        borderRadius: 12,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        background: row.is_running ? "#fef3c7" : "#ecfdf5",
+                        color: row.is_running ? "#92400e" : "#065f46",
+                      }}
+                      >
+                        {row.is_running ? "Running" : "Done"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </DataTableWrapper>
         )}
         <TableRowsLimitFooter placement="tableCard" loadedCount={logs.length} />
       </div>

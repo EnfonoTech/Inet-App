@@ -123,7 +123,7 @@ export default function DataTablePro() {
         reinitTimer = null;
         if (destroyed) return;
         pruneDisconnected();
-        if (!document.querySelector(".data-table-wrapper > table.data-table")) return;
+        if (!document.querySelector(".data-table-wrapper table.data-table")) return;
         void init();
       }, 120);
     };
@@ -138,14 +138,14 @@ export default function DataTablePro() {
         pruneDisconnected();
         let attempts = 0;
         while (!destroyed && attempts < 60) {
-          const found = document.querySelectorAll(".data-table-wrapper > table.data-table").length;
+          const found = document.querySelectorAll(".data-table-wrapper table.data-table").length;
           if (found > 0) break;
           attempts += 1;
           await sleep(80);
         }
         if (destroyed) return;
 
-        const tables = Array.from(document.querySelectorAll(".data-table-wrapper > table.data-table"));
+        const tables = Array.from(document.querySelectorAll(".data-table-wrapper table.data-table"));
         for (let tIdx = 0; tIdx < tables.length; tIdx += 1) {
           if (destroyed) return;
           const table = tables[tIdx];
@@ -576,7 +576,7 @@ export default function DataTablePro() {
               document.addEventListener("mousemove", onMove, true);
               document.addEventListener("mouseup", onUp, true);
             });
-            th.style.position = "relative";
+            /* Avoid th.style.position — it overrides CSS position:sticky on header cells. */
             th.appendChild(handle);
           });
         };

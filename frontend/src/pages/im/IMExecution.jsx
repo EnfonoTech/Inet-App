@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -481,7 +482,7 @@ export default function IMExecution() {
       </div>
 
       <div className="page-content">
-        <div className="data-table-wrapper">
+        <DataTableWrapper>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
           ) : executions.length === 0 ? (
@@ -658,7 +659,7 @@ export default function IMExecution() {
               </tfoot>
             </table>
           )}
-        </div>
+        </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={executions.length}
