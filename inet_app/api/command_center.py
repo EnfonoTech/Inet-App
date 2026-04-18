@@ -1126,9 +1126,9 @@ def confirm_po_upload(rows):
             doc.center_area = first.get("center_area")
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
-            doc.insert(ignore_permissions=True, ignore_links=True)
-            created += 1
-            names.append(doc.name)
+        doc.insert(ignore_permissions=True, ignore_links=True)
+        created += 1
+        names.append(doc.name)
 
         frappe.db.commit()
         lines_imported += len(new_entries)
@@ -2488,9 +2488,9 @@ def update_execution(payload):
 
             doc = frappe.new_doc("Daily Execution")
             doc.rollout_plan = rollout_plan
-            doc.system_id = rp.po_dispatch if rp else None
-            doc.team = rp.team if rp else None
-            pd_name = rp.po_dispatch if rp else None
+            doc.system_id = rp.get("po_dispatch") if rp else None
+            doc.team = rp.get("team") if rp else None
+            pd_name = rp.get("po_dispatch") if rp else None
             im_v = None
             if pd_name:
                 im_v = frappe.db.get_value("PO Dispatch", pd_name, "im")
