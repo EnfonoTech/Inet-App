@@ -2,14 +2,7 @@ import { useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import { fetchPortalSession, getCsrf } from "../../services/api";
 import { defaultAchievedQtyFromPlan } from "../../utils/planDefaultQty";
-
-const EXECUTION_STATUSES = [
-  "In Progress",
-  "Completed",
-  "Hold",
-  "Cancelled",
-  "Postponed",
-];
+import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 
 function parsePhotoList(raw) {
   if (!raw) return [];
@@ -257,7 +250,7 @@ export default function IMPlanningExecutionModal({ open, onClose, selectedPlan, 
               <div className="form-group" style={{ margin: 0 }}>
                 <label>Execution status *</label>
                 <select value={execStatus} onChange={(e) => setExecStatus(e.target.value)} required>
-                  {EXECUTION_STATUSES.map((s) => (
+                  {EXECUTION_STATUS_OPTIONS.map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>

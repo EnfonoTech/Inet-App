@@ -9,14 +9,7 @@ import {
   makeSkewMs,
 } from "../../utils/executionTimerDisplay";
 import { defaultAchievedQtyFromPlan } from "../../utils/planDefaultQty";
-
-const EXECUTION_STATUSES = [
-  "In Progress",
-  "Completed",
-  "Hold",
-  "Cancelled",
-  "Postponed",
-];
+import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 
 
 function DetailRow({ label, value }) {
@@ -585,7 +578,7 @@ export default function ExecutionForm() {
                 onChange={(e) => setExecStatus(e.target.value)}
                 required
               >
-                {EXECUTION_STATUSES.map((s) => (
+                {EXECUTION_STATUS_OPTIONS.map((s) => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>

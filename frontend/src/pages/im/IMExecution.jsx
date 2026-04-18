@@ -4,23 +4,9 @@ import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableR
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-const EXECUTION_STATUS_OPTIONS = [
-  "In Progress",
-  "Completed",
-  "Hold",
-  "Cancelled",
-  "Postponed",
-  "POD Pending",
-  "PO Required",
-  "Span Loss",
-  "Spare Parts",
-  "Extra Visit",
-  "Late Arrival",
-  "Quality Issue",
-  "Travel",
-];
 const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
 
 function badgeTone(value) {
@@ -146,6 +132,10 @@ export default function IMExecution() {
   const [ciagDecision, setCiagDecision] = useState("Open");
   const [ciagBusy, setCiagBusy] = useState(false);
   const [ciagErr, setCiagErr] = useState(null);
+  const [execStatusFor, setExecStatusFor] = useState(null);
+  const [execStatusPick, setExecStatusPick] = useState("In Progress");
+  const [execStatusBusy, setExecStatusBusy] = useState(false);
+  const [execStatusErr, setExecStatusErr] = useState(null);
   const [wdBusy, setWdBusy] = useState("");
   const [wdErr, setWdErr] = useState(null);
   const [selectedExecs, setSelectedExecs] = useState(new Set());
@@ -293,6 +283,24 @@ export default function IMExecution() {
     }
   }
 
+  async function submitExecStatus() {
+    if (!execStatusFor?.name) return;
+    setExecStatusBusy(true);
+    setExecStatusErr(null);
+    try {
+      await pmApi.updateExecution({
+        name: execStatusFor.name,
+        execution_status: execStatusPick,
+      });
+      setExecStatusFor(null);
+      await loadExecutions();
+    } catch (err) {
+      setExecStatusErr(err.message || "Failed to update execution status");
+    } finally {
+      setExecStatusBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -351,6 +359,23 @@ export default function IMExecution() {
           <p style={{ marginTop: 12, fontSize: 12, color: "#64748b" }}>
             Work Done is not created automatically. After QC Pass, use the top <strong>Create Work Done</strong> action.
           </p>
+          </div>
+        </div>
+      )}
+
+      {execStatusFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setExecStatusFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>Execution status: {execStatusFor.name}</h4>
+            {execStatusErr && <div className="notice error" style={{ marginBottom: 10 }}>{execStatusErr}</div>}
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>Status</label>
+              <select value={execStatusPick} onChange={(e) => setExecStatusPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
+                {EXECUTION_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary" disabled={execStatusBusy} onClick={submitExecStatus}>{execStatusBusy ? "…" : "Save"}</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setExecStatusFor(null)}>Cancel</button>
           </div>
         </div>
       )}
@@ -546,7 +571,18 @@ export default function IMExecution() {
                     <td style={{ fontSize: "0.82rem" }}>{e.im_full_name || e.dispatch_im || "—"}</td>
                     <td>{e.execution_date}</td>
                     <td>
-                      <StatusPill value={e.execution_status} />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExecStatusErr(null);
+                          setExecStatusPick(e.execution_status || "In Progress");
+                          setExecStatusFor(e);
+                        }}
+                        style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
+                        title="Click to change execution status"
+                      >
+                        <StatusPill value={e.execution_status} />
+                      </button>
                     </td>
                     <td>
                       {String(e.execution_status || "") !== "Completed" ? (

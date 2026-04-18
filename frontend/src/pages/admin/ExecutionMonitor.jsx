@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-const STATUS_OPTIONS = ["", "Planned", "In Execution", "Completed", "Cancelled", "Planning with Issue"];
+const PLAN_STATUS_OPTIONS = ["", "Planned", "In Execution", "Completed", "Cancelled", "Planning with Issue"];
 
 function statusBadgeClass(status) {
   if (!status) return "";
@@ -14,6 +15,9 @@ function statusBadgeClass(status) {
   if (s === "in-execution" || s === "in-progress") return "in-progress";
   if (s === "completed") return "completed";
   if (s === "cancelled") return "cancelled";
+  if (s === "hold" || s === "postponed") return "new";
+  if (s === "pod-pending" || s === "po-required" || s === "span-loss" || s === "spare-parts") return "in-progress";
+  if (s === "extra-visit" || s === "late-arrival" || s === "quality-issue" || s === "travel") return "in-progress";
   return "new";
 }
 
@@ -78,7 +82,8 @@ export default function ExecutionMonitor() {
   const intervalRef = useRef(null);
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const [planStatusFilter, setPlanStatusFilter] = useState("");
+  const [executionStatusFilter, setExecutionStatusFilter] = useState("");
   const [visitFilter, setVisitFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
@@ -97,7 +102,8 @@ export default function ExecutionMonitor() {
     setError(null);
     try {
       const filters = {};
-      if (statusFilter) filters.status = statusFilter;
+      if (planStatusFilter) filters.status = planStatusFilter;
+      if (executionStatusFilter) filters.execution_status = executionStatusFilter;
       if (visitFilter) filters.visit_type = visitFilter;
       if (teamFilter) filters.team = teamFilter;
       if (projectFilter) filters.project_code = projectFilter;
@@ -113,7 +119,7 @@ export default function ExecutionMonitor() {
     } finally {
       setLoading(false);
     }
-  }, [rowLimit, search, statusFilter, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate]);
+  }, [rowLimit, search, planStatusFilter, executionStatusFilter, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate]);
 
   useEffect(() => {
     loadData();
@@ -136,7 +142,7 @@ export default function ExecutionMonitor() {
     });
   const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
 
-  const hasFilters = search || statusFilter || visitFilter || projectFilter || teamFilter || duidFilter || fromDate || toDate;
+  const hasFilters = search || planStatusFilter || executionStatusFilter || visitFilter || projectFilter || teamFilter || duidFilter || fromDate || toDate;
 
   return (
     <div>
@@ -173,12 +179,24 @@ export default function ExecutionMonitor() {
           }}
         />
         <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          value={planStatusFilter}
+          onChange={(e) => setPlanStatusFilter(e.target.value)}
           style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+          title="Rollout Plan status"
         >
-          <option value="">All Statuses</option>
-          {STATUS_OPTIONS.filter(Boolean).map((s) => (
+          <option value="">All plan statuses</option>
+          {PLAN_STATUS_OPTIONS.filter(Boolean).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select
+          value={executionStatusFilter}
+          onChange={(e) => setExecutionStatusFilter(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
+          title="Daily Execution status"
+        >
+          <option value="">All execution statuses</option>
+          {EXECUTION_STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
@@ -210,7 +228,17 @@ export default function ExecutionMonitor() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setStatusFilter(""); setVisitFilter(""); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
+            onClick={() => {
+              setSearch("");
+              setPlanStatusFilter("");
+              setExecutionStatusFilter("");
+              setVisitFilter("");
+              setProjectFilter("");
+              setTeamFilter("");
+              setDuidFilter("");
+              setFromDate("");
+              setToDate("");
+            }}
           >
             Clear
           </button>

@@ -2254,6 +2254,21 @@ def create_rollout_plans(payload):
     return {"created": created, "names": names}
 
 
+_EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE = frozenset(
+    (
+        "In Progress",
+        "POD Pending",
+        "PO Required",
+        "Span Loss",
+        "Spare Parts",
+        "Extra Visit",
+        "Late Arrival",
+        "Quality Issue",
+        "Travel",
+    )
+)
+
+
 def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
     """
     Keep Rollout Plan plan_status (and optional amounts) in sync with Daily Execution.
@@ -2264,7 +2279,7 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
     st = exec_doc.execution_status
     updates = {}
 
-    if st == "In Progress":
+    if st in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE:
         cur = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
         if cur == "Planned":
             updates["plan_status"] = "In Execution"
@@ -2297,11 +2312,30 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         frappe.db.set_value("Rollout Plan", rollout_plan, updates)
 
 
+_ALLOWED_DAILY_EXECUTION_STATUSES = frozenset(
+    (
+        "In Progress",
+        "Completed",
+        "Hold",
+        "Cancelled",
+        "Postponed",
+        "POD Pending",
+        "PO Required",
+        "Span Loss",
+        "Spare Parts",
+        "Extra Visit",
+        "Late Arrival",
+        "Quality Issue",
+        "Travel",
+    )
+)
+
+
 def _normalize_execution_status(value):
     s = str(value or "").strip()
     if not s:
         return s
-    sl = s.lower()
+    sl = s.lower().replace("_", " ")
     if sl in ("in progress", "inprogress"):
         return "In Progress"
     if sl in ("complete", "completed"):
@@ -2310,6 +2344,28 @@ def _normalize_execution_status(value):
         return "Cancelled"
     if sl in ("postpone", "postponed"):
         return "Postponed"
+    if sl in ("hold", "on hold"):
+        return "Hold"
+    if sl in ("pod pending", "podpending"):
+        return "POD Pending"
+    if sl in ("po required", "porequired"):
+        return "PO Required"
+    if sl in ("span loss", "spanloss"):
+        return "Span Loss"
+    if sl in ("spare parts", "spareparts"):
+        return "Spare Parts"
+    if sl in ("extra visit", "extravisit"):
+        return "Extra Visit"
+    if sl in ("late arrival", "latearrival"):
+        return "Late Arrival"
+    if sl in ("quality issue", "qualityissue"):
+        return "Quality Issue"
+    if sl == "travel":
+        return "Travel"
+    # Title-style match against allowed labels (e.g. user-typed casing)
+    for opt in _ALLOWED_DAILY_EXECUTION_STATUSES:
+        if sl == opt.lower():
+            return opt
     return s
 
 
@@ -2529,6 +2585,12 @@ def update_execution(payload):
 
     if hasattr(doc, "execution_status"):
         doc.execution_status = _normalize_execution_status(doc.execution_status)
+        if doc.execution_status and doc.execution_status not in _ALLOWED_DAILY_EXECUTION_STATUSES:
+            frappe.throw(
+                frappe._("Invalid execution_status. Allowed values: {0}").format(
+                    ", ".join(sorted(_ALLOWED_DAILY_EXECUTION_STATUSES))
+                )
+            )
 
     # QC / CIAG is only allowed once execution is completed.
     if ("qc_status" in payload or "ciag_status" in payload) and doc.execution_status != "Completed":
