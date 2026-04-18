@@ -1126,9 +1126,9 @@ def confirm_po_upload(rows):
             doc.center_area = first.get("center_area")
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
-        doc.insert(ignore_permissions=True, ignore_links=True)
-        created += 1
-        names.append(doc.name)
+            doc.insert(ignore_permissions=True, ignore_links=True)
+            created += 1
+            names.append(doc.name)
 
         frappe.db.commit()
         lines_imported += len(new_entries)
