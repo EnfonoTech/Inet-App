@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useParams, useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtDec = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -406,17 +407,25 @@ function EditOverview({ project, onSave, onCancel }) {
           </div>
           <div>
             <label style={labelStyle}>Customer</label>
-            <select style={inputStyle} value={form.customer} onChange={e => setField("customer", e.target.value)}>
-              <option value="">-- Select --</option>
-              {customers.map(c => <option key={c.name} value={c.customer_name || c.name}>{c.customer_name || c.name}</option>)}
-            </select>
+            <SearchableSelect
+              value={form.customer}
+              onChange={(v) => setField("customer", v)}
+              options={customers.map(c => ({ id: c.customer_name || c.name, label: c.customer_name || c.name }))}
+              placeholder="-- Select --"
+              style={{ width: "100%" }}
+              minWidth={0}
+            />
           </div>
           <div>
             <label style={labelStyle}>Implementation Manager</label>
-            <select style={inputStyle} value={form.implementation_manager} onChange={e => setField("implementation_manager", e.target.value)}>
-              <option value="">-- Select --</option>
-              {ims.map(im => <option key={im.name} value={im.name}>{im.full_name}{im.email ? ` (${im.email})` : ""}</option>)}
-            </select>
+            <SearchableSelect
+              value={form.implementation_manager}
+              onChange={(v) => setField("implementation_manager", v)}
+              options={ims.map(im => ({ id: im.name, label: `${im.full_name}${im.email ? ` (${im.email})` : ""}` }))}
+              placeholder="-- Select --"
+              style={{ width: "100%" }}
+              minWidth={0}
+            />
           </div>
           <div>
             <label style={labelStyle}>Center / Area</label>
@@ -427,15 +436,20 @@ function EditOverview({ project, onSave, onCancel }) {
           </div>
           <div>
             <label style={labelStyle}>Domain</label>
-            <select style={inputStyle} value={form.project_domain} onChange={e => setField("project_domain", e.target.value)}>
-              <option value="">-- Select Domain --</option>
-              {form.project_domain && !domains.some((d) => d.name === form.project_domain) && (
-                <option value={form.project_domain}>{form.project_domain}</option>
-              )}
-              {domains.map((d) => (
-                <option key={d.name} value={d.name}>{d.name}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              value={form.project_domain}
+              onChange={(v) => setField("project_domain", v)}
+              options={(() => {
+                const base = domains.map(d => ({ id: d.name, label: d.name }));
+                if (form.project_domain && !domains.some(d => d.name === form.project_domain)) {
+                  base.unshift({ id: form.project_domain, label: form.project_domain });
+                }
+                return base;
+              })()}
+              placeholder="-- Select Domain --"
+              style={{ width: "100%" }}
+              minWidth={0}
+            />
           </div>
           <div>
             <label style={labelStyle}>Budget Amount (SAR)</label>

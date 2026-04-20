@@ -4,6 +4,8 @@ import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
+import useFilterOptions from "../../hooks/useFilterOptions";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -184,8 +186,11 @@ export default function PODispatch() {
     });
   }
 
-  const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
-  const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  // Filter options come from distinct values across ALL PO Intake Lines, not
+  // just the row-limited slice — so dropdowns stay complete regardless of limit.
+  const { options: filterOpts } = useFilterOptions("PO Intake Line", ["project_code", "site_code"]);
+  const projectOptions = filterOpts.project_code || [];
+  const duidOptions = filterOpts.site_code || [];
   const imLabelById = useMemo(() => {
     const m = {};
     for (const im of imList) {
@@ -260,7 +265,9 @@ export default function PODispatch() {
   }
 
   const autoRows = rows.filter(r => r.dispatch_mode === "Auto");
-  const uniqueProjects = [...new Set(autoRows.map(r => r.project_code).filter(Boolean))];
+  // All projects that have any Auto-mode PO Dispatch, not just ones in the loaded slice.
+  const { options: dispatchFilterOpts } = useFilterOptions("PO Dispatch", ["project_code"]);
+  const uniqueProjects = dispatchFilterOpts.project_code || [];
   const showDispatched = activeTab === "Dispatched" || activeTab === "all";
 
   async function handleConvertByProject() {
@@ -460,20 +467,27 @@ export default function PODispatch() {
             onChange={e => setTableSearch(e.target.value)}
             style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
           />
-          <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-            <option value="">All Projects</option>
-            {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <select value={imFilter} onChange={(e) => setImFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-            <option value="">All IMs</option>
-            {imSelectOptions.map((im) => (
-              <option key={im.name} value={im.name}>{im.full_name || im.im_id || im.name}</option>
-            ))}
-          </select>
-          <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
-            <option value="">All DUIDs</option>
-            {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
+          <SearchableSelect
+            value={projectFilter}
+            onChange={setProjectFilter}
+            options={projectOptions}
+            placeholder="All Projects"
+            minWidth={170}
+          />
+          <SearchableSelect
+            value={imFilter}
+            onChange={setImFilter}
+            options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))}
+            placeholder="All IMs"
+            minWidth={170}
+          />
+          <SearchableSelect
+            value={duidFilter}
+            onChange={setDuidFilter}
+            options={duidOptions}
+            placeholder="All DUIDs"
+            minWidth={160}
+          />
           <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
           <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
           {hasFilters && (

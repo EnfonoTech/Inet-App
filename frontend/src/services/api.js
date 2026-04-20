@@ -356,6 +356,12 @@ export const pmApi = {
   getTimesheetDetail:   (name)    => call("inet_app.api.command_center.get_timesheet_detail", { name }),
   getTablePreferences:  (table_id) => call("inet_app.api.command_center.get_table_preferences", { table_id }),
   getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
+  getDistinctFieldValues: (doctype, fields) =>
+    callCached(
+      "inet_app.api.command_center.get_distinct_field_values",
+      { doctype, fields: JSON.stringify(fields || []) },
+      300_000,
+    ),
   saveTablePreferences: (table_id, config) =>
     call("inet_app.api.command_center.save_table_preferences", {
       table_id,

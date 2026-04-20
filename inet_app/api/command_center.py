@@ -409,6 +409,51 @@ def get_table_preferences(table_id):
 
 
 @frappe.whitelist()
+def get_distinct_field_values(doctype, fields):
+    """Return {fieldname: [distinct values]} for the given fields on a doctype.
+
+    Powers filter dropdowns that must show ALL possible values regardless of
+    the current row-limit. SQL-injection safe: doctype must exist, fields
+    must appear in the doctype meta.
+    """
+    if not doctype or not isinstance(doctype, str):
+        return {}
+    if not frappe.db.exists("DocType", doctype):
+        return {}
+
+    if isinstance(fields, str):
+        try:
+            fields_list = frappe.parse_json(fields)
+        except Exception:
+            fields_list = []
+    else:
+        fields_list = fields
+    if not isinstance(fields_list, list):
+        return {}
+
+    meta = frappe.get_meta(doctype)
+    allowed = {f.fieldname for f in meta.fields}
+    allowed.add("name")  # always safe
+
+    out = {}
+    table_name = "tab" + doctype
+    for f in fields_list:
+        if not isinstance(f, str) or f not in allowed:
+            continue
+        try:
+            rows = frappe.db.sql(
+                f"SELECT DISTINCT `{f}` FROM `{table_name}` "
+                f"WHERE `{f}` IS NOT NULL AND `{f}` != '' "
+                f"ORDER BY `{f}` LIMIT 5000",
+                as_list=True,
+            )
+            out[f] = [r[0] for r in rows if r[0]]
+        except Exception:
+            out[f] = []
+    return out
+
+
+@frappe.whitelist()
 def get_all_table_preferences():
     """Return every saved table preference for the current user in one call.
 

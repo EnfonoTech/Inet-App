@@ -5,6 +5,8 @@ import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableR
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import useFilterOptions from "../../hooks/useFilterOptions";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Work Done", "Re-Visit", "Extra Visit"];
@@ -357,9 +359,12 @@ export default function IMDispatch() {
   const planable = (r) => (r.dispatch_status || "") === "Dispatched";
 
   const planableRows = rows.filter(planable);
-  const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
-  const teamOptions = [...new Set(rows.map((r) => r.team).filter(Boolean))].sort();
-  const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  // Distinct values across ALL dispatches — so dropdowns stay complete under any row limit.
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
+  const { options: teamOpts } = useFilterOptions("INET Team", ["team_id"]);
+  const projectOptions = dispOpts.project_code || [];
+  const duidOptions = dispOpts.site_code || [];
+  const teamOptions = teamOpts.team_id || [];
   const hasFilters = search || modeFilter !== "all" || dummyFilter !== "all" || projectFilter || teamFilter || duidFilter || fromDate || toDate;
 
   function toggleRow(name) {
@@ -537,22 +542,27 @@ export default function IMDispatch() {
               minWidth: 220,
             }}
           />
-          <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-            <option value="">All Projects</option>
-            {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-            <option value="">All Teams</option>
-            {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <select
+          <SearchableSelect
+            value={projectFilter}
+            onChange={setProjectFilter}
+            options={projectOptions}
+            placeholder="All Projects"
+            minWidth={170}
+          />
+          <SearchableSelect
+            value={teamFilter}
+            onChange={setTeamFilter}
+            options={teamOptions}
+            placeholder="All Teams"
+            minWidth={150}
+          />
+          <SearchableSelect
             value={duidFilter}
-            onChange={(e) => setDuidFilter(e.target.value)}
-            style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}
-          >
-            <option value="">All DUIDs</option>
-            {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
+            onChange={setDuidFilter}
+            options={duidOptions}
+            placeholder="All DUIDs"
+            minWidth={150}
+          />
           <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
           <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
           {hasFilters && (

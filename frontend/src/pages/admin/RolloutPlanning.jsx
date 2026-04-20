@@ -4,6 +4,8 @@ import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
+import useFilterOptions from "../../hooks/useFilterOptions";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -182,20 +184,21 @@ export default function RolloutPlanning() {
     });
   }
 
-  const projectOptions = useMemo(
-    () => [...new Set(metaRows.map((r) => r.project_code).filter(Boolean))].sort(),
-    [metaRows],
-  );
-  const imOptionRows = useMemo(
-    () => [...new Map(metaRows.filter((r) => r.im).map((r) => [r.im, r])).values()].sort((a, b) =>
-      String(a.im_full_name || a.im || "").localeCompare(String(b.im_full_name || b.im || ""), undefined, { sensitivity: "base" }),
-    ),
-    [metaRows],
-  );
-  const duidOptions = useMemo(
-    () => [...new Set(metaRows.map((r) => r.site_code).filter(Boolean))].sort(),
-    [metaRows],
-  );
+  // Filter options come from distinct values in the master tables so dropdowns
+  // stay complete regardless of the current row-limited slice.
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "im"]);
+  const projectOptions = dispOpts.project_code || [];
+  const duidOptions = dispOpts.site_code || [];
+  // Keep { im, im_full_name } shape so existing code/JSX unchanged; enrich
+  // plain-ID list from dispatch with full names found in the current slice.
+  const imOptionRows = useMemo(() => {
+    const ids = dispOpts.im || [];
+    const labelById = {};
+    for (const r of metaRows) {
+      if (r.im && r.im_full_name) labelById[r.im] = r.im_full_name;
+    }
+    return ids.map((id) => ({ im: id, im_full_name: labelById[id] || id }));
+  }, [dispOpts.im, metaRows]);
   const hasFilters = search || projectFilter || imFilter || duidFilter || fromDate || toDate;
   const filterActiveForFooter = !!(searchDebounced.trim() || projectFilter || imFilter || duidFilter || fromDate || toDate);
 
@@ -294,20 +297,27 @@ export default function RolloutPlanning() {
               minWidth: 300,
             }}
           />
-          <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-            <option value="">All Projects</option>
-            {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <select value={imFilter} onChange={(e) => setImFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-            <option value="">All IMs</option>
-            {imOptionRows.map((r) => (
-              <option key={r.im} value={r.im}>{r.im_full_name || r.im}</option>
-            ))}
-          </select>
-          <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
-            <option value="">All DUIDs</option>
-            {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
+          <SearchableSelect
+            value={projectFilter}
+            onChange={setProjectFilter}
+            options={projectOptions}
+            placeholder="All Projects"
+            minWidth={170}
+          />
+          <SearchableSelect
+            value={imFilter}
+            onChange={setImFilter}
+            options={imOptionRows.map((r) => ({ id: r.im, label: r.im_full_name || r.im }))}
+            placeholder="All IMs"
+            minWidth={170}
+          />
+          <SearchableSelect
+            value={duidFilter}
+            onChange={setDuidFilter}
+            options={duidOptions}
+            placeholder="All DUIDs"
+            minWidth={150}
+          />
           <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
           <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
           {hasFilters && (

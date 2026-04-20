@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -142,17 +143,25 @@ function CreateProjectModal({ open, onClose, onCreated }) {
             </div>
             <div>
               <label style={labelStyle}>Customer</label>
-              <select style={inputStyle} value={form.customer} onChange={e => setField("customer", e.target.value)}>
-                <option value="">-- Select --</option>
-                {customers.map(c => <option key={c.name} value={c.customer_name || c.name}>{c.customer_name || c.name}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.customer}
+                onChange={(v) => setField("customer", v)}
+                options={customers.map(c => ({ id: c.customer_name || c.name, label: c.customer_name || c.name }))}
+                placeholder="-- Select --"
+                style={{ width: "100%" }}
+                minWidth={0}
+              />
             </div>
             <div>
               <label style={labelStyle}>Implementation Manager</label>
-              <select style={inputStyle} value={form.implementation_manager} onChange={e => setField("implementation_manager", e.target.value)}>
-                <option value="">-- Select --</option>
-                {ims.map(im => <option key={im.name} value={im.name}>{im.full_name}{im.email ? ` (${im.email})` : ""}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.implementation_manager}
+                onChange={(v) => setField("implementation_manager", v)}
+                options={ims.map(im => ({ id: im.name, label: `${im.full_name}${im.email ? ` (${im.email})` : ""}` }))}
+                placeholder="-- Select --"
+                style={{ width: "100%" }}
+                minWidth={0}
+              />
             </div>
             <div>
               <label style={labelStyle}>Center / Area</label>
@@ -160,23 +169,25 @@ function CreateProjectModal({ open, onClose, onCreated }) {
             </div>
             <div>
               <label style={labelStyle}>Project Domain</label>
-              <select style={inputStyle} value={form.project_domain} onChange={e => setField("project_domain", e.target.value)}>
-                <option value="">-- Select Domain --</option>
-                {domains.map(d => (
-                  <option key={d.name} value={d.name}>{d.name}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={form.project_domain}
+                onChange={(v) => setField("project_domain", v)}
+                options={domains.map(d => ({ id: d.name, label: d.name }))}
+                placeholder="-- Select Domain --"
+                style={{ width: "100%" }}
+                minWidth={0}
+              />
             </div>
             <div>
               <label style={labelStyle}>Huawei IM</label>
-              <select style={inputStyle} value={form.huawei_im} onChange={e => setField("huawei_im", e.target.value)}>
-                <option value="">-- Select Huawei IM --</option>
-                {huaweiIms.map(h => (
-                  <option key={h.name} value={h.name}>
-                    {h.full_name}{h.email ? ` (${h.email})` : ""}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={form.huawei_im}
+                onChange={(v) => setField("huawei_im", v)}
+                options={huaweiIms.map(h => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+                placeholder="-- Select Huawei IM --"
+                style={{ width: "100%" }}
+                minWidth={0}
+              />
             </div>
             <div>
               <label style={labelStyle}>Budget Amount (SAR)</label>
@@ -280,18 +291,13 @@ export default function Projects() {
           <option value="At Risk">At Risk</option>
           <option value="Completed">Completed</option>
         </select>
-        <select
+        <SearchableSelect
           value={domainFilter}
-          onChange={e => setDomainFilter(e.target.value)}
-          style={{
-            padding: "9px 14px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-            background: "var(--bg-white)", fontSize: 13, color: "var(--text)",
-            flex: "0 1 auto", minWidth: 0, maxWidth: "100%",
-          }}
-        >
-          <option value="">All Domains</option>
-          {allDomains.map(d => <option key={d.name} value={d.name}>{d.name}</option>)}
-        </select>
+          onChange={setDomainFilter}
+          options={allDomains.map(d => ({ id: d.name, label: d.name }))}
+          placeholder="All Domains"
+          minWidth={170}
+        />
       </div>
 
       {/* Table — scrollable on narrow viewports (data-table-wrapper) */}

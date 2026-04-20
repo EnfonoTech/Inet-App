@@ -4,6 +4,8 @@ import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
+import useFilterOptions from "../../hooks/useFilterOptions";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -133,15 +135,18 @@ export default function ExecutionMonitor() {
     return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   }
 
-  const visitTypes = [...new Set(rows.map((r) => r.visit_type).filter(Boolean))].sort();
-  const projectOptions = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
-  const teamOptions = [...new Set(rows.map((r) => r.team).filter(Boolean))]
-    .sort()
-    .map((tid) => {
-      const hit = rows.find((r) => r.team === tid);
-      return { id: tid, label: hit?.team_name || tid };
-    });
-  const duidOptions = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  // Distinct values across ALL Rollout Plans / PO Dispatches — not row-limited.
+  const { options: planOpts } = useFilterOptions("Rollout Plan", ["visit_type"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
+  const { options: teamOpts } = useFilterOptions("INET Team", ["team_id", "team_name"]);
+  const visitTypes = planOpts.visit_type || [];
+  const projectOptions = dispOpts.project_code || [];
+  const duidOptions = dispOpts.site_code || [];
+  // Preserve { id, label } shape so existing JSX doesn't need to change
+  const teamOptions = (teamOpts.team_id || []).map((tid) => {
+    const hit = rows.find((r) => r.team === tid);
+    return { id: tid, label: hit?.team_name || tid };
+  });
 
   const hasFilters = search || planStatusFilter || executionStatusFilter || visitFilter || projectFilter || teamFilter || duidFilter || fromDate || toDate;
 
@@ -201,28 +206,34 @@ export default function ExecutionMonitor() {
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <select
+        <SearchableSelect
           value={visitFilter}
-          onChange={(e) => setVisitFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All Visit Types</option>
-          {visitTypes.map((vt) => (
-            <option key={vt} value={vt}>{vt}</option>
-          ))}
-        </select>
-        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Projects</option>
-          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Teams</option>
-          {teamOptions.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-        </select>
-        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
-          <option value="">All DUIDs</option>
-          {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
+          onChange={setVisitFilter}
+          options={visitTypes}
+          placeholder="All Visit Types"
+          minWidth={160}
+        />
+        <SearchableSelect
+          value={projectFilter}
+          onChange={setProjectFilter}
+          options={projectOptions}
+          placeholder="All Projects"
+          minWidth={170}
+        />
+        <SearchableSelect
+          value={teamFilter}
+          onChange={setTeamFilter}
+          options={teamOptions}
+          placeholder="All Teams"
+          minWidth={150}
+        />
+        <SearchableSelect
+          value={duidFilter}
+          onChange={setDuidFilter}
+          options={duidOptions}
+          placeholder="All DUIDs"
+          minWidth={150}
+        />
         <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
         <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
         {hasFilters && (

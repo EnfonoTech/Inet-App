@@ -3,6 +3,8 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import useFilterOptions from "../../hooks/useFilterOptions";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -98,14 +100,15 @@ export default function WorkDone() {
   useEffect(() => { loadData(); }, [loadData]);
 
   const hasFilters = search || billingFilter || teamFilter || projectFilter || duidFilter || fromDate || toDate;
-  const teams = [...new Set(rows.map((r) => r.team).filter(Boolean))]
-    .sort()
-    .map((tid) => {
-      const hit = rows.find((r) => r.team === tid);
-      return { id: tid, label: hit?.team_name || tid };
-    });
-  const projects = [...new Set(rows.map((r) => r.project_code).filter(Boolean))].sort();
-  const duids = [...new Set(rows.map((r) => r.site_code).filter(Boolean))].sort();
+  // Distinct values across the full master tables — not row-limited.
+  const { options: teamOpts } = useFilterOptions("INET Team", ["team_id"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
+  const teams = (teamOpts.team_id || []).map((tid) => {
+    const hit = rows.find((r) => r.team === tid);
+    return { id: tid, label: hit?.team_name || tid };
+  });
+  const projects = dispOpts.project_code || [];
+  const duids = dispOpts.site_code || [];
 
   const totals = rows.reduce(
     (acc, r) => ({
@@ -143,40 +146,34 @@ export default function WorkDone() {
             border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280,
           }}
         />
-        <select
+        <SearchableSelect
           value={billingFilter}
-          onChange={(e) => setBillingFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All Billing Status</option>
-          {BILLING_STATUSES.filter(Boolean).map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <select
+          onChange={setBillingFilter}
+          options={BILLING_STATUSES.filter(Boolean)}
+          placeholder="All Billing Status"
+          minWidth={170}
+        />
+        <SearchableSelect
           value={teamFilter}
-          onChange={(e) => setTeamFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All Teams</option>
-          {teams.map((s) => (
-            <option key={s.id} value={s.id}>{s.label}</option>
-          ))}
-        </select>
-        <select
+          onChange={setTeamFilter}
+          options={teams}
+          placeholder="All Teams"
+          minWidth={150}
+        />
+        <SearchableSelect
           value={projectFilter}
-          onChange={(e) => setProjectFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All Projects</option>
-          {projects.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
-          <option value="">All DUIDs</option>
-          {duids.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
+          onChange={setProjectFilter}
+          options={projects}
+          placeholder="All Projects"
+          minWidth={170}
+        />
+        <SearchableSelect
+          value={duidFilter}
+          onChange={setDuidFilter}
+          options={duids}
+          placeholder="All DUIDs"
+          minWidth={150}
+        />
         <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
         <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
         {hasFilters && (

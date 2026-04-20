@@ -6,6 +6,8 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
+import useFilterOptions from "../../hooks/useFilterOptions";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
@@ -191,7 +193,9 @@ export default function IMExecution() {
 
   const qcOptions = [...new Set(executions.map((e) => e.qc_status).filter(Boolean))].sort();
   const ciagOptions = [...new Set(executions.map((e) => e.ciag_status).filter(Boolean))].sort();
-  const projectOptions = [...new Set(executions.map((e) => e.project_code).filter(Boolean))].sort();
+  // Distinct master values — so dropdowns are complete regardless of row limit.
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
+  const projectOptions = dispOpts.project_code || [];
   const teamEntries = useMemo(() => {
     const m = new Map();
     executions.forEach((e) => {
@@ -200,7 +204,7 @@ export default function IMExecution() {
     });
     return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
   }, [executions]);
-  const duidOptions = [...new Set(executions.map((e) => e.site_code).filter(Boolean))].sort();
+  const duidOptions = dispOpts.site_code || [];
   const hasFilters = statusFilter || qcFilter || ciagFilter || search || projectFilter || teamFilter || duidFilter || fromDate || toDate;
   const totalAchieved = executions.reduce((s, e) => s + (e.achieved_qty || 0), 0);
   const eligibleForWorkDone = executions.filter((e) => e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done);
@@ -441,20 +445,27 @@ export default function IMExecution() {
             <option key={c} value={c}>{c}</option>
           ))}
         </select>
-        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Projects</option>
-          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Teams</option>
-          {teamEntries.map(([id, label]) => (
-            <option key={id} value={id}>{label}</option>
-          ))}
-        </select>
-        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)} style={{ maxWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
-          <option value="">All DUIDs</option>
-          {duidOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
+        <SearchableSelect
+          value={projectFilter}
+          onChange={setProjectFilter}
+          options={projectOptions}
+          placeholder="All Projects"
+          minWidth={170}
+        />
+        <SearchableSelect
+          value={teamFilter}
+          onChange={setTeamFilter}
+          options={teamEntries.map(([id, label]) => ({ id, label }))}
+          placeholder="All Teams"
+          minWidth={150}
+        />
+        <SearchableSelect
+          value={duidFilter}
+          onChange={setDuidFilter}
+          options={duidOptions}
+          placeholder="All DUIDs"
+          minWidth={150}
+        />
         <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
         <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
         {hasFilters && (
