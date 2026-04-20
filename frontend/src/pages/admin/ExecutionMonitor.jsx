@@ -7,6 +7,7 @@ import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -235,8 +236,7 @@ export default function ExecutionMonitor() {
           placeholder="All DUIDs"
           minWidth={150}
         />
-        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
             className="btn-secondary"
@@ -314,9 +314,9 @@ export default function ExecutionMonitor() {
                   return (
                     <tr key={row.name}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.po_dispatch || "—"}</td>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.po_dispatch || "") ? `Original dummy POID: ${row.original_dummy_poid}` : ""}>
-                        {(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.po_dispatch || "")
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.poid || row.po_dispatch || "") ? `Original dummy POID: ${row.original_dummy_poid}` : ""}>
+                        {(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.poid || row.po_dispatch || "")
                           ? (row.original_dummy_poid || "").trim()
                           : "—"}
                       </td>
@@ -409,7 +409,7 @@ export default function ExecutionMonitor() {
                   : null,
               }}
               pills={[
-                { label: "POID", value: detailRow.po_dispatch || "—", tone: "blue" },
+                { label: "POID", value: detailRow.poid || detailRow.po_dispatch || "—", tone: "blue" },
                 { label: "Plan", value: detailRow.name || "—", tone: "amber" },
                 detailRow.execution_name ? { label: "Exec", value: detailRow.execution_name, tone: "green" } : null,
                 detailRow.visit_type ? { label: "Visit", value: detailRow.visit_type, tone: "slate" } : null,

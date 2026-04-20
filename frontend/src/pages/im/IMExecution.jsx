@@ -9,6 +9,7 @@ import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
+import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
@@ -467,8 +468,7 @@ export default function IMExecution() {
           placeholder="All DUIDs"
           minWidth={150}
         />
-        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+        <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
             className="btn-secondary"
@@ -478,19 +478,21 @@ export default function IMExecution() {
             Clear
           </button>
         )}
-        {selectedEligible.length > 0 && (
-          <span style={{ fontSize: "0.78rem", color: "#64748b" }}>
-            {selectedEligible.length} selected for Work Done
-          </span>
-        )}
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={selectedEligible.length === 0 || wdBusy === "bulk"}
-          onClick={createWorkDoneBulk}
-        >
-          {wdBusy === "bulk" ? "Creating…" : `Create Work Done (${selectedEligible.length})`}
-        </button>
+        <div className="toolbar-actions">
+          {selectedEligible.length > 0 && (
+            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+              {selectedEligible.length} selected for Work Done
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={selectedEligible.length === 0 || wdBusy === "bulk"}
+            onClick={createWorkDoneBulk}
+          >
+            {wdBusy === "bulk" ? "Creating…" : `Create Work Done (${selectedEligible.length})`}
+          </button>
+        </div>
       </div>
 
       <div className="page-content">
@@ -565,9 +567,9 @@ export default function IMExecution() {
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.system_id || "—"}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(e.original_dummy_poid || "").trim() && String(e.original_dummy_poid) !== String(e.system_id || "") ? `Original dummy POID: ${e.original_dummy_poid}` : ""}>
-                      {(e.original_dummy_poid || "").trim() && String(e.original_dummy_poid) !== String(e.system_id || "")
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.poid || e.system_id || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(e.original_dummy_poid || "").trim() && String(e.original_dummy_poid) !== String(e.poid || e.system_id || "") ? `Original dummy POID: ${e.original_dummy_poid}` : ""}>
+                      {(e.original_dummy_poid || "").trim() && String(e.original_dummy_poid) !== String(e.poid || e.system_id || "")
                         ? (e.original_dummy_poid || "").trim()
                         : "—"}
                     </td>

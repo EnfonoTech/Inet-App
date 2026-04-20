@@ -1,10 +1,9 @@
 {
  "actions": [],
  "autoname": "format:POU-{YYYY}-{#####}",
- "creation": "2026-04-20 00:00:00.000000",
+ "creation": "2026-04-20 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
- "title_field": "file_name",
  "field_order": [
   "uploaded_by",
   "uploaded_at",
@@ -26,34 +25,130 @@
   "notes"
  ],
  "fields": [
-  {"fieldname": "uploaded_by", "fieldtype": "Data", "label": "Uploaded By", "in_list_view": 1, "read_only": 1},
-  {"fieldname": "uploaded_at", "fieldtype": "Datetime", "label": "Uploaded At", "in_list_view": 1, "read_only": 1},
-  {"fieldname": "customer", "fieldtype": "Link", "options": "Customer", "label": "Customer", "in_list_view": 1},
-  {"fieldname": "column_break_hdr", "fieldtype": "Column Break"},
-  {"fieldname": "file_name", "fieldtype": "Data", "label": "File Name", "in_list_view": 1},
-  {"fieldname": "file_url", "fieldtype": "Data", "label": "File URL", "hidden": 1},
-  {"fieldname": "status", "fieldtype": "Select", "options": "Completed\nPartial\nFailed", "label": "Status", "default": "Completed", "in_list_view": 1},
-  {"fieldname": "section_totals", "fieldtype": "Section Break", "label": "Totals"},
-  {"fieldname": "total_rows", "fieldtype": "Int", "label": "Total Rows"},
-  {"fieldname": "lines_imported", "fieldtype": "Int", "label": "Lines Imported"},
-  {"fieldname": "lines_skipped", "fieldtype": "Int", "label": "Lines Skipped"},
-  {"fieldname": "column_break_totals", "fieldtype": "Column Break"},
-  {"fieldname": "po_created", "fieldtype": "Int", "label": "New PO Intakes"},
-  {"fieldname": "po_updated", "fieldtype": "Int", "label": "Appended POs"},
-  {"fieldname": "auto_dispatched", "fieldtype": "Int", "label": "Auto Dispatched"},
-  {"fieldname": "section_details", "fieldtype": "Section Break", "label": "Per-PO Breakdown"},
-  {"fieldname": "po_details", "fieldtype": "Table", "options": "PO Upload Log Detail", "label": "PO Details"},
-  {"fieldname": "notes", "fieldtype": "Small Text", "label": "Notes"}
+  {
+   "fieldname": "uploaded_by",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Uploaded By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uploaded_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Uploaded At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "column_break_hdr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "file_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "File Name"
+  },
+  {
+   "fieldname": "file_url",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "File URL"
+  },
+  {
+   "default": "Completed",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Completed\nPartial\nFailed"
+  },
+  {
+   "fieldname": "section_totals",
+   "fieldtype": "Section Break",
+   "label": "Totals"
+  },
+  {
+   "fieldname": "total_rows",
+   "fieldtype": "Int",
+   "label": "Total Rows"
+  },
+  {
+   "fieldname": "lines_imported",
+   "fieldtype": "Int",
+   "label": "Lines Imported"
+  },
+  {
+   "fieldname": "lines_skipped",
+   "fieldtype": "Int",
+   "label": "Lines Skipped"
+  },
+  {
+   "fieldname": "column_break_totals",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "po_created",
+   "fieldtype": "Int",
+   "label": "New PO Intakes"
+  },
+  {
+   "fieldname": "po_updated",
+   "fieldtype": "Int",
+   "label": "Appended POs"
+  },
+  {
+   "fieldname": "auto_dispatched",
+   "fieldtype": "Int",
+   "label": "Auto Dispatched"
+  },
+  {
+   "fieldname": "section_details",
+   "fieldtype": "Section Break",
+   "label": "Per-PO Breakdown"
+  },
+  {
+   "fieldname": "po_details",
+   "fieldtype": "Table",
+   "label": "PO Details",
+   "options": "PO Upload Log Detail"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
  ],
  "links": [],
- "modified": "2026-04-20 00:00:00.000000",
+ "modified": "2026-04-20 15:23:26.625757",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "PO Upload Log",
  "owner": "Administrator",
  "permissions": [
-  {"create": 1, "delete": 0, "email": 1, "export": 1, "print": 1, "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1}
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
  ],
+ "row_format": "Dynamic",
  "sort_field": "uploaded_at",
- "sort_order": "DESC"
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "file_name"
 }

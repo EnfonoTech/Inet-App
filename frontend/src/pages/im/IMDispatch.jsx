@@ -8,6 +8,7 @@ import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Work Done", "Re-Visit", "Extra Visit"];
@@ -82,7 +83,7 @@ function statusTone(value) {
 
 function DummyMappingBanner({ row }) {
   const orig = (row.original_dummy_poid || "").trim();
-  const current = (row.name || "").trim();
+  const current = (row.poid || row.name || "").trim();
   const open = !!Number(row.is_dummy_po);
   const was = !!Number(row.was_dummy_po);
   if (!open && !was && !orig) return null;
@@ -566,8 +567,7 @@ export default function IMDispatch() {
             placeholder="All DUIDs"
             minWidth={150}
           />
-          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+          <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {hasFilters && (
             <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setModeFilter("all"); setDummyFilter("all"); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
               Clear
@@ -694,7 +694,7 @@ export default function IMDispatch() {
         </div>
       </Modal>
 
-      <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.name ? ` - ${detailRow.name}` : ""}`} width={760}>
+      <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.poid ? ` · ${detailRow.poid}` : detailRow?.name ? ` · ${detailRow.name}` : ""}`} width={760}>
         {detailRow && (
           <>
             <DummyMappingBanner row={detailRow} />
@@ -718,7 +718,7 @@ export default function IMDispatch() {
             <RecordDetailView
               row={detailRow}
               pills={[
-                { label: "POID", value: detailRow.name || "—", tone: "blue" },
+                { label: "POID", value: detailRow.poid || detailRow.name || "—", tone: "blue" },
                 { label: "Project", value: detailRow.project_code || "—", tone: "amber" },
                 { label: "IM", value: detailRow.im_full_name || detailRow.im || "—", tone: "green" },
                 detailRow.dispatch_mode ? { label: "Mode", value: detailRow.dispatch_mode, tone: detailRow.dispatch_mode === "Auto" ? "violet" : "slate" } : null,
@@ -880,7 +880,8 @@ export default function IMDispatch() {
                   const canPlan = planable(row);
                   const wasDf = row.was_dummy_po == 1 || row.was_dummy_po === true || String(row.was_dummy_po || "") === "1";
                   const origCell = (row.original_dummy_poid || "").trim();
-                  const nameCell = (row.name || "").trim();
+                  // Compare against the business POID, not the SYS- doc name.
+                  const nameCell = (row.poid || row.name || "").trim();
                   return (
                     <tr
                       key={row.name}
@@ -898,7 +899,7 @@ export default function IMDispatch() {
                           title={canPlan ? "" : "Only Dispatched lines can be planned"}
                         />
                       </td>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.name}</td>
                       <td><DispatchModeBadge mode={row.dispatch_mode || "Manual"} /></td>
                       <td style={{ fontSize: "0.72rem", maxWidth: 160 }}>
                         {!!Number(row.is_dummy_po) ? (

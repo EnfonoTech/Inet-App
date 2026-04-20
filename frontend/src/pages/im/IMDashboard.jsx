@@ -3,6 +3,13 @@ import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import KPICard from "../../components/KPICard";
 import { BarChart, DonutChart } from "../../components/Charts";
+import DateRangePicker, { DATE_PRESETS } from "../../components/DateRangePicker";
+
+function defaultRange() {
+  const r = DATE_PRESETS.this_month.range(new Date());
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: iso(r.from), to: iso(r.to) };
+}
 
 function LoadingState() {
   return (
@@ -22,12 +29,13 @@ export default function IMDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [range, setRange] = useState(defaultRange);
 
-  async function loadData() {
+  async function loadData(r = range) {
     setError(null);
     try {
       // Always call — backend resolves the IM even if imName is null/wrong
-      const result = await pmApi.getIMDashboard(imName);
+      const result = await pmApi.getIMDashboard(imName, { from_date: r.from, to_date: r.to });
       setData(result);
     } catch (err) {
       setError(err.message || "Failed to load dashboard");
@@ -37,9 +45,9 @@ export default function IMDashboard() {
   }
 
   useEffect(() => {
-    loadData();
+    loadData(range);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imName]);
+  }, [imName, range.from, range.to]);
 
   if (loading) return <LoadingState />;
 
@@ -109,9 +117,10 @@ export default function IMDashboard() {
   return (
     <div className="dashboard">
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="dash-header">
-        <h1>My Dashboard</h1>
-        <div className="subtitle">
+      <div className="dash-header" style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <h1 style={{ margin: 0 }}>My Dashboard</h1>
+          <div className="subtitle">
           <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
             {data?.im || imName || "Installation Manager"}
             {(teams.length > 0 || projects.length > 0) && (
@@ -121,7 +130,12 @@ export default function IMDashboard() {
               </span>
             )}
           </span>
+          </div>
         </div>
+        <DateRangePicker
+          value={range}
+          onChange={(r) => setRange({ from: r.from, to: r.to })}
+        />
       </div>
 
       {/* ── Backend message ─────────────────────────────────── */}

@@ -2,6 +2,7 @@ import { useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import DateRangePicker from "../../components/DateRangePicker";
 
 const fmtNum = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -114,15 +115,11 @@ export default function PODump() {
         </div>
       </div>
 
-      <div className="toolbar" style={{ flexWrap: "wrap", gap: 12 }}>
-        <label style={{ fontSize: "0.84rem", display: "flex", alignItems: "center", gap: 8 }}>
-          From
-          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "6px 10px" }} />
-        </label>
-        <label style={{ fontSize: "0.84rem", display: "flex", alignItems: "center", gap: 8 }}>
-          To
-          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "6px 10px" }} />
-        </label>
+      <div className="toolbar">
+        <DateRangePicker
+          value={{ from: fromDate, to: toDate }}
+          onChange={({ from, to }) => { setFromDate(from); setToDate(to); }}
+        />
         <button type="button" className="btn-primary" onClick={load} disabled={loading}>
           {loading ? "Loading…" : "Run"}
         </button>

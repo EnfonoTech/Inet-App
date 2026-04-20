@@ -9,6 +9,7 @@ import IMPlanningExecutionModal from "./IMPlanningExecutionModal";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
+import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -42,11 +43,10 @@ function canImExecuteFromPlan(status) {
   return ["Planned", "In Execution", "Planning with Issue", "Ready for Execution"].includes(s);
 }
 
-/** Single plan object when exactly one row is selected in the list, else null. */
-function singleSelectedPlan(planList, selected) {
-  if (selected.size !== 1) return null;
-  const name = Array.from(selected)[0];
-  return planList.find((p) => p.name === name) || null;
+/** All selected plans that are in an executable status. */
+function selectedExecutablePlans(planList, selected) {
+  if (!selected || selected.size === 0) return [];
+  return planList.filter((p) => selected.has(p.name) && canImExecuteFromPlan(p.plan_status));
 }
 
 export default function IMPlanning() {
@@ -155,13 +155,14 @@ export default function IMPlanning() {
     .filter((p) => selected.has(p.name))
     .reduce((s, p) => s + (p.target_amount || 0), 0);
 
-  const oneSelected = useMemo(() => singleSelectedPlan(plans, selected), [plans, selected]);
-  const executionSelectionOk = oneSelected && canImExecuteFromPlan(oneSelected.plan_status);
+  const eligiblePlans = useMemo(() => selectedExecutablePlans(plans, selected), [plans, selected]);
+  const executionSelectionOk = eligiblePlans.length > 0;
+  const skippedCount = selected.size - eligiblePlans.length;
 
   function recordExecutionTitle() {
     if (selected.size === 0) return "Select plans using the checkboxes";
-    if (selected.size > 1) return "Select exactly one rollout plan to record execution";
-    if (!canImExecuteFromPlan(oneSelected?.plan_status)) return "This plan status cannot be recorded from Planning";
+    if (eligiblePlans.length === 0) return "None of the selected plans are in an executable status";
+    if (skippedCount > 0) return `${eligiblePlans.length} of ${selected.size} plans are eligible — others will be skipped`;
     return undefined;
   }
 
@@ -171,7 +172,7 @@ export default function IMPlanning() {
         <div>
           <h1 className="page-title">Planning</h1>
           <div className="page-subtitle">
-            Rollout plans for your teams. Select lines with the checkboxes, then use Record execution for exactly one plan in an executable status.
+            Rollout plans for your teams. Select one or more lines and use Record execution for a quick bulk status change across all eligible plans.
           </div>
         </div>
         <div className="page-actions">
@@ -233,8 +234,7 @@ export default function IMPlanning() {
             placeholder="All DUIDs"
             minWidth={150}
           />
-          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+          <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {(hasFilters) && (
             <button
               className="btn-secondary"
@@ -258,7 +258,7 @@ export default function IMPlanning() {
             title={recordExecutionTitle()}
             onClick={() => setExecutionModalOpen(true)}
           >
-            Record execution ({selected.size})
+            Record execution ({eligiblePlans.length}{skippedCount > 0 ? ` / ${selected.size}` : ""})
           </button>
         </div>
       </div>
@@ -319,7 +319,7 @@ export default function IMPlanning() {
                       />
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.po_dispatch || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.poid || p.po_dispatch || "—"}</td>
                     <td>{p.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={p.center_area || ""}>
                       {p.center_area || "—"}
@@ -380,7 +380,7 @@ export default function IMPlanning() {
       <IMPlanningExecutionModal
         open={executionModalOpen}
         onClose={() => setExecutionModalOpen(false)}
-        selectedPlan={executionSelectionOk ? oneSelected : null}
+        selectedPlans={executionSelectionOk ? eligiblePlans : []}
         onSubmitted={async () => {
           setSelected(new Set());
           await loadPlans();
@@ -397,7 +397,7 @@ export default function IMPlanning() {
             <RecordDetailView
               row={detailRow}
               pills={[
-                { label: "POID", value: detailRow.po_dispatch || "—", tone: "blue" },
+                { label: "POID", value: detailRow.poid || detailRow.po_dispatch || "—", tone: "blue" },
                 { label: "Team", value: detailRow.team_name || detailRow.team || "—", tone: "amber" },
                 { label: "DUID", value: detailRow.site_code || "—", tone: "green" },
                 detailRow.plan_status ? { label: "Status", value: detailRow.plan_status, tone: /complete/i.test(detailRow.plan_status) ? "green" : /cancel/i.test(detailRow.plan_status) ? "rose" : /issue/i.test(detailRow.plan_status) ? "amber" : "slate" } : null,

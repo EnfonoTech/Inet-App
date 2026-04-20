@@ -3,6 +3,7 @@ import { pmApi } from "../../services/api";
 import KPICard from "../../components/KPICard";
 import MiniTable from "../../components/MiniTable";
 import { BarChart, DonutChart } from "../../components/Charts";
+import DateRangePicker, { DATE_PRESETS } from "../../components/DateRangePicker";
 
 /* ── Helpers ───────────────────────────────────────────────── */
 
@@ -72,16 +73,24 @@ function LoadingState() {
 
 /* ── Main Dashboard ────────────────────────────────────────── */
 
+/** Default range = This Month (matches the pre-existing backend default). */
+function defaultRange() {
+  const r = DATE_PRESETS.this_month.range(new Date());
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: iso(r.from), to: iso(r.to) };
+}
+
 export default function CommandDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
+  const [range, setRange] = useState(defaultRange);
   const intervalRef = useRef(null);
 
-  async function fetchData() {
+  async function fetchData(r = range) {
     try {
       setFetchError(null);
-      const res = await pmApi.getCommandDashboard();
+      const res = await pmApi.getCommandDashboard({ from_date: r.from, to_date: r.to });
       setData(res);
     } catch (err) {
       console.error("Command Dashboard fetch error:", err);
@@ -92,17 +101,12 @@ export default function CommandDashboard() {
     }
   }
 
-  /* Fullscreen mode: hide sidebar when dashboard is active */
   useEffect(() => {
-    // Dashboard renders within the normal app shell (sidebar stays visible)
-    // No fullscreen mode — admin needs navigation access
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-    intervalRef.current = setInterval(fetchData, 60_000);
+    fetchData(range);
+    intervalRef.current = setInterval(() => fetchData(range), 60_000);
     return () => clearInterval(intervalRef.current);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range.from, range.to]);
 
   if (loading && !data) return <LoadingState />;
 
@@ -181,12 +185,18 @@ export default function CommandDashboard() {
   return (
     <div className="dashboard">
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="dash-header">
-        <h1>INet Telecom Operations Command Dashboard</h1>
-        <div className="subtitle">
-          <span className="live-dot" />
-          <span className="dash-timestamp">Last updated: {last_updated ? fmtTimestamp(last_updated) : "—"}</span>
+      <div className="dash-header" style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <h1 style={{ margin: 0 }}>INet Telecom Operations Command Dashboard</h1>
+          <div className="subtitle">
+            <span className="live-dot" />
+            <span className="dash-timestamp">Last updated: {last_updated ? fmtTimestamp(last_updated) : "—"}</span>
+          </div>
         </div>
+        <DateRangePicker
+          value={range}
+          onChange={(r) => setRange({ from: r.from, to: r.to })}
+        />
       </div>
 
       {/* ── Row 1: Operational Overview ─────────────────────── */}

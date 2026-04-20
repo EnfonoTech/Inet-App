@@ -3310,6 +3310,8 @@ def list_execution_monitor_rows(filters=None, limit=500):
             "site_name",
             "site_code",
         ]
+        if frappe.db.has_column("PO Dispatch", "poid"):
+            d_fields.append("poid")
         if frappe.db.has_column("PO Dispatch", "im"):
             d_fields.append("im")
         if frappe.db.has_column("PO Dispatch", "center_area"):
@@ -3349,6 +3351,9 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "name": p.name,
                 "system_id": p.po_dispatch or p.name,
                 "po_dispatch": p.po_dispatch,
+                # Prefer the `poid` field when populated; fall back to the
+                # dispatch name (which was the POID on pre-refactor docs).
+                "poid": ((d.get("poid") if d else None) or (d.name if d else None) or p.po_dispatch),
                 "po_no": d.po_no if d else None,
                 "item_code": d.item_code if d else None,
                 "item_description": d.item_description if d else None,
@@ -3546,6 +3551,8 @@ def list_work_done_rows(filters=None, limit=500):
     pd_map = {}
     if dispatch_names:
         pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_description"]
+        if frappe.db.has_column("PO Dispatch", "poid"):
+            pd_fields_wd.append("poid")
         if frappe.db.has_column("PO Dispatch", "im"):
             pd_fields_wd.append("im")
         if frappe.db.has_column("PO Dispatch", "center_area"):
@@ -3595,6 +3602,8 @@ def list_work_done_rows(filters=None, limit=500):
             {
                 **r,
                 "po_dispatch": rp.po_dispatch if rp else None,
+                # Business POID from dispatch (fall back to dispatch name on legacy docs).
+                "poid": ((pd.get("poid") if pd else None) or (pd.name if pd else None) or (rp.po_dispatch if rp else None)),
                 "po_no": pd.po_no if pd else None,
                 "project_code": project_code,
                 "site_name": pd.site_name if pd else None,
@@ -3724,6 +3733,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         SELECT
             rp.name AS rollout_plan,
             rp.po_dispatch,
+            COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
             rp.plan_status,
             rp.issue_category,
             rp.plan_date,
@@ -3810,13 +3820,24 @@ def _days_in_month(today=None):
 
 
 @frappe.whitelist()
-def get_command_dashboard():
+def get_command_dashboard(from_date=None, to_date=None):
     """
     Return ALL data for the admin Command Dashboard in a single API call.
+
+    Optional ``from_date`` / ``to_date`` (ISO YYYY-MM-DD) override the default
+    month window for date-scoped metrics (closed activities, revenue, cost,
+    team activity, etc.). Strategic targets still use the running-month
+    baseline so the pro-rated "target today" calc stays meaningful.
     """
     today_str = nowdate()
     today = getdate(today_str)
     first_day, last_day, _ = _month_bounds()
+    if from_date:
+        try: first_day = getdate(from_date)
+        except Exception: pass
+    if to_date:
+        try: last_day = getdate(to_date)
+        except Exception: pass
     days_in_month = _days_in_month(today)
     day_of_month = today.day
 
@@ -4312,9 +4333,12 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
     lim_rp = _portal_row_limit(limit, 500)
     rows = frappe.db.sql(
         f"""
-        SELECT rp.name, rp.po_dispatch AS system_id, rp.po_dispatch, rp.team, rp.plan_date, rp.visit_type,
+        SELECT rp.name, rp.po_dispatch AS system_id, rp.po_dispatch,
+               COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
+               rp.team, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount, rp.achieved_amount,
                rp.completion_pct, rp.plan_status,
+               pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                it.team_name AS team_name,
                {im_full_sql}
@@ -4420,7 +4444,9 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     lim_de = _portal_row_limit(limit, 500)
     rows = frappe.db.sql(
         f"""
-        SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan, de.team, de.execution_date,
+        SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan,
+               COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
+               de.team, de.execution_date,
                de.execution_status, de.achieved_qty, de.achieved_amount, de.gps_location,
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag, de.photos,
                pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
@@ -4621,11 +4647,14 @@ def backfill_rollout_and_execution_im():
 
 
 @frappe.whitelist()
-def get_im_dashboard(im=None):
+def get_im_dashboard(im=None, from_date=None, to_date=None):
     """
     Filtered dashboard for a single IM.
     Resolves the IM Master record name in multiple ways so mismatched
     im/full_name values don't silently return empty data.
+
+    Optional ``from_date`` / ``to_date`` (ISO YYYY-MM-DD) override the
+    default month window for date-scoped metrics.
     """
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
@@ -4644,6 +4673,12 @@ def get_im_dashboard(im=None):
     today_str = nowdate()
     today = getdate(today_str)
     first_day, last_day, _ = _month_bounds()
+    if from_date:
+        try: first_day = getdate(from_date)
+        except Exception: pass
+    if to_date:
+        try: last_day = getdate(to_date)
+        except Exception: pass
     days_in_month = _days_in_month(today)
     day_of_month = today.day
 
@@ -4743,14 +4778,26 @@ def get_im_dashboard(im=None):
     )
     active_today = cint(active_today_rows[0].cnt if active_today_rows else 0)
 
-    # Planned activities
+    # Planned activities — match the Planning page: every Rollout Plan whose
+    # PO Dispatch belongs to this IM (or whose rp.im column points at this IM)
+    # and is in `Planned` status. Counting by team missed plans that weren't
+    # team-assigned yet or that were on teams outside the active list, which
+    # made the dashboard KPI disagree with the Planning table.
+    im_ph = ", ".join(["%s"] * len(im_identifiers))
+    rp_im_clause = ""
+    rp_im_params = []
+    if frappe.db.has_column("Rollout Plan", "im"):
+        rp_im_clause = f" OR IFNULL(rp.im,'') IN ({im_ph})"
+        rp_im_params = list(im_identifiers)
     planned_rows = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS cnt FROM `tabRollout Plan` rp
-        WHERE rp.team IN ({placeholders})
-        AND rp.plan_status = 'Planned'
+        SELECT COUNT(*) AS cnt
+        FROM `tabRollout Plan` rp
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE rp.plan_status = 'Planned'
+        AND (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
         """,
-        tuple(team_ids),
+        tuple(im_identifiers) + tuple(rp_im_params),
         as_dict=True,
     )
     planned_activities = cint(planned_rows[0].cnt if planned_rows else 0)
@@ -5767,10 +5814,13 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
     dispatch_ids = list({p.po_dispatch for p in plan_map.values() if p.po_dispatch})
     dispatch_map = {}
     if dispatch_ids:
+        d_fields = ["name", "item_description", "project_code", "site_name"]
+        if frappe.db.has_column("PO Dispatch", "poid"):
+            d_fields.append("poid")
         for d in frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", dispatch_ids]},
-            fields=["name", "item_description", "project_code", "site_name"],
+            fields=d_fields,
             limit_page_length=len(dispatch_ids) + 1,
         ):
             dispatch_map[d.name] = d
@@ -5800,6 +5850,8 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
                     row["item_description"] = disp.item_description
                     row["project_code"] = disp.project_code
                     row["site_name"] = disp.site_name
+                    row["poid"] = (disp.get("poid") or disp.name) if disp else None
+                    row["system_id"] = pd.po_dispatch
 
     return {"logs": logs, "total": total}
 

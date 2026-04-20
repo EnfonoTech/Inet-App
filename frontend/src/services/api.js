@@ -193,8 +193,8 @@ export const pmApi = {
 
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
-  getCommandDashboard:  ()          => call("inet_app.api.command_center.get_command_dashboard"),
-  getIMDashboard:       (im)        => call("inet_app.api.command_center.get_im_dashboard", { im }),
+  getCommandDashboard:  (args = {})  => call("inet_app.api.command_center.get_command_dashboard", args),
+  getIMDashboard:       (im, args = {}) => call("inet_app.api.command_center.get_im_dashboard", { im, ...args }),
   getIMReports:         ()          => call("inet_app.api.command_center.get_im_reports"),
   listIMRolloutPlans:   (im, planStatus, limit, portalFilters) => {
     const args = {

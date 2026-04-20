@@ -7,6 +7,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -319,8 +320,7 @@ export default function RolloutPlanning() {
             placeholder="All DUIDs"
             minWidth={150}
           />
-          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
-          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }} />
+          <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {hasFilters && (
             <button
               className="btn-secondary"
@@ -420,7 +420,7 @@ export default function RolloutPlanning() {
                         onChange={() => toggleRow(row.name)}
                       />
                     </td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.name}</td>
                     <td>{row.item_code}</td>
                     <td>{row.project_code}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
@@ -637,7 +637,7 @@ export default function RolloutPlanning() {
           <RecordDetailView
             row={detailRow}
             pills={[
-              { label: "POID", value: detailRow.name || "—", tone: "blue" },
+              { label: "POID", value: detailRow.poid || detailRow.name || "—", tone: "blue" },
               { label: "Project", value: detailRow.project_code || "—", tone: "amber" },
               detailRow.im_full_name || detailRow.im ? { label: "IM", value: detailRow.im_full_name || detailRow.im, tone: "green" } : null,
               detailRow.dispatch_mode ? { label: "Mode", value: detailRow.dispatch_mode, tone: detailRow.dispatch_mode === "Auto" ? "violet" : "slate" } : null,
