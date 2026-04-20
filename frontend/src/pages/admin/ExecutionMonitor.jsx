@@ -6,6 +6,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -397,53 +398,73 @@ export default function ExecutionMonitor() {
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Execution Details</h3>
               <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              <Pill label="POID" value={detailRow.po_dispatch} tone="blue" />
-              <Pill label="Plan" value={detailRow.name} tone="amber" />
-              <Pill label="Exec" value={detailRow.execution_name} tone="green" />
-            </div>
-            <div style={{ margin: 0, fontSize: 12, background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
-                <DetailItem label="Plan ID" value={detailRow.name} />
-                <DetailItem label="POID" value={detailRow.po_dispatch} />
-                <DetailItem
-                  label="Dummy POID"
-                  value={
-                    (detailRow.original_dummy_poid || "").trim() && String(detailRow.original_dummy_poid) !== String(detailRow.po_dispatch || "")
-                      ? (detailRow.original_dummy_poid || "").trim()
-                      : "—"
-                  }
-                />
-                <DetailItem label="Item Code" value={detailRow.item_code} />
-                <DetailItem label="Item Description" value={detailRow.item_description} />
-                <DetailItem label="Project" value={detailRow.project_code} />
-                <DetailItem label="DUID" value={detailRow.site_code} />
-                <DetailItem label="Site name" value={detailRow.site_name} />
-                <DetailItem label="Center area" value={detailRow.center_area} />
-                <DetailItem label="Region type" value={detailRow.region_type} />
-                <DetailItem label="Team" value={detailRow.team_name || detailRow.team} />
-                <DetailItem label="IM" value={detailRow.im_full_name || detailRow.im} />
-                <DetailItem label="Visit Type" value={detailRow.visit_type} />
-                <DetailItem label="Plan Date" value={detailRow.plan_date} />
-                <DetailItem label="Execution Date" value={detailRow.execution_date} />
-                <DetailItem label="Plan Status" value={detailRow.plan_status} />
-                <DetailItem label="Execution Status" value={detailRow.execution_status} />
-                <DetailItem label="Target (SAR)" value={fmt.format(detailRow.target_amount || 0)} />
-                <DetailItem label="Achieved (SAR)" value={fmt.format(detailRow.execution_achieved_amount || detailRow.achieved_amount || 0)} />
-                <DetailItem label="QC Status" value={detailRow.qc_status} />
-                <DetailItem label="GPS" value={detailRow.gps_location} />
+            <RecordDetailView
+              row={{
+                ...detailRow,
+                target_sar: detailRow.target_amount,
+                achieved_sar: detailRow.execution_achieved_amount || detailRow.achieved_amount,
+                // Hide duplicate dummy POID when it matches the current POID
+                original_dummy_poid: (detailRow.original_dummy_poid || "").trim() && String(detailRow.original_dummy_poid).trim() !== String(detailRow.po_dispatch || "").trim()
+                  ? detailRow.original_dummy_poid
+                  : null,
+              }}
+              pills={[
+                { label: "POID", value: detailRow.po_dispatch || "—", tone: "blue" },
+                { label: "Plan", value: detailRow.name || "—", tone: "amber" },
+                detailRow.execution_name ? { label: "Exec", value: detailRow.execution_name, tone: "green" } : null,
+                detailRow.visit_type ? { label: "Visit", value: detailRow.visit_type, tone: "slate" } : null,
+              ].filter(Boolean)}
+              hero={
+                <DetailHero>
+                  <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} />
+                  <DetailStatTile label="Target (SAR)" value={fmt.format(detailRow.target_amount || 0)} tone="slate" />
+                  <DetailStatTile label="Achieved (SAR)" value={fmt.format(detailRow.execution_achieved_amount || detailRow.achieved_amount || 0)} tone="green" />
+                  {detailRow.plan_status && (
+                    <DetailStatTile
+                      label="Plan Status"
+                      value={detailRow.plan_status}
+                      tone={/complete/i.test(detailRow.plan_status) ? "green" : /cancel/i.test(detailRow.plan_status) ? "rose" : /progress|execution/i.test(detailRow.plan_status) ? "blue" : /issue/i.test(detailRow.plan_status) ? "amber" : "slate"}
+                    />
+                  )}
+                  {detailRow.execution_status && (
+                    <DetailStatTile
+                      label="Execution Status"
+                      value={detailRow.execution_status}
+                      tone={/complete|done/i.test(detailRow.execution_status) ? "green" : /cancel|fail/i.test(detailRow.execution_status) ? "rose" : /progress|running/i.test(detailRow.execution_status) ? "blue" : "amber"}
+                    />
+                  )}
+                </DetailHero>
+              }
+              hiddenFields={[
+                "item_code",
+                "target_amount", "target_sar", "achieved_sar",
+                "execution_achieved_amount", "achieved_amount",
+                "plan_status", "execution_status",
+                "po_dispatch",
+                // hide duplicates — already in pills / hero
+                "im", "im_full_name",
+              ]}
+              keyOrder={[
+                "item_description",
+                "name", "execution_name", "original_dummy_poid",
+                "project_code", "site_code", "site_name",
+                "center_area", "region_type", "area",
+                "team", "team_name",
+                "visit_type", "plan_date", "execution_date",
+                "qc_status", "ciag_status",
+                "gps_location",
+              ]}
+            />
+            {parseAttachments(detailRow.photos).length > 0 && (
+              <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>
+                {parseAttachments(detailRow.photos).map((url, idx) => (
+                  <div key={`${url}-${idx}`} style={{ marginBottom: 4, fontSize: 13 }}>
+                    <a href={url} target="_blank" rel="noreferrer" style={{ color: "#2563eb", wordBreak: "break-all" }}>{url}</a>
+                  </div>
+                ))}
               </div>
-              {parseAttachments(detailRow.photos).length > 0 && (
-                <div style={{ marginTop: 12, borderRadius: 8, background: "#fff", padding: 10 }}>
-                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Attachments</div>
-                  {parseAttachments(detailRow.photos).map((url, idx) => (
-                    <div key={`${url}-${idx}`} style={{ marginBottom: 4 }}>
-                      <a href={url} target="_blank" rel="noreferrer">{url}</a>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
       )}

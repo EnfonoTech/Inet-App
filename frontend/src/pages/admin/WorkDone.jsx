@@ -5,6 +5,7 @@ import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableR
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -327,42 +328,49 @@ export default function WorkDone() {
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Work Done Details</h3>
               <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              <Pill label="POID" value={detailRow.po_dispatch} tone="blue" />
-              <Pill label="Work Done" value={detailRow.name} tone="amber" />
-              <Pill label="Execution" value={detailRow.execution} tone="green" />
-            </div>
-            <div style={{ margin: 0, fontSize: 12, background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
-                <DetailItem label="Work Done ID" value={detailRow.name} />
-                <DetailItem label="POID" value={detailRow.po_dispatch} />
-                <DetailItem
-                  label="Dummy POID"
-                  value={
-                    (detailRow.original_dummy_poid || "").trim() && String(detailRow.original_dummy_poid) !== String(detailRow.po_dispatch || "")
-                      ? (detailRow.original_dummy_poid || "").trim()
-                      : "—"
-                  }
-                />
-                <DetailItem label="Execution ID" value={detailRow.execution} />
-                <DetailItem label="Execution Date" value={detailRow.execution_date} />
-                <DetailItem label="Item Code" value={detailRow.item_code} />
-                <DetailItem label="Description" value={detailRow.item_description} />
-                <DetailItem label="Project" value={detailRow.project_code} />
-                <DetailItem label="Site" value={detailRow.site_name} />
-                <DetailItem label="Center area" value={detailRow.center_area} />
-                <DetailItem label="Region type" value={detailRow.region_type} />
-                <DetailItem label="Team" value={detailRow.team_name || detailRow.team} />
-                <DetailItem label="IM" value={detailRow.im_full_name || detailRow.im} />
-                <DetailItem label="Visit Type" value={detailRow.visit_type} />
-                <DetailItem label="Executed Qty" value={fmt.format(detailRow.executed_qty || 0)} />
-                <DetailItem label="Revenue (SAR)" value={fmt.format(detailRow.revenue_sar || 0)} />
-                <DetailItem label="Cost (SAR)" value={fmt.format(detailRow.total_cost_sar || 0)} />
-                <DetailItem label="Margin (SAR)" value={fmt.format(detailRow.margin_sar || 0)} />
-                <DetailItem label="Billing Status" value={detailRow.billing_status} />
-                <DetailItem label="Last Updated" value={detailRow.modified} />
-              </div>
-            </div>
+            <RecordDetailView
+              row={{
+                ...detailRow,
+                // Hide duplicate dummy POID when it matches the current POID
+                original_dummy_poid: (detailRow.original_dummy_poid || "").trim() && String(detailRow.original_dummy_poid).trim() !== String(detailRow.po_dispatch || "").trim()
+                  ? detailRow.original_dummy_poid
+                  : null,
+              }}
+              pills={[
+                { label: "POID", value: detailRow.po_dispatch || "—", tone: "blue" },
+                { label: "Work Done", value: detailRow.name || "—", tone: "amber" },
+                detailRow.execution ? { label: "Execution", value: detailRow.execution, tone: "green" } : null,
+                detailRow.billing_status ? { label: "Billing", value: detailRow.billing_status, tone: /invoiced|closed/i.test(detailRow.billing_status) ? "green" : /pending/i.test(detailRow.billing_status) ? "amber" : "slate" } : null,
+              ].filter(Boolean)}
+              hero={
+                <DetailHero>
+                  <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} />
+                  <DetailStatTile label="Executed Qty" value={detailRow.executed_qty != null ? fmt.format(detailRow.executed_qty) : "—"} tone="blue" />
+                  <DetailStatTile label="Revenue (SAR)" value={fmt.format(detailRow.revenue_sar || 0)} tone="green" />
+                  <DetailStatTile label="Cost (SAR)" value={fmt.format(detailRow.total_cost_sar || 0)} tone="amber" />
+                  <DetailStatTile
+                    label="Margin (SAR)"
+                    value={fmt.format(detailRow.margin_sar || 0)}
+                    tone={(detailRow.margin_sar || 0) < 0 ? "rose" : "green"}
+                  />
+                </DetailHero>
+              }
+              hiddenFields={[
+                "po_dispatch", "item_code",
+                "executed_qty", "revenue_sar", "total_cost_sar", "margin_sar",
+                "billing_status",
+                "im", "im_full_name",
+              ]}
+              keyOrder={[
+                "item_description",
+                "name", "execution", "original_dummy_poid",
+                "project_code", "site_code", "site_name",
+                "center_area", "region_type", "area",
+                "team", "team_name",
+                "visit_type", "execution_date",
+                "modified",
+              ]}
+            />
           </div>
         </div>
       )}

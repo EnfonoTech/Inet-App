@@ -6,6 +6,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -394,32 +395,60 @@ export default function PODispatch() {
         </div>
       </Modal>
 
-      <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.poid ? ` - ${detailRow.poid}` : ""}`} width={760}>
+      <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.poid ? ` · ${detailRow.poid}` : ""}`} width={860}>
         {detailRow && (
-          <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                POID: {detailRow.poid || "—"}
-              </div>
-              <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                Project: {detailRow.project_code || "—"}
-              </div>
-              <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                IM: {detailRow.dispatched_im_full_name || imLabelById[detailRow.dispatched_im] || detailRow.dispatched_im || "—"}
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              {Object.entries(detailRow)
-                .filter(([k]) => !HIDDEN_DETAIL_FIELDS.has(String(k).toLowerCase()))
-                .map(([k, v]) => (
-                <DetailItem
-                  key={k}
-                  label={k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
-                  value={v}
+          <RecordDetailView
+            row={detailRow}
+            pills={[
+              { label: "POID", value: detailRow.poid || "—", tone: "blue" },
+              { label: "Project", value: detailRow.project_code || "—", tone: "amber" },
+              { label: "IM", value: detailRow.dispatched_im_full_name || imLabelById[detailRow.dispatched_im] || detailRow.dispatched_im || "—", tone: "green" },
+              detailRow.dispatch_mode ? { label: "Mode", value: detailRow.dispatch_mode, tone: detailRow.dispatch_mode === "Auto" ? "violet" : "slate" } : null,
+            ].filter(Boolean)}
+            hero={
+              <DetailHero>
+                <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} tone="slate" />
+                <DetailStatTile label="Qty" value={detailRow.qty != null ? fmt.format(detailRow.qty) : "—"} tone="blue" />
+                <DetailStatTile label="Rate (SAR)" value={detailRow.rate != null ? fmtAmt.format(detailRow.rate) : "—"} tone="slate" />
+                <DetailStatTile
+                  label="Line Amount (SAR)"
+                  value={detailRow.line_amount != null ? fmtAmt.format(detailRow.line_amount) : "—"}
+                  tone="green"
                 />
-              ))}
-            </div>
-          </div>
+                {detailRow.po_line_status && (
+                  <DetailStatTile
+                    label="Status"
+                    value={detailRow.po_line_status}
+                    tone={
+                      /complete|dispatched/i.test(detailRow.po_line_status) ? "green"
+                      : /cancel|reject/i.test(detailRow.po_line_status) ? "rose"
+                      : /progress|planned/i.test(detailRow.po_line_status) ? "blue"
+                      : "amber"
+                    }
+                  />
+                )}
+              </DetailHero>
+            }
+            hiddenFields={[
+              ...HIDDEN_DETAIL_FIELDS,
+              // Already surfaced in pills / hero — hide to reduce noise.
+              // item_description stays — it renders as its own full-width tile below.
+              "poid", "project_code", "dispatched_im", "dispatched_im_full_name",
+              "item_code", "qty", "rate", "line_amount",
+              "po_line_status",
+            ]}
+            keyOrder={[
+              "item_description",
+              "po_no", "po_intake", "parent", "name", "system_id",
+              "po_line_no", "shipment_number", "dispatch_name",
+              "site_code", "site_name", "area", "center_area", "region_type",
+              "dispatch_mode", "dispatch_target_month",
+              "uom", "due_qty", "billed_quantity", "quantity_cancel",
+              "activity_code", "currency", "tax_rate", "payment_terms",
+              "start_date", "end_date", "publish_date", "sub_contract_no",
+              "customer",
+            ]}
+          />
         )}
       </Modal>
 

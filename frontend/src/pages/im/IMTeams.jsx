@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
+import RecordDetailView from "../../components/RecordDetailView";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -202,27 +203,15 @@ export default function IMTeams() {
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Team Details</h3>
               <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
             </div>
-            <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Team: {detailRow.team_name || "—"}
-                </div>
-                <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Area: {detailRow.area || "—"}
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                {Object.entries(detailRow)
-                  .filter(([k]) => k !== "team_id" && k !== "team_name")
-                  .map(([k, v]) => (
-                  <DetailItem
-                    key={k}
-                    label={String(k).toLowerCase() === "system_id" ? "POID" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                    value={v}
-                  />
-                ))}
-              </div>
-            </div>
+            <RecordDetailView
+              row={detailRow}
+              pills={[
+                { label: "Team", value: detailRow.team_name || "—", tone: "blue" },
+                detailRow.area ? { label: "Area", value: detailRow.area, tone: "green" } : null,
+                detailRow.status ? { label: "Status", value: detailRow.status, tone: /active/i.test(detailRow.status) ? "green" : "slate" } : null,
+              ].filter(Boolean)}
+              hiddenFields={["team_id", "team_name"]}
+            />
           </div>
         </div>
       )}

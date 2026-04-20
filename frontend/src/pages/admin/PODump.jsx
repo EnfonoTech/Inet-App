@@ -1,6 +1,9 @@
 import { useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
+import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+
+const fmtNum = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -55,49 +58,46 @@ export default function PODump() {
 
   function DetailModal({ row, onClose }) {
     if (!row) return null;
-    const ordered = [
-      ["ID", row.id],
-      ["PO Status", row.po_status],
-      ["PO NO.", row.po_no],
-      ["PO Line NO.", row.po_line_no],
-      ["Shipment NO.", row.shipment_no],
-      ["Site Name", row.site_name],
-      ["Site Code", row.site_code],
-      ["Item Code", row.item_code],
-      ["Item Description", row.item_description],
-      ["Unit", row.unit],
-      ["Requested Qty", row.requested_qty],
-      ["Due Qty", row.due_qty],
-      ["Billed Quantity", row.billed_quantity],
-      ["Quantity Cancel", row.quantity_cancel],
-      ["Start Date", row.start_date],
-      ["End Date", row.end_date],
-      ["Sub Contract NO.", row.sub_contract_no],
-      ["Currency", row.currency],
-      ["Unit Price", row.unit_price],
-      ["Line Amount", row.line_amount],
-      ["Tax Rate", row.tax_rate],
-      ["Payment Terms", row.payment_terms],
-      ["Project Code", row.project_code],
-      ["Project Name", row.project_name],
-      ["Center Area", row.center_area],
-      ["Publish Date", row.publish_date],
-    ];
     return (
-      <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-        <div style={{ width: "min(920px, 95vw)", maxHeight: "84vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 18 }} onClick={(e) => e.stopPropagation()}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h3 style={{ margin: 0 }}>PO Dump Details</h3>
+      <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+        <div style={{ width: "min(920px, 100%)", maxHeight: "88vh", overflow: "auto", background: "#fff", borderRadius: 14, padding: 20, boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>
+              PO Dump Details {row.po_no ? <span style={{ color: "#94a3b8", fontWeight: 500 }}>· {row.po_no}</span> : null}
+            </h3>
             <button className="btn-secondary" onClick={onClose}>Close</button>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            {ordered.map(([k, v]) => (
-              <div key={k} style={{ background: "#f8fafc", borderRadius: 8, padding: "8px 10px" }}>
-                <div style={{ fontSize: 11, color: "#64748b" }}>{k}</div>
-                <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{v == null || v === "" ? "—" : String(v)}</div>
-              </div>
-            ))}
-          </div>
+          <RecordDetailView
+            row={row}
+            pills={[
+              row.po_no ? { label: "PO", value: row.po_no, tone: "blue" } : null,
+              row.project_code ? { label: "Project", value: row.project_code, tone: "amber" } : null,
+              row.site_code ? { label: "DUID", value: row.site_code, tone: "green" } : null,
+              row.po_status ? { label: "Status", value: row.po_status, tone: /complete/i.test(row.po_status) ? "green" : /cancel/i.test(row.po_status) ? "rose" : /new|pending/i.test(row.po_status) ? "amber" : "slate" } : null,
+            ].filter(Boolean)}
+            hero={
+              <DetailHero>
+                <DetailStatTile label="Item Code" value={row.item_code || "—"} />
+                <DetailStatTile label="Requested Qty" value={row.requested_qty != null ? fmtNum.format(row.requested_qty) : "—"} tone="blue" />
+                <DetailStatTile label={`Unit Price${row.currency ? ` (${row.currency})` : ""}`} value={row.unit_price != null ? fmtNum.format(row.unit_price) : "—"} />
+                <DetailStatTile label={`Line Amount${row.currency ? ` (${row.currency})` : ""}`} value={row.line_amount != null ? fmtNum.format(row.line_amount) : "—"} tone="green" />
+              </DetailHero>
+            }
+            hiddenFields={[
+              "po_no", "project_code", "site_code", "po_status",
+              "item_code", "requested_qty", "unit_price", "line_amount", "currency",
+            ]}
+            keyOrder={[
+              "item_description",
+              "id", "po_line_no", "shipment_no",
+              "site_name",
+              "unit", "due_qty", "billed_quantity", "quantity_cancel",
+              "start_date", "end_date", "publish_date",
+              "sub_contract_no",
+              "tax_rate", "payment_terms",
+              "project_name", "center_area",
+            ]}
+          />
         </div>
       </div>
     );

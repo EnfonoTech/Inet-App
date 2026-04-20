@@ -4,6 +4,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
+import RecordDetailView from "../../components/RecordDetailView";
 import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -274,28 +275,15 @@ export default function IMProjects() {
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Project Details</h3>
               <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
             </div>
-            <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Project: {detailRow.project_code || "—"}
-                </div>
-                <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Customer: {detailRow.customer || "—"}
-                </div>
-                <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  IM: {detailRow.implementation_manager || "—"}
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                {Object.entries(detailRow).map(([k, v]) => (
-                  <DetailItem
-                    key={k}
-                    label={String(k).toLowerCase() === "system_id" ? "POID" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                    value={v}
-                  />
-                ))}
-              </div>
-            </div>
+            <RecordDetailView
+              row={detailRow}
+              pills={[
+                { label: "Project", value: detailRow.project_code || "—", tone: "blue" },
+                { label: "Customer", value: detailRow.customer || "—", tone: "amber" },
+                { label: "IM", value: detailRow.implementation_manager || "—", tone: "green" },
+                detailRow.project_status ? { label: "Status", value: detailRow.project_status, tone: /active/i.test(detailRow.project_status) ? "green" : /hold|risk/i.test(detailRow.project_status) ? "amber" : "slate" } : null,
+              ].filter(Boolean)}
+            />
           </div>
         </div>
       )}

@@ -6,6 +6,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -633,29 +634,42 @@ export default function RolloutPlanning() {
         width={720}
       >
         {detailRow && (
-          <div style={{ maxHeight: "65vh", overflow: "auto", borderRadius: 8, background: "#f8fafc", padding: 12 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              <Pill label="POID" value={detailRow.name} tone="blue" />
-              <Pill label="Project" value={detailRow.project_code} tone="amber" />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
-              <DetailItem label="POID" value={detailRow.name} />
-              <DetailItem label="PO No" value={detailRow.po_no} />
-              <DetailItem label="Item Code" value={detailRow.item_code} />
-              <DetailItem label="Description" value={detailRow.item_description} />
-              <DetailItem label="Project" value={detailRow.project_code} />
-              <DetailItem label="DUID" value={detailRow.site_code} />
-              <DetailItem label="Site Name" value={detailRow.site_name} />
-              <DetailItem label="IM" value={detailRow.im_full_name || detailRow.im} />
-              <DetailItem label="Dispatch Status" value={detailRow.dispatch_status} />
-              <DetailItem label="Planning Mode" value={detailRow.planning_mode} />
-              <DetailItem label="Dispatch Mode" value={detailRow.dispatch_mode} />
-              <DetailItem label="Qty" value={fmt.format(detailRow.qty || 0)} />
-              <DetailItem label="Rate (SAR)" value={fmt.format(detailRow.rate || 0)} />
-              <DetailItem label="Line Amount (SAR)" value={fmt.format(detailRow.line_amount || 0)} />
-              <DetailItem label="Target Month" value={detailRow.target_month} />
-            </div>
-          </div>
+          <RecordDetailView
+            row={detailRow}
+            pills={[
+              { label: "POID", value: detailRow.name || "—", tone: "blue" },
+              { label: "Project", value: detailRow.project_code || "—", tone: "amber" },
+              detailRow.im_full_name || detailRow.im ? { label: "IM", value: detailRow.im_full_name || detailRow.im, tone: "green" } : null,
+              detailRow.dispatch_mode ? { label: "Mode", value: detailRow.dispatch_mode, tone: detailRow.dispatch_mode === "Auto" ? "violet" : "slate" } : null,
+            ].filter(Boolean)}
+            hero={
+              <DetailHero>
+                <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} />
+                <DetailStatTile label="Qty" value={detailRow.qty != null ? fmt.format(detailRow.qty) : "—"} tone="blue" />
+                <DetailStatTile label="Rate (SAR)" value={detailRow.rate != null ? fmt.format(detailRow.rate) : "—"} />
+                <DetailStatTile label="Line Amount (SAR)" value={detailRow.line_amount != null ? fmt.format(detailRow.line_amount) : "—"} tone="green" />
+                {detailRow.dispatch_status && (
+                  <DetailStatTile
+                    label="Status"
+                    value={detailRow.dispatch_status}
+                    tone={/complete|dispatched/i.test(detailRow.dispatch_status) ? "green" : /cancel|reject/i.test(detailRow.dispatch_status) ? "rose" : /progress|planned/i.test(detailRow.dispatch_status) ? "blue" : "amber"}
+                  />
+                )}
+              </DetailHero>
+            }
+            hiddenFields={[
+              "project_code", "im", "im_full_name",
+              "item_code", "qty", "rate", "line_amount",
+              "dispatch_status", "dispatch_mode",
+            ]}
+            keyOrder={[
+              "item_description",
+              "name", "po_no", "system_id", "po_dispatch",
+              "site_code", "site_name", "area", "center_area", "region_type",
+              "planning_mode", "target_month",
+              "customer",
+            ]}
+          />
         )}
       </Modal>
     </div>

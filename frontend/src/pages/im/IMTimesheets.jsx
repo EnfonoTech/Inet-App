@@ -4,6 +4,7 @@ import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import RecordDetailView from "../../components/RecordDetailView";
 import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
@@ -227,28 +228,15 @@ export default function IMTimesheets() {
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Time Log Details</h3>
               <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
             </div>
-            <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Log: {detailRow.name || "—"}
-                </div>
-                <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  User: {detailRow.user_full_name || detailRow.user || "—"}
-                </div>
-                <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Team: {detailRow.team_id || "—"}
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                {Object.entries(detailRow).map(([k, v]) => (
-                  <DetailItem
-                    key={k}
-                    label={String(k).toLowerCase() === "system_id" ? "POID" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                    value={v}
-                  />
-                ))}
-              </div>
-            </div>
+            <RecordDetailView
+              row={detailRow}
+              pills={[
+                { label: "Log", value: detailRow.name || "—", tone: "blue" },
+                { label: "User", value: detailRow.user_full_name || detailRow.user || "—", tone: "amber" },
+                detailRow.team_id ? { label: "Team", value: detailRow.team_id, tone: "green" } : null,
+                detailRow.is_running ? { label: "Status", value: "Running", tone: "green" } : null,
+              ].filter(Boolean)}
+            />
           </div>
         </div>
       )}

@@ -8,6 +8,7 @@ import { pmApi } from "../../services/api";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import RecordDetailView from "../../components/RecordDetailView";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
@@ -685,38 +686,25 @@ export default function IMExecution() {
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Execution Details</h3>
               <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
             </div>
-            <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Execution: {detailRow.name || "—"}
-                </div>
-                <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  PO: {detailRow.po_no || "—"}
-                </div>
-                <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Team: {detailRow.team_name || detailRow.team || "—"}
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                {Object.entries(detailRow).map(([k, v]) => (
-                  <DetailItem
-                    key={k}
-                    label={String(k).toLowerCase() === "system_id" ? "POID" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                    value={v}
-                  />
+            <RecordDetailView
+              row={detailRow}
+              pills={[
+                { label: "Execution", value: detailRow.name || "—", tone: "blue" },
+                { label: "PO", value: detailRow.po_no || "—", tone: "amber" },
+                { label: "Team", value: detailRow.team_name || detailRow.team || "—", tone: "green" },
+                detailRow.execution_status ? { label: "Status", value: detailRow.execution_status, tone: /complete/i.test(detailRow.execution_status) ? "green" : /cancel/i.test(detailRow.execution_status) ? "rose" : "slate" } : null,
+              ].filter(Boolean)}
+            />
+            {parseAttachments(detailRow.photos).length > 0 && (
+              <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>
+                {parseAttachments(detailRow.photos).map((url, idx) => (
+                  <div key={`${url}-${idx}`} style={{ marginBottom: 4, fontSize: 13 }}>
+                    <a href={url} target="_blank" rel="noreferrer" style={{ color: "#2563eb", wordBreak: "break-all" }}>{url}</a>
+                  </div>
                 ))}
               </div>
-              {parseAttachments(detailRow.photos).length > 0 && (
-                <div style={{ marginTop: 12, background: "#fff", borderRadius: 8, padding: 10 }}>
-                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Attachments</div>
-                  {parseAttachments(detailRow.photos).map((url, idx) => (
-                    <div key={`${url}-${idx}`} style={{ marginBottom: 4 }}>
-                      <a href={url} target="_blank" rel="noreferrer">{url}</a>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
       )}

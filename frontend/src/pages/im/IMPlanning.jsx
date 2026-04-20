@@ -8,6 +8,7 @@ import { pmApi } from "../../services/api";
 import IMPlanningExecutionModal from "./IMPlanningExecutionModal";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import RecordDetailView from "../../components/RecordDetailView";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -393,28 +394,15 @@ export default function IMPlanning() {
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Plan Details</h3>
               <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
             </div>
-            <div style={{ maxHeight: "65vh", overflow: "auto", background: "#f8fafc", borderRadius: 8, padding: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  POID: {detailRow.po_dispatch || "—"}
-                </div>
-                <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#b45309", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  Team: {detailRow.team_name || detailRow.team || "—"}
-                </div>
-                <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                  DUID: {detailRow.site_code || "—"}
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                {Object.entries(detailRow).map(([k, v]) => (
-                  <DetailItem
-                    key={k}
-                    label={String(k).toLowerCase() === "system_id" ? "POID" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                    value={v}
-                  />
-                ))}
-              </div>
-            </div>
+            <RecordDetailView
+              row={detailRow}
+              pills={[
+                { label: "POID", value: detailRow.po_dispatch || "—", tone: "blue" },
+                { label: "Team", value: detailRow.team_name || detailRow.team || "—", tone: "amber" },
+                { label: "DUID", value: detailRow.site_code || "—", tone: "green" },
+                detailRow.plan_status ? { label: "Status", value: detailRow.plan_status, tone: /complete/i.test(detailRow.plan_status) ? "green" : /cancel/i.test(detailRow.plan_status) ? "rose" : /issue/i.test(detailRow.plan_status) ? "amber" : "slate" } : null,
+              ].filter(Boolean)}
+            />
           </div>
         </div>
       )}
