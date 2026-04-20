@@ -637,30 +637,38 @@ def _try_auto_dispatch(doc_name, po_no, child_rows):
     child_rows: list of (child_doc_name, line_dict) tuples
     Returns count of auto-dispatched lines.
     """
+    # Batch-fetch IM + customer for all distinct project codes up front — replaces
+    # 2 queries per child row with 1 IN query, critical when a PO has 1000+ lines.
+    project_codes = list({
+        (line_dict.get("project_code") or "").strip()
+        for _, line_dict in child_rows
+        if line_dict.get("project_code")
+    })
+    proj_map = {}
+    if project_codes:
+        for p in frappe.get_all(
+            "Project Control Center",
+            filters={"name": ["in", project_codes]},
+            fields=["name", "implementation_manager", "customer"],
+            limit_page_length=len(project_codes) + 1,
+        ):
+            proj_map[p.name] = p
+
     count = 0
     for child_doc_name, line_dict in child_rows:
         project_code = line_dict.get("project_code")
         if not project_code:
             continue
-
-        # Resolve IM from Project Control Center
-        im_name = frappe.db.get_value(
-            "Project Control Center", project_code, "implementation_manager"
-        )
-        if not im_name:
+        pdata = proj_map.get(project_code)
+        if not pdata or not pdata.get("implementation_manager"):
             continue
-
-        # Resolve customer
-        customer = frappe.db.get_value(
-            "Project Control Center", project_code, "customer"
-        )
 
         _upsert_po_dispatch_for_line(
             doc_name,
             po_no,
             line_dict,
-            customer=customer,
-            im=im_name,
+            customer=pdata.get("customer"),
+            im=pdata.get("implementation_manager"),
             target_month=None,
             planning_mode="Plan",
             dispatch_status="Dispatched",
@@ -1545,21 +1553,60 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
                 row.setdefault("center_area", None)
                 row.setdefault("region_type", None)
 
-    # Enrich each line with PO-level info and dispatch assignment info
-    parent_cache = {}
+    # Batch-enrich: two bulk fetches replace 1 query per parent + 1 query per line.
+    # For 4k+ rows this collapses ~4000 round-trips into 2, cutting load from ~40s
+    # to sub-second on realistic sizes.
+    parent_names = list({line.get("parent") for line in lines if line.get("parent")})
+    parent_map = {}
+    if parent_names:
+        for p in frappe.get_all(
+            "PO Intake",
+            filters={"name": ["in", parent_names]},
+            fields=["name", "po_no", "customer", "center_area"],
+            limit_page_length=len(parent_names) + 1,
+        ):
+            parent_map[p.name] = p
+
+    dispatch_map = {}
+    if parent_names:
+        disp_fields_full = [
+            "name", "po_intake", "po_line_no", "system_id", "im",
+            "dispatch_mode", "target_month", "region_type", "center_area",
+        ]
+        disp_fields_base = [
+            "name", "po_intake", "po_line_no", "system_id", "im",
+            "dispatch_mode", "target_month", "center_area",
+        ]
+        try:
+            all_disp = frappe.get_all(
+                "PO Dispatch",
+                filters={"po_intake": ["in", parent_names]},
+                fields=disp_fields_full,
+                limit_page_length=len(parent_names) * 100 + 1,
+            )
+        except frappe.db.OperationalError as e:
+            if not frappe.db.is_missing_column(e):
+                raise
+            all_disp = frappe.get_all(
+                "PO Dispatch",
+                filters={"po_intake": ["in", parent_names]},
+                fields=disp_fields_base,
+                limit_page_length=len(parent_names) * 100 + 1,
+            )
+            for d in all_disp:
+                d["region_type"] = region_type_from_center_area(d.get("center_area"))
+        for d in all_disp:
+            dispatch_map[(d.po_intake, cint(d.po_line_no))] = d
+
     for line in lines:
         parent_name = line.get("parent")
-        if parent_name not in parent_cache:
-            parent_cache[parent_name] = frappe.db.get_value(
-                "PO Intake", parent_name, ["po_no", "customer", "center_area"], as_dict=True
-            ) or {}
-        pdata = parent_cache[parent_name]
+        pdata = parent_map.get(parent_name) or {}
         line["po_no"] = pdata.get("po_no", "")
         line["customer"] = pdata.get("customer", "")
         line["po_intake"] = parent_name
         line["center_area"] = line.get("center_area") or pdata.get("center_area")
 
-        dispatch_data = _get_dispatch_for_intake_line(parent_name, line.get("po_line_no"))
+        dispatch_data = dispatch_map.get((parent_name, cint(line.get("po_line_no")))) or {}
         if dispatch_data:
             line["dispatch_name"] = dispatch_data.get("name")
             line["system_id"] = dispatch_data.get("system_id")
@@ -2011,23 +2058,37 @@ def list_po_intake_lines_for_im_map(project_code=None):
             row["center_area"] = None
             row["region_type"] = None
 
-    parents = {}
+    # Batch enrichment — one query for parents, one for dispatches.
+    parent_names = list({row.get("parent") for row in lines if row.get("parent")})
+    parent_map = {}
+    if parent_names:
+        for p in frappe.get_all(
+            "PO Intake",
+            filters={"name": ["in", parent_names]},
+            fields=["name", "po_no", "customer"],
+            limit_page_length=len(parent_names) + 1,
+        ):
+            parent_map[p.name] = p
+
+    dispatch_map = {}
+    if parent_names:
+        for d in frappe.get_all(
+            "PO Dispatch",
+            filters={"po_intake": ["in", parent_names]},
+            fields=["name", "po_intake", "po_line_no", "dispatch_status"],
+            limit_page_length=len(parent_names) * 100 + 1,
+        ):
+            dispatch_map[(d.po_intake, cint(d.po_line_no))] = d
+
     for row in lines:
-        pn = row.get("parent")
-        if pn and pn not in parents:
-            parents[pn] = frappe.db.get_value(
-                "PO Intake", pn, ["po_no", "customer"], as_dict=True
-            ) or {}
-        pdata = parents.get(row.get("parent")) or {}
+        pdata = parent_map.get(row.get("parent")) or {}
         row["po_no"] = pdata.get("po_no", "")
         row["customer"] = pdata.get("customer", "")
         row["po_intake"] = row.get("parent")
-        drow = _get_dispatch_for_intake_line(row.get("parent"), row.get("po_line_no"))
+        drow = dispatch_map.get((row.get("parent"), cint(row.get("po_line_no"))))
         if drow:
             row["existing_dispatch"] = drow.get("name")
-            row["existing_dispatch_status"] = frappe.db.get_value(
-                "PO Dispatch", drow.get("name"), "dispatch_status"
-            )
+            row["existing_dispatch_status"] = drow.get("dispatch_status")
         else:
             row["existing_dispatch"] = None
             row["existing_dispatch_status"] = None
@@ -5692,6 +5753,28 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
             ga_etl["limit_page_length"] = lim_etl
         logs = frappe.get_all("Execution Time Log", **ga_etl)
 
+    # Batch-enrich: two bulk fetches replace 2 queries per row (plan + dispatch).
+    plan_ids = list({r.get("rollout_plan") for r in logs if r.get("rollout_plan")})
+    plan_map = {}
+    if plan_ids:
+        for p in frappe.get_all(
+            "Rollout Plan",
+            filters={"name": ["in", plan_ids]},
+            fields=["name", "po_dispatch", "plan_date", "visit_type", "plan_status"],
+            limit_page_length=len(plan_ids) + 1,
+        ):
+            plan_map[p.name] = p
+    dispatch_ids = list({p.po_dispatch for p in plan_map.values() if p.po_dispatch})
+    dispatch_map = {}
+    if dispatch_ids:
+        for d in frappe.get_all(
+            "PO Dispatch",
+            filters={"name": ["in", dispatch_ids]},
+            fields=["name", "item_description", "project_code", "site_name"],
+            limit_page_length=len(dispatch_ids) + 1,
+        ):
+            dispatch_map[d.name] = d
+
     for row in logs:
         raw_start = row.get("start_time")
         raw_end = row.get("end_time")
@@ -5702,26 +5785,17 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
                 row["elapsed_seconds"] = int(max(0, (now_ms - st_ms) // 1000))
         row["start_time"] = str(raw_start) if raw_start else None
         row["end_time"] = str(raw_end) if raw_end else None
+        # get_cached_value uses the in-process Frappe cache, so this is cheap
         row["user_full_name"] = (
             frappe.get_cached_value("User", row.get("user"), "full_name") or row.get("user")
         )
-        pd = frappe.db.get_value(
-            "Rollout Plan",
-            row.get("rollout_plan"),
-            ["po_dispatch", "plan_date", "visit_type", "plan_status"],
-            as_dict=True,
-        )
+        pd = plan_map.get(row.get("rollout_plan"))
         if pd:
             row["plan_date"] = str(pd.plan_date) if pd.plan_date else None
             row["visit_type"] = pd.visit_type
             row["plan_status"] = pd.plan_status
             if pd.po_dispatch:
-                disp = frappe.db.get_value(
-                    "PO Dispatch",
-                    pd.po_dispatch,
-                    ["item_description", "project_code", "site_name"],
-                    as_dict=True,
-                )
+                disp = dispatch_map.get(pd.po_dispatch)
                 if disp:
                     row["item_description"] = disp.item_description
                     row["project_code"] = disp.project_code
