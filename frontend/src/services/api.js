@@ -77,6 +77,49 @@ function _isLikelyCsrfError(msg) {
   return s.includes("invalid request") || s.includes("csrf");
 }
 
+/**
+ * Tiny in-memory API response cache keyed by method + args JSON.
+ * Stays in process memory — cleared on full page reload. TTL is per-call.
+ * Goal: skip repeat network round-trips for lookup/reference data that
+ * rarely changes within a browsing session (customers, doctype fields, etc).
+ */
+const _apiCache = new Map();
+
+function _cacheKey(method, args) {
+  try { return method + ":" + JSON.stringify(args || {}); }
+  catch { return method + ":" + String(args); }
+}
+
+/** Wrap `call` with time-bounded memoization. Awaited callers share the same in-flight promise. */
+async function callCached(method, args = {}, ttlMs = 60_000) {
+  const key = _cacheKey(method, args);
+  const now = Date.now();
+  const hit = _apiCache.get(key);
+  if (hit) {
+    if (hit.promise) return hit.promise;             // in-flight request dedupe
+    if (hit.expiresAt > now) return hit.value;       // fresh cached value
+  }
+  const promise = call(method, args)
+    .then((value) => {
+      _apiCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+      return value;
+    })
+    .catch((err) => {
+      _apiCache.delete(key);
+      throw err;
+    });
+  _apiCache.set(key, { promise });
+  return promise;
+}
+
+/** Drop cached entries (exported for tests / manual invalidation). */
+export function invalidateApiCache(methodPrefix) {
+  if (!methodPrefix) { _apiCache.clear(); return; }
+  for (const k of Array.from(_apiCache.keys())) {
+    if (k.startsWith(methodPrefix + ":")) _apiCache.delete(k);
+  }
+}
+
 async function call(method, args = {}) {
   const body = new URLSearchParams();
   Object.entries(args).forEach(([k, v]) => {
@@ -135,7 +178,7 @@ export const pmApi = {
 
   // Masters
   listIMMasters:   (args)    => call("inet_app.api.project_management.list_im_masters", args),
-  listCustomers:   (args)    => call("inet_app.api.project_management.list_customers", args),
+  listCustomers:   (args)    => callCached("inet_app.api.project_management.list_customers", args || {}, 60_000),
   createCustomer:  (payload) => call("inet_app.api.project_management.create_customer", { payload: JSON.stringify(payload) }),
   listItemCatalog: (args)    => call("inet_app.api.project_management.list_item_catalog", args),
 
@@ -312,6 +355,7 @@ export const pmApi = {
   approveTimesheet:     (name)    => call("inet_app.api.command_center.approve_timesheet", { name }),
   getTimesheetDetail:   (name)    => call("inet_app.api.command_center.get_timesheet_detail", { name }),
   getTablePreferences:  (table_id) => call("inet_app.api.command_center.get_table_preferences", { table_id }),
+  getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
   saveTablePreferences: (table_id, config) =>
     call("inet_app.api.command_center.save_table_preferences", {
       table_id,
@@ -324,7 +368,7 @@ export const pmApi = {
       names: JSON.stringify(names || []),
     }),
   getDoctypeFields: (doctype) =>
-    call("inet_app.api.command_center.get_doctype_fields", { doctype }),
+    callCached("inet_app.api.command_center.get_doctype_fields", { doctype }, 300_000),
 
   // ── List APIs (Command Center doctypes) ────────────────────
   listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["team_id", "team_name", "im", "team_type", "status", "daily_cost", "isdp_account"], limit_page_length: 100 }),

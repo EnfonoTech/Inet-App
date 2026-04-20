@@ -110,6 +110,7 @@ export default function DataTablePro() {
         toolbar?.remove();
         if (table) {
           table.classList.remove("data-table--tablepro");
+          table.classList.remove("data-table--tablepro-ready");
           delete table.dataset.tableproInitialized;
         }
         tracked.splice(i, 1);
@@ -125,7 +126,7 @@ export default function DataTablePro() {
         pruneDisconnected();
         if (!document.querySelector(".data-table-wrapper table.data-table")) return;
         void init();
-      }, 120);
+      }, 40);  // short debounce — batches rapid tbody swaps but keeps first paint snappy
     };
 
     async function init() {
@@ -136,12 +137,14 @@ export default function DataTablePro() {
       initLock = true;
       try {
         pruneDisconnected();
+        // Poll at one-frame intervals so we pick the table up the moment React
+        // mounts it. 4.8 s total wait is plenty; check more often, not longer.
         let attempts = 0;
-        while (!destroyed && attempts < 60) {
+        while (!destroyed && attempts < 300) {
           const found = document.querySelectorAll(".data-table-wrapper table.data-table").length;
           if (found > 0) break;
           attempts += 1;
-          await sleep(80);
+          await sleep(16);
         }
         if (destroyed) return;
 
@@ -750,6 +753,9 @@ export default function DataTablePro() {
 
         await applyAll();
         renderPanel();
+        // Signal to CSS that saved widths / order / hidden are applied so the
+        // table fades in — avoids the "flash of old layout" before init runs.
+        table.classList.add("data-table--tablepro-ready");
 
         const wrapEl = table.closest(".data-table-wrapper");
         let wrapResizeObs = null;
@@ -774,7 +780,7 @@ export default function DataTablePro() {
             applyWidths();
             ensureFilterRow();
             applyFilters();
-          }, 80);
+          }, 16);
         });
         const tbody = table.querySelector("tbody");
         if (tbody) tbodyMo.observe(tbody, { childList: true });
@@ -821,6 +827,7 @@ export default function DataTablePro() {
         toolbar?.remove();
         if (table) {
           table.classList.remove("data-table--tablepro");
+          table.classList.remove("data-table--tablepro-ready");
           delete table.dataset.tableproInitialized;
         }
       }

@@ -409,6 +409,23 @@ def get_table_preferences(table_id):
 
 
 @frappe.whitelist()
+def get_all_table_preferences():
+    """Return every saved table preference for the current user in one call.
+
+    Prefetched at app boot so per-table `load(tableId)` lookups are synchronous —
+    removes a blocking round-trip that used to precede every table render.
+    """
+    user = frappe.session.user
+    prefs = _get_all_table_prefs_for_user(user) or {}
+    out = {}
+    for k, v in prefs.items():
+        if not isinstance(k, str):
+            continue
+        out[k] = _sanitize_table_pref_config(v or {})
+    return out
+
+
+@frappe.whitelist()
 def save_table_preferences(table_id, config=None):
     """Save per-user table preferences for a page/table id."""
     table_id = str(table_id or "").strip()

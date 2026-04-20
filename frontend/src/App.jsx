@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { TableRowLimitProvider } from "./context/TableRowLimitContext";
+import { prefetchTablePreferences } from "./hooks/useTablePreferences";
 import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
 import inetLogo from "./assets/inet-logo.png";
@@ -71,6 +72,12 @@ function AppContent() {
       navigate("/login", { replace: true });
     }
   }, [user, loading, navigate]);
+
+  // Warm the table-preferences cache in parallel with the first render so
+  // DataTablePro's per-table `load()` calls resolve synchronously from cache.
+  useEffect(() => {
+    if (user) prefetchTablePreferences();
+  }, [user]);
 
   if (loading) return <LoadingScreen />;
   if (!user) return null;

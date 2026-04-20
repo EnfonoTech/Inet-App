@@ -169,6 +169,23 @@
   width: 100%;
   min-width: 100%;
 }
+
+/*
+ * Visibility gate: hide the table until DataTablePro has applied the user's
+ * saved widths / order / hidden / filter state. Without this the browser paints
+ * the raw table for ~100–200 ms before the effect runs, producing the "flash of
+ * old layout" users reported. The gate fades in once `applyAll()` completes.
+ *
+ * Only tables inside `.data-table-wrapper` (DataTablePro's target) are gated,
+ * so MiniTable and other standalone tables are unaffected.
+ */
+.data-table-wrapper > .data-table-scroll > table.data-table {
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+.data-table-wrapper > .data-table-scroll > table.data-table.data-table--tablepro-ready {
+  opacity: 1;
+}
 .data-table.data-table--tablepro > thead > tr:first-child > th {
   resize: none;
   text-overflow: ellipsis;
