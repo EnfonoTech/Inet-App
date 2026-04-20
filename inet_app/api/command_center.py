@@ -991,6 +991,7 @@ def confirm_po_upload(rows):
     lines_imported = 0
     lines_skipped_duplicate = 0
     auto_dispatched = 0
+    po_summary = []  # per-PO breakdown for audit/UI: [{po_no, intake_name, lines_added, lines_skipped, is_new}]
 
     for po_no, lines in po_groups.items():
         first = lines[0]
@@ -1047,11 +1048,13 @@ def confirm_po_upload(rows):
         cim_pairs_done = set()
         duid_done = set()  # site_codes whose DUID master was already ensured this batch
         new_entries = []  # (source_line_dict, append_row_dict)
+        po_skipped = 0
 
         for line in lines:
             poid = _poid_for_upload_line(po_no, line)
             if poid in existing_poids:
                 lines_skipped_duplicate += 1
+                po_skipped += 1
                 continue
 
             item_code = str(line.get("item_code") or "").strip()
@@ -1126,6 +1129,15 @@ def confirm_po_upload(rows):
             existing_poids.add(poid)
 
         if not new_entries:
+            # Every line was a duplicate — still record the PO for the audit summary
+            if po_skipped > 0:
+                po_summary.append({
+                    "po_no": po_no,
+                    "intake_name": existing_name,
+                    "lines_added": 0,
+                    "lines_skipped": po_skipped,
+                    "is_new": False,
+                })
             continue
 
         hdr_status = first.get("po_status") or first.get("status") or first.get("po_intake_status")
@@ -1136,6 +1148,7 @@ def confirm_po_upload(rows):
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
             doc.save(ignore_permissions=True)
+            is_new_po = False
         else:
             doc = frappe.new_doc("PO Intake")
             doc.po_no = po_no
@@ -1148,9 +1161,17 @@ def confirm_po_upload(rows):
             doc.insert(ignore_permissions=True)
             created += 1
             names.append(doc.name)
+            is_new_po = True
 
         frappe.db.commit()
         lines_imported += len(new_entries)
+        po_summary.append({
+            "po_no": po_no,
+            "intake_name": doc.name,
+            "lines_added": len(new_entries),
+            "lines_skipped": po_skipped,
+            "is_new": is_new_po,
+        })
 
         # Resolve DB names for new child rows via SQL — avoids doc.reload() + O(n²) scan
         new_poid_map = {append_row["poid"]: append_row for _src, append_row in new_entries}
@@ -1185,6 +1206,132 @@ def confirm_po_upload(rows):
         "lines_skipped_duplicate": lines_skipped_duplicate,
         "auto_dispatched": auto_dispatched,
         "names": names,
+        "po_summary": po_summary,
+    }
+
+
+@frappe.whitelist()
+def record_po_upload_log(payload):
+    """Persist a PO Upload Log for audit/history. Called after all chunks complete.
+
+    payload = {
+        "file_name": "...", "file_url": "...", "customer": "...",
+        "total_rows": N, "lines_imported": N, "lines_skipped": N,
+        "po_created": N, "po_updated": N, "auto_dispatched": N,
+        "po_summary": [{po_no, intake_name, lines_added, lines_skipped, is_new/status}, ...],
+        "status": "Completed"|"Partial"|"Failed",
+        "notes": "...",
+    }
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload)
+    payload = payload or {}
+
+    doc = frappe.new_doc("PO Upload Log")
+    doc.uploaded_by = frappe.session.user
+    doc.uploaded_at = frappe.utils.now_datetime()
+    doc.file_name = (payload.get("file_name") or "")[:140]
+    doc.file_url = (payload.get("file_url") or "")[:240]
+    doc.customer = payload.get("customer") or None
+    doc.total_rows = cint(payload.get("total_rows") or 0)
+    doc.lines_imported = cint(payload.get("lines_imported") or 0)
+    doc.lines_skipped = cint(payload.get("lines_skipped") or 0)
+    doc.po_created = cint(payload.get("po_created") or 0)
+    doc.po_updated = cint(payload.get("po_updated") or 0)
+    doc.auto_dispatched = cint(payload.get("auto_dispatched") or 0)
+    doc.status = payload.get("status") or "Completed"
+    doc.notes = (payload.get("notes") or "")[:2000]
+
+    for item in (payload.get("po_summary") or []):
+        if not isinstance(item, dict):
+            continue
+        status = item.get("status")
+        if not status:
+            if item.get("is_new"):
+                status = "New"
+            elif cint(item.get("lines_added") or 0) > 0:
+                status = "Appended"
+            else:
+                status = "Duplicate"
+        doc.append("po_details", {
+            "po_no": (item.get("po_no") or "")[:140],
+            "intake_name": item.get("intake_name") or None,
+            "status": status,
+            "lines_added": cint(item.get("lines_added") or 0),
+            "lines_skipped": cint(item.get("lines_skipped") or 0),
+        })
+
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"name": doc.name}
+
+
+@frappe.whitelist()
+def list_po_upload_logs(limit=50):
+    """Return recent PO Upload Log entries with per-PO counts."""
+    limit = cint(limit or 50)
+    if limit <= 0 or limit > 500:
+        limit = 50
+    rows = frappe.get_all(
+        "PO Upload Log",
+        fields=[
+            "name", "uploaded_by", "uploaded_at", "customer", "file_name",
+            "total_rows", "lines_imported", "lines_skipped",
+            "po_created", "po_updated", "auto_dispatched", "status",
+        ],
+        order_by="uploaded_at desc",
+        limit_page_length=limit,
+    )
+    # Attach po count per log (quick summary; full details on demand)
+    log_names = [r.name for r in rows]
+    counts = {}
+    if log_names:
+        placeholders = ",".join(["%s"] * len(log_names))
+        count_rows = frappe.db.sql(
+            f"SELECT parent, COUNT(*) AS c FROM `tabPO Upload Log Detail` "
+            f"WHERE parent IN ({placeholders}) GROUP BY parent",
+            log_names,
+            as_dict=True,
+        )
+        counts = {r.parent: r.c for r in count_rows}
+    for r in rows:
+        r["po_count"] = counts.get(r.name, 0)
+    return rows
+
+
+@frappe.whitelist()
+def get_po_upload_log(name):
+    """Return a PO Upload Log with its per-PO detail rows."""
+    if not name:
+        frappe.throw("name is required")
+    if not frappe.db.exists("PO Upload Log", name):
+        frappe.throw(f"PO Upload Log not found: {name}")
+    doc = frappe.get_doc("PO Upload Log", name)
+    return {
+        "name": doc.name,
+        "uploaded_by": doc.uploaded_by,
+        "uploaded_at": doc.uploaded_at,
+        "customer": doc.customer,
+        "file_name": doc.file_name,
+        "file_url": doc.file_url,
+        "status": doc.status,
+        "total_rows": doc.total_rows,
+        "lines_imported": doc.lines_imported,
+        "lines_skipped": doc.lines_skipped,
+        "po_created": doc.po_created,
+        "po_updated": doc.po_updated,
+        "auto_dispatched": doc.auto_dispatched,
+        "notes": doc.notes,
+        "po_details": [
+            {
+                "po_no": d.po_no,
+                "intake_name": d.intake_name,
+                "status": d.status,
+                "lines_added": d.lines_added,
+                "lines_skipped": d.lines_skipped,
+            }
+            for d in (doc.po_details or [])
+        ],
     }
 
 

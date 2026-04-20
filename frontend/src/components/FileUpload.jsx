@@ -71,7 +71,7 @@ export default function FileUpload({ onFileUploaded, accept = ".xlsx,.csv" }) {
       // Frappe returns { message: { file_url: "..." } }
       const file_url = json.message?.file_url;
       if (!file_url) throw new Error("No file URL returned from server");
-      onFileUploaded(file_url);
+      onFileUploaded(file_url, file.name);
     } catch (err) {
       setError(err.message || "Upload failed");
       setFileName(null);

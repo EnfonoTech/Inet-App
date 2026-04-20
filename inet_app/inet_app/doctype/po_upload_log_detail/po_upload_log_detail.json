@@ -1,0 +1,31 @@
+{
+ "actions": [],
+ "creation": "2026-04-20 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "po_no",
+  "intake_name",
+  "status",
+  "lines_added",
+  "lines_skipped"
+ ],
+ "fields": [
+  {"fieldname": "po_no", "fieldtype": "Data", "in_list_view": 1, "label": "PO No"},
+  {"fieldname": "intake_name", "fieldtype": "Link", "options": "PO Intake", "in_list_view": 1, "label": "Intake Doc"},
+  {"fieldname": "status", "fieldtype": "Select", "options": "New\nAppended\nDuplicate", "in_list_view": 1, "label": "Status"},
+  {"fieldname": "lines_added", "fieldtype": "Int", "in_list_view": 1, "label": "Lines Added"},
+  {"fieldname": "lines_skipped", "fieldtype": "Int", "in_list_view": 1, "label": "Lines Skipped"}
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-20 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PO Upload Log Detail",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

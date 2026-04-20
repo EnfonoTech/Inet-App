@@ -196,7 +196,51 @@ export const pmApi = {
     }),
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
   uploadPOFile:         (file_url, customer)  => call("inet_app.api.command_center.upload_po_file", { file_url, customer: customer || "" }),
-  confirmPOUpload:      (rows)      => call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(rows) }),
+  confirmPOUpload:      async (rows, onProgress) => {
+    // Chunk upload to stay under Werkzeug max_form_memory_size (500 KB default)
+    // and nginx client_max_body_size (1 MB default). 500 rows ≈ 200 KB JSON.
+    // Backend groups by po_no and appends to existing PO Intake, so chunking is safe.
+    const all = Array.isArray(rows) ? rows : [];
+    if (all.length === 0) {
+      return await call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify([]) });
+    }
+    const CHUNK = 500;
+    const totals = { created: 0, lines_imported: 0, lines_skipped_duplicate: 0, auto_dispatched: 0, names: [], po_summary: [] };
+    // Merge per-PO rows across chunks (same po_no may appear in multiple chunks)
+    const byPo = new Map();
+    for (let i = 0; i < all.length; i += CHUNK) {
+      const slice = all.slice(i, i + CHUNK);
+      const r = await call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify(slice) });
+      if (r) {
+        totals.created += r.created || 0;
+        totals.lines_imported += r.lines_imported || 0;
+        totals.lines_skipped_duplicate += r.lines_skipped_duplicate || 0;
+        totals.auto_dispatched += r.auto_dispatched || 0;
+        if (Array.isArray(r.names)) totals.names.push(...r.names);
+        if (Array.isArray(r.po_summary)) {
+          r.po_summary.forEach((p) => {
+            const existing = byPo.get(p.po_no);
+            if (existing) {
+              existing.lines_added += p.lines_added || 0;
+              existing.lines_skipped += p.lines_skipped || 0;
+              // First chunk that reported a new PO wins; later chunks for same PO are appends.
+              if (!existing.intake_name && p.intake_name) existing.intake_name = p.intake_name;
+            } else {
+              byPo.set(p.po_no, { ...p });
+            }
+          });
+        }
+      }
+      if (typeof onProgress === "function") {
+        onProgress({ done: Math.min(i + CHUNK, all.length), total: all.length });
+      }
+    }
+    totals.po_summary = Array.from(byPo.values());
+    return totals;
+  },
+  recordPOUploadLog:    (payload)   => call("inet_app.api.command_center.record_po_upload_log", { payload: JSON.stringify(payload || {}) }),
+  listPOUploadLogs:     (limit = 50) => call("inet_app.api.command_center.list_po_upload_logs", { limit }),
+  getPOUploadLog:       (name)      => call("inet_app.api.command_center.get_po_upload_log", { name }),
   listPOIntakeLines:    (status, limit, portalFilters) => {
     const args = { status: status || "New", limit: limit == null ? null : limit };
     if (portalFilters && typeof portalFilters === "object" && Object.keys(portalFilters).length > 0) {
