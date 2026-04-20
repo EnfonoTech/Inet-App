@@ -484,25 +484,15 @@ def get_doctype_fields(doctype):
 
 def _insert_po_dispatch_with_poid(dispatch_doc, poid):
     """
-    Insert PO Dispatch then optionally rename document name to POID.
-
-    `system_id` stays the immutable naming-series id assigned at insert (e.g. SYS-2026-00001).
-    Document `name` becomes the business POID when rename succeeds, so links and POID stay on `name`.
+    Insert PO Dispatch. `name` stays as the SYS-YYYY-##### series ID.
+    `poid` field holds the business POID; `system_id` mirrors `name` for legacy compatibility.
     """
-    dispatch_doc.insert(ignore_permissions=True)
-    internal_ref = dispatch_doc.name
-    final_name = dispatch_doc.name
     poid = (poid or "").strip()
-    if poid and poid != internal_ref:
-        if not frappe.db.exists("PO Dispatch", poid):
-            frappe.rename_doc("PO Dispatch", internal_ref, poid, force=True, merge=False)
-            final_name = poid
-        else:
-            # Avoid accidental duplicate rename collisions; keep existing doc name.
-            final_name = internal_ref
-
-    frappe.db.set_value("PO Dispatch", final_name, "system_id", internal_ref, update_modified=False)
-    return final_name
+    if poid:
+        dispatch_doc.poid = poid
+    dispatch_doc.insert(ignore_permissions=True)
+    frappe.db.set_value("PO Dispatch", dispatch_doc.name, "system_id", dispatch_doc.name, update_modified=False)
+    return dispatch_doc.name
 
 
 def _upsert_po_dispatch_for_line(
@@ -533,6 +523,7 @@ def _upsert_po_dispatch_for_line(
         fallback=line_dict.get("poid"),
     )
     payload = {
+        "poid": poid,
         "po_intake": po_intake_name,
         "po_no": po_no,
         "po_line_no": po_line_no,
@@ -563,6 +554,9 @@ def _upsert_po_dispatch_for_line(
         system_id = frappe.db.get_value("PO Dispatch", existing_name, "system_id")
         if not system_id:
             frappe.db.set_value("PO Dispatch", existing_name, "system_id", existing_name, update_modified=False)
+        # Ensure poid field is populated for docs created before this field existed
+        if not frappe.db.get_value("PO Dispatch", existing_name, "poid"):
+            frappe.db.set_value("PO Dispatch", existing_name, "poid", poid, update_modified=False)
         return existing_name
 
     doc = frappe.new_doc("PO Dispatch")
@@ -637,7 +631,7 @@ def backfill_po_dispatch_id_to_poid(limit=500):
         limit_page_length=limit,
     )
 
-    renamed = 0
+    updated = 0
     skipped = 0
     failed = []
 
@@ -654,22 +648,19 @@ def backfill_po_dispatch_id_to_poid(limit=500):
             shipment_number=(line or {}).get("shipment_number"),
             fallback=(line or {}).get("poid"),
         )
-        if not poid or d.name == poid:
-            skipped += 1
-            continue
-        if frappe.db.exists("PO Dispatch", poid):
+        if not poid or d.poid == poid:
             skipped += 1
             continue
         try:
-            old_name = d.name
-            frappe.rename_doc("PO Dispatch", old_name, poid, force=True, merge=False)
-            frappe.db.set_value("PO Dispatch", poid, "system_id", old_name, update_modified=False)
-            renamed += 1
+            frappe.db.set_value("PO Dispatch", d.name, "poid", poid, update_modified=False)
+            if not frappe.db.get_value("PO Dispatch", d.name, "system_id"):
+                frappe.db.set_value("PO Dispatch", d.name, "system_id", d.name, update_modified=False)
+            updated += 1
         except Exception:
-            failed.append({"from": d.name, "to": poid})
+            failed.append({"name": d.name, "poid": poid})
 
     frappe.db.commit()
-    return {"checked": len(rows), "renamed": renamed, "skipped": skipped, "failed": failed}
+    return {"checked": len(rows), "updated": updated, "skipped": skipped, "failed": failed}
 
 
 # ---------------------------------------------------------------------------
@@ -1022,15 +1013,39 @@ def confirm_po_upload(rows):
         existing_name = frappe.db.get_value("PO Intake", {"po_no": po_no}, "name")
         existing_poids = set()
         if existing_name:
-            existing_doc = frappe.get_doc("PO Intake", existing_name)
-            if existing_doc.customer != resolved_cust:
+            # Fetch only the fields needed for POID dedup — avoids loading the full child table
+            existing_rows = frappe.db.sql(
+                "SELECT po_line_no, shipment_number, poid FROM `tabPO Intake Line` WHERE parent=%s",
+                existing_name, as_dict=True,
+            )
+            for r in existing_rows:
+                pid = (r.poid or "").strip() or _make_poid(po_no, r.po_line_no, r.shipment_number)
+                existing_poids.add(pid)
+            existing_customer = frappe.db.get_value("PO Intake", existing_name, "customer")
+            if existing_customer != resolved_cust:
                 frappe.throw(
-                    f"PO {po_no} already exists for customer {existing_doc.customer}; "
+                    f"PO {po_no} already exists for customer {existing_customer}; "
                     f"upload uses {resolved_cust}. Use the same customer or a different PO number."
                 )
-            existing_poids = _existing_poids_on_intake_doc(existing_doc)
+
+        # Bulk pre-fetch project codes to avoid a frappe.db.exists() call per line
+        all_project_codes = {
+            str(l.get("project_code") or "").strip() for l in lines if l.get("project_code")
+        }
+        if all_project_codes:
+            _ph = ",".join(["%s"] * len(all_project_codes))
+            existing_projects = {
+                r[0]
+                for r in frappe.db.sql(
+                    f"SELECT name FROM `tabProject Control Center` WHERE name IN ({_ph})",
+                    list(all_project_codes),
+                )
+            }
+        else:
+            existing_projects = set()
 
         cim_pairs_done = set()
+        duid_done = set()  # site_codes whose DUID master was already ensured this batch
         new_entries = []  # (source_line_dict, append_row_dict)
 
         for line in lines:
@@ -1044,8 +1059,8 @@ def confirm_po_upload(rows):
             rate = flt(line.get("rate", 0))
             if qty <= 0 or rate <= 0:
                 frappe.throw(f"Invalid qty/rate in PO {po_no} for item {item_code}")
-            project_code = line.get("project_code")
-            if project_code and not frappe.db.exists("Project Control Center", project_code):
+            project_code = str(line.get("project_code") or "").strip()
+            if project_code and project_code not in existing_projects:
                 ok_p, err_p = ensure_project_control_center(
                     project_code,
                     resolved_cust,
@@ -1054,6 +1069,8 @@ def confirm_po_upload(rows):
                 )
                 if not ok_p:
                     frappe.throw(err_p or f"Project code not found: {project_code}")
+                existing_projects.add(project_code)
+
             cim_key = (resolved_cust, item_code)
             if cim_key not in cim_pairs_done:
                 ok_cim, cim_err = ensure_customer_item_master(resolved_cust, item_code)
@@ -1067,23 +1084,25 @@ def confirm_po_upload(rows):
             line_center_area = line.get("center_area") or first.get("center_area")
             line_region = region_type_from_center_area(line_center_area)
             site_code = str(line.get("site_code") or "").strip()
-            ok_duid, err_duid = ensure_duid_master(
-                site_code,
-                line.get("site_name"),
-                line_center_area,
-            )
-            if not ok_duid:
-                frappe.throw(err_duid or f"Could not create DUID Master for {site_code}")
+            if site_code not in duid_done:
+                ok_duid, err_duid = ensure_duid_master(
+                    site_code,
+                    line.get("site_name"),
+                    line_center_area,
+                )
+                if not ok_duid:
+                    frappe.throw(err_duid or f"Could not create DUID Master for {site_code}")
+                duid_done.add(site_code)
 
             append_row = {
                 "source_id": line.get("source_id"),
-                    "po_line_no": cint(line.get("po_line_no") or 0),
-                    "shipment_number": line.get("shipment_no"),
+                "po_line_no": cint(line.get("po_line_no") or 0),
+                "shipment_number": line.get("shipment_no"),
                 "poid": poid,
                 "site_code": site_code,
-                    "site_name": line.get("site_name"),
-                    "item_code": item_code,
-                    "item_description": line.get("item_description"),
+                "site_name": line.get("site_name"),
+                "item_code": item_code,
+                "item_description": line.get("item_description"),
                 "uom": line.get("unit"),
                 "qty": qty,
                 "due_qty": flt(line.get("due_qty", 0)),
@@ -1097,7 +1116,7 @@ def confirm_po_upload(rows):
                 "line_amount": flt(line.get("line_amount", 0)) or (qty * rate),
                 "tax_rate": line.get("tax_rate"),
                 "payment_terms": line.get("payment_terms"),
-                    "project_code": line.get("project_code"),
+                "project_code": line.get("project_code"),
                 "project_name": line.get("project_name"),
                 "center_area": line_center_area,
                 "region_type": line_region,
@@ -1116,7 +1135,7 @@ def confirm_po_upload(rows):
             doc.status = _normalize_po_intake_status(hdr_status)
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
-            doc.save(ignore_permissions=True, ignore_links=True)
+            doc.save(ignore_permissions=True)
         else:
             doc = frappe.new_doc("PO Intake")
             doc.po_no = po_no
@@ -1126,29 +1145,27 @@ def confirm_po_upload(rows):
             doc.center_area = first.get("center_area")
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
-            doc.insert(ignore_permissions=True, ignore_links=True)
+            doc.insert(ignore_permissions=True)
             created += 1
             names.append(doc.name)
 
         frappe.db.commit()
         lines_imported += len(new_entries)
 
-        doc.reload()
+        # Resolve DB names for new child rows via SQL — avoids doc.reload() + O(n²) scan
+        new_poid_map = {append_row["poid"]: append_row for _src, append_row in new_entries}
+        child_sql_rows = frappe.db.sql(
+            "SELECT name, po_line_no, shipment_number, poid FROM `tabPO Intake Line` WHERE parent=%s",
+            doc.name, as_dict=True,
+        )
         child_rows = []
-        for _src, append_row in new_entries:
-            pln = cint(append_row.get("po_line_no") or 0)
-            want_poid = (append_row.get("poid") or "").strip() or _make_poid(
-                po_no, pln, append_row.get("shipment_number")
-            )
-            for row in doc.po_lines:
-                if cint(row.po_line_no or 0) != pln:
-                    continue
-                got_poid = (row.poid or "").strip() or _make_poid(
-                    po_no, pln, row.shipment_number
-                )
-                if got_poid == want_poid:
-                    child_rows.append((row.name, row.as_dict()))
-                    break
+        for r in child_sql_rows:
+            got_poid = (r.poid or "").strip() or _make_poid(po_no, r.po_line_no, r.shipment_number)
+            if got_poid in new_poid_map:
+                row_dict = dict(new_poid_map[got_poid])
+                row_dict["name"] = r.name
+                row_dict["parent"] = doc.name
+                child_rows.append((r.name, row_dict))
 
         # Ensure each new line has a PO Dispatch row + immutable system_id even before dispatch.
         for _child_name, line_dict in child_rows:
@@ -1935,25 +1952,20 @@ def map_im_dummy_po_to_intake_line(payload=None):
             frappe.db.get_value("PO Dispatch", dummy_name, "original_dummy_poid") or ""
         ).strip()
         if not ex_orig:
-            update_vals["original_dummy_poid"] = dummy_name
+            # Store the dummy's own POID (not its SYS- doc name) as the origin
+            dummy_poid = (frappe.db.get_value("PO Dispatch", dummy_name, "poid") or dummy_name).strip()
+            update_vals["original_dummy_poid"] = dummy_poid
+
+    # Set real POID on the poid field — no rename needed
+    if poid_target:
+        existing_with_poid = frappe.db.get_value("PO Dispatch", {"poid": poid_target}, "name")
+        if existing_with_poid and existing_with_poid != dummy_name:
+            frappe.throw(
+                f"POID {poid_target} already assigned to another dispatch — resolve duplicates first."
+            )
+        update_vals["poid"] = poid_target
 
     frappe.db.set_value("PO Dispatch", dummy_name, update_vals, update_modified=True)
-
-    final_name = dummy_name
-    if poid_target and poid_target != dummy_name:
-        if frappe.db.exists("PO Dispatch", poid_target):
-            frappe.throw(
-                f"POID {poid_target} already exists — resolve duplicate PO dispatches first."
-            )
-        frappe.rename_doc(
-            "PO Dispatch",
-            dummy_name,
-            poid_target,
-            force=True,
-            merge=False,
-            show_alert=False,
-        )
-        final_name = poid_target
 
     frappe.db.set_value(
         "PO Intake Line",
@@ -1963,15 +1975,15 @@ def map_im_dummy_po_to_intake_line(payload=None):
     )
 
     frappe.db.commit()
-    gv_fields = ["po_no", "po_line_no"]
+    gv_fields = ["po_no", "po_line_no", "poid"]
     if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
         gv_fields.append("original_dummy_poid")
     if frappe.db.has_column("PO Dispatch", "was_dummy_po"):
         gv_fields.append("was_dummy_po")
-    meta = frappe.db.get_value("PO Dispatch", final_name, gv_fields, as_dict=True) or {}
+    meta = frappe.db.get_value("PO Dispatch", dummy_name, gv_fields, as_dict=True) or {}
     return {
-        "name": final_name,
-        "poid": final_name,
+        "name": dummy_name,
+        "poid": meta.get("poid") or poid_target,
         "po_intake": parent_intake,
         "po_intake_line": line_name,
         "original_dummy_poid": (meta.get("original_dummy_poid") or "").strip(),

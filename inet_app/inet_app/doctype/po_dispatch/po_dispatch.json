@@ -4,7 +4,9 @@
  "creation": "2026-04-04 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
+ "title_field": "poid",
  "field_order": [
+  "poid",
   "system_id",
   "po_intake",
   "po_no",
@@ -37,7 +39,14 @@
  ],
  "fields": [
   {
-   "description": "Immutable internal id from naming series (SYS-YYYY-#####). Document name is the business POID after rename; this field does not change.",
+   "fieldname": "poid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "POID",
+   "read_only": 1
+  },
+  {
+   "description": "Immutable internal id from naming series (SYS-YYYY-#####). Same as document name.",
    "fieldname": "system_id",
    "fieldtype": "Data",
    "in_list_view": 1,

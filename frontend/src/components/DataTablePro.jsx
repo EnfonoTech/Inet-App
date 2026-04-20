@@ -614,8 +614,13 @@ export default function DataTablePro() {
         wrapper.parentElement?.insertBefore(toolbar, wrapper);
         tracked.push({ table, toolbar });
         if (!wrapperMoList.some((e) => e.wrapper === wrapper)) {
+          // Watch the direct parent of the table (.data-table-scroll) so we catch
+          // conditional <table> swaps (e.g. Loading… div ↔ <table> on data refetch).
+          // The outer .data-table-wrapper only has .data-table-scroll as a child, so
+          // observing it without subtree never fires for the actual swap.
+          const observeTarget = table.parentElement || wrapper;
           const mo = new MutationObserver(() => scheduleReinitFromDom());
-          mo.observe(wrapper, { childList: true });
+          mo.observe(observeTarget, { childList: true });
           wrapperMoList.push({ wrapper, mo });
         }
 
@@ -753,10 +758,33 @@ export default function DataTablePro() {
           wrapResizeObs.observe(wrapEl);
         }
 
+        // Re-apply layout when tbody rows are replaced in-place (e.g. limit selector / data refresh).
+        // The wrapper MutationObserver only fires when the <table> element itself is swapped out;
+        // it misses in-place tbody updates, so new rows come in without colKey, widths, or ordering.
+        let tbodyReapplyTimer = null;
+        const tbodyMo = new MutationObserver(() => {
+          if (destroyed) return;
+          if (tbodyReapplyTimer) clearTimeout(tbodyReapplyTimer);
+          tbodyReapplyTimer = setTimeout(() => {
+            tbodyReapplyTimer = null;
+            if (!table.isConnected || destroyed) return;
+            normalizeRowCells();
+            applyOrder();
+            applyHidden();
+            applyWidths();
+            ensureFilterRow();
+            applyFilters();
+          }, 80);
+        });
+        const tbody = table.querySelector("tbody");
+        if (tbody) tbodyMo.observe(tbody, { childList: true });
+
         table.dataset.tableproCleanup = "1";
         table._tableproCleanup = () => {
           document.removeEventListener("mousedown", onDocClick);
           wrapResizeObs?.disconnect();
+          tbodyMo.disconnect();
+          if (tbodyReapplyTimer) clearTimeout(tbodyReapplyTimer);
         };
         }
       } finally {
