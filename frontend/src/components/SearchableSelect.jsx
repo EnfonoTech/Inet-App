@@ -108,17 +108,18 @@ export default function SearchableSelect({
     <div ref={wrapRef} style={{ position: "relative", display: "inline-block", ...style }}>
       <button
         type="button"
+        className="searchable-select-trigger"
         disabled={disabled}
         onClick={() => !disabled && setOpen((v) => !v)}
         style={{
-          padding: "7px 28px 7px 12px",
-          borderRadius: 7,
+          padding: "5px 22px 5px 10px",
+          borderRadius: 6,
           border: "1px solid #e2e8f0",
-          fontSize: "0.84rem",
+          fontSize: "0.8rem",
           background: disabled ? "#f1f5f9" : "#fff",
           color: value ? "var(--text, #1e293b)" : "#94a3b8",
           cursor: disabled ? "not-allowed" : "pointer",
-          minWidth: minWidth || 140,
+          minWidth: minWidth || 120,
           textAlign: "left",
           position: "relative",
           whiteSpace: "nowrap",
@@ -140,13 +141,13 @@ export default function SearchableSelect({
           title="Clear"
           style={{
             position: "absolute",
-            right: 28,
+            right: 22,
             top: "50%",
             transform: "translateY(-50%)",
             border: 0,
             background: "transparent",
             color: "#94a3b8",
-            fontSize: "0.8rem",
+            fontSize: "0.72rem",
             cursor: "pointer",
             padding: 0,
             lineHeight: 1,

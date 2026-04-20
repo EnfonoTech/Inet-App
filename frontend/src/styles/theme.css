@@ -415,7 +415,7 @@ a:hover { color: var(--blue-dark); }
   min-height: 100dvh;
   height: 100dvh;
   max-height: 100dvh;
-  padding: 32px 40px;
+  padding: 8px 12px;
   overflow-x: hidden;
   overflow-y: hidden;
   background: var(--bg);

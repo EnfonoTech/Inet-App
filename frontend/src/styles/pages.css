@@ -9,8 +9,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 24px 28px 20px;
+  gap: 12px;
+  padding: 8px 20px 4px;
   margin-bottom: 0;
   /* Stick below viewport top while scrolling long pages */
   position: sticky;
@@ -22,16 +22,17 @@
 
 .page-title {
   margin: 0;
-  font-size: 1.35rem;
+  font-size: 1.15rem;
   font-weight: 800;
   letter-spacing: -0.4px;
   color: var(--text);
 }
 
 .page-subtitle {
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: 1px;
+  line-height: 1.35;
 }
 
 .page-actions {
@@ -51,7 +52,10 @@
   flex-direction: column;
   overflow-x: auto;
   overflow-y: hidden;
-  max-height: min(72vh, calc(100dvh - 14rem));
+  /* No fixed cap here — the flex chain under .content-outlet lets the wrapper
+   * fill the remaining viewport height. The fallback below is used only when
+   * the wrapper renders outside that flex chain (standalone embeds). */
+  max-height: min(92vh, calc(100dvh - 5rem));
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -93,8 +97,26 @@
 /* Operational list pages: layout + bounded table card. flex-grow:0 so short tables
    do not stretch with empty space above the row-limit footer; max-height still caps
    long lists so vertical scroll stays inside .data-table-scroll. */
+/* On pages whose main content is a data table, suppress the outer scroll so
+ * the inner .data-table-scroll owns the vertical scroll and the table grows
+ * to the full viewport height. */
+.content-outlet:has(.page-content > .data-table-wrapper) {
+  overflow-y: hidden;
+}
+
+/* On those same pages, unstick the header + filter toolbar. Sticky was useful
+ * only when the outer container scrolled; now that the inner scroll takes
+ * over, sticky only creates z-index layering bugs where the filter toolbar
+ * floats over the Manage Table buttons and the table thead. */
+.content-outlet:has(.page-content > .data-table-wrapper) .page-header,
+.content-outlet:has(.page-content > .data-table-wrapper) .toolbar {
+  position: relative;
+  top: auto;
+  z-index: auto;
+}
+
 .content-outlet > *:has(.page-content > .data-table-wrapper) {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -106,7 +128,7 @@
 }
 
 .content-outlet > *:has(.page-content > .data-table-wrapper) > .page-content {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -118,9 +140,9 @@
 }
 
 .content-outlet > *:has(.page-content > .data-table-wrapper) > .page-content > .data-table-wrapper {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: min(72vh, calc(100dvh - 14rem));
+  max-height: none;
   overflow-x: auto;
   overflow-y: hidden;
   display: flex;
@@ -214,7 +236,7 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-weight: 700;
-  padding: 12px 16px;
+  padding: 8px 12px;
   border-bottom: 2px solid var(--border);
   background: #f8fafc;
   background-clip: padding-box;
@@ -237,8 +259,9 @@
 .data-table th.sortable:hover { background: #f1f5f9; color: var(--text); }
 
 .data-table td {
-  padding: 11px 16px;
-  font-size: 0.84rem;
+  padding: 6px 12px;
+  font-size: 0.83rem;
+  line-height: 1.35;
   border-bottom: 1px solid var(--border-light);
   border-right: 1px solid var(--border-light);
   color: var(--text);
@@ -547,10 +570,11 @@
 /* ── Toolbar ────────────────────────────────────────────────── */
 .toolbar {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 12px 28px;
+  row-gap: 4px;
+  padding: 6px 16px;
   margin-bottom: 0;
   background: var(--bg-white);
   border-bottom: 1px solid var(--border-light);
@@ -563,7 +587,55 @@
 
 /* ── Page Content Wrapper ───────────────────────────────────── */
 .page-content {
-  padding: 20px 28px 28px;
+  padding: 6px 16px 12px;
+}
+
+/* Toolbar layout helpers — dissolve every direct child <div> of `.toolbar`
+ * so filter controls + the right-aligned action button flow as one wrapping
+ * flex row. Without this the filter sub-div takes a full row on its own,
+ * pushing the button to its own mostly-empty row. `!important` is needed
+ * because several pages hand-roll `style={{ display: "flex" }}` on the
+ * wrapping divs; the inline style wins without it. */
+.toolbar > div {
+  display: contents !important;
+}
+.toolbar > .toolbar-actions > *:first-child {
+  margin-left: auto;
+}
+
+/* Compact filter controls — override inline styles from legacy page JSX.
+ * Smaller padding, smaller font, and a cap on minWidth so search inputs and
+ * select pills don't hog an entire row by themselves. */
+.toolbar input[type="search"],
+.toolbar input[type="text"],
+.toolbar input[type="date"],
+.toolbar select,
+.toolbar .searchable-select-trigger,
+.toolbar .tablepro-filter-input {
+  padding: 5px 10px !important;
+  font-size: 0.8rem !important;
+  border-radius: 6px !important;
+  min-height: 30px;
+}
+.toolbar input[type="search"],
+.toolbar input[type="text"] {
+  min-width: 0 !important;
+  max-width: 260px;
+  flex: 1 1 200px;
+}
+.toolbar input[type="date"] {
+  min-width: 0 !important;
+  width: auto;
+  max-width: 140px;
+}
+.toolbar select {
+  min-width: 0 !important;
+  max-width: 180px;
+}
+.toolbar .btn-secondary,
+.toolbar .btn-primary {
+  padding: 5px 12px !important;
+  font-size: 0.8rem !important;
 }
 
 .toolbar .search-input {
@@ -620,8 +692,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
+  padding: 4px 0;
   position: relative;
+  background: var(--bg-white);
 }
 
 .tablepro-toolbar .btn-secondary {

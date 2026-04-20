@@ -331,7 +331,7 @@ export default function RolloutPlanning() {
             </button>
           )}
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="toolbar-actions">
           {selected.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
               {selected.size} selected · SAR {fmt.format(selectedAmt)}

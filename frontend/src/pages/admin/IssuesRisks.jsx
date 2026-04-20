@@ -125,7 +125,7 @@ export default function IssuesRisks() {
             style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 300 }}
           />
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="toolbar-actions">
           {selected.size > 0 && <span style={{ fontSize: "0.78rem", color: "#64748b" }}>{selected.size} selected</span>}
           <button className="btn-primary" disabled={selected.size === 0} onClick={() => setShowModal(true)}>
             Create Plans ({selected.size})

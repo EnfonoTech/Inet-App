@@ -526,7 +526,7 @@ export default function PODispatch() {
           )}
         </div>
 
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="toolbar-actions">
           {/* Dispatched tab: auto-convert buttons */}
           {activeTab === "Dispatched" && autoRows.length > 0 && (
             <>

@@ -480,31 +480,33 @@ export default function IMDispatch() {
       )}
 
       {!loading && hasAnyDispatches && (
-        <div style={{ display: "flex", gap: 10, margin: "0 28px 14px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, margin: "0 16px 4px", flexWrap: "wrap" }}>
           <div style={{
-            flex: "0 1 180px", minWidth: 140, padding: "10px 12px", borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+            minWidth: 160, padding: "6px 12px", borderRadius: 8,
             background: "linear-gradient(135deg,#f59e0b 0%,#d97706 100%)",
-            color: "#fff", boxShadow: "0 4px 16px rgba(245,158,11,0.25)",
+            color: "#fff", boxShadow: "0 2px 8px rgba(245,158,11,0.25)",
           }}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.9, marginBottom: 3 }}>Ready to plan</div>
-            <div style={{ fontSize: "1.35rem", fontWeight: 800, lineHeight: 1.1 }}>{dispatchedCount}</div>
-            <div style={{ fontSize: "0.62rem", opacity: 0.85, marginTop: 2 }}>Status = Dispatched</div>
+            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.9, flex: 1 }}>Ready to plan</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{dispatchedCount}</div>
           </div>
           <div style={{
-            flex: "0 1 180px", minWidth: 140, padding: "10px 12px", borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+            minWidth: 160, padding: "6px 12px", borderRadius: 8,
             background: "linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)",
-            color: "#fff", boxShadow: "0 4px 16px rgba(99,102,241,0.2)",
+            color: "#fff", boxShadow: "0 2px 8px rgba(99,102,241,0.2)",
           }}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.85, marginBottom: 3 }}>Auto Dispatched</div>
-            <div style={{ fontSize: "1.35rem", fontWeight: 800, lineHeight: 1.1 }}>{autoCount}</div>
+            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.85, flex: 1 }}>Auto Dispatched</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{autoCount}</div>
           </div>
           <div style={{
-            flex: "0 1 180px", minWidth: 140, padding: "10px 12px", borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+            minWidth: 160, padding: "6px 12px", borderRadius: 8,
             background: "linear-gradient(135deg,#0ea5e9 0%,#06b6d4 100%)",
-            color: "#fff", boxShadow: "0 4px 16px rgba(14,165,233,0.2)",
+            color: "#fff", boxShadow: "0 2px 8px rgba(14,165,233,0.2)",
           }}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.85, marginBottom: 3 }}>Manual Dispatch</div>
-            <div style={{ fontSize: "1.35rem", fontWeight: 800, lineHeight: 1.1 }}>{manualCount}</div>
+            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.85, flex: 1 }}>Manual Dispatch</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{manualCount}</div>
           </div>
         </div>
       )}
@@ -572,7 +574,7 @@ export default function IMDispatch() {
             </button>
           )}
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="toolbar-actions">
           {selected.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
               {selected.size} selected · SAR {fmt.format(selectedAmt)}
