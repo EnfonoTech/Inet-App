@@ -99,10 +99,10 @@ export default function WorkDone() {
   const [error, setError] = useState(null);
 
   const [search, setSearch] = useState("");
-  const [billingFilter, setBillingFilter] = useState("");
-  const [teamFilter, setTeamFilter] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [billingFilter, setBillingFilter] = useState([]);
+  const [teamFilter, setTeamFilter] = useState([]);
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [detailRow, setDetailRow] = useState(null);
@@ -136,10 +136,10 @@ export default function WorkDone() {
     setError(null);
     try {
       const filters = {};
-      if (billingFilter) filters.billing_status = billingFilter;
-      if (teamFilter) filters.team = teamFilter;
-      if (projectFilter) filters.project_code = projectFilter;
-      if (duidFilter) filters.site_code = duidFilter;
+      if (billingFilter.length) filters.billing_status = billingFilter;
+      if (teamFilter.length) filters.team = teamFilter;
+      if (projectFilter.length) filters.project_code = projectFilter;
+      if (duidFilter.length) filters.site_code = duidFilter;
       if (fromDate) filters.from_date = fromDate;
       if (toDate) filters.to_date = toDate;
       if (search.trim()) filters.search = search.trim();
@@ -154,7 +154,7 @@ export default function WorkDone() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const hasFilters = search || billingFilter || teamFilter || projectFilter || duidFilter || fromDate || toDate;
+  const hasFilters = !!(search || billingFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const { options: teamOpts } = useFilterOptions("INET Team", ["team_id"]);
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
@@ -200,6 +200,7 @@ export default function WorkDone() {
           }}
         />
         <SearchableSelect
+          multi
           value={billingFilter}
           onChange={setBillingFilter}
           options={BILLING_STATUSES.filter(Boolean)}
@@ -207,6 +208,7 @@ export default function WorkDone() {
           minWidth={170}
         />
         <SearchableSelect
+          multi
           value={teamFilter}
           onChange={setTeamFilter}
           options={teams}
@@ -214,6 +216,7 @@ export default function WorkDone() {
           minWidth={150}
         />
         <SearchableSelect
+          multi
           value={projectFilter}
           onChange={setProjectFilter}
           options={projects}
@@ -221,6 +224,7 @@ export default function WorkDone() {
           minWidth={170}
         />
         <SearchableSelect
+          multi
           value={duidFilter}
           onChange={setDuidFilter}
           options={duids}
@@ -232,7 +236,7 @@ export default function WorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter(""); setTeamFilter(""); setProjectFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

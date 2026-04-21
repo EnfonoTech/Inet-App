@@ -3,15 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 /**
  * Drop-in replacement for `<select>` filters with a type-to-search panel.
  *
- * Props:
- *   value       — current selection (string id)
- *   onChange    — (id: string) => void
- *   options     — string[] | { id: string, label?: string }[]
- *   placeholder — text when no value (e.g. "All Projects")
- *   allLabel    — label for the clear/"all" option (default = placeholder)
- *   style       — outer wrapper style
- *   minWidth    — override min trigger width
- *   disabled
+ * Single-select mode (default): `value` is a string id; `onChange(id)` gets
+ * the new id or "" for clear.
+ *
+ * Multi-select mode (`multi`): `value` is a string[] of ids; `onChange(ids)`
+ * gets a new string[]. Paste multiple whitespace/comma/newline-separated
+ * tokens into the search box and press Enter — every option whose id or
+ * label contains any token is auto-selected.
  */
 export default function SearchableSelect({
   value,
@@ -22,6 +20,7 @@ export default function SearchableSelect({
   style,
   minWidth,
   disabled = false,
+  multi = false,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -30,7 +29,6 @@ export default function SearchableSelect({
   const inputRef = useRef(null);
   const listRef = useRef(null);
 
-  // Normalize options to [{id, label}]
   const normalized = useMemo(() => {
     if (!Array.isArray(options)) return [];
     return options
@@ -38,19 +36,41 @@ export default function SearchableSelect({
       .filter((o) => o.id);
   }, [options]);
 
+  const selectedIds = useMemo(() => {
+    if (multi) return Array.isArray(value) ? value.filter(Boolean) : [];
+    return value ? [value] : [];
+  }, [value, multi]);
+
+  const tokens = useMemo(() => {
+    const q = query.trim();
+    if (!q) return [];
+    return q
+      .split(/[\s,;|]+/)
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean);
+  }, [query]);
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return normalized;
-    return normalized.filter((o) => o.label.toLowerCase().includes(q) || o.id.toLowerCase().includes(q));
-  }, [normalized, query]);
+    if (tokens.length === 0) return normalized;
+    return normalized.filter((o) => {
+      const hay = `${o.label} ${o.id}`.toLowerCase();
+      return tokens.some((t) => hay.includes(t));
+    });
+  }, [normalized, tokens]);
 
   const currentLabel = useMemo(() => {
-    if (!value) return "";
-    const hit = normalized.find((o) => o.id === value);
-    return hit ? hit.label : String(value);
-  }, [value, normalized]);
+    if (!selectedIds.length) return "";
+    if (!multi) {
+      const hit = normalized.find((o) => o.id === selectedIds[0]);
+      return hit ? hit.label : String(selectedIds[0]);
+    }
+    if (selectedIds.length === 1) {
+      const hit = normalized.find((o) => o.id === selectedIds[0]);
+      return hit ? hit.label : String(selectedIds[0]);
+    }
+    return `${selectedIds.length} selected`;
+  }, [selectedIds, normalized, multi]);
 
-  // Close on outside click / Escape
   useEffect(() => {
     if (!open) return;
     const onDocMouseDown = (e) => {
@@ -67,7 +87,6 @@ export default function SearchableSelect({
     };
   }, [open]);
 
-  // Focus search on open
   useEffect(() => {
     if (open) {
       setQuery("");
@@ -76,16 +95,37 @@ export default function SearchableSelect({
     }
   }, [open]);
 
-  // Keep highlighted option in view
   useEffect(() => {
     if (!open || activeIdx < 0 || !listRef.current) return;
     const node = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
     node?.scrollIntoView({ block: "nearest" });
   }, [activeIdx, open]);
 
-  function commit(id) {
+  function commitSingle(id) {
     onChange?.(id || "");
     setOpen(false);
+  }
+
+  function toggleMulti(id) {
+    if (!id) return;
+    const set = new Set(selectedIds);
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    onChange?.(Array.from(set));
+  }
+
+  function clearAll() {
+    onChange?.(multi ? [] : "");
+    setOpen(false);
+  }
+
+  function selectAllTokenMatches() {
+    if (!multi || tokens.length === 0) return;
+    const toAdd = filtered.map((o) => o.id);
+    if (toAdd.length === 0) return;
+    const set = new Set([...selectedIds, ...toAdd]);
+    onChange?.(Array.from(set));
+    setQuery("");
   }
 
   function onKeyDownInput(e) {
@@ -97,12 +137,19 @@ export default function SearchableSelect({
       setActiveIdx((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (activeIdx >= 0 && filtered[activeIdx]) commit(filtered[activeIdx].id);
-      else if (filtered.length === 1) commit(filtered[0].id);
+      if (multi) {
+        if (tokens.length > 1) selectAllTokenMatches();
+        else if (activeIdx >= 0 && filtered[activeIdx]) toggleMulti(filtered[activeIdx].id);
+        else if (filtered.length === 1) toggleMulti(filtered[0].id);
+      } else {
+        if (activeIdx >= 0 && filtered[activeIdx]) commitSingle(filtered[activeIdx].id);
+        else if (filtered.length === 1) commitSingle(filtered[0].id);
+      }
     }
   }
 
   const clearLabel = allLabel || placeholder;
+  const hasSelection = selectedIds.length > 0;
 
   return (
     <div ref={wrapRef} className="searchable-select-wrap" style={{ position: "relative", display: "inline-block", ...style }}>
@@ -117,7 +164,7 @@ export default function SearchableSelect({
           border: "1px solid #e2e8f0",
           fontSize: "0.8rem",
           background: disabled ? "#f1f5f9" : "#fff",
-          color: value ? "var(--text, #1e293b)" : "#94a3b8",
+          color: hasSelection ? "var(--text, #1e293b)" : "#94a3b8",
           cursor: disabled ? "not-allowed" : "pointer",
           minWidth: minWidth || 120,
           textAlign: "left",
@@ -125,19 +172,19 @@ export default function SearchableSelect({
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
-          fontWeight: value ? 600 : 500,
+          fontWeight: hasSelection ? 600 : 500,
         }}
       >
-        {value ? currentLabel : placeholder}
+        {hasSelection ? currentLabel : placeholder}
         <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", fontSize: "0.7rem", pointerEvents: "none" }}>
           {open ? "▲" : "▾"}
         </span>
       </button>
 
-      {value && !disabled && (
+      {hasSelection && !disabled && (
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); commit(""); }}
+          onClick={(e) => { e.stopPropagation(); clearAll(); }}
           title="Clear"
           style={{
             position: "absolute",
@@ -178,7 +225,7 @@ export default function SearchableSelect({
               value={query}
               onChange={(e) => { setQuery(e.target.value); setActiveIdx(0); }}
               onKeyDown={onKeyDownInput}
-              placeholder="Search…"
+              placeholder={multi ? "Search (paste space/comma separated, press Enter)…" : "Search…"}
               style={{
                 width: "100%",
                 padding: "7px 10px",
@@ -189,35 +236,72 @@ export default function SearchableSelect({
                 outline: "none",
               }}
             />
+            {multi && tokens.length > 1 && (
+              <button
+                type="button"
+                onClick={selectAllTokenMatches}
+                style={{
+                  marginTop: 6,
+                  width: "100%",
+                  padding: "5px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #bfdbfe",
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Add {filtered.length} match{filtered.length !== 1 ? "es" : ""} from {tokens.length} tokens
+              </button>
+            )}
           </div>
           <div ref={listRef} style={{ maxHeight: 280, overflowY: "auto", padding: "4px 0" }}>
-            <div
-              onClick={() => commit("")}
-              style={{
-                padding: "7px 12px",
-                fontSize: "0.84rem",
-                cursor: "pointer",
-                color: value === "" ? "var(--primary, #2563eb)" : "#64748b",
-                fontWeight: value === "" ? 700 : 500,
-                background: value === "" ? "rgba(37,99,235,0.06)" : "transparent",
-              }}
-            >
-              {clearLabel}
-            </div>
+            {!multi && (
+              <div
+                onClick={() => commitSingle("")}
+                style={{
+                  padding: "7px 12px",
+                  fontSize: "0.84rem",
+                  cursor: "pointer",
+                  color: !hasSelection ? "var(--primary, #2563eb)" : "#64748b",
+                  fontWeight: !hasSelection ? 700 : 500,
+                  background: !hasSelection ? "rgba(37,99,235,0.06)" : "transparent",
+                }}
+              >
+                {clearLabel}
+              </div>
+            )}
+            {multi && hasSelection && (
+              <div
+                onClick={clearAll}
+                style={{
+                  padding: "7px 12px",
+                  fontSize: "0.78rem",
+                  cursor: "pointer",
+                  color: "#64748b",
+                  fontWeight: 600,
+                  borderBottom: "1px solid #f1f5f9",
+                }}
+              >
+                Clear {selectedIds.length} selected
+              </div>
+            )}
             {filtered.length === 0 ? (
               <div style={{ padding: "12px", fontSize: "0.82rem", color: "#94a3b8", textAlign: "center" }}>
                 No matches
               </div>
             ) : (
               filtered.map((o, idx) => {
-                const selected = o.id === value;
+                const selected = selectedIds.includes(o.id);
                 const active = idx === activeIdx;
                 return (
                   <div
                     key={o.id}
                     data-idx={idx}
                     onMouseEnter={() => setActiveIdx(idx)}
-                    onClick={() => commit(o.id)}
+                    onClick={() => (multi ? toggleMulti(o.id) : commitSingle(o.id))}
                     style={{
                       padding: "7px 12px",
                       fontSize: "0.84rem",
@@ -228,10 +312,22 @@ export default function SearchableSelect({
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
                     }}
                     title={o.label}
                   >
-                    {o.label}
+                    {multi && (
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => {}}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ margin: 0, pointerEvents: "none" }}
+                      />
+                    )}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{o.label}</span>
                   </div>
                 );
               })

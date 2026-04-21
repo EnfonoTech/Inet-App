@@ -77,8 +77,8 @@ export default function IMWorkDone() {
   const [billingFilter, setBillingFilter] = useState("");
   const [submissionFilter, setSubmissionFilter] = useState("");
   const [execStatusFilter, setExecStatusFilter] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [submissionFor, setSubmissionFor] = useState(null);
@@ -112,8 +112,8 @@ export default function IMWorkDone() {
       const filters = { im: imName || "" };
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
       if (billingFilter) filters.billing_status = billingFilter;
-      if (projectFilter) filters.project_code = projectFilter;
-      if (duidFilter) filters.site_code = duidFilter;
+      if (projectFilter.length) filters.project_code = projectFilter;
+      if (duidFilter.length) filters.site_code = duidFilter;
       if (fromDate) filters.from_date = fromDate;
       if (toDate) filters.to_date = toDate;
       const list = await pmApi.listWorkDoneRows(filters, rowLimit);
@@ -137,7 +137,7 @@ export default function IMWorkDone() {
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = !!(search || billingFilter || submissionFilter || execStatusFilter || projectFilter || duidFilter || fromDate || toDate);
+  const hasFilters = !!(search || billingFilter || submissionFilter || execStatusFilter || projectFilter.length || duidFilter.length || fromDate || toDate);
 
   return (
     <div>
@@ -174,14 +174,14 @@ export default function IMWorkDone() {
           <option value="">All Exec Status</option>
           {EXECUTION_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <SearchableSelect value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-        <SearchableSelect value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter(""); setSubmissionFilter(""); setExecStatusFilter(""); setProjectFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setBillingFilter(""); setSubmissionFilter(""); setExecStatusFilter(""); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

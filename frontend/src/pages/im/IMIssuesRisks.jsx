@@ -77,9 +77,9 @@ export default function IMIssuesRisks() {
   const [tlStatusFilter, setTlStatusFilter] = useState("");
   const [qcFilter, setQcFilter] = useState("");
   const [ciagFilter, setCiagFilter] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
-  const [teamFilter, setTeamFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [teamFilter, setTeamFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selected, setSelected] = useState(new Set());
@@ -104,9 +104,9 @@ export default function IMIssuesRisks() {
     setLoading(true);
     try {
       const portal = {};
-      if (projectFilter) portal.project_code = projectFilter;
-      if (teamFilter) portal.team = teamFilter;
-      if (duidFilter) portal.site_code = duidFilter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (teamFilter.length) portal.team = teamFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
       const portalArg = Object.keys(portal).length ? portal : undefined;
       const res = await pmApi.listIssueRiskRows(
         imName || "",
@@ -147,7 +147,7 @@ export default function IMIssuesRisks() {
     rows.forEach((r) => { if (r.team) m.set(r.team, r.team_name || r.team); });
     return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
   }, [rows]);
-  const hasFilters = search || issueCatFilter || execStatusFilter || tlStatusFilter || qcFilter || ciagFilter || projectFilter || teamFilter || duidFilter || fromDate || toDate;
+  const hasFilters = !!(search || issueCatFilter || execStatusFilter || tlStatusFilter || qcFilter || ciagFilter || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   useEffect(() => {
     if (!showModal || !imName) return;
@@ -236,15 +236,15 @@ export default function IMIssuesRisks() {
           <option value="">All Exec Status</option>
           {EXECUTION_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <SearchableSelect value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-        <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
-        <SearchableSelect value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
+        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setIssueCatFilter(""); setExecStatusFilter(""); setTlStatusFilter(""); setQcFilter(""); setCiagFilter(""); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setIssueCatFilter(""); setExecStatusFilter(""); setTlStatusFilter(""); setQcFilter(""); setCiagFilter(""); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

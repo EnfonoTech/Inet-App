@@ -72,6 +72,55 @@ def _portal_filters_dict(portal_filters):
     return portal_filters if isinstance(portal_filters, dict) else {}
 
 
+def _ensure_list(raw):
+    """Coerce a filter value (string / JSON array / list) into a deduped list
+    of non-empty stripped strings. Enables multi-select on any filter that
+    previously only accepted a single value."""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple, set)):
+        items = list(raw)
+    elif isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        # JSON array?
+        if s[0] == "[":
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    items = parsed
+                else:
+                    items = [s]
+            except Exception:
+                items = [s]
+        else:
+            items = [s]
+    else:
+        items = [raw]
+    seen = set()
+    out = []
+    for it in items:
+        v = str(it or "").strip()
+        if not v or v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
+
+
+def _sql_in_or_eq(expr, raw):
+    """Build ``expr = %s`` or ``expr IN (%s, %s, …)`` with params for a single
+    or multi-value filter. Returns (clause_or_None, params)."""
+    vals = _ensure_list(raw)
+    if not vals:
+        return None, []
+    if len(vals) == 1:
+        return f"{expr} = %s", vals
+    ph = ", ".join(["%s"] * len(vals))
+    return f"{expr} IN ({ph})", vals
+
+
 def _sql_like_pattern(term):
     """Build a LIKE pattern with % wildcards; escape % and _ in user input."""
     t = (term or "").strip()
@@ -82,12 +131,13 @@ def _sql_like_pattern(term):
 
 
 def _sql_like_tokens(term, max_tokens=50):
-    """Split a free-text search on newlines / commas / semicolons / pipes /
-    tabs into individual LIKE patterns. Spaces are preserved within a token so
-    phrases (e.g. team names) keep working for the single-value case."""
+    """Split a free-text search on whitespace / commas / semicolons / pipes
+    into individual LIKE patterns. Any row matching any token is returned
+    (OR'd). Multi-word phrases are not preserved — users who need phrase
+    matching should paste a distinctive substring instead."""
     if not term:
         return []
-    raw = re.split(r"[\n,;|\t]+", str(term))
+    raw = re.split(r"[\s,;|]+", str(term))
     seen = set()
     out = []
     for piece in raw:
@@ -3614,27 +3664,24 @@ def list_work_done_rows(filters=None, limit=500):
 
     wheres = ["1=1"]
     params = []
-    if filters.get("billing_status"):
-        wheres.append("wd.billing_status = %s")
-        params.append(filters["billing_status"])
-    if filters.get("team"):
-        wheres.append("IFNULL(rp.team, de.team) = %s")
-        params.append(filters["team"])
-    if filters.get("project_code"):
-        wheres.append("IFNULL(pd.project_code,'') = %s")
-        params.append((filters.get("project_code") or "").strip())
-    if filters.get("site_code"):
-        wheres.append("IFNULL(pd.site_code,'') = %s")
-        params.append((filters.get("site_code") or "").strip())
-    if filters.get("im"):
-        imv = (filters.get("im") or "").strip()
+    for col, key in (("wd.billing_status", "billing_status"),
+                     ("IFNULL(rp.team, de.team)", "team"),
+                     ("IFNULL(pd.project_code,'')", "project_code"),
+                     ("IFNULL(pd.site_code,'')", "site_code")):
+        c, p = _sql_in_or_eq(col, filters.get(key))
+        if c:
+            wheres.append(c)
+            params.extend(p)
+    im_vals = _ensure_list(filters.get("im"))
+    if im_vals:
         rp_im_col = frappe.db.has_column("Rollout Plan", "im")
+        ph = ", ".join(["%s"] * len(im_vals))
         if rp_im_col:
-            wheres.append("(IFNULL(pd.im,'') = %s OR IFNULL(rp.im,'') = %s)")
-            params.extend([imv, imv])
+            wheres.append(f"(IFNULL(pd.im,'') IN ({ph}) OR IFNULL(rp.im,'') IN ({ph}))")
+            params.extend(im_vals + im_vals)
         else:
-            wheres.append("IFNULL(pd.im,'') = %s")
-            params.append(imv)
+            wheres.append(f"IFNULL(pd.im,'') IN ({ph})")
+            params.extend(im_vals)
     if filters.get("from_date"):
         wheres.append("de.execution_date >= %s")
         params.append(filters["from_date"])
@@ -3930,15 +3977,13 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             params.append(im_filter_value)
 
     pf_ir = _portal_filters_dict(portal_filters)
-    if (pf_ir.get("project_code") or "").strip():
-        wheres.append("IFNULL(pd.project_code,'') = %s")
-        params.append(pf_ir["project_code"].strip())
-    if (pf_ir.get("site_code") or "").strip():
-        wheres.append("IFNULL(pd.site_code,'') = %s")
-        params.append(pf_ir["site_code"].strip())
-    if (pf_ir.get("team") or "").strip():
-        wheres.append("IFNULL(rp.team,'') = %s")
-        params.append(pf_ir["team"].strip())
+    for col, key in (("IFNULL(pd.project_code,'')", "project_code"),
+                     ("IFNULL(pd.site_code,'')", "site_code"),
+                     ("IFNULL(rp.team,'')", "team")):
+        c, p = _sql_in_or_eq(col, pf_ir.get(key))
+        if c:
+            wheres.append(c)
+            params.extend(p)
 
     like_pat = _sql_like_pattern(search or "")
     if like_pat:
