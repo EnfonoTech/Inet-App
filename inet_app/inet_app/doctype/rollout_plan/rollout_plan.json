@@ -23,7 +23,8 @@
   "completion_pct",
   "plan_status",
   "section_break_ceaq",
-  "issue_category"
+  "issue_category",
+  "issue_remarks"
  ],
  "fields": [
   {
@@ -54,6 +55,12 @@
    "fieldtype": "Select",
    "label": "Issue Category",
    "options": "\nLate Arrival\nExtra Visit\nPAT Rejection\nQC Rejection\nPOD Pending\nSpare Parts Pending\nSite Access Issue\nMaterial Shortage\nCustomer Hold\nOther"
+  },
+  {
+   "description": "Free-text notes entered when a re-plan is created from Issues & Risks.",
+   "fieldname": "issue_remarks",
+   "fieldtype": "Small Text",
+   "label": "Issue Remarks"
   },
   {
    "fieldname": "team",

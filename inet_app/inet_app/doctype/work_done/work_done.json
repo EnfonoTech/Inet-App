@@ -19,6 +19,7 @@
   "total_cost_sar",
   "margin_sar",
   "inet_margin_pct",
+  "submission_status",
   "billing_status"
  ],
  "fields": [
@@ -103,6 +104,14 @@
    "in_list_view": 1,
    "label": "Billing Status",
    "options": "Pending\nInvoiced\nClosed"
+  },
+  {
+   "description": "IM-set status: 'Ready for Confirmation' when Work Done is ready for the customer, 'Confirmation Done' once acknowledged. Blank until IM sets it.",
+   "fieldname": "submission_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Submission Status",
+   "options": "\nReady for Confirmation\nConfirmation Done"
   },
   {
    "fieldname": "column_break_wrgw",

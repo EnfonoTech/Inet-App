@@ -297,6 +297,7 @@ export default function IMPlanning() {
                   <th>IM</th>
                   <th>Plan Date</th>
                   <th>Visit</th>
+                  <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
                   <th>Status</th>
                   <th style={{ textAlign: "right" }}>Target (SAR)</th>
                   <th>View</th>
@@ -331,6 +332,7 @@ export default function IMPlanning() {
                     <td style={{ fontSize: "0.82rem" }}>{p.im_full_name || p.dispatch_im || "—"}</td>
                     <td>{p.plan_date}</td>
                     <td>{p.visit_type}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{p.visit_number != null ? p.visit_number : "—"}</td>
                     <td>
                       <span className={`status-badge ${(p.plan_status || "").toLowerCase().replace(/\s/g, "-")}`}>
                         <span className="status-dot" />

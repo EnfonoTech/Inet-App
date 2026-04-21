@@ -13,6 +13,49 @@ const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 const PLAN_STATUS_OPTIONS = ["", "Planned", "In Execution", "Completed", "Cancelled", "Planning with Issue"];
 
+function badgeTone(value) {
+  const s = String(value || "").toLowerCase();
+  if (!s) return { bg: "#f1f5f9", fg: "#334155", dot: "#64748b" };
+  const tones = {
+    "in progress": { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" },
+    completed: { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" },
+    hold: { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" },
+    cancelled: { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" },
+    postponed: { bg: "#fefce8", fg: "#a16207", dot: "#eab308" },
+  };
+  if (tones[s]) return tones[s];
+  if (s.includes("complete") || s.includes("approved") || s.includes("done") || s.includes("pass")) return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
+  if (s.includes("cancel") || s.includes("reject") || s.includes("fail")) return { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" };
+  if (s.includes("progress") || s.includes("review") || s.includes("open")) return { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" };
+  if (s.includes("hold") || s.includes("pending") || s.includes("wait") || s.includes("postponed")) return { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" };
+  return { bg: "#f8fafc", fg: "#334155", dot: "#64748b" };
+}
+
+function StatusPill({ value }) {
+  if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
+  const tone = badgeTone(value);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 10px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        background: tone.bg,
+        color: tone.fg,
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: tone.dot }} />
+      {value}
+    </span>
+  );
+}
+
 function statusBadgeClass(status) {
   if (!status) return "";
   const s = status.toLowerCase().replace(/\s+/g, "-");
@@ -336,6 +379,7 @@ export default function ExecutionMonitor() {
                   <th>IM</th>
                   <th>Plan Date</th>
                   <th>Visit Type</th>
+                  <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
                   <th style={{ textAlign: "right" }}>Target</th>
                   <th style={{ textAlign: "right" }}>Achieved</th>
                   <th>Plan Status</th>
@@ -374,6 +418,7 @@ export default function ExecutionMonitor() {
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.plan_date}</td>
                       <td>{row.visit_type}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(target)}</td>
                       <td style={{ textAlign: "right" }}>
                         <span style={{ color: pct >= 80 ? "var(--green)" : pct >= 40 ? "var(--amber)" : "var(--red)" }}>
@@ -399,10 +444,10 @@ export default function ExecutionMonitor() {
                               setTlStatusPick(row.tl_status || "In Progress");
                               setTlStatusFor(row);
                             }}
-                            style={{ border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: "0.78rem", fontWeight: 600 }}
+                            style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
                             title="Click to change TL status"
                           >
-                            {row.tl_status || "— Set —"}
+                            <StatusPill value={row.tl_status} />
                           </button>
                         ) : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}
                       </td>
@@ -445,7 +490,7 @@ export default function ExecutionMonitor() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={21} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={22} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{rows.length}</strong>
                     {" "}record{rows.length !== 1 ? "s" : ""}
                   </td>

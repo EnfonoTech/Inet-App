@@ -220,10 +220,11 @@ export const pmApi = {
   },
   getDuidOverview:      (duid, poNo) =>
     call("inet_app.api.command_center.get_duid_overview", { duid: duid || "", po_no: poNo || "" }),
-  reopenRolloutForRevisit: (rolloutPlan, issueCategory) =>
+  reopenRolloutForRevisit: (rolloutPlan, issueCategory, issueRemarks) =>
     call("inet_app.api.command_center.reopen_rollout_for_revisit", {
       rollout_plan: rolloutPlan,
       issue_category: issueCategory || "",
+      issue_remarks: issueRemarks || "",
     }),
   createIMDummyPODispatch: (payload) =>
     call("inet_app.api.command_center.create_im_dummy_po_dispatch", {
@@ -357,6 +358,7 @@ export const pmApi = {
   getTablePreferences:  (table_id) => call("inet_app.api.command_center.get_table_preferences", { table_id }),
   getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
+  updateWorkDoneSubmission: (name, submission_status) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status }),
   getDistinctFieldValues: (doctype, fields) =>
     callCached(
       "inet_app.api.command_center.get_distinct_field_values",

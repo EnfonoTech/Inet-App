@@ -125,6 +125,7 @@ export default function IMExecution() {
   const searchDebounced = useDebounced(search, 300);
   const [reopenFor, setReopenFor] = useState(null);
   const [issueCategory, setIssueCategory] = useState("");
+  const [reopenRemarks, setReopenRemarks] = useState("");
   const [reopenBusy, setReopenBusy] = useState(false);
   const [reopenErr, setReopenErr] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
@@ -225,9 +226,10 @@ export default function IMExecution() {
     setReopenBusy(true);
     setReopenErr(null);
     try {
-      await pmApi.reopenRolloutForRevisit(reopenFor, issueCategory);
+      await pmApi.reopenRolloutForRevisit(reopenFor, issueCategory, reopenRemarks);
       setReopenFor(null);
       setIssueCategory("");
+      setReopenRemarks("");
       await loadExecutions();
     } catch (err) {
       setReopenErr(err.message || "Failed");
@@ -381,8 +383,18 @@ export default function IMExecution() {
                 ))}
               </select>
             </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Issue remarks (optional)</label>
+              <textarea
+                value={reopenRemarks}
+                onChange={(e) => setReopenRemarks(e.target.value)}
+                rows={3}
+                placeholder="Why is this rollout returning to planning? Shown on the re-visit plan and in Issues & Risks."
+                style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.84rem", resize: "vertical" }}
+              />
+            </div>
             <button className="btn-primary" disabled={reopenBusy} onClick={submitReopen}>{reopenBusy ? "…" : "Confirm"}</button>
-            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setReopenFor(null)}>Cancel</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => { setReopenFor(null); setReopenRemarks(""); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -635,6 +647,7 @@ export default function IMExecution() {
                   <th>QC</th>
                   <th>CIAG</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
+                  <th style={{ textAlign: "right" }} title="Which visit this execution is (1, 2, 3…)">Visit #</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -757,6 +770,7 @@ export default function IMExecution() {
                       )}
                     </td>
                     <td style={{ textAlign: "right" }}>{e.achieved_qty || 0}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{e.visit_number != null ? e.visit_number : "—"}</td>
                     <td>
                       <button
                         type="button"
@@ -782,12 +796,13 @@ export default function IMExecution() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={18} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                  <td colSpan={21} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                     {executions.length} row{executions.length !== 1 ? "s" : ""}
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     {fmt.format(totalAchieved)}
                   </td>
+                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                   <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                 </tr>
               </tfoot>

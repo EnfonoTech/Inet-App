@@ -12,13 +12,47 @@ const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 const BILLING_STATUSES = ["", "Pending", "Invoiced", "Closed"];
 
-function billingBadgeClass(status) {
-  if (!status) return "new";
-  const s = status.toLowerCase();
-  if (s === "closed") return "completed";
-  if (s === "invoiced") return "in-progress";
-  if (s === "pending") return "in-progress";
-  return "new";
+function badgeTone(value) {
+  const s = String(value || "").toLowerCase();
+  if (!s) return { bg: "#f1f5f9", fg: "#334155", dot: "#64748b" };
+  const tones = {
+    pending: { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" },
+    invoiced: { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" },
+    closed: { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" },
+    "ready for confirmation": { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" },
+    "confirmation done": { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" },
+  };
+  if (tones[s]) return tones[s];
+  if (s.includes("complete") || s.includes("approved") || s.includes("done") || s.includes("pass")) return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
+  if (s.includes("cancel") || s.includes("reject") || s.includes("fail")) return { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" };
+  if (s.includes("progress") || s.includes("review") || s.includes("open")) return { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" };
+  if (s.includes("hold") || s.includes("pending") || s.includes("wait") || s.includes("postponed")) return { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" };
+  return { bg: "#f8fafc", fg: "#334155", dot: "#64748b" };
+}
+
+function StatusPill({ value }) {
+  if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
+  const tone = badgeTone(value);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 10px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        background: tone.bg,
+        color: tone.fg,
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: tone.dot }} />
+      {value}
+    </span>
+  );
 }
 
 function DetailItem({ label, value }) {
@@ -72,6 +106,25 @@ export default function WorkDone() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [detailRow, setDetailRow] = useState(null);
+  const [submissionFor, setSubmissionFor] = useState(null);
+  const [submissionPick, setSubmissionPick] = useState("");
+  const [submissionBusy, setSubmissionBusy] = useState(false);
+  const [submissionErr, setSubmissionErr] = useState(null);
+
+  async function submitSubmission() {
+    if (!submissionFor?.name) return;
+    setSubmissionBusy(true);
+    setSubmissionErr(null);
+    try {
+      await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick);
+      setSubmissionFor(null);
+      loadData();
+    } catch (err) {
+      setSubmissionErr(err.message || "Failed to update submission status");
+    } finally {
+      setSubmissionBusy(false);
+    }
+  }
 
   useResetOnRowLimitChange(() => {
     setRows([]);
@@ -116,10 +169,8 @@ export default function WorkDone() {
     (acc, r) => ({
       qty: acc.qty + (parseFloat(r.executed_qty) || 0),
       revenue: acc.revenue + (parseFloat(r.revenue_sar || r.revenue || r.line_amount) || 0),
-      cost: acc.cost + (parseFloat(r.total_cost_sar || r.cost) || 0),
-      margin: acc.margin + (parseFloat(r.margin_sar || r.margin) || 0),
     }),
-    { qty: 0, revenue: 0, cost: 0, margin: 0 }
+    { qty: 0, revenue: 0 }
   );
 
   return (
@@ -227,10 +278,10 @@ export default function WorkDone() {
                   <th>Team</th>
                   <th>IM</th>
                   <th>Exec Date</th>
+                  <th style={{ textAlign: "right" }} title="Which visit this work-done is (1, 2, 3…)">Visit #</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
-                  <th style={{ textAlign: "right" }}>Cost</th>
-                  <th style={{ textAlign: "right" }}>Margin</th>
+                  <th>Submission Status</th>
                   <th>Billing Status</th>
                   <th>Open</th>
                 </tr>
@@ -238,8 +289,6 @@ export default function WorkDone() {
               <tbody>
                 {rows.map((row) => {
                   const revenue = parseFloat(row.revenue_sar || row.revenue || row.line_amount) || 0;
-                  const cost = parseFloat(row.total_cost_sar || row.cost) || 0;
-                  const margin = parseFloat(row.margin_sar || row.margin) || revenue - cost;
                   return (
                     <tr key={row.name}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
@@ -261,18 +310,25 @@ export default function WorkDone() {
                       <td>{row.team_name || row.team || "—"}</td>
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.execution_date || "—"}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.executed_qty}</td>
                       <td style={{ textAlign: "right", color: "var(--green)" }}>{fmt.format(revenue)}</td>
-                      <td style={{ textAlign: "right" }}>{fmt.format(cost)}</td>
-                      <td style={{ textAlign: "right", color: margin >= 0 ? "var(--green)" : "var(--red)" }}>
-                        {fmt.format(margin)}
-                      </td>
                       <td>
-                        <span className={`status-badge ${billingBadgeClass(row.billing_status)}`}>
-                          <span className="status-dot" />
-                          {row.billing_status || "Pending"}
-                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSubmissionErr(null);
+                            setSubmissionPick(row.submission_status || "");
+                            setSubmissionFor(row);
+                          }}
+                          style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
+                          title="Click to change submission status"
+                        >
+                          <StatusPill value={row.submission_status} />
+                        </button>
                       </td>
+                      <td><StatusPill value={row.billing_status} /></td>
                       <td>
                         <button
                           type="button"
@@ -289,20 +345,14 @@ export default function WorkDone() {
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
-                  <td colSpan={12} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
+                  <td colSpan={14} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
                     TOTALS ({rows.length} rows)
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px" }}>{fmt.format(totals.qty)}</td>
                   <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "10px 16px" }}>
                     {fmt.format(totals.revenue)}
                   </td>
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px" }}>{fmt.format(totals.cost)}</td>
-                  <td style={{
-                    textAlign: "right", fontWeight: 700, padding: "10px 16px",
-                    color: totals.margin >= 0 ? "var(--green)" : "var(--red)",
-                  }}>
-                    {fmt.format(totals.margin)}
-                  </td>
+                  <td />
                   <td />
                   <td />
                 </tr>
@@ -317,6 +367,26 @@ export default function WorkDone() {
           filterActive={!!hasFilters}
         />
       </div>
+
+      {submissionFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSubmissionFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>Submission status: {submissionFor.name}</h4>
+            {submissionErr && <div className="notice error" style={{ marginBottom: 10 }}>{submissionErr}</div>}
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>Status</label>
+              <select value={submissionPick} onChange={(e) => setSubmissionPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
+                <option value="">— Not set —</option>
+                <option value="Ready for Confirmation">Ready for Confirmation</option>
+                <option value="Confirmation Done">Confirmation Done</option>
+              </select>
+            </div>
+            <button className="btn-primary" disabled={submissionBusy} onClick={submitSubmission}>{submissionBusy ? "…" : "Save"}</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setSubmissionFor(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {detailRow && (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}

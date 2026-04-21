@@ -1948,6 +1948,31 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
     return rows
 
 
+def _next_visit_number_for_dispatch(po_dispatch_name):
+    """Return the visit number for a NEW Rollout Plan on this POID.
+
+    The first plan is visit #1, the next (re-visit) is #2, and so on. Uses
+    MAX(visit_number) and COUNT(*) together so an already-filled column with
+    gaps still advances monotonically.
+    """
+    if not po_dispatch_name:
+        return 1
+    try:
+        row = frappe.db.sql(
+            "SELECT COALESCE(MAX(visit_number), 0) AS max_v, COUNT(*) AS cnt "
+            "FROM `tabRollout Plan` WHERE po_dispatch = %s",
+            (po_dispatch_name,),
+            as_dict=True,
+        )
+    except Exception:
+        return 1
+    if not row:
+        return 1
+    max_v = cint(row[0].get("max_v") or 0)
+    cnt = cint(row[0].get("cnt") or 0)
+    return max(max_v, cnt) + 1
+
+
 def _batch_customer_activity_types(rows, customer_key="customer", item_key="item_code"):
     """Return {(customer, item_code): customer_activity_type} from Customer
     Item Master for every unique (customer, item) pair in `rows`. Picks the
@@ -2606,9 +2631,16 @@ def create_rollout_plans(payload):
         doc.access_time = access_time
         doc.access_period = access_period or None
         doc.visit_type = visit_type
+        # Visit # advances per POID: 1st plan = 1, 2nd = 2 (Re-Visit), etc.
+        doc.visit_number = _next_visit_number_for_dispatch(dispatch_name)
         doc.visit_multiplier = visit_multiplier
         doc.target_amount = flt(dispatch.line_amount) * visit_multiplier
         doc.plan_status = "Planned"
+        # Issue & Risk fields — only attached when a re-plan carries them.
+        if payload.get("issue_category"):
+            doc.issue_category = str(payload["issue_category"])[:140]
+        if payload.get("issue_remarks") and hasattr(doc, "issue_remarks"):
+            doc.issue_remarks = str(payload["issue_remarks"])[:2000]
         if hasattr(doc, "region_type"):
             doc.region_type = dispatch.get("region_type") or region_type_from_center_area(
                 dispatch.get("center_area")
@@ -3249,6 +3281,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
         "team",
         "plan_date",
         "visit_type",
+        "visit_number",
         "target_amount",
         "achieved_amount",
         "completion_pct",
@@ -3474,6 +3507,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "im_full_name": im_name_map.get(im_key) if im_key else None,
                 "plan_date": p.plan_date,
                 "visit_type": p.visit_type,
+                "visit_number": p.get("visit_number") if p else None,
                 "target_amount": flt(p.target_amount or 0),
                 "achieved_amount": flt(p.achieved_amount or 0),
                 "completion_pct": flt(p.completion_pct or 0),
@@ -3535,6 +3569,8 @@ def list_work_done_rows(filters=None, limit=500):
     ]
     if frappe.db.has_column("Work Done", "region_type"):
         wd_fields.append("region_type")
+    if frappe.db.has_column("Work Done", "submission_status"):
+        wd_fields.append("submission_status")
     lim = _portal_row_limit(limit, 500)
 
     wheres = ["1=1"]
@@ -3636,10 +3672,13 @@ def list_work_done_rows(filters=None, limit=500):
     exec_names = [r.execution for r in rows if r.execution]
     ex_map = {}
     if exec_names:
+        de_fields = ["name", "rollout_plan", "execution_date", "execution_status", "team", "qc_status", "remarks"]
+        if frappe.db.has_column("Daily Execution", "ciag_status"):
+            de_fields.append("ciag_status")
         ex_rows = frappe.get_all(
             "Daily Execution",
             filters={"name": ["in", exec_names]},
-            fields=["name", "rollout_plan", "execution_date", "execution_status", "team"],
+            fields=de_fields,
             limit_page_length=rel_cap,
         )
         ex_map = {e.name: e for e in ex_rows}
@@ -3647,7 +3686,7 @@ def list_work_done_rows(filters=None, limit=500):
     plan_names = [e.rollout_plan for e in ex_map.values() if e.rollout_plan]
     rp_map = {}
     if plan_names:
-        rp_fields_wd = ["name", "po_dispatch", "plan_date", "visit_type", "team"]
+        rp_fields_wd = ["name", "po_dispatch", "plan_date", "visit_type", "visit_number", "team", "creation"]
         if frappe.db.has_column("Rollout Plan", "region_type"):
             rp_fields_wd.append("region_type")
         if frappe.db.has_column("Rollout Plan", "im"):
@@ -3663,7 +3702,7 @@ def list_work_done_rows(filters=None, limit=500):
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
     pd_map = {}
     if dispatch_names:
-        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer"]
+        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer", "line_amount", "po_line_no", "dispatch_status"]
         if frappe.db.has_column("PO Dispatch", "poid"):
             pd_fields_wd.append("poid")
         if frappe.db.has_column("PO Dispatch", "im"):
@@ -3700,6 +3739,20 @@ def list_work_done_rows(filters=None, limit=500):
     team_name_map_wd = _batch_inet_team_names(list(team_prefetch))
     im_name_map_wd = _batch_im_master_full_names(list(im_prefetch))
 
+    project_codes = {pd.project_code for pd in pd_map.values() if pd.get("project_code")}
+    project_name_map = {}
+    if project_codes:
+        try:
+            proj_rows = frappe.get_all(
+                "Project Control Center",
+                filters={"name": ["in", list(project_codes)]},
+                fields=["name", "project_name"],
+                limit_page_length=len(project_codes) + 1,
+            )
+            project_name_map = {p.name: p.project_name for p in proj_rows}
+        except Exception:
+            project_name_map = {}
+
     out = []
     for r in rows:
         ex = ex_map.get(r.execution)
@@ -3734,8 +3787,17 @@ def list_work_done_rows(filters=None, limit=500):
                 "customer": pd.get("customer") if pd else None,
                 "execution_date": ex_date,
                 "execution_status": ex.execution_status if ex else None,
+                "qc_status": ex.get("qc_status") if ex else None,
+                "ciag_status": ex.get("ciag_status") if ex else None,
+                "execution_remarks": ex.get("remarks") if ex else None,
                 "plan_date": rp.plan_date if rp else None,
                 "visit_type": rp.visit_type if rp else None,
+                "visit_number": rp.get("visit_number") if rp else None,
+                "planning_timestamp": rp.get("creation") if rp else None,
+                "dispatch_seq": pd.get("po_line_no") if pd else None,
+                "dispatch_status": pd.get("dispatch_status") if pd else None,
+                "line_amount": pd.get("line_amount") if pd else None,
+                "project_name": project_name_map.get(project_code) if project_code else None,
                 "original_dummy_poid": (
                     (pd.get("original_dummy_poid") or "").strip()
                     if pd and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
@@ -3748,6 +3810,23 @@ def list_work_done_rows(filters=None, limit=500):
         for r in out:
             r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
     return out
+
+
+@frappe.whitelist()
+def update_work_done_submission(name, submission_status):
+    """IM sets Work Done submission status: 'Ready for Confirmation' or
+    'Confirmation Done'."""
+    name = (name or "").strip()
+    status = (submission_status or "").strip()
+    if not name:
+        frappe.throw("name is required")
+    if status not in ("Ready for Confirmation", "Confirmation Done", ""):
+        frappe.throw("Invalid submission_status")
+    if not frappe.db.exists("Work Done", name):
+        frappe.throw(f"Work Done not found: {name}")
+    frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
+    frappe.db.commit()
+    return {"name": name, "submission_status": status}
 
 
 @frappe.whitelist()
@@ -3775,7 +3854,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         frappe.throw("Not permitted", frappe.PermissionError)
 
     im_filter_value = (im or "").strip()
-    if is_im:
+    if is_im and not is_admin:
         im_filter_value, _, _ = resolve_im_for_session(im_filter_value)
         if not im_filter_value:
             return []
@@ -3788,7 +3867,18 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
     ciag_sel_ir = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL AS ciag_status"
     lim_ir = _portal_row_limit(limit, 1000)
 
-    wheres = ["rp.plan_status = 'Planning with Issue'"]
+    # Once a re-visit plan is created for the same POID, the source plan is
+    # considered addressed — hide it from Issues & Risks. We detect that by
+    # checking if any plan with a higher visit_number exists for the same
+    # po_dispatch.
+    wheres = [
+        "rp.plan_status = 'Planning with Issue'",
+        "NOT EXISTS ("
+        " SELECT 1 FROM `tabRollout Plan` rp_later"
+        " WHERE rp_later.po_dispatch = rp.po_dispatch"
+        " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)"
+        ")",
+    ]
     params = []
     if im_filter_value:
         if frappe.db.has_column("Rollout Plan", "im"):
@@ -3855,6 +3945,8 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
             rp.plan_status,
             rp.issue_category,
+            rp.issue_remarks,
+            rp.visit_number,
             rp.plan_date,
             rp.visit_type,
             rp.team,
@@ -3866,10 +3958,16 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             pd.project_code,
             pd.site_code,
             pd.site_name,
+            pd.item_code,
+            pd.item_description,
+            pd.line_amount,
             pd.center_area,
             pd.region_type,
             de.name AS execution_name,
+            de.execution_date,
             de.execution_status,
+            de.tl_status,
+            de.remarks AS execution_remarks,
             de.qc_status,
             {ciag_sel_ir}
         FROM `tabRollout Plan` rp
@@ -3877,7 +3975,15 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
         {rp_im_join_ir}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
-        LEFT JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
+        LEFT JOIN `tabDaily Execution` de ON de.name = (
+            SELECT de2.name
+            FROM `tabDaily Execution` de2
+            INNER JOIN `tabRollout Plan` rp2 ON rp2.name = de2.rollout_plan
+            WHERE rp2.po_dispatch = rp.po_dispatch
+            AND IFNULL(rp2.visit_number, 0) <= IFNULL(rp.visit_number, 0)
+            ORDER BY IFNULL(rp2.visit_number,0) DESC, de2.modified DESC
+            LIMIT 1
+        )
         WHERE rp.name IN ({ph})
         ORDER BY rp.modified DESC, de.modified DESC
         """,
@@ -3896,8 +4002,11 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             {
                 "rollout_plan": rp_name,
                 "po_dispatch": r.get("po_dispatch"),
+                "poid": r.get("poid"),
                 "plan_status": r.get("plan_status"),
                 "issue_category": r.get("issue_category"),
+                "issue_remarks": r.get("issue_remarks"),
+                "visit_number": r.get("visit_number"),
                 "plan_date": r.get("plan_date"),
                 "visit_type": r.get("visit_type"),
                 "team": r.get("team"),
@@ -3908,10 +4017,16 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
                 "project_code": r.get("project_code"),
                 "site_code": r.get("site_code"),
                 "site_name": r.get("site_name"),
+                "item_code": r.get("item_code"),
+                "item_description": r.get("item_description"),
+                "line_amount": r.get("line_amount"),
                 "center_area": r.get("center_area"),
                 "region_type": r.get("region_type"),
                 "execution_name": r.get("execution_name"),
+                "execution_date": r.get("execution_date"),
                 "execution_status": r.get("execution_status"),
+                "tl_status": r.get("tl_status"),
+                "execution_remarks": r.get("execution_remarks"),
                 "qc_status": r.get("qc_status"),
                 "ciag_status": r.get("ciag_status"),
                 "modified": r.get("modified"),
@@ -4570,6 +4685,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         f"""
         SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan,
                COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
+               rp.visit_number, rp.visit_type,
                de.team, de.execution_date,
                de.execution_status, de.tl_status, de.issue_category,
                de.achieved_qty, de.achieved_amount, de.gps_location,
@@ -4672,7 +4788,7 @@ def get_duid_overview(duid=None, po_no=None):
 
 
 @frappe.whitelist()
-def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route=None):
+def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route=None, issue_remarks=None):
     """
     Re-visit workflow: move job back to planning with issue.
     Non-completed executions for this plan are cancelled.
@@ -4695,7 +4811,19 @@ def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route
     )
 
     if existing_revisit and existing_revisit != rollout_plan:
+        # Re-stamp the existing re-visit with the new issue context so it
+        # reappears on Issues & Risks. Also force plan_status back to
+        # "Planning with Issue" in case it was moved elsewhere.
         revisit_name = existing_revisit
+        restamp = {
+            "plan_status": "Planning with Issue",
+            "issue_category": (issue_category or "")[:140],
+        }
+        if frappe.db.has_column("Rollout Plan", "issue_remarks") and issue_remarks:
+            restamp["issue_remarks"] = str(issue_remarks)[:2000]
+        frappe.db.set_value(
+            "Rollout Plan", existing_revisit, restamp, update_modified=True
+        )
     else:
         revisit = frappe.new_doc("Rollout Plan")
         revisit.po_dispatch = source.po_dispatch
@@ -4709,6 +4837,7 @@ def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route
         if hasattr(revisit, "access_period"):
             revisit.access_period = getattr(source, "access_period", None)
         revisit.visit_type = "Re-Visit"
+        revisit.visit_number = _next_visit_number_for_dispatch(source.po_dispatch)
         pd_reg = frappe.db.get_value(
             "PO Dispatch", source.po_dispatch, ["region_type", "center_area"], as_dict=True
         ) or {}
@@ -4724,16 +4853,21 @@ def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route
         revisit.target_amount = tgt_src * rev_mult if tgt_src > 0 else 0
         revisit.plan_status = new_status
         revisit.issue_category = (issue_category or "")[:140]
+        if hasattr(revisit, "issue_remarks") and issue_remarks:
+            revisit.issue_remarks = str(issue_remarks)[:2000]
         if hasattr(revisit, "source_rollout_plan"):
             revisit.source_rollout_plan = rollout_plan
         revisit.insert(ignore_permissions=True)
         revisit_name = revisit.name
 
     # Keep source plan as historical record; do not overwrite to Re-Visit.
+    source_updates = {"issue_category": (issue_category or "")[:140]}
+    if frappe.db.has_column("Rollout Plan", "issue_remarks") and issue_remarks:
+        source_updates["issue_remarks"] = str(issue_remarks)[:2000]
     frappe.db.set_value(
         "Rollout Plan",
         rollout_plan,
-        {"issue_category": (issue_category or "")[:140]},
+        source_updates,
         update_modified=True,
     )
 
