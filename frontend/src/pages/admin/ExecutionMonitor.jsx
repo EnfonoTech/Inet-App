@@ -341,6 +341,8 @@ export default function ExecutionMonitor() {
                   <th>Plan Status</th>
                   <th>TL Status</th>
                   <th>Exec Status</th>
+                  <th>QC</th>
+                  <th>CIAG</th>
                   <th>Issue Category</th>
                   <th>Open</th>
                 </tr>
@@ -407,12 +409,9 @@ export default function ExecutionMonitor() {
                           </button>
                         ) : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}
                       </td>
-                      <td>
-                        <span className={`status-badge ${statusBadgeClass(row.execution_status || "Planned")}`}>
-                          <span className="status-dot" />
-                          {row.execution_status || "—"}
-                        </span>
-                      </td>
+                      <td><StatusPill value={row.execution_status} /></td>
+                      <td>{row.execution_name ? <StatusPill value={row.qc_status} /> : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}</td>
+                      <td>{row.execution_name ? <StatusPill value={row.ciag_status} /> : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}</td>
                       <td>
                         {row.execution_name ? (
                           <button
@@ -446,7 +445,7 @@ export default function ExecutionMonitor() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={22} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={24} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{rows.length}</strong>
                     {" "}record{rows.length !== 1 ? "s" : ""}
                   </td>

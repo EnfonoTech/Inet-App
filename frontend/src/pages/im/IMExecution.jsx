@@ -389,7 +389,7 @@ export default function IMExecution() {
                 value={reopenRemarks}
                 onChange={(e) => setReopenRemarks(e.target.value)}
                 rows={3}
-                placeholder="Why is this rollout returning to planning? Shown on the re-visit plan and in Issues & Risks."
+                placeholder=""
                 style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.84rem", resize: "vertical" }}
               />
             </div>
@@ -601,7 +601,7 @@ export default function IMExecution() {
                   <th>CIAG</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }} title="Which visit this execution is (1, 2, 3…)">Visit #</th>
-                  <th>Actions</th>
+                  <th style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -724,25 +724,27 @@ export default function IMExecution() {
                     </td>
                     <td style={{ textAlign: "right" }}>{e.achieved_qty || 0}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{e.visit_number != null ? e.visit_number : "—"}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        style={{ fontSize: "0.72rem", padding: "4px 8px", marginRight: 6 }}
-                        onClick={() => setDetailRow(e)}
-                      >
-                        View
-                      </button>
-                      {!e.work_done && (
+                    <td style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                         <button
                           type="button"
                           className="btn-secondary"
-                          style={{ fontSize: "0.72rem", padding: "4px 8px" }}
-                          onClick={() => setReopenFor(e.rollout_plan)}
+                          style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}
+                          onClick={() => setDetailRow(e)}
                         >
-                          Re-plan
+                          View
                         </button>
-                      )}
+                        {!e.work_done && (
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}
+                            onClick={() => setReopenFor(e.rollout_plan)}
+                          >
+                            Re-plan
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

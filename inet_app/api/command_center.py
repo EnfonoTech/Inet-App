@@ -3420,6 +3420,21 @@ def list_execution_monitor_rows(filters=None, limit=500):
         ex_sql += " LIMIT 1)"
         wheres.append(ex_sql)
 
+    # Once the line is fully closed (exec Completed + QC Pass + CIAG Approved)
+    # AND the IM has created a Work Done record for that execution, hide it
+    # from the monitor — operators don't need to act on it anymore.
+    ciag_col = "de_wd.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
+    wheres.append(
+        "NOT EXISTS ("
+        " SELECT 1 FROM `tabDaily Execution` de_wd"
+        " INNER JOIN `tabWork Done` wd0 ON wd0.execution = de_wd.name"
+        " WHERE de_wd.rollout_plan = rp.name"
+        " AND de_wd.execution_status = 'Completed'"
+        " AND IFNULL(de_wd.qc_status, '') = 'Pass'"
+        f" AND IFNULL({ciag_col}, '') = 'Approved'"
+        ")"
+    )
+
     like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
     if like_pat:
         concat_parts = [
@@ -4731,6 +4746,19 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     elif pf.get("to_date"):
         portal_clause += " AND de.execution_date <= %s"
         params.append(pf["to_date"])
+
+    # Once an execution is fully closed (Completed + Pass + Approved) AND has
+    # been converted to Work Done, drop it — the IM has nothing left to do.
+    ciag_col_hide = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
+    portal_clause += (
+        " AND NOT ("
+        " de.execution_status = 'Completed'"
+        " AND IFNULL(de.qc_status,'') = 'Pass'"
+        f" AND IFNULL({ciag_col_hide},'') = 'Approved'"
+        " AND EXISTS (SELECT 1 FROM `tabWork Done` wd0 WHERE wd0.execution = de.name)"
+        ")"
+    )
+
     like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
     if like_pat:
         concat_parts = [
