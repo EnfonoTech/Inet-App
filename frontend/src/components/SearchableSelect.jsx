@@ -105,7 +105,7 @@ export default function SearchableSelect({
   const clearLabel = allLabel || placeholder;
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", display: "inline-block", ...style }}>
+    <div ref={wrapRef} className="searchable-select-wrap" style={{ position: "relative", display: "inline-block", ...style }}>
       <button
         type="button"
         className="searchable-select-trigger"

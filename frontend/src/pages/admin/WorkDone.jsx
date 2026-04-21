@@ -219,6 +219,7 @@ export default function WorkDone() {
                   <th>Execution</th>
                   <th>Item Code</th>
                   <th>Description</th>
+                  <th>Activity Type</th>
                   <th>Project</th>
                   <th>Site</th>
                   <th>Center area</th>
@@ -250,6 +251,7 @@ export default function WorkDone() {
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.execution || "—"}</td>
                       <td>{row.item_code}</td>
                       <td>{row.item_description || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>
                       <td>{row.project_code}</td>
                       <td>{row.site_name || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>

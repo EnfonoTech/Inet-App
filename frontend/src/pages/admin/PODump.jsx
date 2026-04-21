@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
@@ -23,6 +23,26 @@ export default function PODump() {
   const [error, setError] = useState(null);
   const [meta, setMeta] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
+  const [search, setSearch] = useState("");
+
+  // Client-side search across the most useful columns — keeps the "Run" button
+  // as the heavy-lift date filter while the search box refines what's loaded.
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => {
+      const hay = [
+        r.id, r.po_no, r.poid, r.po_line_no, r.shipment_no,
+        r.site_code, r.site_name, r.item_code, r.item_description,
+        r.project_code, r.project_name, r.po_status, r.center_area,
+        r.sub_contract_no, r.currency, r.payment_terms,
+      ]
+        .map((v) => (v == null ? "" : String(v)))
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [rows, search]);
 
   async function load() {
     setLoading(true);
@@ -41,14 +61,15 @@ export default function PODump() {
   }
 
   function downloadCsv() {
-    if (!rows.length) return;
-    const keys = Object.keys(rows[0]);
+    const exportRows = filteredRows.length ? filteredRows : rows;
+    if (!exportRows.length) return;
+    const keys = Object.keys(exportRows[0]);
     const esc = (v) => {
       const s = v == null ? "" : String(v);
       if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
       return s;
     };
-    const lines = [keys.join(","), ...rows.map((r) => keys.map((k) => esc(r[k])).join(","))];
+    const lines = [keys.join(","), ...exportRows.map((r) => keys.map((k) => esc(r[k])).join(","))];
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -116,16 +137,30 @@ export default function PODump() {
       </div>
 
       <div className="toolbar">
+        <input
+          type="search"
+          placeholder="Search PO, POID, Item, Project, DUID, Site, Status…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          disabled={!rows.length}
+        />
+        {search && (
+          <button type="button" className="btn-secondary" onClick={() => setSearch("")}>
+            Clear
+          </button>
+        )}
         <DateRangePicker
           value={{ from: fromDate, to: toDate }}
           onChange={({ from, to }) => { setFromDate(from); setToDate(to); }}
         />
-        <button type="button" className="btn-primary" onClick={load} disabled={loading}>
-          {loading ? "Loading…" : "Run"}
-        </button>
-        <button type="button" className="btn-secondary" onClick={downloadCsv} disabled={!rows.length}>
-          Download CSV
-        </button>
+        <div className="toolbar-actions">
+          <button type="button" className="btn-primary" onClick={load} disabled={loading}>
+            {loading ? "Loading…" : "Run"}
+          </button>
+          <button type="button" className="btn-secondary" onClick={downloadCsv} disabled={!rows.length}>
+            Download CSV
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -136,7 +171,10 @@ export default function PODump() {
 
       {meta && !error && (
         <div style={{ margin: "0 28px 12px", fontSize: "0.84rem", color: "var(--text-muted)" }}>
-          Range {meta.from_date} → {meta.to_date} · {rows.length} row{rows.length !== 1 ? "s" : ""}
+          Range {meta.from_date} → {meta.to_date} ·{" "}
+          {search
+            ? <><strong>{filteredRows.length}</strong> matching of {rows.length} row{rows.length !== 1 ? "s" : ""}</>
+            : <>{rows.length} row{rows.length !== 1 ? "s" : ""}</>}
         </div>
       )}
 
@@ -147,6 +185,12 @@ export default function PODump() {
               <div className="empty-icon">📄</div>
               <h3>No rows</h3>
               <p>Choose dates and click Run.</p>
+            </div>
+          ) : filteredRows.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">🔍</div>
+              <h3>No matches</h3>
+              <p>No rows match "{search}". Try a different search term.</p>
             </div>
           ) : (
             <table className="data-table">
@@ -167,7 +211,7 @@ export default function PODump() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
+                {filteredRows.map((r, i) => (
                   <tr key={`${r.id || r.poid || r.po_no || "line"}-${i}`}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.id || "—"}</td>
                     <td>{r.po_status || "—"}</td>

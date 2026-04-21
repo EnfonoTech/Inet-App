@@ -356,6 +356,7 @@ export const pmApi = {
   getTimesheetDetail:   (name)    => call("inet_app.api.command_center.get_timesheet_detail", { name }),
   getTablePreferences:  (table_id) => call("inet_app.api.command_center.get_table_preferences", { table_id }),
   getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
+  assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
   getDistinctFieldValues: (doctype, fields) =>
     callCached(
       "inet_app.api.command_center.get_distinct_field_values",

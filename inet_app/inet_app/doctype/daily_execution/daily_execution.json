@@ -11,7 +11,9 @@
   "region_type",
   "team",
   "execution_date",
+  "tl_status",
   "execution_status",
+  "issue_category",
   "column_break_jobe",
   "achieved_qty",
   "achieved_amount",
@@ -68,11 +70,27 @@
   },
   {
    "default": "In Progress",
+   "fieldname": "tl_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "TL Status",
+   "description": "Status reported by the field Team Lead (also editable by the IM).",
+   "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed"
+  },
+  {
+   "default": "In Progress",
    "fieldname": "execution_status",
    "fieldtype": "Select",
    "in_list_view": 1,
-   "label": "Status",
-  "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed\nPOD Pending\nPO Required\nSpan Loss\nSpare Parts\nExtra Visit\nLate Arrival\nQuality Issue\nTravel"
+   "label": "Execution Status",
+   "description": "Status confirmed by the Implementation Manager.",
+   "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed"
+  },
+  {
+   "fieldname": "issue_category",
+   "fieldtype": "Select",
+   "label": "Issue Category",
+   "options": "\nLate Arrival\nExtra Visit\nPAT Rejection\nQC Rejection\nPOD Pending\nSpare Parts Pending\nSite Access Issue\nMaterial Shortage\nCustomer Hold\nOther"
   },
   {
    "fieldname": "achieved_qty",

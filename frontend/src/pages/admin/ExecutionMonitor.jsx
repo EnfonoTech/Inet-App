@@ -3,7 +3,7 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
-import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
+import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
@@ -96,6 +96,44 @@ export default function ExecutionMonitor() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [detailRow, setDetailRow] = useState(null);
+  const [tlStatusFor, setTlStatusFor] = useState(null);
+  const [tlStatusPick, setTlStatusPick] = useState("In Progress");
+  const [tlStatusBusy, setTlStatusBusy] = useState(false);
+  const [tlStatusErr, setTlStatusErr] = useState(null);
+  const [issueCatFor, setIssueCatFor] = useState(null);
+  const [issueCatPick, setIssueCatPick] = useState("");
+  const [issueCatBusy, setIssueCatBusy] = useState(false);
+  const [issueCatErr, setIssueCatErr] = useState(null);
+
+  async function submitTlStatus() {
+    if (!tlStatusFor?.execution_name) return;
+    setTlStatusBusy(true);
+    setTlStatusErr(null);
+    try {
+      await pmApi.updateExecution({ name: tlStatusFor.execution_name, tl_status: tlStatusPick });
+      setTlStatusFor(null);
+      loadData();
+    } catch (err) {
+      setTlStatusErr(err.message || "Failed to update TL status");
+    } finally {
+      setTlStatusBusy(false);
+    }
+  }
+
+  async function submitIssueCat() {
+    if (!issueCatFor?.execution_name) return;
+    setIssueCatBusy(true);
+    setIssueCatErr(null);
+    try {
+      await pmApi.updateExecution({ name: issueCatFor.execution_name, issue_category: issueCatPick || "" });
+      setIssueCatFor(null);
+      loadData();
+    } catch (err) {
+      setIssueCatErr(err.message || "Failed to update issue category");
+    } finally {
+      setIssueCatBusy(false);
+    }
+  }
 
   useResetOnRowLimitChange(() => {
     setRows([]);
@@ -289,6 +327,7 @@ export default function ExecutionMonitor() {
                   <th>Dummy POID</th>
                   <th>Item code</th>
                   <th>Description</th>
+                  <th>Activity Type</th>
                   <th>Project</th>
                   <th>DUID</th>
                   <th>Center area</th>
@@ -300,7 +339,9 @@ export default function ExecutionMonitor() {
                   <th style={{ textAlign: "right" }}>Target</th>
                   <th style={{ textAlign: "right" }}>Achieved</th>
                   <th>Plan Status</th>
+                  <th>TL Status</th>
                   <th>Exec Status</th>
+                  <th>Issue Category</th>
                   <th>Open</th>
                 </tr>
               </thead>
@@ -322,6 +363,7 @@ export default function ExecutionMonitor() {
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.item_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 220 }}>{row.item_description || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>
                       <td>{row.project_code || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={row.site_name || ""}>{row.site_code || "—"}</td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 120 }} title={row.center_area || ""}>
@@ -348,10 +390,44 @@ export default function ExecutionMonitor() {
                         </span>
                       </td>
                       <td>
+                        {row.execution_name ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTlStatusErr(null);
+                              setTlStatusPick(row.tl_status || "In Progress");
+                              setTlStatusFor(row);
+                            }}
+                            style={{ border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: "0.78rem", fontWeight: 600 }}
+                            title="Click to change TL status"
+                          >
+                            {row.tl_status || "— Set —"}
+                          </button>
+                        ) : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}
+                      </td>
+                      <td>
                         <span className={`status-badge ${statusBadgeClass(row.execution_status || "Planned")}`}>
                           <span className="status-dot" />
                           {row.execution_status || "—"}
                         </span>
+                      </td>
+                      <td>
+                        {row.execution_name ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setIssueCatErr(null);
+                              setIssueCatPick(row.issue_category || "");
+                              setIssueCatFor(row);
+                            }}
+                            style={{ border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: "0.78rem", color: row.issue_category ? "#b45309" : "#94a3b8", fontWeight: row.issue_category ? 600 : 500 }}
+                            title="Click to set issue category"
+                          >
+                            {row.issue_category || "— Set —"}
+                          </button>
+                        ) : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}
                       </td>
                       <td>
                         <button
@@ -369,7 +445,7 @@ export default function ExecutionMonitor() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={18} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={21} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{rows.length}</strong>
                     {" "}record{rows.length !== 1 ? "s" : ""}
                   </td>
@@ -385,6 +461,42 @@ export default function ExecutionMonitor() {
           filterActive={hasFilters}
         />
       </div>
+
+      {tlStatusFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setTlStatusFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>TL status: {tlStatusFor.execution_name}</h4>
+            {tlStatusErr && <div className="notice error" style={{ marginBottom: 10 }}>{tlStatusErr}</div>}
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>Status (set by Team Lead — editable here)</label>
+              <select value={tlStatusPick} onChange={(e) => setTlStatusPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
+                {EXECUTION_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary" disabled={tlStatusBusy} onClick={submitTlStatus}>{tlStatusBusy ? "…" : "Save"}</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setTlStatusFor(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {issueCatFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setIssueCatFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>Issue category: {issueCatFor.execution_name}</h4>
+            {issueCatErr && <div className="notice error" style={{ marginBottom: 10 }}>{issueCatErr}</div>}
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>Category</label>
+              <select value={issueCatPick} onChange={(e) => setIssueCatPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
+                <option value="">— None —</option>
+                {ISSUE_CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary" disabled={issueCatBusy} onClick={submitIssueCat}>{issueCatBusy ? "…" : "Save"}</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setIssueCatFor(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {detailRow && (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}

@@ -170,10 +170,7 @@ export default function IMPlanning() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Planning</h1>
-          <div className="page-subtitle">
-            Rollout plans for your teams. Select one or more lines and use Record execution for a quick bulk status change across all eligible plans.
-          </div>
+          <h1 className="page-title">Planned</h1>
         </div>
         <div className="page-actions">
           <button type="button" className="btn-secondary" onClick={() => loadPlans()} disabled={loading}>
@@ -290,6 +287,8 @@ export default function IMPlanning() {
                   </th>
                   <th>Plan ID</th>
                   <th>POID</th>
+                  <th>Description</th>
+                  <th>Activity Type</th>
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -320,6 +319,8 @@ export default function IMPlanning() {
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.poid || p.po_dispatch || "—"}</td>
+                    <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.item_description || ""}>{p.item_description || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{p.customer_activity_type || "—"}</td>
                     <td>{p.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={p.center_area || ""}>
                       {p.center_area || "—"}

@@ -11,7 +11,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-const VISIT_TYPES = ["Work Done", "Re-Visit", "Extra Visit"];
+const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -395,6 +395,8 @@ export default function RolloutPlanning() {
                   </th>
                   <th>POID</th>
                   <th>Item Code</th>
+                  <th>Description</th>
+                  <th>Activity Type</th>
                   <th>Project</th>
                   <th>DUID</th>
                   <th>Center area</th>
@@ -422,6 +424,8 @@ export default function RolloutPlanning() {
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.name}</td>
                     <td>{row.item_code}</td>
+                    <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>
                     <td>{row.project_code}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>

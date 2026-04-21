@@ -311,7 +311,9 @@ export default function ExecutionForm() {
     try {
       await pmApi.updateExecution({
         rollout_plan: id,
-        execution_status: execStatus,
+        // Field (Team Lead) sets tl_status. Execution status is the IM's
+        // confirmation and is edited from the IM Execution screen.
+        tl_status: execStatus,
         achieved_qty: parseFloat(achievedQty) || 0,
         gps_location: gpsLocation,
         remarks,
@@ -568,7 +570,7 @@ export default function ExecutionForm() {
             <div className="exec-section-title">Execution Update</div>
 
             <div className="exec-field">
-              <label>Execution Status *</label>
+              <label>TL Status *</label>
               <select
                 value={execStatus}
                 onChange={(e) => setExecStatus(e.target.value)}

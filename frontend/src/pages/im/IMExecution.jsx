@@ -5,7 +5,7 @@ import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableR
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
-import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
+import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
@@ -141,6 +141,14 @@ export default function IMExecution() {
   const [execStatusPick, setExecStatusPick] = useState("In Progress");
   const [execStatusBusy, setExecStatusBusy] = useState(false);
   const [execStatusErr, setExecStatusErr] = useState(null);
+  const [tlStatusFor, setTlStatusFor] = useState(null);
+  const [tlStatusPick, setTlStatusPick] = useState("In Progress");
+  const [tlStatusBusy, setTlStatusBusy] = useState(false);
+  const [tlStatusErr, setTlStatusErr] = useState(null);
+  const [issueCatFor, setIssueCatFor] = useState(null);
+  const [issueCatPick, setIssueCatPick] = useState("");
+  const [issueCatBusy, setIssueCatBusy] = useState(false);
+  const [issueCatErr, setIssueCatErr] = useState(null);
   const [wdBusy, setWdBusy] = useState("");
   const [wdErr, setWdErr] = useState(null);
   const [selectedExecs, setSelectedExecs] = useState(new Set());
@@ -308,6 +316,42 @@ export default function IMExecution() {
     }
   }
 
+  async function submitTlStatus() {
+    if (!tlStatusFor?.name) return;
+    setTlStatusBusy(true);
+    setTlStatusErr(null);
+    try {
+      await pmApi.updateExecution({
+        name: tlStatusFor.name,
+        tl_status: tlStatusPick,
+      });
+      setTlStatusFor(null);
+      await loadExecutions();
+    } catch (err) {
+      setTlStatusErr(err.message || "Failed to update TL status");
+    } finally {
+      setTlStatusBusy(false);
+    }
+  }
+
+  async function submitIssueCat() {
+    if (!issueCatFor?.name) return;
+    setIssueCatBusy(true);
+    setIssueCatErr(null);
+    try {
+      await pmApi.updateExecution({
+        name: issueCatFor.name,
+        issue_category: issueCatPick || "",
+      });
+      setIssueCatFor(null);
+      await loadExecutions();
+    } catch (err) {
+      setIssueCatErr(err.message || "Failed to update issue category");
+    } finally {
+      setIssueCatBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -330,7 +374,12 @@ export default function IMExecution() {
             {reopenErr && <div className="notice error" style={{ marginBottom: 10 }}>{reopenErr}</div>}
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Issue category</label>
-              <input value={issueCategory} onChange={(e) => setIssueCategory(e.target.value)} placeholder="e.g. PAT Rejection, QC Rejection" style={{ width: "100%", maxWidth: 460, padding: 8 }} />
+              <select value={issueCategory} onChange={(e) => setIssueCategory(e.target.value)} style={{ width: "100%", maxWidth: 460, padding: 8 }}>
+                <option value="">— Select category —</option>
+                {ISSUE_CATEGORY_OPTIONS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
             </div>
             <button className="btn-primary" disabled={reopenBusy} onClick={submitReopen}>{reopenBusy ? "…" : "Confirm"}</button>
             <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setReopenFor(null)}>Cancel</button>
@@ -353,12 +402,16 @@ export default function IMExecution() {
           {qcDecision === "Fail" && (
             <div className="form-group" style={{ marginBottom: 12 }}>
               <label>Issue category</label>
-              <input
+              <select
                 value={qcIssueCategory}
                 onChange={(e) => setQcIssueCategory(e.target.value)}
-                placeholder="e.g. PAT Rejection, QC Rejection, POD Pending"
                 style={{ width: "100%", maxWidth: 460, padding: 8 }}
-              />
+              >
+                <option value="">— Select category —</option>
+                {ISSUE_CATEGORY_OPTIONS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
             </div>
           )}
           <button className="btn-primary" disabled={qcBusy} onClick={submitQc}>{qcBusy ? "…" : "Submit QC"}</button>
@@ -383,6 +436,41 @@ export default function IMExecution() {
             </div>
             <button className="btn-primary" disabled={execStatusBusy} onClick={submitExecStatus}>{execStatusBusy ? "…" : "Save"}</button>
             <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setExecStatusFor(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {tlStatusFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setTlStatusFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>TL status: {tlStatusFor.name}</h4>
+            {tlStatusErr && <div className="notice error" style={{ marginBottom: 10 }}>{tlStatusErr}</div>}
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>Status (set by Team Lead — editable by IM)</label>
+              <select value={tlStatusPick} onChange={(e) => setTlStatusPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
+                {EXECUTION_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary" disabled={tlStatusBusy} onClick={submitTlStatus}>{tlStatusBusy ? "…" : "Save"}</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setTlStatusFor(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {issueCatFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setIssueCatFor(null)}>
+          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>Issue category: {issueCatFor.name}</h4>
+            {issueCatErr && <div className="notice error" style={{ marginBottom: 10 }}>{issueCatErr}</div>}
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label>Category</label>
+              <select value={issueCatPick} onChange={(e) => setIssueCatPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
+                <option value="">— None —</option>
+                {ISSUE_CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary" disabled={issueCatBusy} onClick={submitIssueCat}>{issueCatBusy ? "…" : "Save"}</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setIssueCatFor(null)}>Cancel</button>
           </div>
         </div>
       )}
@@ -532,6 +620,7 @@ export default function IMExecution() {
                   <th>Dummy POID</th>
                   <th>Item code</th>
                   <th>Description</th>
+                  <th>Activity Type</th>
                   <th>Project</th>
                   <th>DUID</th>
                   <th>Center area</th>
@@ -540,7 +629,9 @@ export default function IMExecution() {
                   <th>Team</th>
                   <th>IM</th>
                   <th>Date</th>
-                  <th>Status</th>
+                  <th>TL Status</th>
+                  <th>Execution Status</th>
+                  <th>Issue Category</th>
                   <th>QC</th>
                   <th>CIAG</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
@@ -575,6 +666,7 @@ export default function IMExecution() {
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.item_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 200 }}>{e.item_description || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{e.customer_activity_type || "—"}</td>
                     <td>{e.project_code || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={e.site_name || ""}>{e.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={e.center_area || ""}>
@@ -589,6 +681,20 @@ export default function IMExecution() {
                       <button
                         type="button"
                         onClick={() => {
+                          setTlStatusErr(null);
+                          setTlStatusPick(e.tl_status || "In Progress");
+                          setTlStatusFor(e);
+                        }}
+                        style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
+                        title="Click to change TL status"
+                      >
+                        <StatusPill value={e.tl_status || "—"} />
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => {
                           setExecStatusErr(null);
                           setExecStatusPick(e.execution_status || "In Progress");
                           setExecStatusFor(e);
@@ -597,6 +703,20 @@ export default function IMExecution() {
                         title="Click to change execution status"
                       >
                         <StatusPill value={e.execution_status} />
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIssueCatErr(null);
+                          setIssueCatPick(e.issue_category || "");
+                          setIssueCatFor(e);
+                        }}
+                        style={{ border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: "0.78rem", color: e.issue_category ? "#b45309" : "#94a3b8", fontWeight: e.issue_category ? 600 : 500 }}
+                        title="Click to set issue category"
+                      >
+                        {e.issue_category || "— Set —"}
                       </button>
                     </td>
                     <td>

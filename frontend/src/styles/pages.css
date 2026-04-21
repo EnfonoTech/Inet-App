@@ -599,6 +599,13 @@
 .toolbar > div {
   display: contents !important;
 }
+/* SearchableSelect needs a positioned wrapper so its absolute-positioned
+ * dropdown panel is anchored to the trigger. display:contents strips the
+ * positioning context, so opt this one class out of the dissolve rule. */
+.toolbar > .searchable-select-wrap {
+  display: inline-block !important;
+  position: relative !important;
+}
 .toolbar > .toolbar-actions > *:first-child {
   margin-left: auto;
 }

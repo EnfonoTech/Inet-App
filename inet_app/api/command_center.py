@@ -1778,11 +1778,14 @@ def _po_dispatch_portal_pf_active(pf):
         "to_date",
         "dispatch_mode",
         "dummy_preset",
+        "has_target_month",
     ):
         v = pf.get(k)
         if v is None or v == "":
             continue
         if k == "dummy_preset" and str(v).strip().lower() == "all":
+            continue
+        if k == "has_target_month" and str(v).strip().lower() in ("", "any"):
             continue
         return True
     return False
@@ -1846,6 +1849,13 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             "((IFNULL(was_dummy_po, 0) = 1 AND IFNULL(is_dummy_po, 0) = 0) OR "
             "(IFNULL(original_dummy_poid, '') != '' AND TRIM(original_dummy_poid) != IFNULL(TRIM(name), '')))"
         )
+
+    # has_target_month: "yes" (target_month set), "no" (null/empty), "any" / "" (no filter)
+    htm = (pf.get("has_target_month") or "").strip().lower()
+    if htm == "yes" and "target_month" in fields:
+        wheres.append("`target_month` IS NOT NULL AND `target_month` != ''")
+    elif htm == "no" and "target_month" in fields:
+        wheres.append("(`target_month` IS NULL OR `target_month` = '')")
 
     like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
     if like_pat:
@@ -1928,10 +1938,45 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
             limit_page_length=len(im_names) + 1,
         ):
             im_labels[imm.name] = imm.full_name or imm.name
+    # Batch-fetch Customer Activity Type from Customer Item Master, keyed by
+    # (customer, item_code). One query instead of per-row lookups.
+    cim_map = _batch_customer_activity_types(rows)
     for r in rows:
         imn = r.get("im")
         r["im_full_name"] = im_labels.get(imn) if imn else None
+        r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
     return rows
+
+
+def _batch_customer_activity_types(rows, customer_key="customer", item_key="item_code"):
+    """Return {(customer, item_code): customer_activity_type} from Customer
+    Item Master for every unique (customer, item) pair in `rows`. Picks the
+    active-flag row first when multiple exist for a pair."""
+    pairs = {(r.get(customer_key) or "", r.get(item_key) or "") for r in rows or []}
+    pairs = {p for p in pairs if p[0] and p[1]}
+    if not pairs:
+        return {}
+    customers = list({p[0] for p in pairs})
+    items = list({p[1] for p in pairs})
+    c_ph = ",".join(["%s"] * len(customers))
+    i_ph = ",".join(["%s"] * len(items))
+    try:
+        cim_rows = frappe.db.sql(
+            f"SELECT customer, item_code, customer_activity_type, IFNULL(active_flag, 0) AS active "
+            f"FROM `tabCustomer Item Master` "
+            f"WHERE customer IN ({c_ph}) AND item_code IN ({i_ph}) "
+            f"ORDER BY IFNULL(active_flag, 0) DESC",
+            tuple(customers) + tuple(items),
+            as_dict=True,
+        )
+    except Exception:
+        return {}
+    out = {}
+    for r in cim_rows:
+        k = (r.customer, r.item_code)
+        if k not in out and r.customer_activity_type:
+            out[k] = r.customer_activity_type
+    return out
 
 
 @frappe.whitelist()
@@ -2094,6 +2139,53 @@ def list_po_intake_lines_for_im_map(project_code=None):
             row["existing_dispatch_status"] = None
 
     return lines
+
+
+@frappe.whitelist()
+def assign_im_target_month(payload=None):
+    """Bulk-assign `target_month` on a set of PO Dispatch rows so the IM
+    promotes them from "PO Intake" (dispatched but not yet scheduled) into
+    "My Dispatches" (ready for rollout planning).
+
+    payload = {
+        "dispatches": ["SYS-2026-0001", ...],
+        "target_month": "2026-04"  (or "YYYY-MM-DD")
+    }
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload)
+    payload = payload or {}
+
+    dispatches = payload.get("dispatches") or []
+    target_month = (payload.get("target_month") or "").strip()
+    if not dispatches or not isinstance(dispatches, list):
+        frappe.throw("dispatches (list of PO Dispatch names) is required")
+    if not target_month:
+        frappe.throw("target_month is required")
+
+    # YYYY-MM shorthand → first day of month
+    if len(target_month) == 7 and target_month[4] == "-":
+        target_month = target_month + "-01"
+
+    _im_resolved, im_identifiers = _require_inet_im_session()
+    # Only allow the IM to update their own dispatches.
+    allowed = frappe.db.sql(
+        "SELECT name FROM `tabPO Dispatch` WHERE name IN ({ph}) AND IFNULL(im, '') IN ({im_ph})".format(
+            ph=",".join(["%s"] * len(dispatches)),
+            im_ph=",".join(["%s"] * len(im_identifiers)),
+        ),
+        tuple(dispatches) + tuple(im_identifiers),
+    )
+    allowed_names = [r[0] for r in (allowed or [])]
+    if not allowed_names:
+        frappe.throw("No matching dispatches belong to the current IM.")
+
+    updated = 0
+    for name in allowed_names:
+        frappe.db.set_value("PO Dispatch", name, "target_month", target_month, update_modified=True)
+        updated += 1
+    frappe.db.commit()
+    return {"updated": updated, "target_month": target_month, "names": allowed_names}
 
 
 @frappe.whitelist()
@@ -2465,7 +2557,7 @@ def create_rollout_plans(payload):
     access_period = (payload.get("access_period") or "").strip()
     if access_period and access_period not in ("Day", "Night"):
         access_period = ""
-    visit_type = payload.get("visit_type", "Work Done")
+    visit_type = payload.get("visit_type") or "Execution"
 
     pd = getdate(plan_date)
     ped = getdate(plan_end_date)
@@ -2482,10 +2574,12 @@ def create_rollout_plans(payload):
     if not frappe.db.exists("INET Team", team_override):
         frappe.throw(frappe._("Invalid team selected"))
 
-    # Look up multiplier
-    visit_multiplier = flt(
-        frappe.db.get_value("Visit Multiplier Master", visit_type, "multiplier") or 1.0
-    )
+    # Look up multiplier. "Execution" is the new label for what used to be
+    # "Work Done"; fall back so renames don't require touching the master.
+    multiplier_val = frappe.db.get_value("Visit Multiplier Master", visit_type, "multiplier")
+    if multiplier_val is None and visit_type == "Execution":
+        multiplier_val = frappe.db.get_value("Visit Multiplier Master", "Work Done", "multiplier")
+    visit_multiplier = flt(multiplier_val or 1.0)
 
     created = 0
     names = []
@@ -2852,6 +2946,7 @@ def update_execution(payload):
     for field in [
         "execution_date",
         "execution_status",
+        "tl_status",
         "achieved_qty",
         "achieved_amount",
         "gps_location",
@@ -2870,6 +2965,14 @@ def update_execution(payload):
         if doc.execution_status and doc.execution_status not in _ALLOWED_DAILY_EXECUTION_STATUSES:
             frappe.throw(
                 frappe._("Invalid execution_status. Allowed values: {0}").format(
+                    ", ".join(sorted(_ALLOWED_DAILY_EXECUTION_STATUSES))
+                )
+            )
+    if hasattr(doc, "tl_status") and "tl_status" in payload:
+        doc.tl_status = _normalize_execution_status(doc.tl_status)
+        if doc.tl_status and doc.tl_status not in _ALLOWED_DAILY_EXECUTION_STATUSES:
+            frappe.throw(
+                frappe._("Invalid tl_status. Allowed values: {0}").format(
                     ", ".join(sorted(_ALLOWED_DAILY_EXECUTION_STATUSES))
                 )
             )
@@ -3283,6 +3386,8 @@ def list_execution_monitor_rows(filters=None, limit=500):
             "rollout_plan",
             "execution_date",
             "execution_status",
+            "tl_status",
+            "issue_category",
             "achieved_qty",
             "achieved_amount",
             "qc_status",
@@ -3309,6 +3414,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
             "project_code",
             "site_name",
             "site_code",
+            "customer",
         ]
         if frappe.db.has_column("PO Dispatch", "poid"):
             d_fields.append("poid")
@@ -3375,6 +3481,8 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "execution_name": ex.name if ex else None,
                 "execution_date": ex.execution_date if ex else None,
                 "execution_status": ex.execution_status if ex else None,
+                "tl_status": ex.get("tl_status") if ex else None,
+                "issue_category": ex.get("issue_category") if ex else None,
                 "execution_achieved_qty": flt(ex.achieved_qty or 0) if ex else 0,
                 "execution_achieved_amount": flt(ex.achieved_amount or 0) if ex else 0,
                 "qc_status": ex.qc_status if ex else None,
@@ -3382,6 +3490,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "photos": ex.photos if ex else None,
                 "gps_location": ex.gps_location if ex else None,
                 "modified": p.modified,
+                "customer": d.get("customer") if d else None,
                 "original_dummy_poid": (
                     (d.get("original_dummy_poid") or "").strip()
                     if d and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
@@ -3389,6 +3498,10 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 ),
             }
         )
+    if out:
+        cim_map = _batch_customer_activity_types(out)
+        for r in out:
+            r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
     return out
 
 
@@ -3550,7 +3663,7 @@ def list_work_done_rows(filters=None, limit=500):
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
     pd_map = {}
     if dispatch_names:
-        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_description"]
+        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer"]
         if frappe.db.has_column("PO Dispatch", "poid"):
             pd_fields_wd.append("poid")
         if frappe.db.has_column("PO Dispatch", "im"):
@@ -3616,7 +3729,9 @@ def list_work_done_rows(filters=None, limit=500):
                 "team_name": team_name_map_wd.get(team) if team else None,
                 "im": im_row,
                 "im_full_name": im_name_map_wd.get(im_row) if im_row else None,
+                "item_code": pd.item_code if pd else None,
                 "item_description": pd.item_description if pd else None,
+                "customer": pd.get("customer") if pd else None,
                 "execution_date": ex_date,
                 "execution_status": ex.execution_status if ex else None,
                 "plan_date": rp.plan_date if rp else None,
@@ -3628,6 +3743,10 @@ def list_work_done_rows(filters=None, limit=500):
                 ),
             }
         )
+    if out:
+        cim_map = _batch_customer_activity_types(out)
+        for r in out:
+            r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
     return out
 
 
@@ -4340,6 +4459,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                rp.completion_pct, rp.plan_status,
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
+               pd.customer AS customer, pd.item_description,
                it.team_name AS team_name,
                {im_full_sql}
                {im_plan_extra_sql}
@@ -4355,6 +4475,10 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         tuple(params),
         as_dict=True,
     )
+    if rows:
+        cim_map = _batch_customer_activity_types(rows)
+        for r in rows:
+            r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
     return rows or []
 
 
@@ -4447,9 +4571,11 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan,
                COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
                de.team, de.execution_date,
-               de.execution_status, de.achieved_qty, de.achieved_amount, de.gps_location,
+               de.execution_status, de.tl_status, de.issue_category,
+               de.achieved_qty, de.achieved_amount, de.gps_location,
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag, de.photos,
                pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
+               pd.customer AS customer,
                (SELECT wd.name FROM `tabWork Done` wd WHERE wd.execution = de.name LIMIT 1) AS work_done,
                it.team_name AS team_name,
                {im_full_sql_ex}
@@ -4467,6 +4593,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         tuple(params),
         as_dict=True,
     )
+    if rows:
+        cim_map = _batch_customer_activity_types(rows)
+        for r in rows:
+            r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
     return rows or []
 
 

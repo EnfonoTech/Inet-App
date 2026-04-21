@@ -88,9 +88,9 @@ const icons = {
 /* ── Navigation definitions per role ────────────────────────── */
 const adminNav = [
   { to: "/dashboard",  label: "Dashboard",   icon: "dashboard" },
-  { to: "/projects",   label: "Projects",    icon: "folder" },
   { to: "/po-upload",  label: "PO Upload",   icon: "upload" },
-  { to: "/po-dump",    label: "PO dump",     icon: "barChart" },
+  { to: "/po-dump",    label: "PO Dump",     icon: "barChart" },
+  { to: "/projects",   label: "Projects",    icon: "folder" },
   { to: "/dispatch",   label: "Dispatch",    icon: "send" },
   { to: "/planning",   label: "Planning",    icon: "calendar" },
   { to: "/execution",  label: "Execution",   icon: "eye" },
@@ -106,8 +106,9 @@ const imNav = [
   { to: "/im-dashboard", label: "My Dashboard", icon: "dashboard" },
   { to: "/im-projects",  label: "My Projects",  icon: "folder" },
   { to: "/im-teams",     label: "My Teams",     icon: "user" },
-  { to: "/im-dispatch",  label: "Dispatches",   icon: "send" },
-  { to: "/im-planning",  label: "Planning",     icon: "calendar" },
+  { to: "/im-po-intake", label: "PO Intake",    icon: "upload" },
+  { to: "/im-dispatch",  label: "My Dispatches", icon: "send" },
+  { to: "/im-planning",  label: "Planned",      icon: "calendar" },
   { to: "/im-execution", label: "Execution",    icon: "eye" },
   { to: "/im-work-done", label: "Work Done",    icon: "checkCircle" },
   { to: "/im-issues-risks", label: "Issues & Risks", icon: "clipboard" },

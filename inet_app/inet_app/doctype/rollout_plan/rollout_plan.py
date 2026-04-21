@@ -12,6 +12,10 @@ class RolloutPlan(Document):
     def before_save(self):
         if not self.visit_multiplier:
             mult = frappe.db.get_value("Visit Multiplier Master", self.visit_type, "multiplier")
+            # "Execution" is the new label for legacy "Work Done" — use the
+            # old master entry if no row exists under the new name yet.
+            if mult is None and self.visit_type == "Execution":
+                mult = frappe.db.get_value("Visit Multiplier Master", "Work Done", "multiplier")
             self.visit_multiplier = flt(mult or 1.0)
         if self.target_amount and self.achieved_amount:
             target = flt(self.target_amount)

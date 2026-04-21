@@ -11,7 +11,7 @@ import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/R
 import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
-const VISIT_TYPES = ["Work Done", "Re-Visit", "Extra Visit"];
+const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
 const HIDDEN_DETAIL_FIELDS = new Set([
   "owner", "creation", "modified", "modified_by", "docstatus", "idx",
   "original_dummy_poid", "was_dummy_po",
@@ -197,7 +197,9 @@ export default function IMDispatch() {
         return;
       }
       const filters = [["im", "=", imName]];
-      const portal = {};
+      // Only rows the IM has scheduled (target_month set) — un-scheduled
+      // dispatches appear in the new PO Intake page instead.
+      const portal = { has_target_month: "yes" };
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
       if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
       if (dummyFilter !== "all") portal.dummy_preset = dummyFilter;
@@ -865,6 +867,8 @@ export default function IMDispatch() {
                   <th>PO No</th>
                   <th>Project</th>
                   <th>Item</th>
+                  <th>Description</th>
+                  <th>Activity Type</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Amount</th>
                   <th>IM</th>
@@ -941,6 +945,8 @@ export default function IMDispatch() {
                       <td>{row.po_no}</td>
                       <td>{row.project_code}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.item_code}</td>
+                      <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.qty}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
                       <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.im_full_name || row.im || "—"}</td>

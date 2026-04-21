@@ -51,8 +51,9 @@
   {
    "description": "Set when returning job to planning (re-visit / QC)",
    "fieldname": "issue_category",
-   "fieldtype": "Small Text",
-   "label": "Issue Category"
+   "fieldtype": "Select",
+   "label": "Issue Category",
+   "options": "\nLate Arrival\nExtra Visit\nPAT Rejection\nQC Rejection\nPOD Pending\nSpare Parts Pending\nSite Access Issue\nMaterial Shortage\nCustomer Hold\nOther"
   },
   {
    "fieldname": "team",
@@ -84,11 +85,11 @@
    "options": "\nDay\nNight"
   },
   {
-   "default": "Work Done",
+   "default": "Execution",
    "fieldname": "visit_type",
    "fieldtype": "Select",
    "label": "Visit Type",
-   "options": "Work Done\nRe-Visit\nExtra Visit"
+   "options": "Execution\nRe-Visit\nExtra Visit\nWork Done"
   },
   {
    "fieldname": "source_rollout_plan",

@@ -31,6 +31,7 @@ import IMExecution from "./pages/im/IMExecution";
 import IMReports from "./pages/im/IMReports";
 import IMTimesheets from "./pages/im/IMTimesheets";
 import IMDispatch from "./pages/im/IMDispatch";
+import IMPOIntake from "./pages/im/IMPOIntake";
 import IMWorkDone from "./pages/im/IMWorkDone";
 import IMIssuesRisks from "./pages/im/IMIssuesRisks";
 import OperationsOverview from "./pages/OperationsOverview";
@@ -111,6 +112,7 @@ function AppContent() {
             <Route path="/im-dashboard" element={<IMDashboard />} />
             <Route path="/im-projects" element={<IMProjects />} />
             <Route path="/im-teams" element={<IMTeams />} />
+            <Route path="/im-po-intake" element={<IMPOIntake />} />
             <Route path="/im-dispatch" element={<IMDispatch />} />
             <Route path="/im-planning" element={<IMPlanning />} />
             <Route path="/im-execution" element={<IMExecution />} />
