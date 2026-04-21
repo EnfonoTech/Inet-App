@@ -7,6 +7,7 @@ import calendar
 import csv
 import json
 import os
+import re
 
 import frappe
 from inet_app.inet_app.doctype.po_intake.po_intake import normalize_po_intake_status as _normalize_po_intake_status
@@ -78,6 +79,37 @@ def _sql_like_pattern(term):
         return None
     t = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{t}%"
+
+
+def _sql_like_tokens(term, max_tokens=50):
+    """Split a free-text search on newlines / commas / semicolons / pipes /
+    tabs into individual LIKE patterns. Spaces are preserved within a token so
+    phrases (e.g. team names) keep working for the single-value case."""
+    if not term:
+        return []
+    raw = re.split(r"[\n,;|\t]+", str(term))
+    seen = set()
+    out = []
+    for piece in raw:
+        s = (piece or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        esc = s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        out.append(f"%{esc}%")
+        if len(out) >= max_tokens:
+            break
+    return out
+
+
+def _sql_search_clause(concat_expr, term):
+    """Build an OR'd LIKE clause across pasted tokens for a concat expression.
+    Returns (clause_sql_or_None, params_list). Empty term → (None, [])."""
+    patterns = _sql_like_tokens(term)
+    if not patterns:
+        return None, []
+    ors = " OR ".join([f"{concat_expr} LIKE %s"] * len(patterns))
+    return f"({ors})", patterns
 
 
 def _make_poid(po_no, po_line_no, shipment_number):
@@ -1493,14 +1525,15 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         elif pf.get("to_date"):
             wheres.append("(pd.name IS NULL OR pd.target_month <= %s)")
             params.append(pf["to_date"])
-        like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
-        if like_pat:
-            wheres.append(
-                "(CONCAT_WS(' ', IFNULL(pil.name,''), IFNULL(pil.poid,''), IFNULL(pil.item_code,''), "
-                "IFNULL(pil.project_code,''), IFNULL(pil.site_code,''), IFNULL(pi.po_no,''), "
-                "IFNULL(pi.customer,''), IFNULL(pil.center_area,''), IFNULL(pil.region_type,'')) LIKE %s)"
-            )
-            params.append(like_pat)
+        concat_expr_intake = (
+            "CONCAT_WS(' ', IFNULL(pil.name,''), IFNULL(pil.poid,''), IFNULL(pil.item_code,''), "
+            "IFNULL(pil.project_code,''), IFNULL(pil.site_code,''), IFNULL(pi.po_no,''), "
+            "IFNULL(pi.customer,''), IFNULL(pil.center_area,''), IFNULL(pil.region_type,''))"
+        )
+        clause, cparams = _sql_search_clause(concat_expr_intake, pf.get("search") or pf.get("q") or "")
+        if clause:
+            wheres.append(clause)
+            params.extend(cparams)
         id_sql = (
             "SELECT pil.name AS line_id "
             "FROM `tabPO Intake Line` pil "
@@ -1857,8 +1890,8 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
     elif htm == "no" and "target_month" in fields:
         wheres.append("(`target_month` IS NULL OR `target_month` = '')")
 
-    like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
-    if like_pat:
+    tokens = _sql_like_tokens(pf.get("search") or pf.get("q") or "")
+    if tokens:
         like_cols = [
             c
             for c in (
@@ -1875,10 +1908,14 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             if c in fields
         ]
         if like_cols:
-            wheres.append(
-                "(" + " OR ".join(f"IFNULL(`{c}`, '') LIKE %s" for c in like_cols) + ")"
-            )
-            params.extend([like_pat] * len(like_cols))
+            # Each token matches if ANY column contains it; any-token-matches
+            # wins, so OR everything together.
+            ors = []
+            for _ in tokens:
+                ors.extend(f"IFNULL(`{c}`, '') LIKE %s" for c in like_cols)
+            wheres.append("(" + " OR ".join(ors) + ")")
+            for tok in tokens:
+                params.extend([tok] * len(like_cols))
 
     return wheres, params
 
@@ -3365,8 +3402,10 @@ def list_execution_monitor_rows(filters=None, limit=500):
             pd_im_join = "LEFT JOIN `tabIM Master` rim_pd ON rim_pd.name = pd.im"
             concat_parts.append("IFNULL(rim_pd.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        wheres.append(f"({concat_expr} LIKE %s)")
-        params.append(like_pat)
+        clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "")
+        if clause:
+            wheres.append(clause)
+            params.extend(cparams)
     else:
         rp_im_join = (
             "LEFT JOIN `tabIM Master` rim_rp ON rim_rp.name = rp.im"
@@ -3639,8 +3678,10 @@ def list_work_done_rows(filters=None, limit=500):
         if frappe.db.has_column("PO Dispatch", "im"):
             concat_parts.append("IFNULL(rim_pd.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        wheres.append(f"({concat_expr} LIKE %s)")
-        params.append(like_pat)
+        clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "")
+        if clause:
+            wheres.append(clause)
+            params.extend(cparams)
 
     id_sql = (
         "SELECT wd.name AS wd_name "
@@ -3917,8 +3958,10 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        wheres.append(f"({concat_expr} LIKE %s)")
-        params.append(like_pat)
+        clause, cparams = _sql_search_clause(concat_expr, search or "")
+        if clause:
+            wheres.append(clause)
+            params.extend(cparams)
 
     id_sql = (
         "SELECT rp.name AS plan_id "
@@ -4547,8 +4590,11 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         ]
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
-        portal_clause += " AND (CONCAT_WS(' ', " + ", ".join(concat_parts) + ") LIKE %s)"
-        params.append(like_pat)
+        concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
+        clause, cparams = _sql_search_clause(concat_expr, pf.get("search") or pf.get("q") or "")
+        if clause:
+            portal_clause += f" AND {clause}"
+            params.extend(cparams)
     im_plan_extras = []
     if frappe.db.has_column("Rollout Plan", "region_type"):
         im_plan_extras.append("rp.region_type AS region_type")
@@ -4658,8 +4704,11 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             concat_parts.append("IFNULL(de.ciag_status,'')")
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
-        portal_clause += " AND (CONCAT_WS(' ', " + ", ".join(concat_parts) + ") LIKE %s)"
-        params.append(like_pat)
+        concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
+        clause, cparams = _sql_search_clause(concat_expr, pf.get("search") or pf.get("q") or "")
+        if clause:
+            portal_clause += f" AND {clause}"
+            params.extend(cparams)
     ciag_sel = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL"
     im_ex_extras = []
     if frappe.db.has_column("Daily Execution", "region_type"):
@@ -5945,11 +5994,12 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
     elif to_date:
         db_filters["start_time"] = ["<=", f"{to_date} 23:59:59"]
 
-    like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
+    search_term_etl = filters.get("search") or filters.get("q") or ""
+    like_tokens_etl = _sql_like_tokens(search_term_etl)
     lim_etl = _portal_row_limit(limit, 100)
     off_etl = cint(offset)
 
-    if like_pat:
+    if like_tokens_etl:
         wheres = ["1=1"]
         params = []
         joins = (
@@ -6010,8 +6060,9 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
             "IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.notes,''), IFNULL(pd.project_code,''), "
             "IFNULL(pd.item_description,''), IFNULL(pd.site_name,''), IFNULL(pd.po_no,''))"
         )
-        wheres.append(f"({concat_etl} LIKE %s)")
-        params.append(like_pat)
+        ors_etl = " OR ".join([f"{concat_etl} LIKE %s"] * len(like_tokens_etl))
+        wheres.append(f"({ors_etl})")
+        params.extend(like_tokens_etl)
 
         wc = " AND ".join(wheres)
         total = int(
