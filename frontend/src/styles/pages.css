@@ -705,6 +705,15 @@
   background: var(--bg-white);
 }
 
+/* Frozen columns: the inline style handles position/left/bg. This adds a
+   subtle right-edge shadow so users can see where the frozen region ends. */
+.tablepro-col-frozen {
+  box-shadow: 2px 0 4px -2px rgba(15, 23, 42, 0.12);
+}
+.data-table thead .tablepro-col-frozen {
+  box-shadow: 2px 0 4px -2px rgba(15, 23, 42, 0.18);
+}
+
 .tablepro-toolbar .btn-secondary {
   font-size: 0.73rem;
   padding: 3px 9px;

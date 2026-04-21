@@ -192,6 +192,7 @@ export default function DataTablePro() {
         const state = {
           order: Array.isArray(saved.order) ? saved.order.filter((k) => columns.some((c) => c.key === k)) : columns.map((c) => c.key),
           hidden: new Set(Array.isArray(saved.hidden) ? saved.hidden : []),
+          frozen: new Set(Array.isArray(saved.frozen) ? saved.frozen : []),
           widths: { ...(saved.widths || {}) },
           filters: { ...(saved.filters || {}) },
           show_filters: !!saved.show_filters,
@@ -235,6 +236,7 @@ export default function DataTablePro() {
           prefsApi.saveDebounced(tableId, {
             order: state.order,
             hidden: Array.from(state.hidden),
+            frozen: Array.from(state.frozen),
             widths: state.widths,
             filters: state.filters,
             show_filters: state.show_filters ? 1 : 0,
@@ -412,6 +414,70 @@ export default function DataTablePro() {
           });
         };
 
+        const widthForKeyLookup = (key) => {
+          if (selectColumnKey && key === selectColumnKey) return TABLEPRO_SELECT_COL_PX;
+          const w = state.widths[key];
+          return w != null && Number.isFinite(Number(w)) && Number(w) > 0
+            ? Number(w)
+            : TABLEPRO_DEFAULT_COL_MIN_PX;
+        };
+
+        /**
+         * Sticky-position every frozen column so it survives horizontal scroll.
+         * Computes each column's left offset as the cumulative width of all
+         * earlier frozen columns in the current visible order.
+         */
+        const applyFrozen = () => {
+          const offsets = {};
+          let cumulative = 0;
+          state.order.forEach((key) => {
+            if (state.hidden.has(key)) return;
+            if (state.frozen.has(key)) {
+              offsets[key] = cumulative;
+              cumulative += widthForKeyLookup(key);
+            }
+          });
+
+          const clearSticky = (cell) => {
+            if (!cell) return;
+            if (cell.dataset.tableproFrozen === "1") {
+              cell.style.position = "";
+              cell.style.left = "";
+              cell.style.zIndex = "";
+              cell.style.background = "";
+              cell.classList.remove("tablepro-col-frozen");
+              delete cell.dataset.tableproFrozen;
+            }
+          };
+          const setSticky = (cell, left, isHeader) => {
+            if (!cell) return;
+            cell.dataset.tableproFrozen = "1";
+            cell.classList.add("tablepro-col-frozen");
+            cell.style.position = "sticky";
+            cell.style.left = `${left}px`;
+            // thead th has CSS z-index:10 so non-frozen headers can cover
+            // frozen ones during horizontal scroll. Frozen header needs to be
+            // above that (20). Body sticky just needs > 0 to cover non-frozen
+            // body cells (which have no z-index).
+            cell.style.zIndex = String(isHeader ? 20 : 3);
+            cell.style.background = isHeader ? "#f8fafc" : "#fff";
+          };
+
+          const rows = [
+            ...table.querySelectorAll("thead tr"),
+            ...table.querySelectorAll("tbody tr"),
+            ...table.querySelectorAll("tfoot tr"),
+          ];
+          rows.forEach((row) => {
+            const isHeader = row.parentElement?.tagName === "THEAD";
+            Array.from(row.children).forEach((cell) => {
+              const k = cell.dataset.colKey;
+              if (k && offsets[k] != null) setSticky(cell, offsets[k], isHeader);
+              else clearSticky(cell);
+            });
+          });
+        };
+
         const applyWidths = () => {
           const setCellPx = (cell, width) => {
             if (width) {
@@ -448,6 +514,7 @@ export default function DataTablePro() {
             });
           });
           syncTableScrollWidth();
+          applyFrozen();
         };
 
         const applyFilters = () => {
@@ -605,6 +672,7 @@ export default function DataTablePro() {
           ensureFilterRow();
           applyFilters();
           addResizeHandles();
+          applyFrozen();
         };
 
         const toolbar = document.createElement("div");
@@ -682,17 +750,27 @@ export default function DataTablePro() {
                 <label class="tablepro-panel-select-col"><input type="checkbox" checked disabled> ${escAttr(col.label)}</label>
               `;
             } else {
+              const frozen = state.frozen.has(key);
               row.innerHTML = `
               <label><input type="checkbox" ${state.hidden.has(key) ? "" : "checked"}> ${escAttr(col.label)}</label>
               <div class="tablepro-panel-actions">
+                <button type="button" class="btn-secondary freeze" title="${frozen ? "Unfreeze column" : "Freeze column (keeps it visible while scrolling)"}" style="${frozen ? "background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe;" : ""}">📌</button>
                 <button type="button" class="btn-secondary up">↑</button>
                 <button type="button" class="btn-secondary down">↓</button>
               </div>
             `;
             }
-            const cb = row.querySelector("label.tablepro-panel-select-col") ? null : row.querySelector("input");
+            const cb = row.querySelector("label.tablepro-panel-select-col") ? null : row.querySelector('label > input[type="checkbox"]');
+            const freezeBtn = row.querySelector(".freeze");
             const up = row.querySelector(".up");
             const down = row.querySelector(".down");
+            freezeBtn?.addEventListener("click", () => {
+              if (state.frozen.has(key)) state.frozen.delete(key);
+              else state.frozen.add(key);
+              renderPanel();
+              void applyAll();
+              persist();
+            });
             cb?.addEventListener("change", (e) => {
               if (e.target.checked) state.hidden.delete(key);
               else state.hidden.add(key);
@@ -734,6 +812,7 @@ export default function DataTablePro() {
           columns = columns.filter((c) => baseColumnKeys.includes(c.key));
           state.order = [...baseColumnKeys];
           state.hidden = new Set();
+          state.frozen = new Set();
           state.widths = {};
           state.filters = {};
           state.show_filters = false;
@@ -780,6 +859,7 @@ export default function DataTablePro() {
             applyWidths();
             ensureFilterRow();
             applyFilters();
+            applyFrozen();
           }, 16);
         });
         const tbody = table.querySelector("tbody");
