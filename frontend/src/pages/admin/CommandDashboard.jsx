@@ -246,7 +246,7 @@ export default function CommandDashboard() {
       {/* ── Bottom Grid: 4 Panels ──────────────────────────── */}
       <div className="bottom-grid">
         {/* Panel 1: Top 5 Teams */}
-        <div className="panel">
+        <div className="panel panel--teams">
           <div className="panel-header">
             <h3>Top 5 Teams</h3>
           </div>
@@ -256,7 +256,7 @@ export default function CommandDashboard() {
         </div>
 
         {/* Panel 2: IM Performance */}
-        <div className="panel">
+        <div className="panel panel--im">
           <div className="panel-header">
             <h3>IM Performance</h3>
           </div>
@@ -266,7 +266,7 @@ export default function CommandDashboard() {
         </div>
 
         {/* Panel 3: Team Status */}
-        <div className="panel">
+        <div className="panel panel--status">
           <div className="panel-header">
             <h3>Team Status</h3>
           </div>
@@ -279,7 +279,7 @@ export default function CommandDashboard() {
         </div>
 
         {/* Panel 4: Action Watchlist */}
-        <div className="panel">
+        <div className="panel panel--watch">
           <div className="panel-header">
             <h3>Action Watchlist</h3>
           </div>

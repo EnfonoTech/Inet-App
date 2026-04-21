@@ -170,27 +170,64 @@
 .dashboard .panel {
   background: var(--bg-white);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-sm);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
+
+.dashboard .panel:hover {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
+}
+
+/* Top accent bar — per-panel theme */
+.dashboard .panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--blue), var(--blue-dark));
+}
+.dashboard .panel--teams::before { background: linear-gradient(90deg, #6366f1, #2563eb); }
+.dashboard .panel--im::before    { background: linear-gradient(90deg, #0891b2, #0e7490); }
+.dashboard .panel--status::before{ background: linear-gradient(90deg, #10b981, #047857); }
+.dashboard .panel--watch::before { background: linear-gradient(90deg, #f59e0b, #d97706); }
 
 .dashboard .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border-light);
+  background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
 }
 
 .dashboard .panel-header h3 {
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-weight: 700;
   color: var(--text);
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: 0.01em;
 }
+
+.dashboard .panel-header h3::before {
+  content: "";
+  width: 4px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--blue);
+}
+.dashboard .panel--teams .panel-header h3::before { background: #6366f1; }
+.dashboard .panel--im    .panel-header h3::before { background: #0891b2; }
+.dashboard .panel--status .panel-header h3::before { background: #10b981; }
+.dashboard .panel--watch  .panel-header h3::before { background: #f59e0b; }
 
 .dashboard .panel-header .panel-action {
   font-size: 0.68rem;
@@ -221,16 +258,21 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-weight: 700;
-  padding: 6px 0;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   background: transparent;
 }
 
 .dashboard .mini-table td {
-  padding: 7px 0;
-  font-size: 0.78rem;
+  padding: 9px 10px;
+  font-size: 0.8rem;
   border-bottom: 1px solid var(--border-light);
   color: var(--text);
+  transition: background 0.15s ease;
+}
+
+.dashboard .mini-table tbody tr:nth-child(even) td {
+  background: #fafbfd;
 }
 
 .dashboard .mini-table tbody tr:last-child td {
@@ -238,7 +280,19 @@
 }
 
 .dashboard .mini-table tbody tr:hover td {
-  background: var(--blue-bg);
+  background: #eff6ff;
+}
+
+/* Rank column (first cell) gets a pill badge in Top 5 Teams */
+.dashboard .panel--teams .mini-table td:first-child,
+.dashboard .panel--im    .mini-table td:first-child {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Numeric cells should use tabular-nums so columns align */
+.dashboard .mini-table td + td {
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Bar Chart (CSS) ────────────────────────────────────────── */
@@ -267,12 +321,16 @@
 
 .dashboard .chart-bar-track {
   flex: 1;
-  height: 20px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  height: 16px;
+  background: #f1f5f9;
+  border: none;
+  border-radius: 999px;
   overflow: hidden;
   position: relative;
+}
+
+.dashboard .chart-bar-fill {
+  border-radius: 999px;
 }
 
 .dashboard .chart-bar-fill {
@@ -362,20 +420,31 @@
 .dashboard .watchlist-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border-light);
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fafbfd;
+  border: 1px solid var(--border-light);
+  margin-bottom: 8px;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.dashboard .watchlist-item:hover {
+  background: #fff;
+  border-color: var(--border);
+  transform: translateX(2px);
 }
 
 .dashboard .watchlist-item:last-child {
-  border-bottom: none;
+  margin-bottom: 0;
 }
 
 .dashboard .watchlist-indicator {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.04);
 }
 
 .dashboard .watchlist-indicator.green { background: var(--green); }
@@ -524,17 +593,27 @@
 @keyframes dash-spin { to { transform: rotate(360deg); } }
 
 /* ── Responsive ─────────────────────────────────────────────── */
-@media (max-width: 1400px) {
+/* Keep the 6-column KPI row down to ~1100px so 14" laptops (~1366px wide
+   with sidebar) keep the same layout as desktop, just tighter. Cards
+   shrink their padding and value font-size when we cross ~1300px. */
+@media (max-width: 1300px) {
+  .dashboard .kpi-card { padding: 12px; }
+  .dashboard .kpi-card .kpi-value { font-size: 1.2rem; }
+  .dashboard .kpi-card .kpi-label { font-size: 0.6rem; margin-bottom: 6px; }
+  .dashboard .kpi-row { gap: 8px; }
+}
+
+@media (max-width: 1100px) {
   .dashboard .kpi-row { grid-template-columns: repeat(3, 1fr); }
   .dashboard .bottom-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
-@media (max-width: 1000px) {
+@media (max-width: 800px) {
   .dashboard .kpi-row { grid-template-columns: repeat(2, 1fr); }
   .dashboard .bottom-grid { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 560px) {
   .dashboard { padding: 16px; }
   .dashboard .kpi-row { grid-template-columns: 1fr; }
 }
