@@ -681,7 +681,11 @@ export default function ExecutionForm() {
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) => { uploadAttachment(e.target.files?.[0]); e.target.value = ""; }}
+                  multiple
+                  onChange={(e) => {
+                    Array.from(e.target.files || []).forEach((f) => uploadAttachment(f));
+                    e.target.value = "";
+                  }}
                   disabled={attachmentBusy}
                 />
               </label>
