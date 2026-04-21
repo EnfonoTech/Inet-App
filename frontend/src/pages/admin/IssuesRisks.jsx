@@ -70,11 +70,11 @@ export default function IssuesRisks() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [issueCatFilter, setIssueCatFilter] = useState("");
-  const [execStatusFilter, setExecStatusFilter] = useState("");
-  const [tlStatusFilter, setTlStatusFilter] = useState("");
-  const [qcFilter, setQcFilter] = useState("");
-  const [ciagFilter, setCiagFilter] = useState("");
+  const [issueCatFilter, setIssueCatFilter] = useState([]);
+  const [execStatusFilter, setExecStatusFilter] = useState([]);
+  const [tlStatusFilter, setTlStatusFilter] = useState([]);
+  const [qcFilter, setQcFilter] = useState([]);
+  const [ciagFilter, setCiagFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
@@ -119,11 +119,11 @@ export default function IssuesRisks() {
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
-      if (issueCatFilter && (r.issue_category || "") !== issueCatFilter) return false;
-      if (execStatusFilter && (r.execution_status || "") !== execStatusFilter) return false;
-      if (tlStatusFilter && (r.tl_status || "") !== tlStatusFilter) return false;
-      if (qcFilter && (r.qc_status || "") !== qcFilter) return false;
-      if (ciagFilter && (r.ciag_status || "") !== ciagFilter) return false;
+      if (issueCatFilter.length && !issueCatFilter.includes(r.issue_category || "")) return false;
+      if (execStatusFilter.length && !execStatusFilter.includes(r.execution_status || "")) return false;
+      if (tlStatusFilter.length && !tlStatusFilter.includes(r.tl_status || "")) return false;
+      if (qcFilter.length && !qcFilter.includes(r.qc_status || "")) return false;
+      if (ciagFilter.length && !ciagFilter.includes(r.ciag_status || "")) return false;
       if (fromDate && (!r.plan_date || r.plan_date < fromDate)) return false;
       if (toDate && (!r.plan_date || r.plan_date > toDate)) return false;
       return true;
@@ -140,7 +140,7 @@ export default function IssuesRisks() {
     rows.forEach((r) => { if (r.team) m.set(r.team, r.team_name || r.team); });
     return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
   }, [rows]);
-  const hasFilters = !!(search || issueCatFilter || execStatusFilter || tlStatusFilter || qcFilter || ciagFilter || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(search || issueCatFilter.length || execStatusFilter.length || tlStatusFilter.length || qcFilter.length || ciagFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   useEffect(() => {
     if (!showModal) return;
@@ -221,14 +221,8 @@ export default function IssuesRisks() {
           onChange={(e) => setSearch(e.target.value)}
           style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240 }}
         />
-        <select value={issueCatFilter} onChange={(e) => setIssueCatFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Categories</option>
-          {ISSUE_CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={execStatusFilter} onChange={(e) => setExecStatusFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Exec Status</option>
-          {EXECUTION_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+        <SearchableSelect multi value={issueCatFilter} onChange={setIssueCatFilter} options={ISSUE_CATEGORY_OPTIONS} placeholder="All Categories" minWidth={160} />
+        <SearchableSelect multi value={execStatusFilter} onChange={setExecStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Exec Status" minWidth={150} />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
@@ -237,7 +231,7 @@ export default function IssuesRisks() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setIssueCatFilter(""); setExecStatusFilter(""); setTlStatusFilter(""); setQcFilter(""); setCiagFilter(""); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setIssueCatFilter([]); setExecStatusFilter([]); setTlStatusFilter([]); setQcFilter([]); setCiagFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

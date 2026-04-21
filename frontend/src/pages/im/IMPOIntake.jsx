@@ -42,8 +42,8 @@ export default function IMPOIntake() {
 
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [projectFilter, setProjectFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [modeFilter, setModeFilter] = useState("all");
 
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -70,8 +70,8 @@ export default function IMPOIntake() {
       const portal = { has_target_month: "no" };
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
       if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
-      if (projectFilter) portal.project_code = projectFilter;
-      if (duidFilter) portal.site_code = duidFilter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
       const res = await pmApi.listPODispatches(filters, rowLimit, portal);
       setRows(Array.isArray(res) ? res : []);
       setSelected(new Set());
@@ -88,7 +88,7 @@ export default function IMPOIntake() {
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
 
-  const hasFilters = search || projectFilter || duidFilter || modeFilter !== "all";
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || modeFilter !== "all");
 
   function toggleRow(name) {
     setSelected((prev) => {
@@ -169,24 +169,12 @@ export default function IMPOIntake() {
           <option value="Auto">Auto</option>
           <option value="Manual">Manual</option>
         </select>
-        <SearchableSelect
-          value={projectFilter}
-          onChange={setProjectFilter}
-          options={projectOptions}
-          placeholder="All Projects"
-          minWidth={170}
-        />
-        <SearchableSelect
-          value={duidFilter}
-          onChange={setDuidFilter}
-          options={duidOptions}
-          placeholder="All DUIDs"
-          minWidth={150}
-        />
+        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         {hasFilters && (
           <button
             className="btn-secondary"
-            onClick={() => { setSearch(""); setModeFilter("all"); setProjectFilter(""); setDuidFilter(""); }}
+            onClick={() => { setSearch(""); setModeFilter("all"); setProjectFilter([]); setDuidFilter([]); }}
           >
             Clear
           </button>

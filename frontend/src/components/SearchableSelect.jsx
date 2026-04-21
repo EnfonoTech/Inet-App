@@ -322,9 +322,9 @@ export default function SearchableSelect({
                       <input
                         type="checkbox"
                         checked={selected}
-                        onChange={() => {}}
+                        onChange={() => toggleMulti(o.id)}
                         onClick={(e) => e.stopPropagation()}
-                        style={{ margin: 0, pointerEvents: "none" }}
+                        style={{ margin: 0, cursor: "pointer" }}
                       />
                     )}
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{o.label}</span>

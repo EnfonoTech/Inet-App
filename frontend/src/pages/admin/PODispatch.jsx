@@ -103,9 +103,9 @@ export default function PODispatch() {
   const [selected, setSelected] = useState(new Set());
   const [tableSearch, setTableSearch] = useState("");
   const tableSearchDebounced = useDebounced(tableSearch, 300);
-  const [projectFilter, setProjectFilter] = useState("");
-  const [imFilter, setImFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [imFilter, setImFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
@@ -147,9 +147,9 @@ export default function PODispatch() {
       const status = tab ?? activeTab;
       const portal = { intake_tab: String(status || "").toLowerCase() };
       if (tableSearchDebounced.trim()) portal.search = tableSearchDebounced.trim();
-      if (projectFilter) portal.project_code = projectFilter;
-      if (imFilter) portal.dispatched_im = imFilter;
-      if (duidFilter) portal.site_code = duidFilter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (imFilter.length) portal.dispatched_im = imFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
       if (fromDate) portal.from_date = fromDate;
       if (toDate) portal.to_date = toDate;
       const [poLines, ims] = await Promise.all([
@@ -206,7 +206,7 @@ export default function PODispatch() {
     ),
     [imList],
   );
-  const hasFilters = tableSearch || projectFilter || imFilter || duidFilter || fromDate || toDate;
+  const hasFilters = !!(tableSearch || projectFilter.length || imFilter.length || duidFilter.length || fromDate || toDate);
 
   function toggleAll() {
     setSelected(selected.size === rows.length ? new Set() : new Set(rows.map((r) => r.name)));
@@ -497,30 +497,12 @@ export default function PODispatch() {
             onChange={e => setTableSearch(e.target.value)}
             style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
           />
-          <SearchableSelect
-            value={projectFilter}
-            onChange={setProjectFilter}
-            options={projectOptions}
-            placeholder="All Projects"
-            minWidth={170}
-          />
-          <SearchableSelect
-            value={imFilter}
-            onChange={setImFilter}
-            options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))}
-            placeholder="All IMs"
-            minWidth={170}
-          />
-          <SearchableSelect
-            value={duidFilter}
-            onChange={setDuidFilter}
-            options={duidOptions}
-            placeholder="All DUIDs"
-            minWidth={160}
-          />
+          <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+          <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))} placeholder="All IMs" minWidth={170} />
+          <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={160} />
           <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {hasFilters && (
-            <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter(""); setImFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
+            <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}>
               Clear
             </button>
           )}

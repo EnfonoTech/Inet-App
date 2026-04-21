@@ -102,9 +102,9 @@ export default function RolloutPlanning() {
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [metaRows, setMetaRows] = useState([]);
-  const [projectFilter, setProjectFilter] = useState("");
-  const [imFilter, setImFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [imFilter, setImFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
@@ -143,9 +143,9 @@ export default function RolloutPlanning() {
     try {
       const portal = {};
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-      if (projectFilter) portal.project_code = projectFilter;
-      if (imFilter) portal.im = imFilter;
-      if (duidFilter) portal.site_code = duidFilter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (imFilter.length) portal.im = imFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
       if (fromDate) portal.from_date = fromDate;
       if (toDate) portal.to_date = toDate;
       const list = await pmApi.listPODispatches({ dispatch_status: "Dispatched" }, rowLimit, portal);
@@ -201,8 +201,8 @@ export default function RolloutPlanning() {
     }
     return ids.map((id) => ({ im: id, im_full_name: labelById[id] || id }));
   }, [dispOpts.im, metaRows]);
-  const hasFilters = search || projectFilter || imFilter || duidFilter || fromDate || toDate;
-  const filterActiveForFooter = !!(searchDebounced.trim() || projectFilter || imFilter || duidFilter || fromDate || toDate);
+  const hasFilters = !!(search || projectFilter.length || imFilter.length || duidFilter.length || fromDate || toDate);
+  const filterActiveForFooter = !!(searchDebounced.trim() || projectFilter.length || imFilter.length || duidFilter.length || fromDate || toDate);
 
   function toggleAll() {
     if (selected.size === rows.length && rows.length > 0) {
@@ -299,33 +299,15 @@ export default function RolloutPlanning() {
               minWidth: 300,
             }}
           />
-          <SearchableSelect
-            value={projectFilter}
-            onChange={setProjectFilter}
-            options={projectOptions}
-            placeholder="All Projects"
-            minWidth={170}
-          />
-          <SearchableSelect
-            value={imFilter}
-            onChange={setImFilter}
-            options={imOptionRows.map((r) => ({ id: r.im, label: r.im_full_name || r.im }))}
-            placeholder="All IMs"
-            minWidth={170}
-          />
-          <SearchableSelect
-            value={duidFilter}
-            onChange={setDuidFilter}
-            options={duidOptions}
-            placeholder="All DUIDs"
-            minWidth={150}
-          />
+          <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+          <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imOptionRows.map((r) => ({ id: r.im, label: r.im_full_name || r.im }))} placeholder="All IMs" minWidth={170} />
+          <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
           <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {hasFilters && (
             <button
               className="btn-secondary"
               style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-              onClick={() => { setSearch(""); setProjectFilter(""); setImFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
+              onClick={() => { setSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
             >
               Clear
             </button>

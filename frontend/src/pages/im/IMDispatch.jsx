@@ -144,9 +144,9 @@ export default function IMDispatch() {
   const [error, setError] = useState(null);
   const [modeFilter, setModeFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
-  const [teamFilter, setTeamFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [teamFilter, setTeamFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -203,9 +203,9 @@ export default function IMDispatch() {
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
       if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
       if (dummyFilter !== "all") portal.dummy_preset = dummyFilter;
-      if (projectFilter) portal.project_code = projectFilter;
-      if (teamFilter) portal.team = teamFilter;
-      if (duidFilter) portal.site_code = duidFilter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (teamFilter.length) portal.team = teamFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
       if (fromDate) portal.from_date = fromDate;
       if (toDate) portal.to_date = toDate;
       const portalArg = Object.keys(portal).length ? portal : undefined;
@@ -369,7 +369,7 @@ export default function IMDispatch() {
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
   const teamOptions = teamOpts.team_id || [];
-  const hasFilters = search || modeFilter !== "all" || dummyFilter !== "all" || projectFilter || teamFilter || duidFilter || fromDate || toDate;
+  const hasFilters = !!(search || modeFilter !== "all" || dummyFilter !== "all" || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   function toggleRow(name) {
     setSelected((prev) => {
@@ -548,30 +548,12 @@ export default function IMDispatch() {
               minWidth: 220,
             }}
           />
-          <SearchableSelect
-            value={projectFilter}
-            onChange={setProjectFilter}
-            options={projectOptions}
-            placeholder="All Projects"
-            minWidth={170}
-          />
-          <SearchableSelect
-            value={teamFilter}
-            onChange={setTeamFilter}
-            options={teamOptions}
-            placeholder="All Teams"
-            minWidth={150}
-          />
-          <SearchableSelect
-            value={duidFilter}
-            onChange={setDuidFilter}
-            options={duidOptions}
-            placeholder="All DUIDs"
-            minWidth={150}
-          />
+          <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+          <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="All Teams" minWidth={150} />
+          <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
           <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {hasFilters && (
-            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setModeFilter("all"); setDummyFilter("all"); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}>
+            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setModeFilter("all"); setDummyFilter("all"); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}>
               Clear
             </button>
           )}

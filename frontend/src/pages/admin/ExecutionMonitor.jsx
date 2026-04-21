@@ -130,12 +130,12 @@ export default function ExecutionMonitor() {
   const intervalRef = useRef(null);
 
   const [search, setSearch] = useState("");
-  const [planStatusFilter, setPlanStatusFilter] = useState("");
-  const [executionStatusFilter, setExecutionStatusFilter] = useState("");
-  const [visitFilter, setVisitFilter] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
-  const [teamFilter, setTeamFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [planStatusFilter, setPlanStatusFilter] = useState([]);
+  const [executionStatusFilter, setExecutionStatusFilter] = useState([]);
+  const [visitFilter, setVisitFilter] = useState([]);
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [teamFilter, setTeamFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [detailRow, setDetailRow] = useState(null);
@@ -188,12 +188,12 @@ export default function ExecutionMonitor() {
     setError(null);
     try {
       const filters = {};
-      if (planStatusFilter) filters.status = planStatusFilter;
-      if (executionStatusFilter) filters.execution_status = executionStatusFilter;
-      if (visitFilter) filters.visit_type = visitFilter;
-      if (teamFilter) filters.team = teamFilter;
-      if (projectFilter) filters.project_code = projectFilter;
-      if (duidFilter) filters.site_code = duidFilter;
+      if (planStatusFilter.length) filters.status = planStatusFilter;
+      if (executionStatusFilter.length) filters.execution_status = executionStatusFilter;
+      if (visitFilter.length) filters.visit_type = visitFilter;
+      if (teamFilter.length) filters.team = teamFilter;
+      if (projectFilter.length) filters.project_code = projectFilter;
+      if (duidFilter.length) filters.site_code = duidFilter;
       if (fromDate) filters.from_date = fromDate;
       if (toDate) filters.to_date = toDate;
       if (search.trim()) filters.search = search.trim();
@@ -231,7 +231,7 @@ export default function ExecutionMonitor() {
     return { id: tid, label: hit?.team_name || tid };
   });
 
-  const hasFilters = search || planStatusFilter || executionStatusFilter || visitFilter || projectFilter || teamFilter || duidFilter || fromDate || toDate;
+  const hasFilters = !!(search || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   return (
     <div>
@@ -267,56 +267,12 @@ export default function ExecutionMonitor() {
             border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240,
           }}
         />
-        <select
-          value={planStatusFilter}
-          onChange={(e) => setPlanStatusFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-          title="Rollout Plan status"
-        >
-          <option value="">All plan statuses</option>
-          {PLAN_STATUS_OPTIONS.filter(Boolean).map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <select
-          value={executionStatusFilter}
-          onChange={(e) => setExecutionStatusFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-          title="Daily Execution status"
-        >
-          <option value="">All execution statuses</option>
-          {EXECUTION_STATUS_OPTIONS.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <SearchableSelect
-          value={visitFilter}
-          onChange={setVisitFilter}
-          options={visitTypes}
-          placeholder="All Visit Types"
-          minWidth={160}
-        />
-        <SearchableSelect
-          value={projectFilter}
-          onChange={setProjectFilter}
-          options={projectOptions}
-          placeholder="All Projects"
-          minWidth={170}
-        />
-        <SearchableSelect
-          value={teamFilter}
-          onChange={setTeamFilter}
-          options={teamOptions}
-          placeholder="All Teams"
-          minWidth={150}
-        />
-        <SearchableSelect
-          value={duidFilter}
-          onChange={setDuidFilter}
-          options={duidOptions}
-          placeholder="All DUIDs"
-          minWidth={150}
-        />
+        <SearchableSelect multi value={planStatusFilter} onChange={setPlanStatusFilter} options={PLAN_STATUS_OPTIONS.filter(Boolean)} placeholder="All Plan Status" minWidth={150} />
+        <SearchableSelect multi value={executionStatusFilter} onChange={setExecutionStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Exec Status" minWidth={150} />
+        <SearchableSelect multi value={visitFilter} onChange={setVisitFilter} options={visitTypes} placeholder="All Visit Types" minWidth={160} />
+        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="All Teams" minWidth={150} />
+        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
@@ -324,12 +280,12 @@ export default function ExecutionMonitor() {
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
             onClick={() => {
               setSearch("");
-              setPlanStatusFilter("");
-              setExecutionStatusFilter("");
-              setVisitFilter("");
-              setProjectFilter("");
-              setTeamFilter("");
-              setDuidFilter("");
+              setPlanStatusFilter([]);
+              setExecutionStatusFilter([]);
+              setVisitFilter([]);
+              setProjectFilter([]);
+              setTeamFilter([]);
+              setDuidFilter([]);
               setFromDate("");
               setToDate("");
             }}

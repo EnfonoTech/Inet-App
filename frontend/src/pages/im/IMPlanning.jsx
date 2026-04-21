@@ -54,12 +54,12 @@ export default function IMPlanning() {
   const { rowLimit } = useTableRowLimit();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("Planned");
-  const [visitFilter, setVisitFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(["Planned"]);
+  const [visitFilter, setVisitFilter] = useState([]);
   const [search, setSearch] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
-  const [teamFilter, setTeamFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [teamFilter, setTeamFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -77,14 +77,14 @@ export default function IMPlanning() {
     try {
       const portal = {};
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-      if (visitFilter) portal.visit_type = visitFilter;
-      if (projectFilter) portal.project_code = projectFilter;
-      if (teamFilter) portal.team = teamFilter;
-      if (duidFilter) portal.site_code = duidFilter;
+      if (visitFilter.length) portal.visit_type = visitFilter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (teamFilter.length) portal.team = teamFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
       if (fromDate) portal.from_date = fromDate;
       if (toDate) portal.to_date = toDate;
       const portalArg = Object.keys(portal).length ? portal : undefined;
-      const res = await pmApi.listIMRolloutPlans(imName, statusFilter || undefined, rowLimit, portalArg);
+      const res = await pmApi.listIMRolloutPlans(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
       setPlans(Array.isArray(res) ? res : []);
     } catch {
       setPlans([]);
@@ -149,7 +149,7 @@ export default function IMPlanning() {
     }
   }
 
-  const hasFilters = visitFilter || search || projectFilter || teamFilter || duidFilter || fromDate || toDate;
+  const hasFilters = !!(visitFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
   const totalAmt = plans.reduce((s, p) => s + (p.target_amount || 0), 0);
   const selectedAmt = plans
     .filter((p) => selected.has(p.name))
@@ -191,52 +191,17 @@ export default function IMPlanning() {
               border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,
             }}
           />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-          >
-            <option value="">All Statuses</option>
-            <option value="Planned">Planned</option>
-            <option value="Planning with Issue">Planning with Issue</option>
-            <option value="In Execution">In Execution</option>
-            <option value="Completed">Completed</option>
-            <option value="Cancelled">Cancelled</option>
-          </select>
-          <SearchableSelect
-            value={visitFilter}
-            onChange={setVisitFilter}
-            options={visitTypes}
-            placeholder="All Visit Types"
-            minWidth={160}
-          />
-          <SearchableSelect
-            value={projectFilter}
-            onChange={setProjectFilter}
-            options={projectOptions}
-            placeholder="All Projects"
-            minWidth={170}
-          />
-          <SearchableSelect
-            value={teamFilter}
-            onChange={setTeamFilter}
-            options={teamEntries.map(([id, label]) => ({ id, label }))}
-            placeholder="All Teams"
-            minWidth={150}
-          />
-          <SearchableSelect
-            value={duidFilter}
-            onChange={setDuidFilter}
-            options={duidOptions}
-            placeholder="All DUIDs"
-            minWidth={150}
-          />
+          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={["Planned", "Planning with Issue", "In Execution", "Completed", "Cancelled"]} placeholder="All Statuses" minWidth={150} />
+          <SearchableSelect multi value={visitFilter} onChange={setVisitFilter} options={visitTypes} placeholder="All Visit Types" minWidth={160} />
+          <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+          <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
+          <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
           <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {(hasFilters) && (
             <button
               className="btn-secondary"
               style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-              onClick={() => { setSearch(""); setVisitFilter(""); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
+              onClick={() => { setSearch(""); setVisitFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
             >
               Clear
             </button>

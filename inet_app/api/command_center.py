@@ -1553,17 +1553,18 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         if filters.get("po_line_status"):
             wheres.append("pil.po_line_status = %s")
             params.append(filters["po_line_status"])
-        if pf.get("project_code"):
-            wheres.append("IFNULL(pil.project_code,'') = %s")
-            params.append((pf.get("project_code") or "").strip())
-        if pf.get("site_code"):
-            wheres.append("IFNULL(pil.site_code,'') = %s")
-            params.append((pf.get("site_code") or "").strip())
-        im_v = (pf.get("dispatched_im") or pf.get("im") or "").strip()
+        for col, key in (("IFNULL(pil.project_code,'')", "project_code"),
+                         ("IFNULL(pil.site_code,'')", "site_code")):
+            c, p = _sql_in_or_eq(col, pf.get(key))
+            if c:
+                wheres.append(c)
+                params.extend(p)
+        im_vals = _ensure_list(pf.get("dispatched_im") or pf.get("im"))
         intake_tab = (pf.get("intake_tab") or "").strip().lower()
-        if im_v and intake_tab != "new":
-            wheres.append("IFNULL(pd.im,'') = %s")
-            params.append(im_v)
+        if im_vals and intake_tab != "new":
+            c, p = _sql_in_or_eq("IFNULL(pd.im,'')", im_vals)
+            wheres.append(c)
+            params.extend(p)
         if pf.get("from_date") and pf.get("to_date"):
             wheres.append(
                 "(pd.name IS NULL OR (pd.target_month BETWEEN %s AND %s))"
@@ -1881,15 +1882,13 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
         if isinstance(filters, dict)
         else [list(x) for x in (filters or [])]
     )
-    if pf.get("project_code"):
-        base_fl.append(["project_code", "=", (pf.get("project_code") or "").strip()])
-    if pf.get("site_code"):
-        base_fl.append(["site_code", "=", (pf.get("site_code") or "").strip()])
-    if pf.get("team"):
-        base_fl.append(["team", "=", (pf.get("team") or "").strip()])
-    pim = (pf.get("im") or "").strip()
-    if pim and "im" in fields:
-        base_fl.append(["im", "=", pim])
+    for key in ("project_code", "site_code", "team"):
+        vals = _ensure_list(pf.get(key))
+        if vals:
+            base_fl.append([key, "in" if len(vals) > 1 else "=", vals if len(vals) > 1 else vals[0]])
+    im_vals = _ensure_list(pf.get("im"))
+    if im_vals and "im" in fields:
+        base_fl.append(["im", "in" if len(im_vals) > 1 else "=", im_vals if len(im_vals) > 1 else im_vals[0]])
     if pf.get("dispatch_mode"):
         base_fl.append(["dispatch_mode", "=", (pf.get("dispatch_mode") or "").strip()])
     if pf.get("from_date") and pf.get("to_date"):
@@ -3383,15 +3382,15 @@ def list_execution_monitor_rows(filters=None, limit=500):
 
     wheres = ["1=1"]
     params = []
-    if filters.get("status"):
-        wheres.append("rp.plan_status = %s")
-        params.append(filters["status"])
-    if filters.get("visit_type"):
-        wheres.append("rp.visit_type = %s")
-        params.append(filters["visit_type"])
-    if filters.get("team"):
-        wheres.append("rp.team = %s")
-        params.append(filters["team"])
+    for col, key in (("rp.plan_status", "status"),
+                     ("rp.visit_type", "visit_type"),
+                     ("rp.team", "team"),
+                     ("IFNULL(pd.project_code,'')", "project_code"),
+                     ("IFNULL(pd.site_code,'')", "site_code")):
+        c, p = _sql_in_or_eq(col, filters.get(key))
+        if c:
+            wheres.append(c)
+            params.extend(p)
     if filters.get("from_date") and filters.get("to_date"):
         wheres.append("rp.plan_date BETWEEN %s AND %s")
         params.extend([filters["from_date"], filters["to_date"]])
@@ -3401,19 +3400,20 @@ def list_execution_monitor_rows(filters=None, limit=500):
     elif filters.get("to_date"):
         wheres.append("rp.plan_date <= %s")
         params.append(filters["to_date"])
-    if filters.get("project_code"):
-        wheres.append("IFNULL(pd.project_code,'') = %s")
-        params.append((filters.get("project_code") or "").strip())
-    if filters.get("site_code"):
-        wheres.append("IFNULL(pd.site_code,'') = %s")
-        params.append((filters.get("site_code") or "").strip())
 
-    if filters.get("execution_status"):
+    exec_status_vals = _ensure_list(filters.get("execution_status"))
+    if exec_status_vals:
+        if len(exec_status_vals) == 1:
+            ex_match = "de0.execution_status = %s"
+            ex_params = [exec_status_vals[0]]
+        else:
+            ex_match = "de0.execution_status IN ({})".format(", ".join(["%s"] * len(exec_status_vals)))
+            ex_params = list(exec_status_vals)
         ex_sql = (
             "EXISTS (SELECT 1 FROM `tabDaily Execution` de0 "
-            "WHERE de0.rollout_plan = rp.name AND de0.execution_status = %s"
+            f"WHERE de0.rollout_plan = rp.name AND {ex_match}"
         )
-        params.append(filters["execution_status"])
+        params.extend(ex_params)
         if filters.get("execution_team"):
             ex_sql += " AND de0.team = %s"
             params.append(filters["execution_team"])
@@ -4592,22 +4592,23 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
     ph = ", ".join(["%s"] * len(im_identifiers))
     params = list(im_identifiers)
     status_clause = ""
-    if plan_status:
-        status_clause = " AND rp.plan_status = %s"
-        params.append(plan_status)
+    status_vals = _ensure_list(plan_status)
+    if status_vals:
+        if len(status_vals) == 1:
+            status_clause = " AND rp.plan_status = %s"
+            params.append(status_vals[0])
+        else:
+            status_clause = " AND rp.plan_status IN ({})".format(", ".join(["%s"] * len(status_vals)))
+            params.extend(status_vals)
     portal_clause = ""
-    if pf.get("visit_type"):
-        portal_clause += " AND rp.visit_type = %s"
-        params.append(pf["visit_type"])
-    if pf.get("project_code"):
-        portal_clause += " AND IFNULL(pd.project_code,'') = %s"
-        params.append((pf.get("project_code") or "").strip())
-    if pf.get("site_code"):
-        portal_clause += " AND IFNULL(pd.site_code,'') = %s"
-        params.append((pf.get("site_code") or "").strip())
-    if pf.get("team"):
-        portal_clause += " AND IFNULL(rp.team,'') = %s"
-        params.append((pf.get("team") or "").strip())
+    for col, key in (("rp.visit_type", "visit_type"),
+                     ("IFNULL(pd.project_code,'')", "project_code"),
+                     ("IFNULL(pd.site_code,'')", "site_code"),
+                     ("IFNULL(rp.team,'')", "team")):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            portal_clause += f" AND {c}"
+            params.extend(p)
     if pf.get("from_date") and pf.get("to_date"):
         portal_clause += " AND rp.plan_date BETWEEN %s AND %s"
         params.extend([pf["from_date"], pf["to_date"]])
@@ -4698,25 +4699,29 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     ph = ", ".join(["%s"] * len(im_identifiers))
     params = list(im_identifiers)
     status_clause = ""
-    if execution_status:
-        status_clause = " AND de.execution_status = %s"
-        params.append(_normalize_execution_status(execution_status))
+    status_vals = _ensure_list(execution_status)
+    if status_vals:
+        norm_vals = [_normalize_execution_status(s) for s in status_vals]
+        if len(norm_vals) == 1:
+            status_clause = " AND de.execution_status = %s"
+            params.append(norm_vals[0])
+        else:
+            status_clause = " AND de.execution_status IN ({})".format(", ".join(["%s"] * len(norm_vals)))
+            params.extend(norm_vals)
     portal_clause = ""
-    if pf.get("qc_status"):
-        portal_clause += " AND IFNULL(de.qc_status,'') = %s"
-        params.append((pf.get("qc_status") or "").strip())
-    if frappe.db.has_column("Daily Execution", "ciag_status") and pf.get("ciag_status"):
-        portal_clause += " AND IFNULL(de.ciag_status,'') = %s"
-        params.append((pf.get("ciag_status") or "").strip())
-    if pf.get("project_code"):
-        portal_clause += " AND IFNULL(pd.project_code,'') = %s"
-        params.append((pf.get("project_code") or "").strip())
-    if pf.get("site_code"):
-        portal_clause += " AND IFNULL(pd.site_code,'') = %s"
-        params.append((pf.get("site_code") or "").strip())
-    if pf.get("team"):
-        portal_clause += " AND IFNULL(de.team,'') = %s"
-        params.append((pf.get("team") or "").strip())
+    for col, key in (("IFNULL(de.qc_status,'')", "qc_status"),
+                     ("IFNULL(pd.project_code,'')", "project_code"),
+                     ("IFNULL(pd.site_code,'')", "site_code"),
+                     ("IFNULL(de.team,'')", "team")):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            portal_clause += f" AND {c}"
+            params.extend(p)
+    if frappe.db.has_column("Daily Execution", "ciag_status"):
+        c, p = _sql_in_or_eq("IFNULL(de.ciag_status,'')", pf.get("ciag_status"))
+        if c:
+            portal_clause += f" AND {c}"
+            params.extend(p)
     if pf.get("from_date") and pf.get("to_date"):
         portal_clause += " AND de.execution_date BETWEEN %s AND %s"
         params.extend([pf["from_date"], pf["to_date"]])

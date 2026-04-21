@@ -74,9 +74,9 @@ export default function IMWorkDone() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [billingFilter, setBillingFilter] = useState("");
-  const [submissionFilter, setSubmissionFilter] = useState("");
-  const [execStatusFilter, setExecStatusFilter] = useState("");
+  const [billingFilter, setBillingFilter] = useState([]);
+  const [submissionFilter, setSubmissionFilter] = useState([]);
+  const [execStatusFilter, setExecStatusFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
@@ -111,7 +111,7 @@ export default function IMWorkDone() {
     try {
       const filters = { im: imName || "" };
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
-      if (billingFilter) filters.billing_status = billingFilter;
+      if (billingFilter.length) filters.billing_status = billingFilter;
       if (projectFilter.length) filters.project_code = projectFilter;
       if (duidFilter.length) filters.site_code = duidFilter;
       if (fromDate) filters.from_date = fromDate;
@@ -128,16 +128,21 @@ export default function IMWorkDone() {
   useEffect(() => { loadData(); }, [imName, rowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate]);
 
   const filteredRows = useMemo(() => rows.filter((r) => {
-    if (submissionFilter === "__NONE__" && r.submission_status) return false;
-    if (submissionFilter && submissionFilter !== "__NONE__" && (r.submission_status || "") !== submissionFilter) return false;
-    if (execStatusFilter && (r.execution_status || "") !== execStatusFilter) return false;
+    if (submissionFilter.length) {
+      const sub = r.submission_status || "";
+      const wantsNone = submissionFilter.includes("__NONE__");
+      const nonNone = submissionFilter.filter((v) => v !== "__NONE__");
+      const match = (wantsNone && !sub) || nonNone.includes(sub);
+      if (!match) return false;
+    }
+    if (execStatusFilter.length && !execStatusFilter.includes(r.execution_status || "")) return false;
     return true;
   }), [rows, submissionFilter, execStatusFilter]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = !!(search || billingFilter || submissionFilter || execStatusFilter || projectFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
 
   return (
     <div>
@@ -158,22 +163,30 @@ export default function IMWorkDone() {
           onChange={(e) => setSearch(e.target.value)}
           style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240 }}
         />
-        <select value={submissionFilter} onChange={(e) => setSubmissionFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Submission</option>
-          <option value="__NONE__">Not set</option>
-          <option value="Ready for Confirmation">Ready for Confirmation</option>
-          <option value="Confirmation Done">Confirmation Done</option>
-        </select>
-        <select value={billingFilter} onChange={(e) => setBillingFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Billing</option>
-          <option value="Pending">Pending</option>
-          <option value="Invoiced">Invoiced</option>
-          <option value="Closed">Closed</option>
-        </select>
-        <select value={execStatusFilter} onChange={(e) => setExecStatusFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Exec Status</option>
-          {EXECUTION_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+        <SearchableSelect
+          multi
+          value={submissionFilter}
+          onChange={setSubmissionFilter}
+          options={[{ id: "__NONE__", label: "Not set" }, { id: "Ready for Confirmation", label: "Ready for Confirmation" }, { id: "Confirmation Done", label: "Confirmation Done" }]}
+          placeholder="All Submission"
+          minWidth={150}
+        />
+        <SearchableSelect
+          multi
+          value={billingFilter}
+          onChange={setBillingFilter}
+          options={["Pending", "Invoiced", "Closed"]}
+          placeholder="All Billing"
+          minWidth={130}
+        />
+        <SearchableSelect
+          multi
+          value={execStatusFilter}
+          onChange={setExecStatusFilter}
+          options={EXECUTION_STATUS_OPTIONS}
+          placeholder="All Exec Status"
+          minWidth={150}
+        />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
@@ -181,7 +194,7 @@ export default function IMWorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter(""); setSubmissionFilter(""); setExecStatusFilter(""); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setSubmissionFilter([]); setExecStatusFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

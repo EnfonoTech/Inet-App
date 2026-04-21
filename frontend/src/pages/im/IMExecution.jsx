@@ -113,13 +113,13 @@ export default function IMExecution() {
   const { rowLimit } = useTableRowLimit();
   const [executions, setExecutions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("");
-  const [qcFilter, setQcFilter] = useState("");
-  const [ciagFilter, setCiagFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState([]);
+  const [qcFilter, setQcFilter] = useState([]);
+  const [ciagFilter, setCiagFilter] = useState([]);
   const [search, setSearch] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
-  const [teamFilter, setTeamFilter] = useState("");
-  const [duidFilter, setDuidFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState([]);
+  const [teamFilter, setTeamFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -169,15 +169,15 @@ export default function IMExecution() {
     try {
       const portal = {};
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-      if (qcFilter) portal.qc_status = qcFilter;
-      if (ciagFilter) portal.ciag_status = ciagFilter;
-      if (projectFilter) portal.project_code = projectFilter;
-      if (teamFilter) portal.team = teamFilter;
-      if (duidFilter) portal.site_code = duidFilter;
+      if (qcFilter.length) portal.qc_status = qcFilter;
+      if (ciagFilter.length) portal.ciag_status = ciagFilter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (teamFilter.length) portal.team = teamFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
       if (fromDate) portal.from_date = fromDate;
       if (toDate) portal.to_date = toDate;
       const portalArg = Object.keys(portal).length ? portal : undefined;
-      const res = await pmApi.listIMDailyExecutions(imName, statusFilter || undefined, rowLimit, portalArg);
+      const res = await pmApi.listIMDailyExecutions(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
       setExecutions(Array.isArray(res) ? res : []);
     } catch {
       setExecutions([]);
@@ -216,7 +216,7 @@ export default function IMExecution() {
     return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
   }, [executions]);
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = statusFilter || qcFilter || ciagFilter || search || projectFilter || teamFilter || duidFilter || fromDate || toDate;
+  const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
   const totalAchieved = executions.reduce((s, e) => s + (e.achieved_qty || 0), 0);
   const eligibleForWorkDone = executions.filter((e) => e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done);
   const selectedEligible = eligibleForWorkDone.filter((e) => selectedExecs.has(e.name));
@@ -515,65 +515,18 @@ export default function IMExecution() {
             border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,
           }}
         />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All Statuses</option>
-          {EXECUTION_STATUS_OPTIONS.map((status) => (
-            <option key={status} value={status}>
-              {status}
-            </option>
-          ))}
-        </select>
-        <select
-          value={qcFilter}
-          onChange={(e) => setQcFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All QC</option>
-          {qcOptions.map((qc) => (
-            <option key={qc} value={qc}>{qc}</option>
-          ))}
-        </select>
-        <select
-          value={ciagFilter}
-          onChange={(e) => setCiagFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All CIAG</option>
-          {ciagOptions.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-        <SearchableSelect
-          value={projectFilter}
-          onChange={setProjectFilter}
-          options={projectOptions}
-          placeholder="All Projects"
-          minWidth={170}
-        />
-        <SearchableSelect
-          value={teamFilter}
-          onChange={setTeamFilter}
-          options={teamEntries.map(([id, label]) => ({ id, label }))}
-          placeholder="All Teams"
-          minWidth={150}
-        />
-        <SearchableSelect
-          value={duidFilter}
-          onChange={setDuidFilter}
-          options={duidOptions}
-          placeholder="All DUIDs"
-          minWidth={150}
-        />
+        <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Statuses" minWidth={150} />
+        <SearchableSelect multi value={qcFilter} onChange={setQcFilter} options={qcOptions} placeholder="All QC" minWidth={130} />
+        <SearchableSelect multi value={ciagFilter} onChange={setCiagFilter} options={ciagOptions} placeholder="All CIAG" minWidth={130} />
+        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
+        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setStatusFilter(""); setQcFilter(""); setCiagFilter(""); setProjectFilter(""); setTeamFilter(""); setDuidFilter(""); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setStatusFilter([]); setQcFilter([]); setCiagFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
