@@ -625,10 +625,8 @@ export default function IMExecution() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.poid || e.system_id || "—"}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(e.original_dummy_poid || "").trim() && String(e.original_dummy_poid) !== String(e.poid || e.system_id || "") ? `Original dummy POID: ${e.original_dummy_poid}` : ""}>
-                      {(e.original_dummy_poid || "").trim() && String(e.original_dummy_poid) !== String(e.poid || e.system_id || "")
-                        ? (e.original_dummy_poid || "").trim()
-                        : "—"}
+                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(e.original_dummy_poid || "").trim() ? `Dummy POID: ${e.original_dummy_poid}` : ""}>
+                      {(e.original_dummy_poid || "").trim() || "—"}
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.item_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 200 }}>{e.item_description || "—"}</td>

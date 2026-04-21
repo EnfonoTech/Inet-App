@@ -296,10 +296,8 @@ export default function WorkDone() {
                   return (
                     <tr key={row.name}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.poid || row.po_dispatch || "") ? `Original dummy POID: ${row.original_dummy_poid}` : ""}>
-                        {(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.poid || row.po_dispatch || "")
-                          ? (row.original_dummy_poid || "").trim()
-                          : "—"}
+                      <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() ? `Dummy POID: ${row.original_dummy_poid}` : ""}>
+                        {(row.original_dummy_poid || "").trim() || "—"}
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.execution || "—"}</td>
                       <td>{row.item_code}</td>

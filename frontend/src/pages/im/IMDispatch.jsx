@@ -12,6 +12,23 @@ import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+function todayMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthOptions() {
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i += 1) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+    out.push({ id: value, label });
+  }
+  return out;
+}
 const HIDDEN_DETAIL_FIELDS = new Set([
   "owner", "creation", "modified", "modified_by", "docstatus", "idx",
   "original_dummy_poid", "was_dummy_po",
@@ -169,7 +186,7 @@ export default function IMDispatch() {
   const [dummyBusy, setDummyBusy] = useState(false);
   const [dummyErr, setDummyErr] = useState(null);
   const [projectsForDummy, setProjectsForDummy] = useState([]);
-  const [dummyForm, setDummyForm] = useState({ project_code: "" });
+  const [dummyForm, setDummyForm] = useState({ project_code: "", target_month: "" });
   const [mapForRow, setMapForRow] = useState(null);
   const [mapLines, setMapLines] = useState([]);
   const [mapLineId, setMapLineId] = useState("");
@@ -291,7 +308,7 @@ export default function IMDispatch() {
 
   async function openDummyPoModal() {
     setDummyErr(null);
-    setDummyForm({ project_code: projectFilter || "" });
+    setDummyForm({ project_code: Array.isArray(projectFilter) ? (projectFilter[0] || "") : (projectFilter || ""), target_month: todayMonth() });
     setShowDummyModal(true);
     if (!imName) {
       setProjectsForDummy([]);
@@ -322,7 +339,10 @@ export default function IMDispatch() {
     setDummyBusy(true);
     setDummyErr(null);
     try {
-      await pmApi.createIMDummyPODispatch({ project_code: dummyForm.project_code });
+      await pmApi.createIMDummyPODispatch({
+        project_code: dummyForm.project_code,
+        target_month: dummyForm.target_month || undefined,
+      });
       setShowDummyModal(false);
       setSuccessMsg("Dummy PO created.");
       await load();
@@ -749,7 +769,7 @@ export default function IMDispatch() {
         width={420}
       >
         {dummyErr && <div className="notice error" style={{ marginBottom: 12 }}>{dummyErr}</div>}
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 16 }}>
           <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Project</label>
           <select
             value={dummyForm.project_code}
@@ -761,6 +781,18 @@ export default function IMDispatch() {
               <option key={p.name} value={p.project_code || p.name}>
                 {p.project_code || p.name}{p.project_name ? ` — ${p.project_name}` : ""}
               </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Target month</label>
+          <select
+            value={dummyForm.target_month || ""}
+            onChange={(e) => setDummyForm((f) => ({ ...f, target_month: e.target.value }))}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+          >
+            {monthOptions().map((m) => (
+              <option key={m.id} value={m.id}>{m.label}</option>
             ))}
           </select>
         </div>

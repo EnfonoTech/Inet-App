@@ -358,10 +358,8 @@ export default function ExecutionMonitor() {
                     <tr key={row.name}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.poid || row.po_dispatch || "") ? `Original dummy POID: ${row.original_dummy_poid}` : ""}>
-                        {(row.original_dummy_poid || "").trim() && String(row.original_dummy_poid) !== String(row.poid || row.po_dispatch || "")
-                          ? (row.original_dummy_poid || "").trim()
-                          : "—"}
+                      <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() ? `Dummy POID: ${row.original_dummy_poid}` : ""}>
+                        {(row.original_dummy_poid || "").trim() || "—"}
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.item_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 220 }}>{row.item_description || "—"}</td>

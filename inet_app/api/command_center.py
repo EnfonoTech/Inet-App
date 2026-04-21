@@ -1766,7 +1766,9 @@ def create_im_dummy_po_dispatch(payload=None):
 
     Placeholder DUID / item / qty are set; real details are applied in map_im_dummy_po_to_intake_line.
 
-    payload: {"project_code": required}
+    payload: {"project_code": required, "target_month": optional "YYYY-MM" or
+    "YYYY-MM-01". If provided, the dummy dispatch skips PO Intake and lands
+    directly in My Dispatches under that month.}
     """
     if isinstance(payload, str):
         payload = frappe.parse_json(payload)
@@ -1779,6 +1781,16 @@ def create_im_dummy_po_dispatch(payload=None):
         frappe.throw("project_code is required")
     if not _pcc_im_allows_project(project_code, im_identifiers):
         frappe.throw("You are not the Implementation Manager for this project.")
+
+    target_month = (payload.get("target_month") or "").strip()
+    if target_month:
+        # Accept "YYYY-MM" or a full date — always store as first-of-month.
+        try:
+            if len(target_month) == 7:
+                target_month = f"{target_month}-01"
+            target_month = str(getdate(target_month).replace(day=1))
+        except Exception:
+            frappe.throw("Invalid target_month (expected YYYY-MM or YYYY-MM-DD)")
 
     site_code = None
     for _attempt in range(40):
@@ -1833,19 +1845,24 @@ def create_im_dummy_po_dispatch(payload=None):
     doc.planning_mode = "Plan"
     doc.dispatch_status = "Dispatched"
     doc.dispatch_mode = "Manual"
+    if target_month and frappe.db.has_column("PO Dispatch", "target_month"):
+        doc.target_month = target_month
     if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
         doc.is_dummy_po = 1
 
     final_name = _insert_po_dispatch_with_poid(doc, poid)
     stamp = {}
     if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
-        stamp["original_dummy_poid"] = final_name
+        # Store the business-visible POID (DUMMY-YYMMDD-XXXXXX-1), not the
+        # doctype name (SYS-YYYY-NNNNN). The Dummy POID column everywhere
+        # shows this value verbatim.
+        stamp["original_dummy_poid"] = poid
     if frappe.db.has_column("PO Dispatch", "was_dummy_po"):
         stamp["was_dummy_po"] = 1
     if stamp:
         frappe.db.set_value("PO Dispatch", final_name, stamp, update_modified=False)
     frappe.db.commit()
-    return {"name": final_name, "po_no": po_no, "poid": final_name}
+    return {"name": final_name, "po_no": po_no, "poid": poid}
 
 
 def _po_dispatch_portal_pf_active(pf):
