@@ -77,10 +77,14 @@ after_migrate = "inet_app.setup.after_migrate"
 # application home page (will override Website Settings)
 # home_page = "login"
 
-# website user home page (by Role)
-# role_home_page = {
-# 	"Role": "home_page"
-# }
+# Landing page per role. Frappe uses the FIRST matching role in this map for
+# the logged-in user. Without this, field/IM users get Desk's "No App" page
+# because they lack Desk / System Manager permissions.
+role_home_page = {
+	"INET Field Team": "pms/today",
+	"INET IM": "pms/im-dashboard",
+	"INET Admin": "pms/dashboard",
+}
 
 # Generators
 # ----------
