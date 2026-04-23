@@ -51,8 +51,13 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      await login(form.username.trim(), form.password);
-      navigate("/dashboard", { replace: true });
+      const res = await login(form.username.trim(), form.password);
+      const home = res?.role === "admin"
+        ? "/dashboard"
+        : res?.role === "im"
+        ? "/im-dashboard"
+        : "/today";
+      navigate(home, { replace: true });
     } catch (err) {
       setError(err?.message || "Login failed. Please check your credentials.");
     } finally {

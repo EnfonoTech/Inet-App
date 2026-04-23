@@ -15,12 +15,13 @@ export function AuthProvider({ children }) {
     try {
       const res = await pmApi.getLoggedUser();
       if (res && res.authenticated === true && res.user && res.user !== "Guest") {
+        const resolvedRole = res.app_role || "field";
         setUser({ email: res.user, full_name: res.full_name || "" });
-        setRole(res.app_role || "field");
+        setRole(resolvedRole);
         setImName(res.im_name || null);
         setTeamId(res.team_id || null);
         setLoading(false);
-        return true;
+        return { ok: true, role: resolvedRole };
       }
     } catch {
       // treat as logged out
@@ -30,7 +31,7 @@ export function AuthProvider({ children }) {
     setImName(null);
     setTeamId(null);
     setLoading(false);
-    return false;
+    return { ok: false, role: null };
   }, []);
 
   useEffect(() => {
@@ -64,11 +65,21 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(
     async (usr, pwd) => {
+      // Frappe's /api/method/login returns:
+      //   "Logged In"  — success, user has a Desk home_page
+      //   "No App"     — credentials ok, session IS created, but the user has
+      //                  no Desk app access. For portal/field users this is
+      //                  still a successful login; skip the throw and verify
+      //                  via checkSession().
+      //   "Incorrect User or Password" (and friends) — real failure
       const data = await frappe_login(usr, pwd);
-      if (data.message !== "Logged In") {
-        throw new Error(data.message || "Login failed");
+      const msg = String(data?.message || "").trim();
+      const clearlyOk = msg === "Logged In" || msg === "No App" || msg === "Already Logged In";
+      const sess = await checkSession();
+      if (!sess.ok) {
+        throw new Error(clearlyOk ? "Session could not be established" : (msg || "Login failed"));
       }
-      await checkSession();
+      return { role: sess.role };
     },
     [checkSession]
   );
