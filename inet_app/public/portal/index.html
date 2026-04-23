@@ -12,11 +12,42 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="INET PMS" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="icon" href="/assets/inet_app/portal/assets/inet-app-icon-192.png" />
+    <link rel="apple-touch-icon" href="/assets/inet_app/portal/assets/inet-app-icon-192.png" />
     <title>INET Portal</title>
+    <style>
+      #inet-splash { position: fixed; inset: 0; background: #f6f8fb; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2147483647; transition: opacity 0.35s ease; }
+      #inet-splash img { width: 128px; height: 128px; border-radius: 28px; box-shadow: 0 12px 32px rgba(15,23,42,0.18); }
+      #inet-splash .inet-splash-name { margin-top: 18px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.06em; color: #1a2744; }
+      #inet-splash .inet-splash-ring { margin-top: 20px; width: 28px; height: 28px; border-radius: 50%; border: 3px solid rgba(26,39,68,0.15); border-top-color: #1a2744; animation: inet-spin 0.9s linear infinite; }
+      @keyframes inet-spin { to { transform: rotate(360deg); } }
+      #inet-splash.inet-splash--hide { opacity: 0; pointer-events: none; }
+    </style>
     <script type="module" crossorigin src="/assets/inet_app/portal/assets/index.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/inet_app/portal/assets/index.css">
   <link rel="manifest" href="/assets/inet_app/portal/pms-manifest.webmanifest"></head>
   <body>
     <div id="root"></div>
+    <div id="inet-splash" aria-hidden="true">
+      <img src="/assets/inet_app/portal/assets/inet-app-icon-512.png" alt="INET" />
+      <div class="inet-splash-name">INET PMS</div>
+      <div class="inet-splash-ring"></div>
+    </div>
+    <script>
+      (function () {
+        var el = document.getElementById("inet-splash");
+        if (!el) return;
+        var tries = 0;
+        var timer = setInterval(function () {
+          tries += 1;
+          var root = document.getElementById("root");
+          if ((root && root.childNodes.length > 0) || tries > 300) {
+            el.classList.add("inet-splash--hide");
+            setTimeout(function () { el && el.remove(); }, 400);
+            clearInterval(timer);
+          }
+        }, 50);
+      })();
+    </script>
   </body>
 </html>

@@ -3,7 +3,10 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
 const PORTAL_BASE = "/assets/inet_app/portal/";
-const MANIFEST_ICON = `${PORTAL_BASE}assets/inet-logo.png`;
+const ICON_192 = `${PORTAL_BASE}assets/inet-app-icon-192.png`;
+const ICON_512 = `${PORTAL_BASE}assets/inet-app-icon-512.png`;
+const ICON_192_MASK = `${PORTAL_BASE}assets/inet-app-icon-192-maskable.png`;
+const ICON_512_MASK = `${PORTAL_BASE}assets/inet-app-icon-512-maskable.png`;
 
 export default defineConfig({
   plugins: [
@@ -24,50 +27,17 @@ export default defineConfig({
         background_color: "#f6f8fb",
         categories: ["business", "productivity"],
         icons: [
-          {
-            src: MANIFEST_ICON,
-            sizes: "192x192",
-            type: "image/png",
-            purpose: "any",
-          },
-          {
-            src: MANIFEST_ICON,
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "maskable",
-          },
+          { src: ICON_192, sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: ICON_512, sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: ICON_192_MASK, sizes: "192x192", type: "image/png", purpose: "maskable" },
+          { src: ICON_512_MASK, sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
         shortcuts: [
-          {
-            name: "Today's Work",
-            short_name: "Today",
-            url: "/pms/today",
-            icons: [{ src: MANIFEST_ICON, sizes: "192x192", type: "image/png" }],
-          },
-          {
-            name: "Execute",
-            short_name: "Execute",
-            url: "/pms/field-execute",
-            icons: [{ src: MANIFEST_ICON, sizes: "192x192", type: "image/png" }],
-          },
-          {
-            name: "QC / CIAG",
-            short_name: "QC",
-            url: "/pms/field-qc-ciag",
-            icons: [{ src: MANIFEST_ICON, sizes: "192x192", type: "image/png" }],
-          },
-          {
-            name: "History",
-            short_name: "History",
-            url: "/pms/field-history",
-            icons: [{ src: MANIFEST_ICON, sizes: "192x192", type: "image/png" }],
-          },
-          {
-            name: "Time log",
-            short_name: "Time",
-            url: "/pms/field-timesheet",
-            icons: [{ src: MANIFEST_ICON, sizes: "192x192", type: "image/png" }],
-          },
+          { name: "Today's Work", short_name: "Today",   url: "/pms/today",           icons: [{ src: ICON_192, sizes: "192x192", type: "image/png" }] },
+          { name: "Execute",      short_name: "Execute", url: "/pms/field-execute",   icons: [{ src: ICON_192, sizes: "192x192", type: "image/png" }] },
+          { name: "QC / CIAG",    short_name: "QC",      url: "/pms/field-qc-ciag",   icons: [{ src: ICON_192, sizes: "192x192", type: "image/png" }] },
+          { name: "History",      short_name: "History", url: "/pms/field-history",   icons: [{ src: ICON_192, sizes: "192x192", type: "image/png" }] },
+          { name: "Time log",     short_name: "Time",    url: "/pms/field-timesheet", icons: [{ src: ICON_192, sizes: "192x192", type: "image/png" }] },
         ],
       },
       workbox: {
