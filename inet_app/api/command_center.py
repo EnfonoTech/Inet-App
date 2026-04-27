@@ -6791,3 +6791,168 @@ def get_timesheet_detail(name):
     """Get full timesheet with time_logs."""
     doc = frappe.get_doc("Timesheet", name)
     return doc.as_dict()
+
+
+# Fields the IM is allowed to edit on their own INET Team. team_id / im /
+# team_type / subcontractor / field_user / isdp_account / daily_cost are
+# admin-only — IMs only manage display name, status, members and notes.
+_IM_TEAM_EDITABLE_FIELDS = (
+    "team_name",
+    "status",
+    "note",
+)
+
+
+@frappe.whitelist()
+def update_im_team(name, payload=None):
+    """Update an INET Team owned by the logged-in IM.
+
+    Only the IM whose identifiers match the team's `im` field may edit, and
+    only the safelist of fields above. ``team_members`` (when provided)
+    replaces the child table; expects ``[{employee, designation, is_team_lead}, ...]``.
+    """
+    if not name:
+        frappe.throw("name is required")
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload) if payload else {}
+    payload = payload or {}
+
+    _im_resolved, im_identifiers = _require_inet_im_session()
+
+    team = frappe.db.get_value("INET Team", name, ["name", "im"], as_dict=True)
+    if not team:
+        frappe.throw(f"INET Team not found: {name}")
+    if (team.im or "") not in im_identifiers:
+        frappe.throw("Not permitted: this team is not assigned to you", frappe.PermissionError)
+
+    members_raw = payload.get("team_members")
+    members_changed = members_raw is not None
+    clean = []
+
+    updates = {}
+    for fname in _IM_TEAM_EDITABLE_FIELDS:
+        if fname not in payload:
+            continue
+        val = payload.get(fname)
+        if fname == "daily_cost":
+            try:
+                val = flt(val)
+            except Exception:
+                continue
+        elif fname == "daily_cost_applies":
+            val = 1 if val in (1, "1", True, "true", "yes", "on") else 0
+        elif isinstance(val, str):
+            val = val.strip()
+        updates[fname] = val
+
+    if updates:
+        frappe.db.set_value("INET Team", name, updates, update_modified=True)
+
+    if members_changed:
+        seen_emp = set()
+        team_leads = 0
+        for m in (members_raw or []):
+            emp = (m or {}).get("employee")
+            if not emp:
+                continue
+            emp = str(emp).strip()
+            if not emp or emp in seen_emp:
+                continue
+            seen_emp.add(emp)
+            is_lead = 1 if (m.get("is_team_lead") in (1, "1", True, "true", "yes", "on")) else 0
+            if is_lead:
+                team_leads += 1
+            desig = (m.get("designation") or "").strip() or None
+            clean.append({
+                "employee": emp,
+                "designation": desig,
+                "is_team_lead": is_lead,
+            })
+        if team_leads > 1:
+            frappe.throw("Only one team member can be marked as Team Lead.")
+
+        # Replace the child table via the document API so Frappe handles
+        # name allocation, validate hooks (e.g. lead-syncs-field_user) and
+        # parent linkage automatically.
+        doc = frappe.get_doc("INET Team", name)
+        doc.set("team_members", [])
+        for row in clean:
+            doc.append("team_members", row)
+        doc.save(ignore_permissions=True)
+
+    frappe.db.commit()
+    return {
+        "name": name,
+        "updated": len(updates),
+        "fields": list(updates.keys()),
+        "members_replaced": members_changed,
+        "member_count": len(clean) if members_changed else None,
+    }
+
+
+@frappe.whitelist()
+def get_im_team_detail(name):
+    """Return one INET Team's data including members for the edit modal.
+    Restricted to teams owned by the logged-in IM."""
+    if not name:
+        frappe.throw("name is required")
+    _im_resolved, im_identifiers = _require_inet_im_session()
+    team = frappe.db.get_value("INET Team", name, ["name", "im"], as_dict=True)
+    if not team or (team.im or "") not in im_identifiers:
+        frappe.throw("Not permitted: this team is not assigned to you", frappe.PermissionError)
+    doc = frappe.get_doc("INET Team", name).as_dict()
+    members = []
+    for m in (doc.get("team_members") or []):
+        emp_full = ""
+        if m.get("employee"):
+            emp_full = frappe.db.get_value("Employee", m.get("employee"), "employee_name") or ""
+        members.append({
+            "employee": m.get("employee"),
+            "employee_name": emp_full,
+            "designation": m.get("designation") or "",
+            "is_team_lead": 1 if m.get("is_team_lead") else 0,
+        })
+    return {
+        "name": doc.get("name"),
+        "team_id": doc.get("team_id"),
+        "team_name": doc.get("team_name"),
+        "team_type": doc.get("team_type"),
+        "im": doc.get("im"),
+        "subcontractor": doc.get("subcontractor"),
+        "isdp_account": doc.get("isdp_account"),
+        "field_user": doc.get("field_user"),
+        "status": doc.get("status"),
+        "daily_cost": doc.get("daily_cost"),
+        "daily_cost_applies": doc.get("daily_cost_applies"),
+        "note": doc.get("note"),
+        "team_members": members,
+    }
+
+
+@frappe.whitelist()
+def list_employees_for_picker(search=None, limit=50):
+    """Lightweight Employee picker for the IM team-edit modal."""
+    _require_inet_im_session()
+    if search:
+        s = f"%{(search or '').strip()}%"
+        emps = frappe.db.sql(
+            """
+            SELECT name, employee_name, designation
+            FROM `tabEmployee`
+            WHERE status = 'Active'
+              AND (name LIKE %s OR IFNULL(employee_name,'') LIKE %s)
+            ORDER BY employee_name ASC
+            LIMIT %s
+            """,
+            (s, s, int(limit)),
+            as_dict=True,
+        )
+    else:
+        emps = frappe.get_all(
+            "Employee",
+            filters={"status": "Active"},
+            fields=["name", "employee_name", "designation"],
+            order_by="employee_name asc",
+            limit_page_length=int(limit),
+        )
+    return emps or []
