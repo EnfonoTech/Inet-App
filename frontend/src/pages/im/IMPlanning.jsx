@@ -170,7 +170,7 @@ export default function IMPlanning() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Planned</h1>
+          <h1 className="page-title">Rollout Execution</h1>
         </div>
         <div className="page-actions">
           <button type="button" className="btn-secondary" onClick={() => loadPlans()} disabled={loading}>

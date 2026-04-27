@@ -467,7 +467,7 @@ export default function IMDispatch() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">My Dispatches</h1>
+          <h1 className="page-title">Rollout Planning</h1>
           <div className="page-subtitle">Dispatch lines assigned to your IM.</div>
         </div>
         <div className="page-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
