@@ -10,6 +10,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
+import RemarksCell from "../../components/RemarksCell";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -265,6 +266,9 @@ export default function IMPlanning() {
                   <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
                   <th>Status</th>
                   <th style={{ textAlign: "right" }}>Target (SAR)</th>
+                  <th title="Remark set by PM">General</th>
+                  <th title="Remark set by IM">Manager</th>
+                  <th title="Remark set by Field Team Lead">Team Lead</th>
                   <th>View</th>
                 </tr>
               </thead>
@@ -305,6 +309,9 @@ export default function IMPlanning() {
                       </span>
                     </td>
                     <td style={{ textAlign: "right" }}>{fmt.format(p.target_amount || 0)}</td>
+                    <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.general_remark} tone="general" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.general_remark = v; }} /></td>
+                    <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.manager_remark} tone="manager" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.manager_remark = v; }} /></td>
+                    <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.team_lead_remark} tone="team_lead" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.team_lead_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"

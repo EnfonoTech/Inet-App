@@ -35,9 +35,9 @@ function canEditRemark(role, tone) {
  *   onSaved    — optional callback (newValue) after a successful save
  */
 const TONES = {
-  general:   { dot: "#64748b", label: "General",   who: "Set by PM" },
-  manager:   { dot: "#3b82f6", label: "Manager",   who: "Set by IM" },
-  team_lead: { dot: "#10b981", label: "Team Lead", who: "Set by Field Lead" },
+  general:   { dot: "#64748b", label: "General"   },
+  manager:   { dot: "#3b82f6", label: "Manager"   },
+  team_lead: { dot: "#10b981", label: "Team Lead" },
 };
 
 export default function RemarksCell({ value, tone = "general", poDispatch, poid, onSaved }) {
@@ -127,7 +127,6 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ width: 10, height: 10, borderRadius: 999, background: t.dot }} />
                 <span style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>{t.label} remark</span>
-                <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>· {t.who}</span>
               </div>
               <button
                 type="button"

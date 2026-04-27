@@ -366,18 +366,12 @@ export default function IMTeams() {
                       </table>
                     </div>
                   )}
-                  <p style={{ marginTop: 6, fontSize: "0.7rem", color: "#94a3b8" }}>
-                    Mark exactly one Team Lead. The lead's linked User becomes the Field App login.
-                  </p>
                 </div>
 
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
                   <button type="button" className="btn-secondary" disabled={editBusy} onClick={() => setEditRow(null)}>Cancel</button>
                   <button type="button" className="btn-primary" disabled={editBusy} onClick={submitEdit}>{editBusy ? "Saving…" : "Save"}</button>
                 </div>
-                <p style={{ marginTop: 10, fontSize: "0.72rem", color: "#94a3b8" }}>
-                  Team ID, IM owner, type, subcontractor, Field App user, ISDP account and daily cost are admin-only.
-                </p>
               </>
             )}
           </div>

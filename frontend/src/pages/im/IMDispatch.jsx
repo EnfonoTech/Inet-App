@@ -383,7 +383,17 @@ export default function IMDispatch() {
 
   const planable = (r) => (r.dispatch_status || "") === "Dispatched";
 
-  const planableRows = rows.filter(planable);
+  // Hide rows that are already planned — except unmapped Dummy POs, which
+  // the IM still needs to see here so they can map them to a real PO line.
+  const isUnmappedDummy = (r) =>
+    Number(r.is_dummy_po) === 1
+    && (!r.po_no || String(r.po_no).startsWith("DUMMY-"));
+  const visibleRows = rows.filter((r) => {
+    const planned = (r.dispatch_status || "").toLowerCase() === "planned";
+    return !planned || isUnmappedDummy(r);
+  });
+
+  const planableRows = visibleRows.filter(planable);
   // Distinct values across ALL dispatches — so dropdowns stay complete under any row limit.
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const { options: teamOpts } = useFilterOptions("INET Team", ["team_id"]);
@@ -865,7 +875,7 @@ export default function IMDispatch() {
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
               Loading dispatches...
             </div>
-          ) : rows.length === 0 ? (
+          ) : visibleRows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📋</div>
               <h3>{!imName ? "IM account not linked" : "No dispatch records found"}</h3>
@@ -904,11 +914,11 @@ export default function IMDispatch() {
                   <th>Center area</th>
                   <th>Region</th>
                   <th>Status</th>
-                  <th>View</th>
+                  <th style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
+                {visibleRows.map((row) => {
                   const canPlan = planable(row);
                   const wasDf = row.was_dummy_po == 1 || row.was_dummy_po === true || String(row.was_dummy_po || "") === "1";
                   const origCell = (row.original_dummy_poid || "").trim();
@@ -989,20 +999,27 @@ export default function IMDispatch() {
                           {row.dispatch_status || "Pending"}
                         </span>
                       </td>
-                      <td>
-                        <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} onClick={() => setDetailRow(row)}>
-                          View
-                        </button>
-                        {!!Number(row.is_dummy_po) && (
+                      <td style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                           <button
                             type="button"
                             className="btn-secondary"
-                            style={{ fontSize: "0.72rem", padding: "4px 10px", marginLeft: 6 }}
-                            onClick={() => { setMapErr(null); setMapForRow(row); }}
+                            style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}
+                            onClick={() => setDetailRow(row)}
                           >
-                            Map PO
+                            View
                           </button>
-                        )}
+                          {!!Number(row.is_dummy_po) && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}
+                              onClick={() => { setMapErr(null); setMapForRow(row); }}
+                            >
+                              Map PO
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1011,7 +1028,12 @@ export default function IMDispatch() {
               <tfoot>
                 <tr>
                   <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    <strong>{rows.length} row{rows.length !== 1 ? "s" : ""}</strong>
+                    <strong>{visibleRows.length} row{visibleRows.length !== 1 ? "s" : ""}</strong>
+                    {visibleRows.length !== rows.length && (
+                      <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#94a3b8" }}>
+                        ({rows.length - visibleRows.length} planned hidden)
+                      </span>
+                    )}
                     <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
                       Select rows with status <strong>Dispatched</strong> to create rollout plans.
                     </span>
@@ -1024,8 +1046,8 @@ export default function IMDispatch() {
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={rows.length}
-          filteredCount={rows.length}
-          filterActive={!!hasFilters}
+          filteredCount={visibleRows.length}
+          filterActive={!!hasFilters || visibleRows.length !== rows.length}
         />
       </div>
     </div>

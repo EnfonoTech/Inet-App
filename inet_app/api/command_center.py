@@ -4831,6 +4831,9 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                pd.customer AS customer, pd.item_description,
+               pd.general_remark AS general_remark,
+               pd.manager_remark AS manager_remark,
+               pd.team_lead_remark AS team_lead_remark,
                it.team_name AS team_name,
                {im_full_sql}
                {im_plan_extra_sql}

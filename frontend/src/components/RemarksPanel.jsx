@@ -47,9 +47,9 @@ export default function RemarksPanel({ poDispatch, compact = false }) {
   const editable = data.editable || {};
   const role = data.role;
   const fields = [
-    { key: "general_remark", label: "General",  placeholder: "General remarks about this rollout…", who: "Set by PM" },
-    { key: "manager_remark", label: "Manager",  placeholder: "Remarks by Implementation Manager…", who: "Set by IM" },
-    { key: "team_lead_remark", label: "Team Lead", placeholder: "Remarks by Team Lead…", who: "Set by Field Lead" },
+    { key: "general_remark",   label: "General",   placeholder: "" },
+    { key: "manager_remark",   label: "Manager",   placeholder: "" },
+    { key: "team_lead_remark", label: "Team Lead", placeholder: "" },
   ].filter((f) => Object.prototype.hasOwnProperty.call(data, f.key));
 
   async function persist(field, value) {
@@ -101,7 +101,6 @@ export default function RemarksPanel({ poDispatch, compact = false }) {
             <div key={f.key} style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 8, alignItems: "flex-start" }}>
               <div style={{ paddingTop: 6 }}>
                 <div style={{ fontSize: "0.74rem", fontWeight: 600, color: "#334155" }}>{f.label}</div>
-                <div style={{ fontSize: "0.64rem", color: "#94a3b8" }}>{f.who}</div>
               </div>
               <div style={{ position: "relative" }}>
                 <textarea
