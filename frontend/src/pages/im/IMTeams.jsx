@@ -41,6 +41,8 @@ export default function IMTeams() {
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [detailRow, setDetailRow] = useState(null);
+  const [detailMembers, setDetailMembers] = useState([]);
+  const [detailMembersLoading, setDetailMembersLoading] = useState(false);
 
   // Edit modal state
   const [editRow, setEditRow] = useState(null);     // shows the modal when set
@@ -73,6 +75,22 @@ export default function IMTeams() {
     else setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imName, user?.full_name]);
+
+  // Pull full team detail (incl. members) when the View modal opens.
+  useEffect(() => {
+    if (!detailRow?.name) return;
+    let alive = true;
+    setDetailMembers([]);
+    setDetailMembersLoading(true);
+    pmApi.getIMTeamDetail(detailRow.name)
+      .then((d) => {
+        if (!alive) return;
+        setDetailMembers(Array.isArray(d?.team_members) ? d.team_members : []);
+      })
+      .catch(() => { if (alive) setDetailMembers([]); })
+      .finally(() => { if (alive) setDetailMembersLoading(false); });
+    return () => { alive = false; };
+  }, [detailRow?.name]);
 
   async function openEdit(t) {
     setEditErr(null);
@@ -382,6 +400,51 @@ export default function IMTeams() {
               ].filter(Boolean)}
               hiddenFields={["team_id", "team_name"]}
             />
+
+            <div style={{ marginTop: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <h4 style={{ margin: 0, fontSize: "0.88rem", fontWeight: 700, color: "#0f172a" }}>
+                  Team members <span style={{ color: "#94a3b8", fontWeight: 500, fontSize: "0.78rem" }}>({detailMembers.length})</span>
+                </h4>
+              </div>
+              {detailMembersLoading ? (
+                <div style={{ padding: 12, textAlign: "center", color: "#94a3b8", fontSize: "0.82rem" }}>Loading members…</div>
+              ) : detailMembers.length === 0 ? (
+                <div style={{ padding: 12, textAlign: "center", color: "#94a3b8", fontSize: "0.82rem", border: "1px dashed #e2e8f0", borderRadius: 8 }}>
+                  No members assigned. Use Edit to add some.
+                </div>
+              ) : (
+                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                    <thead>
+                      <tr style={{ background: "#f8fafc" }}>
+                        <th style={{ textAlign: "left", padding: "8px 10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.04em" }}>Employee</th>
+                        <th style={{ textAlign: "left", padding: "8px 10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.04em" }}>Designation</th>
+                        <th style={{ textAlign: "center", padding: "8px 10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.04em" }}>Lead</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailMembers.map((m, idx) => (
+                        <tr key={`${m.employee || idx}`} style={{ borderTop: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "8px 10px" }}>
+                            <div style={{ fontWeight: 600, color: "#1e293b" }}>{m.employee_name || m.employee || "—"}</div>
+                            {m.employee && m.employee_name && (
+                              <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontFamily: "ui-monospace, monospace" }}>{m.employee}</div>
+                            )}
+                          </td>
+                          <td style={{ padding: "8px 10px", color: "#475569" }}>{m.designation || "—"}</td>
+                          <td style={{ padding: "8px 10px", textAlign: "center" }}>
+                            {m.is_team_lead
+                              ? <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8", fontWeight: 700, fontSize: "0.7rem" }}>Lead</span>
+                              : <span style={{ color: "#cbd5e1" }}>—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

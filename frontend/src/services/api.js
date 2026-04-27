@@ -386,6 +386,16 @@ export const pmApi = {
   listEmployeesForPicker: (search) => call("inet_app.api.command_center.list_employees_for_picker", { search: search || "", limit: 100 }),
   listFrappeUsers:   (search) => call("frappe.client.get_list", { doctype: "User", filters: search ? [["full_name", "like", `%${search}%`]] : [["enabled", "=", 1]], fields: ["name", "full_name", "email"], limit_page_length: 50, order_by: "full_name asc" }),
   listSubcontractors: () => call("frappe.client.get_list", { doctype: "Subcontractor Master", filters: {}, fields: ["name", "subcontractor_name"], limit_page_length: 100 }),
+  // Generic helpers used by the Masters page (and anywhere else needing a
+  // robust, CSRF-retrying frappe.client.get_list / get_count).
+  genericList: (doctype, fields, limit, orderBy = "modified desc") =>
+    call("frappe.client.get_list", {
+      doctype,
+      fields: fields && fields.length ? fields : ["name"],
+      limit_page_length: Number(limit) > 0 ? Math.min(Number(limit), 10000) : 200,
+      order_by: orderBy,
+    }),
+  genericCount: (doctype) => call("frappe.client.get_count", { doctype }),
   listPODispatches:  (filters, limitPageLength, portalFilters) => {
     const args = {
       filters: filters || {},

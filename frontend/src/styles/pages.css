@@ -201,11 +201,11 @@
  * Only tables inside `.data-table-wrapper` (DataTablePro's target) are gated,
  * so MiniTable and other standalone tables are unaffected.
  */
+/* Default to visible — DataTablePro enhances tables AFTER paint, so we no
+   longer hide unenhanced tables. (Earlier we faded in on .--tablepro-ready,
+   which produced a blank panel when DataTablePro's per-wrapper MutationObserver
+   was attached to an old, detached wrapper after a route/keyed remount.) */
 .data-table-wrapper > .data-table-scroll > table.data-table {
-  opacity: 0;
-  transition: opacity 0.12s ease-out;
-}
-.data-table-wrapper > .data-table-scroll > table.data-table.data-table--tablepro-ready {
   opacity: 1;
 }
 .data-table.data-table--tablepro > thead > tr:first-child > th {

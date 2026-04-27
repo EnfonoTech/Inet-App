@@ -1,8 +1,37 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useSearchParams } from "react-router-dom";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { pmApi } from "../../services/api";
+
+/** Catch render errors inside the records panel so one bad doctype/row can't
+ * wipe out the whole Masters page. Default fallback shows a friendly message. */
+class RecordsErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("Masters panel crashed:", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 24, textAlign: "center", color: "#b91c1c", fontSize: "0.85rem" }}>
+          Couldn't render this list: {String(this.state.error?.message || this.state.error)}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/** Force-stringify a Frappe field value so React never sees an object. */
+function cellText(v) {
+  if (v == null) return "–";
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
+  try { return JSON.stringify(v); } catch { return "–"; }
+}
 
 // Correct Frappe doctype names + actual field names from each doctype JSON
 const MASTER_DOCTYPES = [
@@ -126,29 +155,17 @@ function deskNewUrl(doctype) {
 
 async function fetchCount(doctype) {
   try {
-    const res = await fetch(
-      `/api/method/frappe.client.get_count?doctype=${encodeURIComponent(doctype)}`,
-      { credentials: "include" }
-    );
-    const json = await res.json();
-    if (json?.message !== undefined) return json.message;
-    return "–";
+    const v = await pmApi.genericCount(doctype);
+    return (v === undefined || v === null) ? "–" : v;
   } catch {
     return "–";
   }
 }
 
 async function fetchRecords(doctype, fields, limit) {
-  const fieldParam = encodeURIComponent(JSON.stringify(fields));
-  const n = Number(limit);
-  const lim = n === 0 ? 0 : n > 0 ? Math.min(n, 10000) : 200;
   try {
-    const res = await fetch(
-      `/api/resource/${encodeURIComponent(doctype)}?fields=${fieldParam}&limit_page_length=${lim}&order_by=modified+desc`,
-      { credentials: "include" }
-    );
-    const json = await res.json();
-    return json?.data || [];
+    const rows = await pmApi.genericList(doctype, fields, limit);
+    return Array.isArray(rows) ? rows : [];
   } catch {
     return [];
   }
@@ -302,11 +319,11 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
                   rel="noreferrer"
                   style={{ color: "#2563eb", fontWeight: 600, textDecoration: "none", fontSize: "0.82rem" }}
                 >
-                  {row.name}
+                  {cellText(row.name)}
                 </a>
               </td>
               {cols.map((f) => (
-                <td key={f}>{row[f] ?? "–"}</td>
+                <td key={f}>{cellText(row[f])}</td>
               ))}
               <td style={{ textAlign: "center" }}>
                 <a
@@ -447,7 +464,9 @@ export default function Masters() {
                 </button>
               </div>
             </div>
-            <RecordsTable doctype={expanded.doctype} fields={expanded.fields} displayCols={expanded.displayCols} rowLimit={rowLimit} />
+            <RecordsErrorBoundary key={expanded.doctype}>
+              <RecordsTable doctype={expanded.doctype} fields={expanded.fields} displayCols={expanded.displayCols} rowLimit={rowLimit} />
+            </RecordsErrorBoundary>
           </div>
         )}
       </div>
