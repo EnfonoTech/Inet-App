@@ -344,7 +344,7 @@ export default function IMIssuesRisks() {
                   {teamsList.map((t) => <option key={t.team_id} value={t.team_id}>{t.team_id} — {t.team_name}</option>)}
                 </select>
               </div>
-              <div className="form-group"><label>Visit Type</label><input value={visitType} onChange={(e) => setVisitType(e.target.value)} /></div>
+              <div className="form-group"><label>Visit Type</label><input value={visitType} readOnly disabled style={{ background: "#f1f5f9", cursor: "not-allowed" }} /></div>
               <div className="form-group"><label>Access Time</label><input value={accessTime} onChange={(e) => setAccessTime(e.target.value)} placeholder="e.g. 08:00-12:00" /></div>
               <div className="form-group">
                 <label>Access Period</label>
@@ -354,12 +354,12 @@ export default function IMIssuesRisks() {
               </div>
             </div>
             <div className="form-group" style={{ marginTop: 10 }}>
-              <label>Issue Remarks (optional — shared across all created plans)</label>
+              <label>Issue Remarks</label>
               <textarea
                 value={issueRemarks}
                 onChange={(e) => setIssueRemarks(e.target.value)}
                 rows={3}
-                placeholder="Why is this re-plan needed? Will show up on every created plan and in Issues & Risks."
+                placeholder=""
                 style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.84rem", resize: "vertical" }}
               />
             </div>

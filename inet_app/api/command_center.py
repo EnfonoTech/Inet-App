@@ -2724,6 +2724,70 @@ def create_rollout_plans(payload):
 
         target_team = team_override
 
+        # Reuse-instead-of-recreate: when this dispatch's latest plan was
+        # created from an issue (Planning-with-Issue placeholder, or a
+        # previously-planned issue plan still pre-execution), don't allocate
+        # a NEW visit_number — repurpose that plan as the actionable target.
+        # This keeps visit_number aligned with the physical attempt count
+        # (1, 2, 2, 3, …) and lets "Create Plans from I&R" be clicked
+        # repeatedly without each click incrementing the visit.
+        latest_plan = frappe.db.sql(
+            """
+            SELECT name, visit_number, plan_status,
+                   IFNULL(issue_category, '') AS issue_category,
+                   IFNULL(visit_type, '') AS visit_type
+            FROM `tabRollout Plan`
+            WHERE po_dispatch = %s
+            ORDER BY IFNULL(visit_number, 0) DESC, modified DESC
+            LIMIT 1
+            """,
+            (dispatch_name,),
+            as_dict=True,
+        )
+        latest = latest_plan[0] if latest_plan else None
+        # Reuse the latest plan when it's an open issue placeholder of any kind:
+        # currently in Planning with Issue, or already Planned but originated
+        # from a re-plan (visit_type = Re-Visit, or has an issue_category set).
+        reusable = bool(
+            latest and (
+                latest.plan_status == "Planning with Issue"
+                or (
+                    latest.plan_status == "Planned"
+                    and (latest.issue_category or latest.visit_type == "Re-Visit")
+                )
+            )
+        )
+        if reusable:
+            # Move it into "Planned" so it shows up on the Planning page
+            # alongside other actionable plans, while the I&R row stays
+            # visible (issue_category is preserved).
+            updates = {
+                "team": target_team,
+                "plan_date": plan_date,
+                "plan_end_date": plan_end_date,
+                "access_time": access_time,
+                "access_period": access_period or None,
+                "visit_type": visit_type,
+                "plan_status": "Planned",
+            }
+            if payload.get("issue_category"):
+                updates["issue_category"] = str(payload["issue_category"])[:140]
+            if payload.get("issue_remarks") and frappe.db.has_column("Rollout Plan", "issue_remarks"):
+                updates["issue_remarks"] = str(payload["issue_remarks"])[:2000]
+            frappe.db.set_value(
+                "Rollout Plan", latest.name, updates, update_modified=True
+            )
+            frappe.db.set_value(
+                "PO Dispatch",
+                dispatch_name,
+                {"dispatch_status": "Planned"},
+                update_modified=False,
+            )
+            frappe.db.commit()
+            created += 1
+            names.append(latest.name)
+            continue
+
         doc = frappe.new_doc("Rollout Plan")
         doc.po_dispatch = dispatch_name
         doc.team = target_team
@@ -3452,6 +3516,17 @@ def list_execution_monitor_rows(filters=None, limit=500):
         ")"
     )
 
+    # When a plan was re-planned (a higher-visit_number plan exists for the
+    # same dispatch), the older plan represents a past attempt — drop it
+    # from the live monitor so operators only see the current visit.
+    wheres.append(
+        "NOT EXISTS ("
+        " SELECT 1 FROM `tabRollout Plan` rp_later"
+        " WHERE rp_later.po_dispatch = rp.po_dispatch"
+        " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)"
+        ")"
+    )
+
     like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
     if like_pat:
         concat_parts = [
@@ -3987,16 +4062,40 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
     ciag_sel_ir = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL AS ciag_status"
     lim_ir = _portal_row_limit(limit, 1000)
 
-    # Once a re-visit plan is created for the same POID, the source plan is
-    # considered addressed — hide it from Issues & Risks. We detect that by
-    # checking if any plan with a higher visit_number exists for the same
-    # po_dispatch.
+    # I&R = "open issue per dispatch". The row stays visible across the full
+    # lifecycle of the issue: from re-plan → date/team filled in → execution
+    # → and only disappears when (a) a Work Done is created for the
+    # dispatch, or (b) another re-plan supersedes it with a higher visit.
+    #
+    # Conditions:
+    #   1. Show only the latest plan per dispatch (NOT EXISTS higher visit).
+    #   2. The dispatch has an unresolved issue — any of these persistent
+    #      markers signals that this plan was created from a re-plan flow:
+    #        - visit_type = 'Re-Visit' (always set by reopen_rollout_for_revisit)
+    #        - issue_category is set
+    #        - plan_status is currently or was historically 'Planning with Issue'
+    #   3. No Work Done exists for the dispatch yet.
     wheres = [
-        "rp.plan_status = 'Planning with Issue'",
         "NOT EXISTS ("
         " SELECT 1 FROM `tabRollout Plan` rp_later"
         " WHERE rp_later.po_dispatch = rp.po_dispatch"
         " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)"
+        ")",
+        "("
+        " rp.visit_type = 'Re-Visit'"
+        " OR IFNULL(rp.issue_category,'') != ''"
+        " OR rp.plan_status = 'Planning with Issue'"
+        " OR EXISTS ("
+        "   SELECT 1 FROM `tabRollout Plan` rp_pwi"
+        "   WHERE rp_pwi.po_dispatch = rp.po_dispatch"
+        "   AND rp_pwi.plan_status = 'Planning with Issue'"
+        " )"
+        ")",
+        "NOT EXISTS ("
+        " SELECT 1 FROM `tabWork Done` wd_ir"
+        " INNER JOIN `tabDaily Execution` de_ir ON de_ir.name = wd_ir.execution"
+        " INNER JOIN `tabRollout Plan` rp_wd ON rp_wd.name = de_ir.rollout_plan"
+        " WHERE rp_wd.po_dispatch = rp.po_dispatch"
         ")",
     ]
     params = []
@@ -4847,6 +4946,11 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         {rp_im_join_ex}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         WHERE pd.im IN ({ph}){status_clause}{portal_clause}
+        AND NOT EXISTS (
+            SELECT 1 FROM `tabRollout Plan` rp_later
+            WHERE rp_later.po_dispatch = rp.po_dispatch
+            AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)
+        )
         ORDER BY de.execution_date DESC, de.modified DESC
         {_sql_limit_suffix(lim_de)}
         """,
