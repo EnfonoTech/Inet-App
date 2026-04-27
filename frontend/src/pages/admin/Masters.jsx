@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useSearchParams } from "react-router-dom";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
@@ -240,20 +240,22 @@ function MasterCard({ label, description, icon, color, count, isExpanded, onTogg
 function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
   const [records, setRecords] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [prevRowLimit, setPrevRowLimit] = useState(rowLimit);
-  if (prevRowLimit !== rowLimit) {
-    setPrevRowLimit(rowLimit);
-    setRecords(null);
-    setLoading(true);
-  }
+  // Stable signature for the fields array so useEffect doesn't re-fire every
+  // parent render and clobber an in-flight fetch with a stale empty result.
+  const fieldsKey = useMemo(() => (Array.isArray(fields) ? fields.join("|") : ""), [fields]);
 
   useEffect(() => {
+    let alive = true;
     setLoading(true);
+    setRecords(null);
     fetchRecords(doctype, fields, rowLimit).then((rows) => {
+      if (!alive) return;
       setRecords(rows);
       setLoading(false);
     });
-  }, [doctype, rowLimit]);
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doctype, rowLimit, fieldsKey]);
 
   if (loading) {
     return (

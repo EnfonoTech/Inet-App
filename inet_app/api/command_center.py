@@ -5210,11 +5210,238 @@ def get_im_dashboard(im=None, from_date=None, to_date=None):
     )
     planned_activities = cint(planned_rows[0].cnt if planned_rows else 0)
 
+    # ── Site-centric KPIs (rollout plans = sites in this context) ─────────
+    site_kpi_rows = frappe.db.sql(
+        f"""
+        SELECT
+            COUNT(*) AS total_assigned,
+            SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_total,
+            SUM(CASE WHEN rp.plan_status = 'In Execution' THEN 1 ELSE 0 END) AS in_progress_cnt,
+            SUM(CASE WHEN rp.plan_status = 'Planning with Issue' THEN 1 ELSE 0 END) AS delayed_cnt,
+            SUM(CASE WHEN rp.plan_date = %s THEN 1 ELSE 0 END) AS today_target_cnt,
+            SUM(CASE WHEN rp.plan_status = 'Completed' AND rp.modified >= %s THEN 1 ELSE 0 END) AS today_completed_cnt
+        FROM `tabRollout Plan` rp
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
+        """,
+        (today_str, f"{today_str} 00:00:00") + tuple(im_identifiers) + tuple(rp_im_params),
+        as_dict=True,
+    )
+    skr = (site_kpi_rows[0] if site_kpi_rows else {}) or {}
+    site_kpi = {
+        "total_assigned": cint(skr.get("total_assigned") or 0),
+        "completed_total": cint(skr.get("completed_total") or 0),
+        "in_progress": cint(skr.get("in_progress_cnt") or 0),
+        "delayed": cint(skr.get("delayed_cnt") or 0),
+        "today_target": cint(skr.get("today_target_cnt") or 0),
+        "today_completed": cint(skr.get("today_completed_cnt") or 0),
+    }
+
+    # ── Team performance: completed sites per team in the date window ────
+    team_perf = []
+    if team_ids:
+        team_perf_rows = frappe.db.sql(
+            f"""
+            SELECT t.team_id AS team_id,
+                   COALESCE(t.team_name, t.team_id) AS team_name,
+                   COUNT(rp.name) AS sites_done
+            FROM `tabINET Team` t
+            LEFT JOIN `tabRollout Plan` rp
+                ON rp.team = t.name
+                AND rp.plan_status = 'Completed'
+                AND rp.plan_date BETWEEN %s AND %s
+            WHERE t.name IN ({placeholders})
+            GROUP BY t.name, t.team_id, t.team_name
+            ORDER BY sites_done DESC, team_name ASC
+            """,
+            (first_day, last_day) + tuple(team_ids),
+            as_dict=True,
+        )
+        team_perf = [
+            {"team_id": r.team_id, "team_name": r.team_name, "sites_done": cint(r.sites_done or 0)}
+            for r in (team_perf_rows or [])
+        ]
+
+    # ── Project progress: completion % per project for this IM ───────────
+    project_progress = []
+    if projects:
+        project_codes = [p["project_code"] for p in projects if p.get("project_code")]
+        if project_codes:
+            ph_pr = ", ".join(["%s"] * len(project_codes))
+            prog_rows = frappe.db.sql(
+                f"""
+                SELECT pd.project_code AS project_code,
+                       COUNT(rp.name) AS total,
+                       SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS done
+                FROM `tabPO Dispatch` pd
+                LEFT JOIN `tabRollout Plan` rp ON rp.po_dispatch = pd.name
+                WHERE pd.project_code IN ({ph_pr})
+                AND IFNULL(pd.im,'') IN ({im_ph})
+                GROUP BY pd.project_code
+                """,
+                tuple(project_codes) + tuple(im_identifiers),
+                as_dict=True,
+            )
+            prog_map = {r.project_code: r for r in (prog_rows or [])}
+            for p in projects[:6]:
+                pc = p.get("project_code")
+                row = prog_map.get(pc)
+                total = cint(row.total) if row else 0
+                done = cint(row.done) if row else 0
+                pct = int(round((done / total) * 100)) if total > 0 else 0
+                project_progress.append({
+                    "project_code": pc,
+                    "project_name": p.get("project_name") or pc,
+                    "total": total,
+                    "done": done,
+                    "pct": pct,
+                })
+
+    # ── Site status table: latest rollout plans for this IM ──────────────
+    site_status = frappe.db.sql(
+        f"""
+        SELECT rp.name AS site_id,
+               COALESCE(pd.site_name, pd.site_code) AS location,
+               pd.project_code AS project,
+               rp.plan_status AS status,
+               rp.modified AS last_update,
+               rp.issue_category AS issue
+        FROM `tabRollout Plan` rp
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
+        ORDER BY rp.modified DESC
+        LIMIT 8
+        """,
+        tuple(im_identifiers) + tuple(rp_im_params),
+        as_dict=True,
+    )
+    site_status = [
+        {
+            "site_id": r.site_id,
+            "location": r.location or "—",
+            "project": r.project or "—",
+            "status": r.status or "—",
+            "last_update": str(r.last_update) if r.last_update else "",
+            "issue": r.issue or "",
+        }
+        for r in (site_status or [])
+    ]
+
+    # ── Material shortage: rollout plans / executions tagged with that issue
+    material_categories = ("Material Shortage", "Spare Parts Pending")
+    mat_ph = ", ".join(["%s"] * len(material_categories))
+    mat_rows = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS cnt FROM (
+            SELECT rp.name FROM `tabRollout Plan` rp
+            LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+            WHERE rp.issue_category IN ({mat_ph})
+            AND (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
+            UNION
+            SELECT de.name FROM `tabDaily Execution` de
+            LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+            LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+            WHERE de.issue_category IN ({mat_ph})
+            AND (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
+        ) AS u
+        """,
+        tuple(material_categories) + tuple(im_identifiers) + tuple(rp_im_params)
+        + tuple(material_categories) + tuple(im_identifiers) + tuple(rp_im_params),
+        as_dict=True,
+    )
+    material_shortage = cint(mat_rows[0].cnt if mat_rows else 0)
+
+    # ── Site locations: lat/lon from DUID Master joined via PO Dispatch ──
+    site_locations = []
+    has_lat = frappe.db.has_column("DUID Master", "latitude")
+    has_lon = frappe.db.has_column("DUID Master", "longitude")
+    if has_lat and has_lon:
+        site_loc_rows = frappe.db.sql(
+            f"""
+            SELECT
+                pd.site_code AS site_code,
+                COALESCE(pd.site_name, pd.site_code) AS site_name,
+                pd.project_code AS project_code,
+                d.latitude AS lat,
+                d.longitude AS lon,
+                MAX(rp.modified) AS last_update,
+                /* Status: latest rollout plan's status if any, else 'Planned' */
+                SUBSTRING_INDEX(GROUP_CONCAT(rp.plan_status ORDER BY rp.modified DESC), ',', 1) AS status
+            FROM `tabPO Dispatch` pd
+            INNER JOIN `tabDUID Master` d ON d.name = pd.site_code
+            LEFT JOIN `tabRollout Plan` rp ON rp.po_dispatch = pd.name
+            WHERE IFNULL(pd.im,'') IN ({im_ph})
+              AND IFNULL(d.latitude, 0) <> 0
+              AND IFNULL(d.longitude, 0) <> 0
+            GROUP BY pd.site_code, pd.site_name, pd.project_code, d.latitude, d.longitude
+            ORDER BY last_update DESC
+            LIMIT 200
+            """,
+            tuple(im_identifiers),
+            as_dict=True,
+        )
+        for r in (site_loc_rows or []):
+            try:
+                lat = float(r.lat)
+                lon = float(r.lon)
+            except (TypeError, ValueError):
+                continue
+            site_locations.append({
+                "site_code": r.site_code,
+                "site_name": r.site_name or r.site_code,
+                "project_code": r.project_code,
+                "lat": lat,
+                "lon": lon,
+                "status": r.status or "Planned",
+                "last_update": str(r.last_update) if r.last_update else "",
+            })
+
+    # ── Activity timeline: recent Daily Execution events ─────────────────
+    timeline_rows = frappe.db.sql(
+        f"""
+        SELECT de.name AS exec_id,
+               de.execution_date,
+               de.modified AS ts,
+               de.execution_status,
+               de.rollout_plan,
+               COALESCE(pd.site_code, pd.site_name) AS site
+        FROM `tabDaily Execution` de
+        LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
+        ORDER BY de.modified DESC
+        LIMIT 8
+        """,
+        tuple(im_identifiers) + tuple(rp_im_params),
+        as_dict=True,
+    )
+    timeline = []
+    for r in (timeline_rows or []):
+        verb = (
+            "completed" if (r.execution_status or "").lower() == "completed"
+            else "delay reported" if (r.execution_status or "").lower() in ("hold", "cancelled", "postponed")
+            else "work started" if (r.execution_status or "").lower() == "in progress"
+            else "updated"
+        )
+        site = r.site or r.rollout_plan or "—"
+        timeline.append({
+            "ts": str(r.ts) if r.ts else "",
+            "label": f"Site {site} {verb}",
+            "exec_id": r.exec_id,
+        })
+
     return {
         "im": im_resolved,
         "teams": teams,
         "projects": projects,
         "action_items": action_items,
+        "site_kpi": site_kpi,
+        "team_perf": team_perf,
+        "project_progress": project_progress,
+        "site_status": site_status,
+        "timeline": timeline,
+        "material_shortage": material_shortage,
+        "site_locations": site_locations,
         "kpi": {
             "monthly_target": monthly_target,
             "target_today": target_today,

@@ -8,7 +8,9 @@
   "duid",
   "site_name",
   "center_area",
-  "region_type"
+  "region_type",
+  "latitude",
+  "longitude"
  ],
  "fields": [
   {
@@ -40,6 +42,20 @@
    "label": "Region Type",
    "options": "Standard\nHard",
    "read_only": 1
+  },
+  {
+   "description": "Decimal degrees, e.g. 24.713600 for Riyadh.",
+   "fieldname": "latitude",
+   "fieldtype": "Float",
+   "label": "Latitude",
+   "precision": "6"
+  },
+  {
+   "description": "Decimal degrees, e.g. 46.675300 for Riyadh.",
+   "fieldname": "longitude",
+   "fieldtype": "Float",
+   "label": "Longitude",
+   "precision": "6"
   }
  ],
  "index_web_pages_for_search": 1,
