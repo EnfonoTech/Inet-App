@@ -8,6 +8,7 @@
   "team_id",
   "team_name",
   "im",
+  "department",
   "team_type",
   "subcontractor",
   "field_user",
@@ -42,6 +43,13 @@
    "in_list_view": 1,
    "label": "Implementation Manager",
    "options": "IM Master"
+  },
+  {
+   "fieldname": "department",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Department",
+   "options": "Department"
   },
   {
    "fieldname": "team_type",

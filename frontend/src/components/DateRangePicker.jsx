@@ -111,27 +111,91 @@ export default function DateRangePicker({ value, onChange, presets, style, compa
   function handleToChange(v) { onChange?.({ from, to: v, preset: "custom" }); }
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", display: "inline-flex", gap: 6, alignItems: "center", ...style }}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          padding: "5px 10px",
-          border: "1px solid #e2e8f0",
-          borderRadius: 6,
-          background: "#fff",
-          fontSize: "0.8rem",
-          fontWeight: 600,
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-          color: currentPreset === "custom" ? "#64748b" : "var(--text, #1e293b)",
-        }}
-        title="Pick a date range preset"
-      >
-        <span style={{ marginRight: 6, fontSize: "0.72rem", color: "#94a3b8", fontWeight: 500 }}>Date:</span>
-        {currentLabel}
-        <span style={{ marginLeft: 6, fontSize: "0.7rem", color: "#94a3b8" }}>{open ? "▲" : "▾"}</span>
-      </button>
+    <div ref={wrapRef} style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap", ...style }}>
+      {/* Wrap the trigger button in its OWN relative container so the
+          dropdown anchors to the button — not to the wider wrapper that
+          also contains the from/to date inputs (which can wrap to a new
+          line in narrow toolbars and would drag `left: 0` far from the
+          actual click target). */}
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            padding: "5px 10px",
+            border: "1px solid #e2e8f0",
+            borderRadius: 6,
+            background: "#fff",
+            fontSize: "0.8rem",
+            fontWeight: 600,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            color: currentPreset === "custom" ? "#64748b" : "var(--text, #1e293b)",
+          }}
+          title="Pick a date range preset"
+        >
+          <span style={{ marginRight: 6, fontSize: "0.72rem", color: "#94a3b8", fontWeight: 500 }}>Date:</span>
+          {currentLabel}
+          <span style={{ marginLeft: 6, fontSize: "0.7rem", color: "#94a3b8" }}>{open ? "▲" : "▾"}</span>
+        </button>
+
+        {open && (
+          <div style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            zIndex: 50,
+            background: "white",
+            border: "1px solid #e2e8f0",
+            borderRadius: 8,
+            boxShadow: "0 10px 25px rgba(15,23,42,0.15)",
+            minWidth: 200,
+            maxHeight: 320,
+            overflowY: "auto",
+            padding: "4px 0",
+          }}>
+            {order.map((key) => {
+              const def = DATE_PRESETS[key];
+              if (!def) return null;
+              const selected = key === currentPreset;
+              return (
+                <div
+                  key={key}
+                  onClick={() => applyPreset(key)}
+                  style={{
+                    padding: "7px 14px",
+                    cursor: "pointer",
+                    fontSize: "0.84rem",
+                    background: selected ? "rgba(37,99,235,0.10)" : "transparent",
+                    color: selected ? "var(--primary, #2563eb)" : "var(--text, #1e293b)",
+                    fontWeight: selected ? 700 : 500,
+                  }}
+                  onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "rgba(100,116,139,0.08)"; }}
+                  onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "transparent"; }}
+                >
+                  {def.label}
+                </div>
+              );
+            })}
+            <div
+              onClick={() => applyPreset("custom")}
+              style={{
+                padding: "7px 14px",
+                cursor: "pointer",
+                fontSize: "0.84rem",
+                borderTop: "1px solid #eef2f7",
+                color: "#64748b",
+                fontWeight: currentPreset === "custom" ? 700 : 500,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(100,116,139,0.08)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            >
+              Custom…
+            </div>
+          </div>
+        )}
+      </div>
+
       {!compact && (
         <>
           <input
@@ -149,62 +213,6 @@ export default function DateRangePicker({ value, onChange, presets, style, compa
             title="To"
           />
         </>
-      )}
-
-      {open && (
-        <div style={{
-          position: "absolute",
-          top: "calc(100% + 4px)",
-          left: 0,
-          zIndex: 50,
-          background: "white",
-          border: "1px solid #e2e8f0",
-          borderRadius: 8,
-          boxShadow: "0 10px 25px rgba(15,23,42,0.15)",
-          minWidth: 200,
-          maxHeight: 320,
-          overflowY: "auto",
-          padding: "4px 0",
-        }}>
-          {order.map((key) => {
-            const def = DATE_PRESETS[key];
-            if (!def) return null;
-            const selected = key === currentPreset;
-            return (
-              <div
-                key={key}
-                onClick={() => applyPreset(key)}
-                style={{
-                  padding: "7px 14px",
-                  cursor: "pointer",
-                  fontSize: "0.84rem",
-                  background: selected ? "rgba(37,99,235,0.10)" : "transparent",
-                  color: selected ? "var(--primary, #2563eb)" : "var(--text, #1e293b)",
-                  fontWeight: selected ? 700 : 500,
-                }}
-                onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "rgba(100,116,139,0.08)"; }}
-                onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "transparent"; }}
-              >
-                {def.label}
-              </div>
-            );
-          })}
-          <div
-            onClick={() => applyPreset("custom")}
-            style={{
-              padding: "7px 14px",
-              cursor: "pointer",
-              fontSize: "0.84rem",
-              borderTop: "1px solid #eef2f7",
-              color: "#64748b",
-              fontWeight: currentPreset === "custom" ? 700 : 500,
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(100,116,139,0.08)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-          >
-            Custom…
-          </div>
-        </div>
       )}
     </div>
   );

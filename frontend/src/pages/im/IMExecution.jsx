@@ -9,6 +9,8 @@ import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constant
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
+import RemarksPanel from "../../components/RemarksPanel";
+import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -601,6 +603,9 @@ export default function IMExecution() {
                   <th>CIAG</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }} title="Which visit this execution is (1, 2, 3…)">Visit #</th>
+                  <th title="Remark set by PM">General</th>
+                  <th title="Remark set by IM">Manager</th>
+                  <th title="Remark set by Field Team Lead">Team Lead</th>
                   <th style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>Actions</th>
                 </tr>
               </thead>
@@ -722,6 +727,9 @@ export default function IMExecution() {
                     </td>
                     <td style={{ textAlign: "right" }}>{e.achieved_qty || 0}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{e.visit_number != null ? e.visit_number : "—"}</td>
+                    <td><RemarksCell value={e.general_remark} tone="general" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.general_remark = v; }} /></td>
+                    <td><RemarksCell value={e.manager_remark} tone="manager" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.manager_remark = v; }} /></td>
+                    <td><RemarksCell value={e.team_lead_remark} tone="team_lead" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.team_lead_remark = v; }} /></td>
                     <td style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>
                       <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                         <button
@@ -755,6 +763,9 @@ export default function IMExecution() {
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     {fmt.format(totalAchieved)}
                   </td>
+                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                   <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                   <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                 </tr>

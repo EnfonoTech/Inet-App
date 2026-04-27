@@ -9,6 +9,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
+import RemarksCell from "../../components/RemarksCell";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const money = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
@@ -229,6 +230,9 @@ export default function IMWorkDone() {
                   <th>CIAG</th>
                   <th>QC</th>
                   <th>Execution Remarks</th>
+                  <th title="Remark set by PM">General</th>
+                  <th title="Remark set by IM">Manager</th>
+                  <th title="Remark set by Field Team Lead">Team Lead</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Billing Status</th>
                   <th>Submission Status</th>
@@ -256,6 +260,9 @@ export default function IMWorkDone() {
                     <td><StatusPill value={r.ciag_status} /></td>
                     <td><StatusPill value={r.qc_status} /></td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.execution_remarks || ""}>{r.execution_remarks || "—"}</td>
+                    <td><RemarksCell value={r.general_remark} tone="general" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.general_remark = v; }} /></td>
+                    <td><RemarksCell value={r.manager_remark} tone="manager" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.manager_remark = v; }} /></td>
+                    <td><RemarksCell value={r.team_lead_remark} tone="team_lead" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.team_lead_remark = v; }} /></td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.revenue_sar || 0)}</td>
                     <td><StatusPill value={r.billing_status} /></td>
                     <td>

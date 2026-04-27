@@ -5,6 +5,7 @@ import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableR
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import RemarksCell from "../../components/RemarksCell";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -286,6 +287,9 @@ export default function IMIssuesRisks() {
                   <th>Issue Category</th>
                   <th>Issue Remarks</th>
                   <th>Execution Remarks</th>
+                  <th title="Remark set by PM">General</th>
+                  <th title="Remark set by IM">Manager</th>
+                  <th title="Remark set by Field Team Lead">Team Lead</th>
                 </tr>
               </thead>
               <tbody>
@@ -317,6 +321,9 @@ export default function IMIssuesRisks() {
                     <td><StatusPill value={r.issue_category} /></td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.issue_remarks || ""}>{r.issue_remarks || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.execution_remarks || ""}>{r.execution_remarks || "—"}</td>
+                    <td><RemarksCell value={r.general_remark} tone="general" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.general_remark = v; }} /></td>
+                    <td><RemarksCell value={r.manager_remark} tone="manager" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.manager_remark = v; }} /></td>
+                    <td><RemarksCell value={r.team_lead_remark} tone="team_lead" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.team_lead_remark = v; }} /></td>
                   </tr>
                 ))}
               </tbody>

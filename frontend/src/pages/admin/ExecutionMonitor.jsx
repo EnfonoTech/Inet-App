@@ -7,6 +7,8 @@ import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constant
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import RemarksPanel from "../../components/RemarksPanel";
+import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -344,6 +346,9 @@ export default function ExecutionMonitor() {
                   <th>QC</th>
                   <th>CIAG</th>
                   <th>Issue Category</th>
+                  <th title="Remark set by PM">General</th>
+                  <th title="Remark set by IM">Manager</th>
+                  <th title="Remark set by Field Team Lead">Team Lead</th>
                   <th>Open</th>
                 </tr>
               </thead>
@@ -427,6 +432,9 @@ export default function ExecutionMonitor() {
                           </button>
                         ) : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}
                       </td>
+                      <td><RemarksCell value={row.general_remark} tone="general" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.general_remark = v; }} /></td>
+                      <td><RemarksCell value={row.manager_remark} tone="manager" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.manager_remark = v; }} /></td>
+                      <td><RemarksCell value={row.team_lead_remark} tone="team_lead" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.team_lead_remark = v; }} /></td>
                       <td>
                         <button
                           type="button"
@@ -443,7 +451,7 @@ export default function ExecutionMonitor() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={24} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td colSpan={27} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{rows.length}</strong>
                     {" "}record{rows.length !== 1 ? "s" : ""}
                   </td>

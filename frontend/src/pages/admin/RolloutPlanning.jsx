@@ -122,6 +122,7 @@ export default function RolloutPlanning() {
   const [successMsg, setSuccessMsg] = useState(null);
   const [createError, setCreateError] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
+  const [managerRemark, setManagerRemark] = useState("");
 
   useResetOnRowLimitChange(() => {
     setRows([]);
@@ -219,6 +220,7 @@ export default function RolloutPlanning() {
     setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
+    setManagerRemark("");
     setShowModal(true);
   }
 
@@ -241,6 +243,7 @@ export default function RolloutPlanning() {
         access_time: accessTime,
         access_period: accessPeriod,
         visit_type: visitType,
+        manager_remark: managerRemark || undefined,
       });
       const count = result?.created ?? selected.size;
       setSuccessMsg(`Created ${count} rollout plan${count !== 1 ? "s" : ""} successfully.`);
@@ -590,6 +593,20 @@ export default function RolloutPlanning() {
                     </label>
                   </div>
                 </div>
+              </div>
+
+              {/* Single remark — saved as the Manager remark on every
+                  selected POID. Planning is normally done by the IM, so we
+                  collapse the 3-way panel into one Manager-tone textarea. */}
+              <div className="form-group">
+                <label>Remark</label>
+                <textarea
+                  rows={3}
+                  value={managerRemark}
+                  onChange={(e) => setManagerRemark(e.target.value)}
+                  placeholder="Remark for these rollout plans…"
+                  style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: "0.86rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical", minHeight: 60 }}
+                />
               </div>
         </>
 

@@ -257,6 +257,8 @@ function MasterCard({ label, description, icon, color, count, isExpanded, onTogg
 function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
   const [records, setRecords] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [colFilters, setColFilters] = useState({});
   // Stable signature for the fields array so useEffect doesn't re-fire every
   // parent render and clobber an in-flight fetch with a stale empty result.
   const fieldsKey = useMemo(() => (Array.isArray(fields) ? fields.join("|") : ""), [fields]);
@@ -265,6 +267,8 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
     let alive = true;
     setLoading(true);
     setRecords(null);
+    setSearch("");
+    setColFilters({});
     fetchRecords(doctype, fields, rowLimit).then((rows) => {
       if (!alive) return;
       setRecords(rows);
@@ -273,6 +277,54 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doctype, rowLimit, fieldsKey]);
+
+  const cols = useMemo(
+    () => (displayCols && displayCols.length > 0 ? displayCols : (fields || []).filter((f) => f !== "name")),
+    [displayCols, fields]
+  );
+
+  // Columns that should render as a categorical dropdown filter (low-cardinality
+  // strings like "status", "team_type", "category"). Detect by name + by sample.
+  const filterableCols = useMemo(() => {
+    if (!records) return [];
+    return cols.filter((c) => {
+      const looksCategorical = /(status|type|category|group|domain|model|territory)/i.test(c);
+      if (!looksCategorical) return false;
+      const distinct = new Set(records.map((r) => cellText(r[c])).filter((v) => v && v !== "–"));
+      return distinct.size > 0 && distinct.size <= 20;
+    });
+  }, [records, cols]);
+
+  const distinctValues = useMemo(() => {
+    const out = {};
+    filterableCols.forEach((c) => {
+      const set = new Set();
+      (records || []).forEach((r) => {
+        const v = cellText(r[c]);
+        if (v && v !== "–") set.add(v);
+      });
+      out[c] = Array.from(set).sort();
+    });
+    return out;
+  }, [records, filterableCols]);
+
+  const filtered = useMemo(() => {
+    if (!records) return [];
+    const q = search.trim().toLowerCase();
+    return records.filter((r) => {
+      if (q) {
+        const hay = [r.name, ...cols.map((c) => cellText(r[c]))].join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      for (const [c, val] of Object.entries(colFilters)) {
+        if (!val) continue;
+        if (cellText(r[c]) !== val) return false;
+      }
+      return true;
+    });
+  }, [records, search, colFilters, cols]);
+
+  const hasFilters = !!search || Object.values(colFilters).some(Boolean);
 
   if (loading) {
     return (
@@ -290,10 +342,41 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
     );
   }
 
-  const cols = displayCols && displayCols.length > 0 ? displayCols : fields.filter((f) => f !== "name");
-
   return (
     <>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 6 }}>
+      <input
+        type="search"
+        placeholder="Search records…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.8rem", minWidth: 200 }}
+      />
+      {filterableCols.map((c) => (
+        <select
+          key={c}
+          value={colFilters[c] || ""}
+          onChange={(e) => setColFilters((f) => ({ ...f, [c]: e.target.value }))}
+          style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.8rem", textTransform: "capitalize" }}
+          title={c.replace(/_/g, " ")}
+        >
+          <option value="">All {c.replace(/_/g, " ")}</option>
+          {(distinctValues[c] || []).map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+      ))}
+      {hasFilters && (
+        <button
+          type="button"
+          style={{ fontSize: "0.76rem", padding: "5px 10px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer" }}
+          onClick={() => { setSearch(""); setColFilters({}); }}
+        >
+          Clear
+        </button>
+      )}
+      <span style={{ marginLeft: "auto", color: "#94a3b8", fontSize: "0.76rem" }}>
+        {filtered.length}{hasFilters && ` of ${records.length}`} records
+      </span>
+    </div>
     <DataTableWrapper style={{ marginTop: 0 }}>
       <table className="data-table">
         <thead>
@@ -309,7 +392,14 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
           </tr>
         </thead>
         <tbody>
-          {records.map((row, idx) => (
+          {filtered.length === 0 && (
+            <tr>
+              <td colSpan={cols.length + 3} style={{ padding: 18, textAlign: "center", color: "#94a3b8" }}>
+                No records match your filter.
+              </td>
+            </tr>
+          )}
+          {filtered.map((row, idx) => (
             <tr key={idx}>
               <td style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{idx + 1}</td>
               <td>
@@ -349,7 +439,7 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
         </tbody>
       </table>
     </DataTableWrapper>
-    <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />
+    <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} filteredCount={filtered.length} filterActive={hasFilters} />
     </>
   );
 }

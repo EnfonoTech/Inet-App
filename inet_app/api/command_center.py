@@ -2712,6 +2712,20 @@ def create_rollout_plans(payload):
     created = 0
     names = []
 
+    # Optional remark fields the caller can stamp on each PO Dispatch as part
+    # of plan creation. Same write rules as `update_po_remark`:
+    #   general    → PM only
+    #   manager    → PM + IM
+    #   team_lead  → PM + IM + Field
+    role = _user_role_class()
+    remark_updates = {}
+    if (payload.get("general_remark") is not None) and role == "pm":
+        remark_updates["general_remark"] = str(payload.get("general_remark") or "")[:8000]
+    if (payload.get("manager_remark") is not None) and role in ("pm", "im"):
+        remark_updates["manager_remark"] = str(payload.get("manager_remark") or "")[:8000]
+    if (payload.get("team_lead_remark") is not None) and role in ("pm", "im", "field"):
+        remark_updates["team_lead_remark"] = str(payload.get("team_lead_remark") or "")[:8000]
+
     for dispatch_name in dispatches:
         dispatch = frappe.db.get_value(
             "PO Dispatch",
@@ -2777,10 +2791,12 @@ def create_rollout_plans(payload):
             frappe.db.set_value(
                 "Rollout Plan", latest.name, updates, update_modified=True
             )
+            disp_updates = {"dispatch_status": "Planned"}
+            disp_updates.update(remark_updates)
             frappe.db.set_value(
                 "PO Dispatch",
                 dispatch_name,
-                {"dispatch_status": "Planned"},
+                disp_updates,
                 update_modified=False,
             )
             frappe.db.commit()
@@ -2816,10 +2832,12 @@ def create_rollout_plans(payload):
         doc.insert(ignore_permissions=True)
         frappe.db.commit()
 
+        disp_updates = {"dispatch_status": "Planned"}
+        disp_updates.update(remark_updates)
         frappe.db.set_value(
             "PO Dispatch",
             dispatch_name,
-            {"dispatch_status": "Planned"},
+            disp_updates,
             update_modified=False,
         )
 
@@ -3655,6 +3673,9 @@ def list_execution_monitor_rows(filters=None, limit=500):
             d_fields.append("region_type")
         if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
             d_fields.append("original_dummy_poid")
+        for rk in ("general_remark", "manager_remark", "team_lead_remark"):
+            if frappe.db.has_column("PO Dispatch", rk):
+                d_fields.append(rk)
         drows = frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", dispatch_names]},
@@ -3721,6 +3742,9 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "gps_location": ex.gps_location if ex else None,
                 "modified": p.modified,
                 "customer": d.get("customer") if d else None,
+                "general_remark": d.get("general_remark") if d else None,
+                "manager_remark": d.get("manager_remark") if d else None,
+                "team_lead_remark": d.get("team_lead_remark") if d else None,
                 "original_dummy_poid": (
                     (d.get("original_dummy_poid") or "").strip()
                     if d and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
@@ -3897,7 +3921,7 @@ def list_work_done_rows(filters=None, limit=500):
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
     pd_map = {}
     if dispatch_names:
-        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer", "line_amount", "po_line_no", "dispatch_status"]
+        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer", "line_amount", "po_line_no", "dispatch_status", "general_remark", "manager_remark", "team_lead_remark"]
         if frappe.db.has_column("PO Dispatch", "poid"):
             pd_fields_wd.append("poid")
         if frappe.db.has_column("PO Dispatch", "im"):
@@ -3993,6 +4017,9 @@ def list_work_done_rows(filters=None, limit=500):
                 "dispatch_status": pd.get("dispatch_status") if pd else None,
                 "line_amount": pd.get("line_amount") if pd else None,
                 "project_name": project_name_map.get(project_code) if project_code else None,
+                "general_remark": pd.get("general_remark") if pd else None,
+                "manager_remark": pd.get("manager_remark") if pd else None,
+                "team_lead_remark": pd.get("team_lead_remark") if pd else None,
                 "original_dummy_poid": (
                     (pd.get("original_dummy_poid") or "").strip()
                     if pd and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
@@ -4182,6 +4209,9 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             pd.line_amount,
             pd.center_area,
             pd.region_type,
+            pd.general_remark,
+            pd.manager_remark,
+            pd.team_lead_remark,
             de.name AS execution_name,
             de.execution_date,
             de.execution_status,
@@ -4241,6 +4271,9 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
                 "line_amount": r.get("line_amount"),
                 "center_area": r.get("center_area"),
                 "region_type": r.get("region_type"),
+                "general_remark": r.get("general_remark"),
+                "manager_remark": r.get("manager_remark"),
+                "team_lead_remark": r.get("team_lead_remark"),
                 "execution_name": r.get("execution_name"),
                 "execution_date": r.get("execution_date"),
                 "execution_status": r.get("execution_status"),
@@ -4935,6 +4968,9 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag, de.photos,
                pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
                pd.customer AS customer,
+               pd.general_remark AS general_remark,
+               pd.manager_remark AS manager_remark,
+               pd.team_lead_remark AS team_lead_remark,
                (SELECT wd.name FROM `tabWork Done` wd WHERE wd.execution = de.name LIMIT 1) AS work_done,
                it.team_name AS team_name,
                {im_full_sql_ex}
@@ -6956,3 +6992,107 @@ def list_employees_for_picker(search=None, limit=50):
             limit_page_length=int(limit),
         )
     return emps or []
+
+
+# ──────────────────────────────────────────────────────────────────────
+# POID-level remarks (general / manager / team_lead) — role-scoped
+# ──────────────────────────────────────────────────────────────────────
+_REMARK_TYPES = {"general", "manager", "team_lead"}
+
+
+def _resolve_dispatch_for_remarks(po_dispatch):
+    """Find the PO Dispatch row for a POID or system_id and return its name."""
+    name = (po_dispatch or "").strip()
+    if not name:
+        frappe.throw("po_dispatch is required")
+    if frappe.db.exists("PO Dispatch", name):
+        return name
+    hit = frappe.db.get_value("PO Dispatch", {"poid": name}, "name")
+    if hit:
+        return hit
+    frappe.throw(f"PO Dispatch not found: {name}")
+
+
+def _user_role_class():
+    """Coarse role bucket for remark visibility/edit rules."""
+    roles = set(frappe.get_roles(frappe.session.user))
+    if "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles:
+        return "pm"
+    if "INET IM" in roles:
+        return "im"
+    if "INET Field Team" in roles:
+        return "field"
+    return None
+
+
+@frappe.whitelist()
+def get_po_remarks(po_dispatch):
+    """Return the remark trio for a POID, masking fields the caller can't read.
+
+    Visibility:
+      - PM / admin: sees all three; edits any of the three
+      - IM:        sees all three; edits manager + team_lead
+      - Field:     sees only team_lead; edits team_lead
+    """
+    role = _user_role_class()
+    if role is None:
+        frappe.throw("Not permitted", frappe.PermissionError)
+    name = _resolve_dispatch_for_remarks(po_dispatch)
+    row = frappe.db.get_value(
+        "PO Dispatch", name,
+        ["name", "poid", "general_remark", "manager_remark", "team_lead_remark"],
+        as_dict=True,
+    ) or {}
+
+    visible = {
+        "po_dispatch": row.get("name"),
+        "poid": row.get("poid") or row.get("name"),
+        "role": role,
+    }
+    if role in ("pm", "im"):
+        visible["general_remark"] = row.get("general_remark") or ""
+        visible["manager_remark"] = row.get("manager_remark") or ""
+        visible["team_lead_remark"] = row.get("team_lead_remark") or ""
+    elif role == "field":
+        visible["team_lead_remark"] = row.get("team_lead_remark") or ""
+    visible["editable"] = {
+        # general:   PM only
+        # manager:   PM + IM
+        # team_lead: PM + IM + Field
+        "general_remark": role == "pm",
+        "manager_remark": role in ("pm", "im"),
+        "team_lead_remark": role in ("pm", "im", "field"),
+    }
+    return visible
+
+
+@frappe.whitelist()
+def update_po_remark(po_dispatch, remark_type, value):
+    """Set one remark on a POID. Permissions:
+        - general    → PM
+        - manager    → PM + IM
+        - team_lead  → PM + IM + Field
+    """
+    role = _user_role_class()
+    if role is None:
+        frappe.throw("Not permitted", frappe.PermissionError)
+    name = _resolve_dispatch_for_remarks(po_dispatch)
+    rtype = (remark_type or "").strip().lower()
+    if rtype not in _REMARK_TYPES:
+        frappe.throw("Invalid remark_type")
+    field = f"{rtype}_remark"
+
+    allowed = (
+        (rtype == "general" and role == "pm")
+        or (rtype == "manager" and role in ("pm", "im"))
+        or (rtype == "team_lead" and role in ("pm", "im", "field"))
+    )
+    if not allowed:
+        frappe.throw("Not permitted to edit this remark", frappe.PermissionError)
+
+    text = str(value or "")
+    if len(text) > 8000:
+        text = text[:8000]
+    frappe.db.set_value("PO Dispatch", name, field, text, update_modified=True)
+    frappe.db.commit()
+    return {"po_dispatch": name, "remark_type": rtype, "value": text}

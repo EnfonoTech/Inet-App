@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, useResetOnRowLimitChange, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import SearchableSelect from "../../components/SearchableSelect";
 
@@ -251,12 +251,7 @@ export default function Projects() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Projects</h1>
-          <div className="page-subtitle">
-            Manage all INET telecom projects
-            {" "}
-            (<strong>{projects.length}</strong> loaded
-            {rowLimit === TABLE_ROW_LIMIT_ALL ? " · all rows (no limit)" : ` · max ${rowLimit} rows`})
-          </div>
+          <div className="page-subtitle">Manage all INET telecom projects</div>
         </div>
         <div className="page-actions">
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New Project</button>

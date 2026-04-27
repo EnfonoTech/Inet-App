@@ -177,6 +177,7 @@ export default function IMDispatch() {
   const [teamsList, setTeamsList] = useState([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [visitType, setVisitType] = useState("Work Done");
+  const [managerRemark, setManagerRemark] = useState("");
   const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
   const [createError, setCreateError] = useState(null);
@@ -414,6 +415,7 @@ export default function IMDispatch() {
     setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
+    setManagerRemark("");
     setShowModal(true);
   }
 
@@ -436,6 +438,7 @@ export default function IMDispatch() {
         access_time: accessTime,
         access_period: accessPeriod,
         visit_type: visitType,
+        manager_remark: managerRemark || undefined,
       });
       const count = result?.created ?? dispatches.length;
       setSuccessMsg(`Created ${count} rollout plan${count !== 1 ? "s" : ""}. View them under Planning.`);
@@ -688,6 +691,17 @@ export default function IMDispatch() {
               Night
             </label>
           </div>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 16 }}>
+          <label>Remark</label>
+          <textarea
+            rows={3}
+            value={managerRemark}
+            onChange={(e) => setManagerRemark(e.target.value)}
+            placeholder="Remark for these rollout plans…"
+            style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: "0.86rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical", minHeight: 60 }}
+          />
         </div>
 
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>

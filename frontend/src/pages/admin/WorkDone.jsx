@@ -6,6 +6,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -287,6 +288,9 @@ export default function WorkDone() {
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Submission Status</th>
                   <th>Billing Status</th>
+                  <th title="Remark set by PM">General</th>
+                  <th title="Remark set by IM">Manager</th>
+                  <th title="Remark set by Field Team Lead">Team Lead</th>
                   <th>Open</th>
                 </tr>
               </thead>
@@ -331,6 +335,9 @@ export default function WorkDone() {
                         </button>
                       </td>
                       <td><StatusPill value={row.billing_status} /></td>
+                      <td><RemarksCell value={row.general_remark} tone="general" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.general_remark = v; }} /></td>
+                      <td><RemarksCell value={row.manager_remark} tone="manager" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.manager_remark = v; }} /></td>
+                      <td><RemarksCell value={row.team_lead_remark} tone="team_lead" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.team_lead_remark = v; }} /></td>
                       <td>
                         <button
                           type="button"
@@ -354,6 +361,9 @@ export default function WorkDone() {
                   <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "10px 16px" }}>
                     {fmt.format(totals.revenue)}
                   </td>
+                  <td />
+                  <td />
+                  <td />
                   <td />
                   <td />
                   <td />

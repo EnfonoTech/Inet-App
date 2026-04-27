@@ -396,6 +396,10 @@ export const pmApi = {
       order_by: orderBy,
     }),
   genericCount: (doctype) => call("frappe.client.get_count", { doctype }),
+
+  // POID-level remarks (general / manager / team_lead) — role-scoped
+  getPoRemarks: (po_dispatch) => call("inet_app.api.command_center.get_po_remarks", { po_dispatch }),
+  updatePoRemark: (po_dispatch, remark_type, value) => call("inet_app.api.command_center.update_po_remark", { po_dispatch, remark_type, value }),
   listPODispatches:  (filters, limitPageLength, portalFilters) => {
     const args = {
       filters: filters || {},
