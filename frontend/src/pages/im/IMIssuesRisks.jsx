@@ -156,7 +156,10 @@ export default function IMIssuesRisks() {
     (async () => {
       try {
         const list = await pmApi.listINETTeams({ status: "Active", im: imName });
-        if (!cancelled) setTeamsList(Array.isArray(list) ? list : []);
+        const fieldOnly = (Array.isArray(list) ? list : []).filter(
+          (t) => (t.team_category || "Field Team") !== "Sub-Contract Team"
+        );
+        if (!cancelled) setTeamsList(fieldOnly);
       } catch {
         if (!cancelled) setTeamsList([]);
       }

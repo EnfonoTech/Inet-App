@@ -113,11 +113,18 @@ export default function WorkDone() {
   const [submissionErr, setSubmissionErr] = useState(null);
 
   async function submitSubmission() {
-    if (!submissionFor?.name) return;
+    if (!submissionFor) return;
     setSubmissionBusy(true);
     setSubmissionErr(null);
     try {
-      await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick);
+      if (submissionFor.is_subcon) {
+        const dispatch = submissionFor.po_dispatch || submissionFor.poid;
+        if (!dispatch) throw new Error("Missing PO Dispatch reference for sub-contract row");
+        await pmApi.updateSubconSubmission(dispatch, submissionPick);
+      } else {
+        if (!submissionFor.name) throw new Error("Missing Work Done name");
+        await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick);
+      }
       setSubmissionFor(null);
       loadData();
     } catch (err) {
@@ -383,7 +390,14 @@ export default function WorkDone() {
       {submissionFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSubmissionFor(null)}>
           <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
-            <h4 style={{ margin: "0 0 12px" }}>Submission status: {submissionFor.name}</h4>
+            <h4 style={{ margin: "0 0 12px" }}>
+              Submission status: {submissionFor.is_subcon
+                ? (submissionFor.poid || submissionFor.po_dispatch)
+                : submissionFor.name}
+              {submissionFor.is_subcon && (
+                <span style={{ marginLeft: 8, fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, background: "rgba(167,139,250,0.15)", color: "#7c3aed", fontWeight: 700 }}>Sub-Contract</span>
+              )}
+            </h4>
             {submissionErr && <div className="notice error" style={{ marginBottom: 10 }}>{submissionErr}</div>}
             <div className="form-group" style={{ marginBottom: 12 }}>
               <label>Status</label>

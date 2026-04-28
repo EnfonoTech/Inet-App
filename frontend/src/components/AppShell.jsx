@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { pmApi } from "../services/api";
 import FieldGlobalTimerBar from "./FieldGlobalTimerBar";
 import DataTablePro from "./DataTablePro";
 import PullToRefresh from "./PullToRefresh";
@@ -84,6 +85,12 @@ const icons = {
       <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
   ),
+  briefcase: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+      <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+    </svg>
+  ),
 };
 
 /* ── Navigation definitions per role ────────────────────────── */
@@ -147,12 +154,38 @@ export default function AppShell() {
     setMobileNavOpen(false);
   }, [location.pathname]);
 
+  /* IMs with `can_subcon=1` get the Sub-Contract menu item injected. */
+  const [imCanSubcon, setImCanSubcon] = useState(false);
+  useEffect(() => {
+    if (role !== "im") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await pmApi.getMySubconCapability();
+        if (!cancelled) setImCanSubcon(!!res?.can_subcon);
+      } catch {
+        if (!cancelled) setImCanSubcon(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [role]);
+
   /* Pick nav items based on role */
   const navItems = useMemo(() => {
-    if (role === "im") return imNav;
+    if (role === "im") {
+      if (!imCanSubcon) return imNav;
+      const out = [];
+      imNav.forEach((item) => {
+        out.push(item);
+        if (item.to === "/im-po-intake") {
+          out.push({ to: "/im-subcon", label: "Sub-Contract", icon: "briefcase" });
+        }
+      });
+      return out;
+    }
     if (role === "field") return fieldNav;
     return adminNav;
-  }, [role]);
+  }, [role, imCanSubcon]);
 
   /* Current page title for topbar */
   const current = useMemo(

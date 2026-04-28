@@ -4031,6 +4031,174 @@ def list_work_done_rows(filters=None, limit=500):
         cim_map = _batch_customer_activity_types(out)
         for r in out:
             r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+
+    # ── Sub-Contract completions: synthesize Work Done rows for PO Dispatches
+    # whose subcon_status='Work Done'. Subcon flow lives outside the rollout
+    # chain (no Daily Execution / Rollout Plan / Work Done record), so we union
+    # them in here as flagged synthetic rows so they show up in the same list.
+    subcon_rows = _synthesize_subcon_workdone_rows(filters)
+    if subcon_rows:
+        out.extend(subcon_rows)
+        out.sort(
+            key=lambda r: (r.get("execution_date") or "", r.get("modified") or ""),
+            reverse=True,
+        )
+    return out
+
+
+def _synthesize_subcon_workdone_rows(filters):
+    """Build Work-Done-shaped rows from PO Dispatches with subcon_status='Work Done'.
+
+    Honors the same filters as ``list_work_done_rows``:
+        billing_status, from_date / to_date, team, project_code, site_code, im, search.
+    Subcon dispatches don't carry a billing_status; if the caller filtered to a
+    specific real billing_status (Confirmed/Submitted/etc.), they're excluded.
+    The ``team`` filter is matched against ``pd.subcon_team`` (not the rollout team).
+    """
+    f = filters or {}
+
+    # Billing status filter — subcon rows are emitted as `billing_status='Pending'`.
+    # Only include them when the filter allows Pending (or is unset).
+    bs_vals = _ensure_list(f.get("billing_status"))
+    if bs_vals:
+        accept = {"", "pending", "all"}
+        if not any(str(v).strip().lower() in accept for v in bs_vals):
+            return []
+
+    where = ["IFNULL(pd.subcon_status,'') = 'Work Done'"]
+    params = []
+    for col, key in (
+        ("pd.project_code", "project_code"),
+        ("pd.site_code", "site_code"),
+        ("pd.subcon_team", "team"),
+    ):
+        c, p = _sql_in_or_eq(col, f.get(key))
+        if c:
+            where.append(c)
+            params.extend(p)
+    im_vals = _ensure_list(f.get("im"))
+    if im_vals:
+        ph = ", ".join(["%s"] * len(im_vals))
+        where.append(f"IFNULL(pd.im,'') IN ({ph})")
+        params.extend(im_vals)
+    if f.get("from_date"):
+        where.append("pd.subcon_completed_on >= %s")
+        params.append(f["from_date"])
+    if f.get("to_date"):
+        where.append("pd.subcon_completed_on <= %s")
+        params.append(f["to_date"])
+
+    search = f.get("search") or f.get("q") or ""
+    if search:
+        clause, like_params = _sql_search_clause(
+            "CONCAT_WS(' ', "
+            "IFNULL(pd.poid,''), IFNULL(pd.po_no,''), IFNULL(pd.item_code,''), "
+            "IFNULL(pd.item_description,''), IFNULL(pd.site_name,''), "
+            "IFNULL(pd.site_code,''), IFNULL(pd.project_code,''), "
+            "IFNULL(pd.center_area,''), IFNULL(pd.region_type,''), "
+            "IFNULL(t.team_id,''), IFNULL(t.team_name,''), IFNULL(pd.im,''))",
+            search,
+        )
+        if clause:
+            where.append(clause)
+            params.extend(like_params)
+
+    sub_sub_col = (
+        "pd.subcon_submission_status AS subcon_submission_status"
+        if frappe.db.has_column("PO Dispatch", "subcon_submission_status")
+        else "'' AS subcon_submission_status"
+    )
+    sql = (
+        "SELECT pd.name AS po_dispatch, pd.poid AS poid, pd.po_no, pd.po_line_no, "
+        "pd.project_code, pd.site_code, pd.site_name, pd.center_area, pd.region_type, "
+        "pd.item_code, pd.item_description, pd.customer, pd.line_amount, "
+        "pd.dispatch_status, pd.im, "
+        "pd.subcon_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark, "
+        f"{sub_sub_col}, "
+        "pd.general_remark, pd.manager_remark, pd.team_lead_remark, "
+        "t.team_id AS subcon_team_id, t.team_name AS subcon_team_name, "
+        "pd.modified "
+        "FROM `tabPO Dispatch` pd "
+        "LEFT JOIN `tabINET Team` t ON t.name = pd.subcon_team "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY pd.subcon_completed_on DESC, pd.modified DESC"
+    )
+    rows = frappe.db.sql(sql, tuple(params), as_dict=True) or []
+    if not rows:
+        return []
+
+    project_codes = {r.project_code for r in rows if r.get("project_code")}
+    project_name_map = {}
+    if project_codes:
+        try:
+            proj_rows = frappe.get_all(
+                "Project Control Center",
+                filters={"name": ["in", list(project_codes)]},
+                fields=["name", "project_name"],
+                limit_page_length=len(project_codes) + 1,
+            )
+            project_name_map = {p.name: p.project_name for p in proj_rows}
+        except Exception:
+            project_name_map = {}
+
+    im_prefetch = list({r.im for r in rows if r.get("im")})
+    im_name_map = _batch_im_master_full_names(im_prefetch) if im_prefetch else {}
+
+    out = []
+    cim_map = _batch_customer_activity_types(rows)
+    for r in rows:
+        out.append({
+            # Synthetic name so React/UI keys stay unique. There's no Work Done
+            # doctype row backing this entry — anything that tries to mutate by
+            # `name` should check `is_subcon` first.
+            "name": f"SUBCON-{r.get('po_dispatch')}",
+            "execution": None,
+            "system_id": r.get("po_dispatch"),
+            "poid": r.get("poid") or r.get("po_dispatch"),
+            "po_dispatch": r.get("po_dispatch"),
+            "po_no": r.get("po_no"),
+            "project_code": r.get("project_code"),
+            "project_name": project_name_map.get(r.get("project_code")),
+            "site_code": r.get("site_code"),
+            "site_name": r.get("site_name"),
+            "center_area": r.get("center_area"),
+            "region_type": r.get("region_type"),
+            "team": r.get("subcon_team"),
+            "team_name": r.get("subcon_team_name") or r.get("subcon_team_id") or r.get("subcon_team"),
+            "im": r.get("im"),
+            "im_full_name": im_name_map.get(r.get("im")),
+            "item_code": r.get("item_code"),
+            "item_description": r.get("item_description"),
+            "customer": r.get("customer"),
+            "customer_activity_type": cim_map.get((r.get("customer") or "", r.get("item_code") or "")),
+            "executed_qty": None,
+            "billing_rate_sar": None,
+            "revenue_sar": r.get("line_amount"),
+            "team_cost_sar": None,
+            "subcontract_cost_sar": None,
+            "total_cost_sar": None,
+            "margin_sar": None,
+            "billing_status": "Pending",
+            "submission_status": r.get("subcon_submission_status") or "",
+            "execution_date": r.get("subcon_completed_on"),
+            "execution_status": "Completed",
+            "qc_status": None,
+            "ciag_status": None,
+            "execution_remarks": r.get("subcon_remark"),
+            "plan_date": None,
+            "visit_type": "Sub-Contract",
+            "visit_number": None,
+            "planning_timestamp": None,
+            "dispatch_seq": r.get("po_line_no"),
+            "dispatch_status": r.get("dispatch_status"),
+            "line_amount": r.get("line_amount"),
+            "general_remark": r.get("general_remark"),
+            "manager_remark": r.get("manager_remark"),
+            "team_lead_remark": r.get("team_lead_remark"),
+            "original_dummy_poid": None,
+            "modified": r.get("modified"),
+            "is_subcon": 1,
+        })
     return out
 
 
@@ -4049,6 +4217,43 @@ def update_work_done_submission(name, submission_status):
     frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
     frappe.db.commit()
     return {"name": name, "submission_status": status}
+
+
+@frappe.whitelist()
+def update_subcon_submission(po_dispatch, submission_status):
+    """Set submission_status on a sub-contracted PO Dispatch (no Work Done row exists).
+
+    Stored on PO Dispatch.subcon_submission_status so synthetic Work Done rows can
+    surface it in the regular list. Allowed values: '', 'Ready for Confirmation',
+    'Confirmation Done'. Permission: PM, or IM owning the dispatch.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    status = (submission_status or "").strip()
+    if status not in ("Ready for Confirmation", "Confirmation Done", ""):
+        frappe.throw("Invalid submission_status")
+    name = _resolve_dispatch_for_remarks(po_dispatch)
+    pd = frappe.db.get_value(
+        "PO Dispatch", name,
+        ["name", "im", "subcon_status", "poid"],
+        as_dict=True,
+    ) or {}
+    if not pd.get("name"):
+        frappe.throw("PO Dispatch not found")
+    if (pd.get("subcon_status") or "") != "Work Done":
+        frappe.throw("Submission status can only be set on completed sub-contract POIDs.")
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session()
+        if not _can_subcon_dispatch(role, im_identifiers, pd):
+            frappe.throw("Not permitted", frappe.PermissionError)
+    frappe.db.set_value(
+        "PO Dispatch", name,
+        "subcon_submission_status", status,
+        update_modified=True,
+    )
+    frappe.db.commit()
+    return {"po_dispatch": name, "poid": pd.get("poid") or name, "submission_status": status}
 
 
 @frappe.whitelist()
@@ -7099,3 +7304,400 @@ def update_po_remark(po_dispatch, remark_type, value):
     frappe.db.set_value("PO Dispatch", name, field, text, update_modified=True)
     frappe.db.commit()
     return {"po_dispatch": name, "remark_type": rtype, "value": text}
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Sub-Contract flow — IM-driven, lives outside the rollout chain
+# ──────────────────────────────────────────────────────────────────────
+def _can_subcon_dispatch(role, im_identifiers, pd):
+    if role == "pm":
+        return True
+    if role != "im":
+        return False
+    pd_im = (pd.get("im") or "")
+    if pd_im and pd_im not in (im_identifiers or []):
+        return False
+    return True
+
+
+@frappe.whitelist()
+def get_my_subcon_capability(im=None):
+    """Return whether the current session can sub-contract POIDs.
+
+    PM/admin: always True. IM: True only if `IM Master.can_subcon = 1`.
+    Field: never.
+    """
+    role = _user_role_class()
+    if role == "pm":
+        return {"role": role, "can_subcon": True, "im": None}
+    if role != "im":
+        return {"role": role, "can_subcon": False, "im": None}
+    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
+    if not im_identifiers:
+        return {"role": role, "can_subcon": False, "im": None}
+    # `im_resolved` is the IM Master name; `im_identifiers` is an unordered
+    # set-derived list (may contain email / full_name / etc.). Probe both.
+    target = im_resolved if im_resolved and frappe.db.exists("IM Master", im_resolved) else None
+    if not target:
+        for ident in im_identifiers:
+            if frappe.db.exists("IM Master", ident):
+                target = ident
+                break
+    flag = 0
+    if target:
+        flag = cint(frappe.db.get_value("IM Master", target, "can_subcon") or 0)
+    return {"role": role, "can_subcon": bool(flag), "im": target}
+
+
+@frappe.whitelist()
+def list_subcon_teams_for_picker(search=None, limit=200):
+    """Sub-Contract Team picker — only teams with category 'Sub-Contract Team'."""
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    s = (search or "").strip()
+    where = ["IFNULL(team_category,'Field Team') = 'Sub-Contract Team'", "IFNULL(status,'Active') = 'Active'"]
+    params = []
+    if s:
+        where.append("(name LIKE %s OR IFNULL(team_id,'') LIKE %s OR IFNULL(team_name,'') LIKE %s)")
+        like = f"%{s}%"
+        params.extend([like, like, like])
+    sql = f"""
+        SELECT name, team_id, team_name, subcontractor, department
+        FROM `tabINET Team`
+        WHERE {' AND '.join(where)}
+        ORDER BY IFNULL(team_name, team_id) ASC
+        LIMIT {int(limit)}
+    """
+    return frappe.db.sql(sql, tuple(params), as_dict=True)
+
+
+def _assign_subcon_one(role, im_identifiers, name, team, remark):
+    """Stamp subcon fields on a single PO Dispatch. Returns (ok, info_or_error)."""
+    pd = frappe.db.get_value(
+        "PO Dispatch", name,
+        ["name", "im", "dispatch_status", "subcon_status", "subcon_team", "is_dummy_po", "poid"],
+        as_dict=True,
+    ) or {}
+    if not pd.get("name"):
+        return False, {"po_dispatch": name, "error": "PO Dispatch not found"}
+
+    cur_status = (pd.get("dispatch_status") or "")
+    if cur_status == "Planned":
+        return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Already in Rollout Planning — cancel the plan first."}
+    if cur_status == "Completed":
+        return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Already completed."}
+    if cur_status == "Cancelled":
+        return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Cancelled — cannot sub-contract."}
+    if (pd.get("subcon_status") or "") == "Pending":
+        return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Already sub-contracted (pending)."}
+    if (pd.get("is_dummy_po") or 0) and not (pd.get("poid") or "").strip():
+        return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Map the dummy PO to a real PO line before sub-contracting."}
+
+    if role == "im":
+        if not _can_subcon_dispatch(role, im_identifiers, pd):
+            return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Not assigned to you."}
+
+    updates = {
+        "subcon_team": team["name"],
+        "subcon_status": "Pending",
+        "subcon_completed_on": None,
+        "dispatch_status": "Sub-Contracted",
+    }
+    if remark is not None and str(remark or "").strip():
+        updates["subcon_remark"] = str(remark or "")[:8000]
+    frappe.db.set_value("PO Dispatch", name, updates, update_modified=True)
+    return True, {
+        "po_dispatch": name,
+        "poid": pd.get("poid") or name,
+        "subcon_team": team["name"],
+        "subcon_team_name": team.get("team_name") or team.get("team_id"),
+        "subcon_status": "Pending",
+        "dispatch_status": "Sub-Contracted",
+    }
+
+
+@frappe.whitelist()
+def assign_subcon(po_dispatch=None, po_dispatches=None, subcon_team=None, remark=None):
+    """Sub-contract one or many PO Dispatches to a non-field team.
+
+    Accepts either ``po_dispatch`` (single name) or ``po_dispatches`` (list / JSON
+    array). The list form is preferred for bulk actions from the UI.
+
+    Side-effects per dispatch:
+        subcon_team           = <team>
+        subcon_status         = 'Pending'
+        subcon_completed_on   = NULL
+        dispatch_status       = 'Sub-Contracted'
+        subcon_remark         = <remark> (optional)
+
+    NOTE: subcon dispatches are intentionally kept OUT of the rollout chain — no
+    Rollout Plan, Daily Execution or Work Done rows are created. Reporting that
+    needs them must read the PO Dispatch row directly.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if not subcon_team:
+        frappe.throw("subcon_team is required")
+
+    raw = po_dispatches if po_dispatches not in (None, "", []) else po_dispatch
+    if isinstance(raw, str):
+        try:
+            parsed = frappe.parse_json(raw)
+            if isinstance(parsed, (list, tuple)):
+                raw = parsed
+        except Exception:
+            pass
+    if isinstance(raw, (list, tuple)):
+        candidates = [str(x).strip() for x in raw if str(x or "").strip()]
+    elif raw:
+        candidates = [str(raw).strip()]
+    else:
+        candidates = []
+    if not candidates:
+        frappe.throw("po_dispatch is required")
+
+    team = frappe.db.get_value(
+        "INET Team", subcon_team,
+        ["name", "team_id", "team_name", "team_category", "status"],
+        as_dict=True,
+    )
+    if not team:
+        frappe.throw(f"INET Team not found: {subcon_team}")
+    if (team.get("team_category") or "Field Team") != "Sub-Contract Team":
+        frappe.throw("Sub-contracting is only allowed to teams with category 'Sub-Contract Team'.")
+    if (team.get("status") or "Active") != "Active":
+        frappe.throw("Selected team is not Active.")
+
+    im_identifiers = []
+    if role == "im":
+        im_resolved, im_identifiers, _ = resolve_im_for_session()
+        # Gate by IM Master.can_subcon. resolve_im_for_session returns
+        # `im_resolved` = IM Master name; `im_identifiers` is an unordered
+        # set-derived list that can include email / full_name / etc., so
+        # always look up the IM Master row by the resolved name (or by any
+        # identifier that maps to one).
+        my_im = im_resolved if im_resolved and frappe.db.exists("IM Master", im_resolved) else None
+        if not my_im:
+            for ident in im_identifiers or []:
+                if frappe.db.exists("IM Master", ident):
+                    my_im = ident
+                    break
+        if not my_im:
+            frappe.throw("Could not resolve your IM Master record.", frappe.PermissionError)
+        if not cint(frappe.db.get_value("IM Master", my_im, "can_subcon") or 0):
+            frappe.throw("Sub-contracting is not enabled for your IM profile. Ask the admin to enable 'Can Sub-Contract' on your IM Master.", frappe.PermissionError)
+
+    # Resolve POIDs / system_ids to real names
+    resolved = []
+    for token in candidates:
+        try:
+            resolved.append(_resolve_dispatch_for_remarks(token))
+        except Exception:
+            resolved.append(None)
+
+    updated = []
+    errors = []
+    for i, name in enumerate(resolved):
+        if not name:
+            errors.append({"po_dispatch": candidates[i], "error": "PO Dispatch not found"})
+            continue
+        ok, info = _assign_subcon_one(role, im_identifiers, name, team, remark)
+        (updated if ok else errors).append(info)
+
+    frappe.db.commit()
+    return {
+        "updated": updated,
+        "errors": errors,
+        "summary": {
+            "total": len(candidates),
+            "updated_count": len(updated),
+            "error_count": len(errors),
+            "subcon_team": team["name"],
+            "subcon_team_name": team.get("team_name") or team.get("team_id"),
+        },
+    }
+
+
+def _mark_subcon_done_one(role, im_identifiers, name, completed, remark):
+    pd = frappe.db.get_value(
+        "PO Dispatch", name,
+        ["name", "im", "dispatch_status", "subcon_status", "subcon_team", "subcon_remark", "poid"],
+        as_dict=True,
+    ) or {}
+    if not pd.get("name"):
+        return False, {"po_dispatch": name, "error": "PO Dispatch not found"}
+    if (pd.get("subcon_status") or "") != "Pending":
+        return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Not in 'Sub-Contract Pending' state."}
+    if role == "im" and not _can_subcon_dispatch(role, im_identifiers, pd):
+        return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Not assigned to you."}
+
+    updates = {
+        "subcon_status": "Work Done",
+        "subcon_completed_on": completed,
+        # Keep dispatch_status='Sub-Contracted' through the Work Done step. The
+        # subcon flow lives outside the rollout chain — same way regular rows
+        # keep dispatch_status='Planned' even after Daily Execution completes.
+        # Completion is conveyed by subcon_status='Work Done' and the execution
+        # status surfaced in the Work Done feed.
+    }
+    addition = (str(remark or "")).strip() if remark is not None else ""
+    if addition:
+        existing = (pd.get("subcon_remark") or "").strip()
+        if existing:
+            combined = existing + "\n— Work Done note —\n" + addition
+        else:
+            combined = addition
+        updates["subcon_remark"] = combined[:8000]
+    frappe.db.set_value("PO Dispatch", name, updates, update_modified=True)
+    return True, {
+        "po_dispatch": name,
+        "poid": pd.get("poid") or name,
+        "subcon_status": "Work Done",
+        "subcon_completed_on": str(completed),
+        "dispatch_status": "Sub-Contracted",
+    }
+
+
+@frappe.whitelist()
+def mark_subcon_work_done(po_dispatch=None, po_dispatches=None, completed_on=None, remark=None):
+    """Mark one or many sub-contracted POIDs as Work Done.
+
+    Accepts either ``po_dispatch`` (single name) or ``po_dispatches`` (list / JSON).
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    raw = po_dispatches if po_dispatches not in (None, "", []) else po_dispatch
+    if isinstance(raw, str):
+        try:
+            parsed = frappe.parse_json(raw)
+            if isinstance(parsed, (list, tuple)):
+                raw = parsed
+        except Exception:
+            pass
+    if isinstance(raw, (list, tuple)):
+        candidates = [str(x).strip() for x in raw if str(x or "").strip()]
+    elif raw:
+        candidates = [str(raw).strip()]
+    else:
+        candidates = []
+    if not candidates:
+        frappe.throw("po_dispatch is required")
+
+    completed = completed_on or nowdate()
+    try:
+        completed = getdate(completed)
+    except Exception:
+        completed = nowdate()
+
+    im_identifiers = []
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session()
+
+    resolved = []
+    for token in candidates:
+        try:
+            resolved.append(_resolve_dispatch_for_remarks(token))
+        except Exception:
+            resolved.append(None)
+
+    updated = []
+    errors = []
+    for i, name in enumerate(resolved):
+        if not name:
+            errors.append({"po_dispatch": candidates[i], "error": "PO Dispatch not found"})
+            continue
+        ok, info = _mark_subcon_done_one(role, im_identifiers, name, completed, remark)
+        (updated if ok else errors).append(info)
+
+    frappe.db.commit()
+    return {
+        "updated": updated,
+        "errors": errors,
+        "summary": {
+            "total": len(candidates),
+            "updated_count": len(updated),
+            "error_count": len(errors),
+            "completed_on": str(completed),
+        },
+    }
+
+
+@frappe.whitelist()
+def list_subcon_dispatches(
+    im=None, search=None, status="all", limit=300,
+    project_code=None, site_code=None, subcon_team=None,
+):
+    """Sub-Contract list feed.
+
+    status: "all" | "pending" | "done"
+    Visible to PM (all IMs) and IM (own POIDs only).
+    Optional filters ``project_code``, ``site_code`` and ``subcon_team`` accept
+    a single value or a JSON-array / comma-separated list.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    where = ["IFNULL(pd.subcon_status,'') != ''"]
+    params = []
+
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session(im)
+        if not im_identifiers:
+            return []
+        ph = ", ".join(["%s"] * len(im_identifiers))
+        where.append(f"IFNULL(pd.im,'') IN ({ph})")
+        params.extend(list(im_identifiers))
+    elif role == "pm" and im:
+        _, im_identifiers, _ = resolve_im_for_session(im)
+        if im_identifiers:
+            ph = ", ".join(["%s"] * len(im_identifiers))
+            where.append(f"IFNULL(pd.im,'') IN ({ph})")
+            params.extend(list(im_identifiers))
+
+    s = (status or "all").lower()
+    if s == "pending":
+        where.append("pd.subcon_status = 'Pending'")
+    elif s in ("done", "work_done"):
+        where.append("pd.subcon_status = 'Work Done'")
+
+    for col, raw in (("project_code", project_code), ("site_code", site_code), ("subcon_team", subcon_team)):
+        clause, in_params = _sql_in_or_eq(f"pd.{col}", raw)
+        if clause:
+            where.append(clause)
+            params.extend(in_params)
+
+    if search:
+        clause, like_params = _sql_search_clause(
+            "CONCAT_WS(' ', pd.poid, pd.po_no, pd.item_code, pd.item_description, pd.site_name, pd.site_code, pd.project_code, IFNULL(t.team_name,''), IFNULL(t.team_id,''))",
+            search,
+        )
+        if clause:
+            where.append(clause)
+            params.extend(like_params)
+
+    limit_int = int(limit) if limit else 300
+    sql = f"""
+        SELECT pd.name AS po_dispatch,
+               pd.poid AS poid,
+               pd.po_no, pd.po_line_no,
+               pd.item_code, pd.item_description,
+               pd.qty, pd.line_amount,
+               pd.project_code, pd.customer, pd.im,
+               pd.site_code, pd.site_name, pd.center_area, pd.region_type,
+               pd.dispatch_status, pd.target_month,
+               pd.subcon_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark,
+               t.team_id   AS subcon_team_id,
+               t.team_name AS subcon_team_name,
+               pd.modified
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN `tabINET Team` t ON t.name = pd.subcon_team
+        WHERE {' AND '.join(where)}
+        ORDER BY pd.modified DESC
+        LIMIT {limit_int}
+    """
+    return frappe.db.sql(sql, tuple(params), as_dict=True)

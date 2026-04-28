@@ -359,6 +359,7 @@ export const pmApi = {
   getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
   updateWorkDoneSubmission: (name, submission_status) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status }),
+  updateSubconSubmission: (po_dispatch, submission_status) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status }),
   getDistinctFieldValues: (doctype, fields) =>
     callCached(
       "inet_app.api.command_center.get_distinct_field_values",
@@ -380,7 +381,7 @@ export const pmApi = {
     callCached("inet_app.api.command_center.get_doctype_fields", { doctype }, 300_000),
 
   // ── List APIs (Command Center doctypes) ────────────────────
-  listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["name", "team_id", "team_name", "im", "team_type", "status", "daily_cost", "isdp_account", "subcontractor", "field_user", "daily_cost_applies", "note"], limit_page_length: 100 }),
+  listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["name", "team_id", "team_name", "im", "team_type", "team_category", "department", "status", "daily_cost", "isdp_account", "subcontractor", "field_user", "daily_cost_applies", "note"], limit_page_length: 100 }),
   getIMTeamDetail:   (name) => call("inet_app.api.command_center.get_im_team_detail", { name }),
   updateIMTeam:      (name, payload) => call("inet_app.api.command_center.update_im_team", { name, payload: JSON.stringify(payload || {}) }),
   listEmployeesForPicker: (search) => call("inet_app.api.command_center.list_employees_for_picker", { search: search || "", limit: 100 }),
@@ -400,6 +401,28 @@ export const pmApi = {
   // POID-level remarks (general / manager / team_lead) — role-scoped
   getPoRemarks: (po_dispatch) => call("inet_app.api.command_center.get_po_remarks", { po_dispatch }),
   updatePoRemark: (po_dispatch, remark_type, value) => call("inet_app.api.command_center.update_po_remark", { po_dispatch, remark_type, value }),
+
+  // Sub-Contract flow — IM-driven, lives outside the rollout chain
+  getMySubconCapability: (im) => call("inet_app.api.command_center.get_my_subcon_capability", im ? { im } : {}),
+  listSubconTeamsForPicker: (search) => call("inet_app.api.command_center.list_subcon_teams_for_picker", { search: search || "", limit: 200 }),
+  assignSubcon: (po_dispatches, subcon_team, remark) => call("inet_app.api.command_center.assign_subcon", {
+    po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
+    subcon_team,
+    remark: remark || "",
+  }),
+  markSubconWorkDone: (po_dispatches, completed_on, remark) => call("inet_app.api.command_center.mark_subcon_work_done", {
+    po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
+    completed_on: completed_on || "",
+    remark: remark || "",
+  }),
+  listSubconDispatches: (params) => {
+    const args = { ...(params || {}) };
+    ["project_code", "site_code", "subcon_team"].forEach((k) => {
+      if (Array.isArray(args[k])) args[k] = JSON.stringify(args[k]);
+    });
+    return call("inet_app.api.command_center.list_subcon_dispatches", args);
+  },
+
   listPODispatches:  (filters, limitPageLength, portalFilters) => {
     const args = {
       filters: filters || {},

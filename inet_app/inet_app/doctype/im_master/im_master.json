@@ -13,6 +13,7 @@
   "employee",
   "user",
   "status",
+  "can_subcon",
   "section_break_cost",
   "monthly_cost_sar",
   "column_break_pozg",
@@ -69,6 +70,14 @@
    "in_list_view": 1,
    "label": "Status",
    "options": "Active\nInactive"
+  },
+  {
+   "default": "0",
+   "description": "When enabled, this IM can sub-contract POIDs to non-field teams from the PO Control page.",
+   "fieldname": "can_subcon",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Can Sub-Contract"
   },
   {
    "fieldname": "section_break_cost",

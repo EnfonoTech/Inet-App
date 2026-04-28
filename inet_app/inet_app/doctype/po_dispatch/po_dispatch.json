@@ -35,7 +35,14 @@
   "region_type",
   "site_code",
   "column_break_wuyp",
-  "site_name"
+  "site_name",
+  "section_subcon",
+  "subcon_team",
+  "subcon_status",
+  "subcon_submission_status",
+  "column_break_subcon",
+  "subcon_completed_on",
+  "subcon_remark"
  ],
  "fields": [
   {
@@ -139,7 +146,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Pending\nDispatched\nPlanned\nCompleted\nCancelled"
+   "options": "Pending\nDispatched\nPlanned\nSub-Contracted\nCompleted\nCancelled"
   },
   {
    "default": "Manual",
@@ -219,6 +226,46 @@
   },
   {
    "fieldname": "column_break_wuyp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.subcon_team || doc.subcon_status",
+   "fieldname": "section_subcon",
+   "fieldtype": "Section Break",
+   "label": "Sub-Contract"
+  },
+  {
+   "description": "Set when the IM sub-contracts this POID to a non-field team. Subcon dispatches do not flow through Rollout Plan / Daily Execution.",
+   "fieldname": "subcon_team",
+   "fieldtype": "Link",
+   "label": "Sub-Contract Team",
+   "options": "INET Team"
+  },
+  {
+   "fieldname": "subcon_status",
+   "fieldtype": "Select",
+   "label": "Sub-Contract Status",
+   "options": "\nPending\nWork Done"
+  },
+  {
+   "fieldname": "subcon_submission_status",
+   "fieldtype": "Select",
+   "label": "Sub-Contract Submission Status",
+   "options": "\nReady for Confirmation\nConfirmation Done"
+  },
+  {
+   "fieldname": "subcon_completed_on",
+   "fieldtype": "Date",
+   "label": "Sub-Contract Completed On"
+  },
+  {
+   "fieldname": "subcon_remark",
+   "fieldtype": "Small Text",
+   "label": "Sub-Contract Remark"
+  },
+  {
+   "fieldname": "column_break_subcon",
    "fieldtype": "Column Break"
   }
  ],

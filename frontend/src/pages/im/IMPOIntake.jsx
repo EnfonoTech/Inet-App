@@ -52,6 +52,16 @@ export default function IMPOIntake() {
   const [assignError, setAssignError] = useState(null);
   const [toastMsg, setToastMsg] = useState(null);
 
+  // ── Sub-Contract flow ───────────────────────────────────────
+  const [canSubcon, setCanSubcon] = useState(false);
+  const [showSubconModal, setShowSubconModal] = useState(false);
+  const [subconTeams, setSubconTeams] = useState([]);
+  const [subconTeamsLoading, setSubconTeamsLoading] = useState(false);
+  const [subconTeamId, setSubconTeamId] = useState("");
+  const [subconRemark, setSubconRemark] = useState("");
+  const [subconBusy, setSubconBusy] = useState(false);
+  const [subconError, setSubconError] = useState(null);
+
   useResetOnRowLimitChange(() => {
     setRows([]);
     setLoading(true);
@@ -73,7 +83,11 @@ export default function IMPOIntake() {
       if (projectFilter.length) portal.project_code = projectFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
       const res = await pmApi.listPODispatches(filters, rowLimit, portal);
-      setRows(Array.isArray(res) ? res : []);
+      const arr = Array.isArray(res) ? res : [];
+      // Subcon dispatches still have target_month=NULL, so they'd otherwise leak
+      // into this view — filter them out client-side.
+      const visible = arr.filter((r) => (r.dispatch_status || "") !== "Sub-Contracted");
+      setRows(visible);
       setSelected(new Set());
     } catch (err) {
       setError(err.message || "Failed to load PO intake");
@@ -83,6 +97,70 @@ export default function IMPOIntake() {
   }, [imName, rowLimit, searchDebounced, modeFilter, projectFilter, duidFilter]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await pmApi.getMySubconCapability();
+        if (!cancelled) setCanSubcon(!!res?.can_subcon);
+      } catch {
+        if (!cancelled) setCanSubcon(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  async function openSubconModal() {
+    if (selected.size < 1) return;
+    setSubconError(null);
+    setSubconTeamId("");
+    setSubconRemark("");
+    setShowSubconModal(true);
+    setSubconTeamsLoading(true);
+    try {
+      const list = await pmApi.listSubconTeamsForPicker();
+      setSubconTeams(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setSubconError(err.message || "Failed to load sub-contract teams");
+      setSubconTeams([]);
+    } finally {
+      setSubconTeamsLoading(false);
+    }
+  }
+
+  async function submitSubcon() {
+    if (selected.size < 1 || !subconTeamId) return;
+    const ids = Array.from(selected);
+    setSubconBusy(true);
+    setSubconError(null);
+    try {
+      const res = await pmApi.assignSubcon(ids, subconTeamId, subconRemark);
+      const summary = res?.summary || {};
+      const okN = summary.updated_count ?? 0;
+      const errN = summary.error_count ?? 0;
+      const teamLbl = summary.subcon_team_name || subconTeamId;
+      if (errN === 0) {
+        setShowSubconModal(false);
+        setToastMsg(`Sub-contracted ${okN} POID${okN !== 1 ? "s" : ""} to ${teamLbl}.`);
+        setTimeout(() => setToastMsg(null), 4500);
+        setSelected(new Set());
+        await load();
+      } else {
+        const firstErr = (res?.errors || [])[0];
+        const tail = firstErr ? `${firstErr.poid || firstErr.po_dispatch}: ${firstErr.error}` : "see errors";
+        setSubconError(`${okN} sub-contracted, ${errN} failed (${tail})`);
+        if (okN > 0) {
+          await load();
+          // keep modal open so user can see errors
+        }
+      }
+    } catch (err) {
+      setSubconError(err.message || "Failed to sub-contract");
+    } finally {
+      setSubconBusy(false);
+    }
+  }
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
@@ -193,6 +271,18 @@ export default function IMPOIntake() {
           >
             Dispatch ({selected.size})
           </button>
+          {canSubcon && (
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={selected.size < 1}
+              title={selected.size < 1 ? "Select one or more POIDs to sub-contract" : "Sub-contract the selected POIDs to a non-field team"}
+              onClick={openSubconModal}
+              style={{ borderColor: "#a78bfa", color: "#7c3aed" }}
+            >
+              Sub-Contract ({selected.size})
+            </button>
+          )}
         </div>
       </div>
 
@@ -290,6 +380,87 @@ export default function IMPOIntake() {
           filterActive={!!hasFilters}
         />
       </div>
+
+      {showSubconModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={subconBusy ? undefined : () => setShowSubconModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>
+                Sub-Contract <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span>
+              </h3>
+              <button type="button" onClick={() => setShowSubconModal(false)} disabled={subconBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            {selectedRows.length > 0 && (
+              <div style={{
+                fontSize: "0.76rem", color: "#475569",
+                background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8,
+                padding: "8px 10px", marginBottom: 12,
+                maxHeight: 140, overflowY: "auto",
+              }}>
+                {selectedRows.map((r) => (
+                  <div key={r.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#0f172a" }}>{r.poid || r.name}</span>
+                    <span style={{ color: "#64748b" }}>
+                      {r.po_no || "—"} · {r.item_code || "—"} · {r.site_code || "—"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Sub-Contract Team *</label>
+              <select
+                value={subconTeamId}
+                onChange={(e) => setSubconTeamId(e.target.value)}
+                disabled={subconBusy || subconTeamsLoading}
+                required
+              >
+                <option value="">{subconTeamsLoading ? "Loading teams…" : "— Select a sub-contract team —"}</option>
+                {subconTeams.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.team_name || t.team_id}{t.team_id && t.team_name ? ` (${t.team_id})` : ""}
+                  </option>
+                ))}
+              </select>
+              {!subconTeamsLoading && subconTeams.length === 0 && (
+                <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginTop: 4 }}>
+                  No active teams with category "Sub-Contract Team". Add one in the Teams master.
+                </div>
+              )}
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Note (optional)</label>
+              <textarea
+                rows={3}
+                value={subconRemark}
+                onChange={(e) => setSubconRemark(e.target.value)}
+                placeholder="Any reference / scope notes for this sub-contract assignment…"
+                disabled={subconBusy}
+                style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }}
+              />
+            </div>
+            {subconError && (
+              <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}>
+                <span>!</span> {subconError}
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="btn-secondary" onClick={() => setShowSubconModal(false)} disabled={subconBusy}>Cancel</button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={submitSubcon}
+                disabled={subconBusy || !subconTeamId}
+                style={{ background: "#7c3aed", borderColor: "#7c3aed" }}
+              >
+                {subconBusy ? "Sub-contracting…" : `Sub-Contract ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAssignModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
