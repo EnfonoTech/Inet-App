@@ -17,6 +17,10 @@
   "total_rows",
   "lines_imported",
   "lines_skipped",
+  "lines_skipped_terminal",
+  "lines_skipped_closed",
+  "lines_skipped_cancelled",
+  "terminal_dupe_samples",
   "column_break_totals",
   "po_created",
   "po_updated",
@@ -97,6 +101,28 @@
    "fieldname": "lines_skipped",
    "fieldtype": "Int",
    "label": "Lines Skipped"
+  },
+  {
+   "description": "Of the skipped duplicates, how many already exist as Closed or Cancelled (sum).",
+   "fieldname": "lines_skipped_terminal",
+   "fieldtype": "Int",
+   "label": "Closed + Cancelled in system"
+  },
+  {
+   "fieldname": "lines_skipped_closed",
+   "fieldtype": "Int",
+   "label": "Already Closed in system"
+  },
+  {
+   "fieldname": "lines_skipped_cancelled",
+   "fieldtype": "Int",
+   "label": "Already Cancelled in system"
+  },
+  {
+   "description": "Sample POIDs (JSON) that were skipped because the existing record is Closed or Cancelled.",
+   "fieldname": "terminal_dupe_samples",
+   "fieldtype": "Long Text",
+   "label": "Terminal Duplicate Samples"
   },
   {
    "fieldname": "column_break_totals",

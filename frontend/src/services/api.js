@@ -252,7 +252,18 @@ export const pmApi = {
       return await call("inet_app.api.command_center.confirm_po_upload", { rows: JSON.stringify([]) });
     }
     const CHUNK = 500;
-    const totals = { created: 0, lines_imported: 0, lines_skipped_duplicate: 0, auto_dispatched: 0, names: [], po_summary: [] };
+    const totals = {
+      created: 0,
+      lines_imported: 0,
+      lines_skipped_duplicate: 0,
+      lines_skipped_terminal: 0,
+      lines_skipped_closed: 0,
+      lines_skipped_cancelled: 0,
+      terminal_dupe_samples: [],
+      auto_dispatched: 0,
+      names: [],
+      po_summary: [],
+    };
     // Merge per-PO rows across chunks (same po_no may appear in multiple chunks)
     const byPo = new Map();
     for (let i = 0; i < all.length; i += CHUNK) {
@@ -262,6 +273,12 @@ export const pmApi = {
         totals.created += r.created || 0;
         totals.lines_imported += r.lines_imported || 0;
         totals.lines_skipped_duplicate += r.lines_skipped_duplicate || 0;
+        totals.lines_skipped_terminal += r.lines_skipped_terminal || 0;
+        totals.lines_skipped_closed += r.lines_skipped_closed || 0;
+        totals.lines_skipped_cancelled += r.lines_skipped_cancelled || 0;
+        if (Array.isArray(r.terminal_dupe_samples) && totals.terminal_dupe_samples.length < 30) {
+          totals.terminal_dupe_samples.push(...r.terminal_dupe_samples.slice(0, 30 - totals.terminal_dupe_samples.length));
+        }
         totals.auto_dispatched += r.auto_dispatched || 0;
         if (Array.isArray(r.names)) totals.names.push(...r.names);
         if (Array.isArray(r.po_summary)) {

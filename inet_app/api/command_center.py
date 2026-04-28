@@ -1266,6 +1266,10 @@ def confirm_po_upload(rows):
     names = []
     lines_imported = 0
     lines_skipped_duplicate = 0
+    lines_skipped_terminal = 0   # = closed + cancelled (kept for backward-compat)
+    lines_skipped_closed = 0
+    lines_skipped_cancelled = 0
+    terminal_dupe_samples = []  # first ~20 (poid, existing_status) pairs for the FE summary
     item_code_from_desc = 0  # rows where item_code was blank / "NA" — fell back to item_description
     auto_dispatched = 0
     po_summary = []  # per-PO breakdown for audit/UI: [{po_no, intake_name, lines_added, lines_skipped, is_new}]
@@ -1290,15 +1294,19 @@ def confirm_po_upload(rows):
 
         existing_name = frappe.db.get_value("PO Intake", {"po_no": po_no}, "name")
         existing_poids = set()
+        existing_status_by_poid = {}
         if existing_name:
-            # Fetch only the fields needed for POID dedup — avoids loading the full child table
+            # Fetch fields for POID dedup + the existing line's status so we can
+            # tell the user which duplicates are sitting under terminal states.
             existing_rows = frappe.db.sql(
-                "SELECT po_line_no, shipment_number, poid FROM `tabPO Intake Line` WHERE parent=%s",
+                "SELECT po_line_no, shipment_number, poid, po_line_status "
+                "FROM `tabPO Intake Line` WHERE parent=%s",
                 existing_name, as_dict=True,
             )
             for r in existing_rows:
                 pid = (r.poid or "").strip() or _make_poid(po_no, r.po_line_no, r.shipment_number)
                 existing_poids.add(pid)
+                existing_status_by_poid[pid] = (r.po_line_status or "").strip()
             existing_customer = frappe.db.get_value("PO Intake", existing_name, "customer")
             if existing_customer != resolved_cust:
                 frappe.throw(
@@ -1332,6 +1340,19 @@ def confirm_po_upload(rows):
             if poid in existing_poids:
                 lines_skipped_duplicate += 1
                 po_skipped += 1
+                existing_status = existing_status_by_poid.get(poid, "")
+                if existing_status == "Closed":
+                    lines_skipped_terminal += 1
+                    lines_skipped_closed += 1
+                elif existing_status == "Cancelled":
+                    lines_skipped_terminal += 1
+                    lines_skipped_cancelled += 1
+                if existing_status in ("Closed", "Cancelled") and len(terminal_dupe_samples) < 20:
+                    terminal_dupe_samples.append({
+                        "poid": poid,
+                        "existing_status": existing_status,
+                        "po_no": po_no,
+                    })
                 continue
 
             item_code, used_desc = _resolve_item_code_with_fallback(line)
@@ -1499,6 +1520,10 @@ def confirm_po_upload(rows):
         "created": created,
         "lines_imported": lines_imported,
         "lines_skipped_duplicate": lines_skipped_duplicate,
+        "lines_skipped_terminal": lines_skipped_terminal,
+        "lines_skipped_closed": lines_skipped_closed,
+        "lines_skipped_cancelled": lines_skipped_cancelled,
+        "terminal_dupe_samples": terminal_dupe_samples,
         "item_code_from_desc": item_code_from_desc,
         "auto_dispatched": auto_dispatched,
         "names": names,
@@ -1532,6 +1557,15 @@ def record_po_upload_log(payload):
     doc.total_rows = cint(payload.get("total_rows") or 0)
     doc.lines_imported = cint(payload.get("lines_imported") or 0)
     doc.lines_skipped = cint(payload.get("lines_skipped") or 0)
+    doc.lines_skipped_terminal = cint(payload.get("lines_skipped_terminal") or 0)
+    doc.lines_skipped_closed = cint(payload.get("lines_skipped_closed") or 0)
+    doc.lines_skipped_cancelled = cint(payload.get("lines_skipped_cancelled") or 0)
+    samples = payload.get("terminal_dupe_samples")
+    if samples:
+        try:
+            doc.terminal_dupe_samples = frappe.as_json(samples)[:8000]
+        except Exception:
+            doc.terminal_dupe_samples = None
     doc.po_created = cint(payload.get("po_created") or 0)
     doc.po_updated = cint(payload.get("po_updated") or 0)
     doc.auto_dispatched = cint(payload.get("auto_dispatched") or 0)
@@ -1572,7 +1606,8 @@ def list_po_upload_logs(limit=50):
         "PO Upload Log",
         fields=[
             "name", "uploaded_by", "uploaded_at", "customer", "file_name",
-            "total_rows", "lines_imported", "lines_skipped",
+            "total_rows", "lines_imported", "lines_skipped", "lines_skipped_terminal",
+            "lines_skipped_closed", "lines_skipped_cancelled",
             "po_created", "po_updated", "auto_dispatched", "status",
         ],
         order_by="uploaded_at desc",
@@ -1603,6 +1638,14 @@ def get_po_upload_log(name):
     if not frappe.db.exists("PO Upload Log", name):
         frappe.throw(f"PO Upload Log not found: {name}")
     doc = frappe.get_doc("PO Upload Log", name)
+    samples = []
+    if getattr(doc, "terminal_dupe_samples", None):
+        try:
+            parsed = frappe.parse_json(doc.terminal_dupe_samples)
+            if isinstance(parsed, list):
+                samples = parsed
+        except Exception:
+            samples = []
     return {
         "name": doc.name,
         "uploaded_by": doc.uploaded_by,
@@ -1614,6 +1657,10 @@ def get_po_upload_log(name):
         "total_rows": doc.total_rows,
         "lines_imported": doc.lines_imported,
         "lines_skipped": doc.lines_skipped,
+        "lines_skipped_terminal": getattr(doc, "lines_skipped_terminal", 0) or 0,
+        "lines_skipped_closed": getattr(doc, "lines_skipped_closed", 0) or 0,
+        "lines_skipped_cancelled": getattr(doc, "lines_skipped_cancelled", 0) or 0,
+        "terminal_dupe_samples": samples,
         "po_created": doc.po_created,
         "po_updated": doc.po_updated,
         "auto_dispatched": doc.auto_dispatched,

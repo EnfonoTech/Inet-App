@@ -240,6 +240,10 @@ export default function POUpload() {
       setParseResult(null);
       const poDocsCreated = result?.created ?? 0;
       const skipped = result?.lines_skipped_duplicate ?? 0;
+      const skippedTerminal = result?.lines_skipped_terminal ?? 0;
+      const skippedClosed = result?.lines_skipped_closed ?? 0;
+      const skippedCancelled = result?.lines_skipped_cancelled ?? 0;
+      const terminalSamples = Array.isArray(result?.terminal_dupe_samples) ? result.terminal_dupe_samples : [];
       const linesImported =
         typeof result?.lines_imported === "number"
           ? result.lines_imported
@@ -257,6 +261,10 @@ export default function POUpload() {
           total_rows: rowCount,
           lines_imported: linesImported,
           lines_skipped: skipped,
+          lines_skipped_terminal: skippedTerminal,
+          lines_skipped_closed: skippedClosed,
+          lines_skipped_cancelled: skippedCancelled,
+          terminal_dupe_samples: terminalSamples,
           po_created: poDocsCreated,
           po_updated: poUpdated,
           auto_dispatched: result?.auto_dispatched || 0,
@@ -268,7 +276,7 @@ export default function POUpload() {
         console.warn("Could not save PO upload log:", logErr);
       }
       refreshRecentLogs();
-      setSuccessSummary({ linesImported, skipped, poDocsCreated, poSummary, fileName: uploadedFileName });
+      setSuccessSummary({ linesImported, skipped, skippedTerminal, skippedClosed, skippedCancelled, terminalSamples, poDocsCreated, poSummary, fileName: uploadedFileName });
       setStep(2);
     } catch (err) {
       setConfirmError(err.message || "Failed to import rows");
@@ -903,6 +911,97 @@ function StatusPill({ status, lines_added }) {
   return <span style={{ color: "#94a3b8", fontWeight: 600, fontSize: "0.78rem" }}>● Duplicate</span>;
 }
 
+function TerminalDupeCard({ closed = 0, cancelled = 0, samples }) {
+  const [open, setOpen] = useState(false);
+  const list = Array.isArray(samples) ? samples : [];
+  const total = (closed || 0) + (cancelled || 0);
+  return (
+    <div style={{
+      marginBottom: 20,
+      background: "linear-gradient(135deg, rgba(167,139,250,0.06), rgba(99,102,241,0.04))",
+      border: "1px solid #c7d2fe",
+      borderRadius: 12,
+      overflow: "hidden",
+      boxShadow: "0 1px 2px rgba(99,102,241,0.06)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px" }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: 10,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "#ede9fe", color: "#7c3aed",
+          fontSize: "1rem", fontWeight: 700,
+        }}>
+          ⚑
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "0.92rem", fontWeight: 700, color: "#1e1b4b", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span>{total} POID{total !== 1 ? "s" : ""} already in terminal state:</span>
+            {closed > 0 && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 10px", borderRadius: 999, background: "rgba(100,116,139,0.12)", color: "#475569", fontSize: "0.78rem", fontWeight: 700 }}>
+                Closed · {closed}
+              </span>
+            )}
+            {cancelled > 0 && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 10px", borderRadius: 999, background: "rgba(239,68,68,0.10)", color: "#b91c1c", fontSize: "0.78rem", fontWeight: 700 }}>
+                Cancelled · {cancelled}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: "0.78rem", color: "#475569", marginTop: 4 }}>
+            Skipped by POID dedup — the existing terminal status was kept (no overwrite).
+          </div>
+        </div>
+        {list.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            style={{
+              padding: "6px 14px", fontSize: "0.78rem", fontWeight: 600,
+              background: "#fff", border: "1px solid #c7d2fe", borderRadius: 8,
+              color: "#4338ca", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >
+            {open ? "Hide samples" : `View samples (${list.length})`}
+          </button>
+        )}
+      </div>
+      {open && list.length > 0 && (
+        <div style={{ borderTop: "1px solid #c7d2fe", background: "#fff" }}>
+          <div style={{ overflowX: "auto", maxHeight: 280, overflowY: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+              <thead>
+                <tr style={{ background: "#f5f3ff", textAlign: "left" }}>
+                  <th style={{ padding: "8px 14px", fontWeight: 700, color: "#4338ca", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>POID</th>
+                  <th style={{ padding: "8px 14px", fontWeight: 700, color: "#4338ca", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>PO No</th>
+                  <th style={{ padding: "8px 14px", fontWeight: 700, color: "#4338ca", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Existing Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((s, i) => (
+                  <tr key={`${s.poid || i}-${i}`} style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "7px 14px", fontFamily: "ui-monospace, monospace", color: "#0f172a" }}>{s.poid || "—"}</td>
+                    <td style={{ padding: "7px 14px", color: "#475569" }}>{s.po_no || "—"}</td>
+                    <td style={{ padding: "7px 14px" }}>
+                      <span style={{
+                        display: "inline-block", padding: "2px 8px", borderRadius: 999,
+                        fontSize: "0.7rem", fontWeight: 700,
+                        background: s.existing_status === "Cancelled" ? "rgba(239,68,68,0.10)" : "rgba(100,116,139,0.10)",
+                        color: s.existing_status === "Cancelled" ? "#b91c1c" : "#475569",
+                      }}>
+                        {s.existing_status || "—"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SummaryChip({ label, value, color = "#334155", bg = "rgba(100,116,139,0.08)" }) {
   return (
     <div style={{
@@ -969,14 +1068,34 @@ function POUploadSuccessView({ successSummary, summarySearch, setSummarySearch, 
         </div>
       )}
 
-      {/* Summary strip */}
+      {/* Summary strip — Closed / Cancelled split out so each is visible */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
         <SummaryChip label="Lines Imported" value={successSummary.linesImported} color="#059669" bg="rgba(16,185,129,0.08)" />
         <SummaryChip label="Duplicates Skipped" value={successSummary.skipped} color="#b45309" bg="rgba(245,158,11,0.1)" />
+        <SummaryChip
+          label="Already Closed (in system)"
+          value={successSummary.skippedClosed || 0}
+          color="#475569"
+          bg="rgba(100,116,139,0.10)"
+        />
+        <SummaryChip
+          label="Already Cancelled (in system)"
+          value={successSummary.skippedCancelled || 0}
+          color="#b91c1c"
+          bg="rgba(239,68,68,0.08)"
+        />
         <SummaryChip label="New POs" value={byStatusCount.new} color="#059669" bg="rgba(16,185,129,0.05)" />
         <SummaryChip label="Appended POs" value={byStatusCount.appended} color="#2563eb" bg="rgba(37,99,235,0.08)" />
         <SummaryChip label="Total POs Touched" value={rows.length} />
       </div>
+
+      {(successSummary.skippedTerminal || 0) > 0 && (
+        <TerminalDupeCard
+          closed={successSummary.skippedClosed || 0}
+          cancelled={successSummary.skippedCancelled || 0}
+          samples={successSummary.terminalSamples || []}
+        />
+      )}
 
       {/* Per-PO breakdown */}
       {rows.length > 0 && (
@@ -1135,6 +1254,8 @@ function POUploadHistory({ logs, onRefresh, onSelect }) {
               <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>POs</th>
               <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Imported</th>
               <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Skipped</th>
+              <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "#475569" }} title="Of the skipped duplicates, how many already exist as Closed">Closed</th>
+              <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "#b91c1c" }} title="Of the skipped duplicates, how many already exist as Cancelled">Cancelled</th>
               <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Status</th>
               <th style={{ padding: "10px 14px" }}></th>
             </tr>
@@ -1152,6 +1273,8 @@ function POUploadHistory({ logs, onRefresh, onSelect }) {
                 <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums" }}>{log.po_count || 0}</td>
                 <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: "#059669", fontWeight: 600 }}>{fmt.format(log.lines_imported || 0)}</td>
                 <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: (log.lines_skipped || 0) > 0 ? "#b45309" : "var(--text-muted, #94a3b8)" }}>{fmt.format(log.lines_skipped || 0)}</td>
+                <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: (log.lines_skipped_closed || 0) > 0 ? "#475569" : "var(--text-muted, #94a3b8)", fontWeight: (log.lines_skipped_closed || 0) > 0 ? 600 : 400 }}>{fmt.format(log.lines_skipped_closed || 0)}</td>
+                <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: (log.lines_skipped_cancelled || 0) > 0 ? "#b91c1c" : "var(--text-muted, #94a3b8)", fontWeight: (log.lines_skipped_cancelled || 0) > 0 ? 600 : 400 }}>{fmt.format(log.lines_skipped_cancelled || 0)}</td>
                 <td style={{ padding: "10px 14px" }}>
                   <span style={{
                     fontSize: "0.72rem",
@@ -1204,10 +1327,25 @@ function POUploadDetailModal({ log, onClose }) {
         <div style={{ padding: "14px 22px", display: "flex", gap: 10, flexWrap: "wrap", borderBottom: "1px solid var(--border, #e2e8f0)" }}>
           <SummaryChip label="Imported" value={log.lines_imported} color="#059669" bg="rgba(16,185,129,0.08)" />
           <SummaryChip label="Skipped" value={log.lines_skipped} color="#b45309" bg="rgba(245,158,11,0.1)" />
+          {(log.lines_skipped_closed || 0) > 0 && (
+            <SummaryChip label="Already Closed" value={log.lines_skipped_closed} color="#475569" bg="rgba(100,116,139,0.10)" />
+          )}
+          {(log.lines_skipped_cancelled || 0) > 0 && (
+            <SummaryChip label="Already Cancelled" value={log.lines_skipped_cancelled} color="#b91c1c" bg="rgba(239,68,68,0.08)" />
+          )}
           <SummaryChip label="New POs" value={log.po_created} color="#059669" bg="rgba(16,185,129,0.05)" />
           <SummaryChip label="Appended" value={log.po_updated} color="#2563eb" bg="rgba(37,99,235,0.08)" />
           <SummaryChip label="Auto Dispatched" value={log.auto_dispatched} />
         </div>
+        {(log.lines_skipped_terminal || 0) > 0 && (
+          <div style={{ padding: "12px 22px 0" }}>
+            <TerminalDupeCard
+              closed={log.lines_skipped_closed || 0}
+              cancelled={log.lines_skipped_cancelled || 0}
+              samples={Array.isArray(log.terminal_dupe_samples) ? log.terminal_dupe_samples : []}
+            />
+          </div>
+        )}
         <div style={{ overflowY: "auto", padding: "0 4px" }}>
           <table style={{ width: "100%", fontSize: "0.86rem", borderCollapse: "collapse" }}>
             <thead style={{ position: "sticky", top: 0, background: "var(--bg, #f6f8fb)" }}>
