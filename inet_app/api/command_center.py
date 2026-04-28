@@ -1118,6 +1118,13 @@ def upload_po_file(file_url, customer=None):
 
         # ---- Validation ------------------------------------------------
         errors = []
+        # Standard upload is for active workflow lines only. Closed / Cancelled
+        # lines must be backfilled through the Archive tab so they don't
+        # auto-dispatch into the IM queue.
+        if row_dict["po_status"] in ("CLOSED", "CANCELLED"):
+            errors.append(
+                f"PO Status is {row_dict['po_status']} — use the Archive tab to import closed / cancelled lines"
+            )
         if not row_dict.get("po_no"):
             errors.append("po_no is required")
         # Accept rows where item_code is blank / "NA" if we can fall back to
