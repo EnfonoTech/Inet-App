@@ -8,6 +8,7 @@
   "uploaded_by",
   "uploaded_at",
   "customer",
+  "upload_mode",
   "column_break_hdr",
   "file_name",
   "file_url",
@@ -68,7 +69,14 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Completed\nPartial\nFailed"
+   "options": "Queued\nRunning\nCompleted\nPartial\nFailed"
+  },
+  {
+   "fieldname": "upload_mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Mode",
+   "options": "Standard\nArchive"
   },
   {
    "fieldname": "section_totals",

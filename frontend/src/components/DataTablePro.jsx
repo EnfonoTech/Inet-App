@@ -75,6 +75,8 @@ function detectTableDoctype(pathname, tIdx) {
     "/im-timesheets:1": "Execution Time Log",
     "/field-history:1": "Daily Execution",
     "/field-timesheet:1": "Execution Time Log",
+    "/po-dump:1": "PO Intake Line",
+    "/im-subcon:1": "PO Dispatch",
   };
   return map[key] || null;
 }

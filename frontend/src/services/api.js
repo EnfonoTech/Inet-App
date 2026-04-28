@@ -240,6 +240,9 @@ export const pmApi = {
     }),
   getFieldTeamDashboard:(team_id)   => call("inet_app.api.command_center.get_field_team_dashboard", { team_id }),
   uploadPOFile:         (file_url, customer)  => call("inet_app.api.command_center.upload_po_file", { file_url, customer: customer || "" }),
+  previewPOArchiveFile: (file_url) => call("inet_app.api.command_center.preview_po_archive_file", { file_url }),
+  startPOArchiveImport: (file_url, customer) => call("inet_app.api.command_center.start_po_archive_import", { file_url, customer }),
+  getPOArchiveImportStatus: (log_name) => call("inet_app.api.command_center.get_po_archive_import_status", { log_name }),
   confirmPOUpload:      async (rows, onProgress) => {
     // Chunk upload to stay under Werkzeug max_form_memory_size (500 KB default)
     // and nginx client_max_body_size (1 MB default). 500 rows ≈ 200 KB JSON.
@@ -299,11 +302,15 @@ export const pmApi = {
   generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),
   getFieldExecutionForRollout: (rollout_plan) =>
     call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),
-  exportPODump: (from_date, to_date) =>
-    call("inet_app.api.command_center.export_po_dump", {
+  exportPODump: (from_date, to_date, statuses, limit) => {
+    const args = {
       from_date: from_date || "",
       to_date: to_date || "",
-    }),
+      statuses: JSON.stringify(Array.isArray(statuses) ? statuses : (statuses ? [statuses] : ["OPEN"])),
+    };
+    if (Number(limit) > 0) args.limit = Number(limit);
+    return call("inet_app.api.command_center.export_po_dump", args);
+  },
 
   // ── Activity Cost Master ───────────────────────────────────
   listActivityCosts:    ()              => call("inet_app.api.command_center.list_activity_costs"),

@@ -162,11 +162,33 @@ def _sql_search_clause(concat_expr, term):
     return f"({ors})", patterns
 
 
+def _normalize_int_token(value):
+    """Render a numeric value as a clean integer string when it has no fractional part.
+
+    Excel binary parsers hand back ``1.0`` for what should be an integer; if we
+    drop that into a POID we end up with ugly suffixes like ``-1-1.0``.
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else str(value)
+    s = str(value).strip()
+    # Strip a trailing ".0" left over from float-to-string conversions upstream.
+    if s.endswith(".0") and s[:-2].lstrip("-").isdigit():
+        return s[:-2]
+    return s
+
+
 def _make_poid(po_no, po_line_no, shipment_number):
     """Build POID: PO No - PO Line No - Shipment No."""
     parts = [str(po_no or "").strip(), str(cint(po_line_no) if po_line_no else 0)]
-    if shipment_number:
-        parts.append(str(shipment_number).strip())
+    ship = _normalize_int_token(shipment_number)
+    if ship and ship != "0":
+        parts.append(ship)
     return "-".join(parts)
 
 
@@ -821,15 +843,37 @@ def backfill_po_dispatch_id_to_poid(limit=500):
 
 
 @frappe.whitelist()
-def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1):
+def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000):
     """
     Export PO Intake lines whose parent PO was created in the date range (upload date).
     Returns uploaded PO lines in source column order for audit/export.
+
+    ``statuses`` is a JSON list / comma string of buckets to include — any of
+    ``OPEN`` (New / Dispatched / Completed), ``CLOSED``, ``CANCELLED``. Defaults
+    to OPEN only so dumps stay small after archive imports.
     """
     fd = getdate(from_date) if from_date else add_days(getdate(), -30)
     td = getdate(to_date) if to_date else getdate()
     if td < fd:
         frappe.throw("to_date must be on or after from_date")
+
+    if isinstance(statuses, str):
+        try:
+            parsed = frappe.parse_json(statuses)
+            if isinstance(parsed, (list, tuple)):
+                statuses = parsed
+        except Exception:
+            statuses = [s.strip() for s in statuses.split(",") if s.strip()]
+    if not statuses:
+        statuses = ["OPEN"]
+    bucket_set = {str(s).strip().upper() for s in statuses}
+    line_status_filter = []
+    if "OPEN" in bucket_set:
+        line_status_filter += ["New", "Dispatched", "Completed", ""]
+    if "CLOSED" in bucket_set:
+        line_status_filter.append("Closed")
+    if "CANCELLED" in bucket_set or "CANCELED" in bucket_set:
+        line_status_filter.append("Cancelled")
 
     parents = frappe.db.sql(
         """
@@ -844,11 +888,35 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1):
     parent_map = {p.name: p for p in parents}
     parent_names = list(parent_map.keys())
     rows_out = []
+
+    # Total counts per bucket for the active date range — independent of which
+    # buckets the caller is fetching, so the FE can always show full counts.
+    bucket_totals = {"open": 0, "closed": 0, "cancelled": 0}
+    if parent_names:
+        ph_p = ", ".join(["%s"] * len(parent_names))
+        agg = frappe.db.sql(
+            f"""
+            SELECT
+              SUM(CASE WHEN IFNULL(po_line_status, 'New') IN ('New','Dispatched','Completed','') THEN 1 ELSE 0 END) AS open_cnt,
+              SUM(CASE WHEN po_line_status = 'Closed' THEN 1 ELSE 0 END) AS closed_cnt,
+              SUM(CASE WHEN po_line_status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelled_cnt
+            FROM `tabPO Intake Line`
+            WHERE parent IN ({ph_p})
+            """,
+            tuple(parent_names),
+            as_dict=True,
+        )
+        if agg:
+            bucket_totals["open"] = cint(agg[0].open_cnt or 0)
+            bucket_totals["closed"] = cint(agg[0].closed_cnt or 0)
+            bucket_totals["cancelled"] = cint(agg[0].cancelled_cnt or 0)
+
     if not parent_names:
         return {
             "from_date": str(fd),
             "to_date": str(td),
             "rows": rows_out,
+            "totals": bucket_totals,
         }
 
     fields = [
@@ -879,21 +947,45 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1):
         "payment_terms",
         "center_area",
         "publish_date",
+        "po_line_status",
     ]
 
+    # Allow up to 100k rows for archive dumps. Honor any positive limit (down
+    # to 1) from the FE row-limit selector — previously we floored at 100,
+    # which made "20" and "100" return the same result.
+    lim = min(max(int(limit or 100000), 1), 100000)
+    line_filters = {"parent": ["in", parent_names]}
+    if line_status_filter:
+        line_filters["po_line_status"] = ["in", list({s for s in line_status_filter})]
     lines = frappe.get_all(
         "PO Intake Line",
-        filters={"parent": ["in", parent_names]},
+        filters=line_filters,
         fields=fields,
         order_by="parent desc, idx asc",
-        limit_page_length=10000,
+        limit_page_length=lim,
     )
     for ln in lines:
         par = parent_map.get(ln.parent) or {}
+        # The PO Dump column reads from the per-line status (po_line_status)
+        # so each POID shows its own state. Treat New / Dispatched / Completed
+        # as Open for filter / display roll-ups.
+        line_status = (ln.get("po_line_status") or "").strip()
+        if not line_status:
+            line_status = (par.get("status") or "OPEN").strip()
+        upper = line_status.upper()
+        if upper in ("NEW", "DISPATCHED", "COMPLETED", "OPEN"):
+            display_status = "OPEN"
+        elif upper in ("CLOSED",):
+            display_status = "CLOSED"
+        elif upper in ("CANCELLED", "CANCELED"):
+            display_status = "CANCELLED"
+        else:
+            display_status = upper or "OPEN"
         rows_out.append(
             {
                 "id": ln.get("source_id") or "",
-                "po_status": (par.get("status") or "OPEN"),
+                "po_status": display_status,
+                "po_line_status": line_status,
                 "po_no": par.get("po_no") or "",
                 "po_line_no": ln.get("po_line_no"),
                 "shipment_no": ln.get("shipment_number") or "",
@@ -927,6 +1019,7 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1):
         "from_date": str(fd),
         "to_date": str(td),
         "rows": rows_out,
+        "totals": bucket_totals,
     }
 
 
@@ -1027,8 +1120,15 @@ def upload_po_file(file_url, customer=None):
         errors = []
         if not row_dict.get("po_no"):
             errors.append("po_no is required")
-        if not row_dict.get("item_code"):
-            errors.append("item_code is required")
+        # Accept rows where item_code is blank / "NA" if we can fall back to
+        # the description (helper rewrites the code at confirm time).
+        resolved_code, used_desc = _resolve_item_code_with_fallback(row_dict)
+        if not resolved_code:
+            errors.append("item_code is required (or provide an item_description fallback)")
+        elif used_desc:
+            row_dict["item_code"] = resolved_code
+            if not str(row_dict.get("item_description") or "").strip():
+                row_dict["item_description"] = resolved_code
         if not row_dict.get("project_code"):
             errors.append("project_code is required")
         qty = flt(row_dict.get("qty", 0))
@@ -1095,6 +1195,30 @@ def upload_po_file(file_url, customer=None):
     }
 
 
+_ITEM_CODE_PLACEHOLDERS = {"", "NA", "N/A", "-", "N.A.", "NULL", "NONE"}
+
+
+def _resolve_item_code_with_fallback(line):
+    """Return (item_code, used_description_flag).
+
+    Some Master Tracker rows leave Item Code blank or filled in with ``NA``.
+    Standard PO uploads can't insert a PO Intake Line with a blank Item Code
+    (it's a mandatory link to ``Item``), so when the value is missing or a
+    placeholder, fall back to using the Item Description as the code (truncated
+    to fit Frappe's Data length limit). The matching ``Item`` will be created
+    by ``ensure_item_master`` further down the line.
+    """
+    raw = (line.get("item_code") or "")
+    code = str(raw).strip()
+    if code.upper() in _ITEM_CODE_PLACEHOLDERS:
+        desc = str(line.get("item_description") or "").strip()
+        if desc:
+            return desc[:140].strip(), True
+        # No description either — caller will need to skip this row.
+        return "", True
+    return code, False
+
+
 def _poid_for_upload_line(po_no, line):
     """Stable POID for de-duplication (matches PO Intake Line / dispatch conventions)."""
     return _make_poid(po_no, line.get("po_line_no"), line.get("shipment_no"))
@@ -1142,6 +1266,7 @@ def confirm_po_upload(rows):
     names = []
     lines_imported = 0
     lines_skipped_duplicate = 0
+    item_code_from_desc = 0  # rows where item_code was blank / "NA" — fell back to item_description
     auto_dispatched = 0
     po_summary = []  # per-PO breakdown for audit/UI: [{po_no, intake_name, lines_added, lines_skipped, is_new}]
 
@@ -1209,7 +1334,19 @@ def confirm_po_upload(rows):
                 po_skipped += 1
                 continue
 
-            item_code = str(line.get("item_code") or "").strip()
+            item_code, used_desc = _resolve_item_code_with_fallback(line)
+            if used_desc and item_code:
+                # Stamp the resolved code back on the source line so subsequent
+                # lookups (CIM, dispatch upsert) all see the same value.
+                line["item_code"] = item_code
+                if not str(line.get("item_description") or "").strip():
+                    line["item_description"] = item_code
+                item_code_from_desc += 1
+            if not item_code:
+                # Truly empty (no description either) — skip rather than fail.
+                lines_skipped_duplicate += 1
+                po_skipped += 1
+                continue
             qty = flt(line.get("qty", 0))
             rate = flt(line.get("rate", 0))
             if qty <= 0 or rate <= 0:
@@ -1299,6 +1436,11 @@ def confirm_po_upload(rows):
             doc.status = _normalize_po_intake_status(hdr_status)
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
+            # Defence in depth: a few legacy rows leak into valid_rows with a
+            # blank item_code (e.g. when the source cell is whitespace). Don't
+            # blow up the whole upload — the helper above already filled in a
+            # description-derived code where possible.
+            doc.flags.ignore_mandatory = True
             doc.save(ignore_permissions=True)
             is_new_po = False
         else:
@@ -1310,6 +1452,7 @@ def confirm_po_upload(rows):
             doc.center_area = first.get("center_area")
             for _src, append_row in new_entries:
                 doc.append("po_lines", append_row)
+            doc.flags.ignore_mandatory = True
             doc.insert(ignore_permissions=True)
             created += 1
             names.append(doc.name)
@@ -1356,6 +1499,7 @@ def confirm_po_upload(rows):
         "created": created,
         "lines_imported": lines_imported,
         "lines_skipped_duplicate": lines_skipped_duplicate,
+        "item_code_from_desc": item_code_from_desc,
         "auto_dispatched": auto_dispatched,
         "names": names,
         "po_summary": po_summary,
@@ -4533,11 +4677,14 @@ def get_command_dashboard(from_date=None, to_date=None):
     day_of_month = today.day
 
     # ---- Operational KPIs --------------------------------------------------
+    # Open lines = PO Intake Lines whose per-line status is NOT terminal.
+    # The line-wise status is the source of truth — the parent PO Intake's
+    # status field is just a roll-up and isn't authoritative for KPIs.
     open_po_result = frappe.db.sql(
         """
         SELECT COALESCE(SUM(line_amount), 0) AS total_value, COUNT(*) AS line_count
-        FROM `tabPO Dispatch`
-        WHERE dispatch_status NOT IN ('Completed', 'Cancelled')
+        FROM `tabPO Intake Line`
+        WHERE IFNULL(po_line_status, 'New') NOT IN ('Closed', 'Cancelled')
         """,
         as_dict=True,
     )
@@ -7701,3 +7848,769 @@ def list_subcon_dispatches(
         LIMIT {limit_int}
     """
     return frappe.db.sql(sql, tuple(params), as_dict=True)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# PO Archive Import — closed/cancelled lines are imported with terminal
+# status and stay out of the active workflow. Used to backfill historical
+# POs from spreadsheets so the PM can dump them later.
+# ──────────────────────────────────────────────────────────────────────
+_PO_ARCHIVE_ALIAS = {
+    "ID": "source_id",
+    "Contract": "contract",
+    "Project Domain": "project_domain",
+    "POID": "poid",
+    "PO Status": "po_status",
+    "PO STATUS": "po_status",
+    "Status": "po_status",
+    "PO status": "po_status",
+    "PO NO.": "po_no",
+    "PO No.": "po_no",
+    "PO No": "po_no",
+    "PO Line NO.": "po_line_no",
+    "PO Line No.": "po_line_no",
+    "PO Line No": "po_line_no",
+    "Shipment NO.": "shipment_no",
+    "Shipment No.": "shipment_no",
+    "Site Name": "site_name",
+    "Site Code": "site_code",
+    "Item Code": "item_code",
+    "Item Description": "item_description",
+    "Unit": "unit",
+    "Requested Qty": "qty",
+    "Due Qty": "due_qty",
+    "Billed Quantity": "billed_quantity",
+    "Quantity Cancel": "quantity_cancel",
+    "Start Date": "start_date",
+    "End Date": "end_date",
+    "Sub Contract NO.": "sub_contract_no",
+    "Currency": "currency",
+    "Unit Price": "rate",
+    "Line Amount": "line_amount",
+    "Tax Rate": "tax_rate",
+    "Payment Terms": "payment_terms",
+    "Project Code": "project_code",
+    "Project Name": "project_name",
+    "Center Area": "center_area",
+    "Publish Date": "publish_date",
+    "Huawei Owner": "huawei_owner",
+    "Inet Owner": "inet_owner",
+    "Inet IM Remarks": "im_remark",
+}
+
+
+def _excel_serial_to_date_str(value):
+    """Excel stores dates as serials; pyxlsb returns the float. Pass-through strings."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            base = _dt(1899, 12, 30)
+            return (base + _td(days=float(value))).strftime("%Y-%m-%d")
+        except Exception:
+            return None
+    return str(value)
+
+
+def _po_archive_resolve_local_path(file_url):
+    if file_url and file_url.startswith("/private/files/"):
+        return frappe.get_site_path("private", "files", file_url[len("/private/files/"):])
+    if file_url and file_url.startswith("/files/"):
+        return frappe.get_site_path("public", "files", file_url[len("/files/"):])
+    try:
+        file_doc = frappe.get_doc("File", {"file_url": file_url})
+        return file_doc.get_full_path()
+    except Exception:
+        frappe.throw(f"Cannot resolve file path for: {file_url}")
+
+
+def _detect_archive_header_row(rows_iter):
+    """Find the header row (the first row containing 'PO NO.' or 'PO Status').
+
+    Master Tracker exports often prepend a totals row before the real headers.
+    """
+    headers = None
+    skipped = 0
+    while True:
+        try:
+            row = next(rows_iter)
+        except StopIteration:
+            break
+        vals = [(str(v).strip() if v is not None else "") for v in row]
+        if any(h in ("PO NO.", "PO No.", "PO No", "PO Status", "POID") for h in vals):
+            headers = vals
+            break
+        skipped += 1
+        if skipped > 8:
+            break
+    return headers, rows_iter
+
+
+def _yield_po_archive_rows(file_path, sheet_hint="PO Tracker"):
+    """Yield raw row dicts (aliased keys) from xlsb / xlsx / xlsm / csv."""
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext == ".xlsb":
+        try:
+            from pyxlsb import open_workbook
+        except ImportError:
+            frappe.throw("pyxlsb is not installed. Run `bench pip install pyxlsb`.")
+        with open_workbook(file_path) as wb:
+            target = sheet_hint if sheet_hint in wb.sheets else wb.sheets[0]
+            with wb.get_sheet(target) as sheet:
+                py_iter = ([c.v for c in r] for r in sheet.rows())
+                headers, py_iter = _detect_archive_header_row(py_iter)
+                if not headers:
+                    return
+                for vals in py_iter:
+                    if not any(v not in (None, "") for v in vals):
+                        continue
+                    row_dict = {}
+                    for col_idx, cell_val in enumerate(vals):
+                        h = headers[col_idx] if col_idx < len(headers) else ""
+                        std_key = _PO_ARCHIVE_ALIAS.get(h)
+                        if std_key:
+                            row_dict[std_key] = cell_val
+                    if row_dict:
+                        for k in ("start_date", "end_date", "publish_date"):
+                            if k in row_dict:
+                                row_dict[k] = _excel_serial_to_date_str(row_dict[k])
+                        # Whole-number ints come back as floats from xlsb; clean
+                        # them so POIDs don't end up with `-1-1.0`.
+                        for k in ("po_line_no", "shipment_no"):
+                            if k in row_dict:
+                                row_dict[k] = _normalize_int_token(row_dict[k])
+                        yield row_dict
+        return
+
+    if ext in (".xlsx", ".xlsm"):
+        try:
+            import openpyxl
+        except ImportError:
+            frappe.throw("openpyxl is not installed. Run `bench pip install openpyxl`.")
+        wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+        ws = wb[sheet_hint] if sheet_hint in wb.sheetnames else wb.active
+        py_iter = (list(r) for r in ws.iter_rows(values_only=True))
+        headers, py_iter = _detect_archive_header_row(py_iter)
+        if not headers:
+            return
+        for vals in py_iter:
+            if not any(v not in (None, "") for v in vals):
+                continue
+            row_dict = {}
+            for col_idx, cell_val in enumerate(vals):
+                h = headers[col_idx] if col_idx < len(headers) else ""
+                std_key = _PO_ARCHIVE_ALIAS.get(h)
+                if std_key:
+                    row_dict[std_key] = cell_val
+            if row_dict:
+                yield row_dict
+        return
+
+    if ext == ".csv":
+        with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+        py_iter = iter(rows)
+        headers, py_iter = _detect_archive_header_row(py_iter)
+        if not headers:
+            return
+        for vals in py_iter:
+            if not any(v not in (None, "") for v in vals):
+                continue
+            row_dict = {}
+            for col_idx, cell_val in enumerate(vals):
+                h = headers[col_idx] if col_idx < len(headers) else ""
+                std_key = _PO_ARCHIVE_ALIAS.get(h)
+                if std_key:
+                    row_dict[std_key] = cell_val
+            if row_dict:
+                yield row_dict
+        return
+
+    frappe.throw(f"Unsupported file type: {ext}")
+
+
+def _archive_status_for(po_status):
+    """Map normalized po_status → PO Dispatch dispatch_status; None for non-archive rows."""
+    s = str(po_status or "").strip().upper()
+    if s in ("CLOSED", "CLOSE", "COMPLETED", "DONE"):
+        return "Closed"
+    if s in ("CANCELLED", "CANCELED", "CANCEL"):
+        return "Cancelled"
+    return None
+
+
+@frappe.whitelist()
+def preview_po_archive_file(file_url):
+    """Pre-flight scan: counts, missing UOMs / Items / Projects, and a small sample.
+
+    The customer is *not* required at this stage — it's resolved per-line from
+    the row's ``project_code`` (Project Control Center.customer) at import time.
+    """
+    file_path = _po_archive_resolve_local_path(file_url)
+    counts = {"CLOSED": 0, "CANCELLED": 0, "OPEN": 0, "OTHER": 0}
+    sample = []
+    total = 0
+    uoms = set()
+    items = set()
+    projects = set()
+    projects_no_customer = set()
+    rows_missing_project = 0
+    for row_dict in _yield_po_archive_rows(file_path):
+        total += 1
+        target = _archive_status_for(row_dict.get("po_status"))
+        if target == "Closed":
+            counts["CLOSED"] += 1
+        elif target == "Cancelled":
+            counts["CANCELLED"] += 1
+        else:
+            ps = str(row_dict.get("po_status") or "").strip().upper()
+            counts["OPEN" if ps == "OPEN" else "OTHER"] += 1
+        if not target:
+            continue
+        if (row_dict.get("unit") or "").strip():
+            uoms.add(str(row_dict["unit"]).strip())
+        if (row_dict.get("item_code") or "").strip():
+            items.add(str(row_dict["item_code"]).strip())
+        if (row_dict.get("project_code") or "").strip():
+            projects.add(str(row_dict["project_code"]).strip())
+        else:
+            rows_missing_project += 1
+        if len(sample) < 10:
+            sample.append({
+                "poid": row_dict.get("poid"),
+                "po_status": row_dict.get("po_status"),
+                "po_no": row_dict.get("po_no"),
+                "po_line_no": row_dict.get("po_line_no"),
+                "item_code": row_dict.get("item_code"),
+                "site_code": row_dict.get("site_code"),
+                "site_name": row_dict.get("site_name"),
+                "project_code": row_dict.get("project_code"),
+                "project_name": row_dict.get("project_name"),
+                "qty": row_dict.get("qty"),
+                "rate": row_dict.get("rate"),
+                "line_amount": row_dict.get("line_amount"),
+                "unit": row_dict.get("unit"),
+            })
+
+    # UOM check: anything not present in `tabUOM` is missing. Compare
+    # case-insensitively because the DB collation accepts `Set`/`SET` as the
+    # same row, but `_bulk_existing_set` returns the canonical casing.
+    missing_uoms = []
+    if uoms:
+        existing_uom = _bulk_existing_set("UOM", list(uoms))
+        existing_uom_ci = {str(x).strip().lower() for x in existing_uom}
+        missing_uoms = sorted([u for u in uoms if u.strip().lower() not in existing_uom_ci])
+    # Item check (case-insensitive: same reason).
+    missing_items = []
+    if items:
+        existing_items = _bulk_existing_set("Item", list(items))
+        existing_items_ci = {str(x).strip().lower() for x in existing_items}
+        missing_items = sorted([i for i in items if i.strip().lower() not in existing_items_ci])
+    # Project check: which projects are missing & which exist but have no customer.
+    missing_projects = []
+    if projects:
+        existing_projects = _bulk_existing_set("Project Control Center", list(projects))
+        missing_projects = sorted([p for p in projects if p not in existing_projects])
+        if existing_projects:
+            ph = ", ".join(["%s"] * len(existing_projects))
+            no_cust_rows = frappe.db.sql(
+                f"SELECT name FROM `tabProject Control Center` "
+                f"WHERE name IN ({ph}) AND IFNULL(customer,'') = ''",
+                tuple(existing_projects),
+            )
+            projects_no_customer = sorted([r[0] for r in no_cust_rows])
+
+    return {
+        "total_rows": total,
+        "counts": counts,
+        "to_import": counts["CLOSED"] + counts["CANCELLED"],
+        "sample": sample,
+        "missing_uoms": missing_uoms,
+        "missing_items": missing_items,
+        "missing_projects": missing_projects,
+        "projects_without_customer": list(projects_no_customer),
+        "rows_missing_project_code": rows_missing_project,
+        "unique_projects": len(projects),
+        "unique_uoms": len(uoms),
+        "unique_items": len(items),
+    }
+
+
+def _archive_log_update(log_name, **fields):
+    if not log_name or not frappe.db.exists("PO Upload Log", log_name):
+        return
+    fields = {k: v for k, v in fields.items() if v is not None}
+    if not fields:
+        return
+    frappe.db.set_value("PO Upload Log", log_name, fields, update_modified=True)
+    frappe.db.commit()
+
+
+def _bulk_existing_set(doctype, names):
+    if not names:
+        return set()
+    names = list({str(n).strip() for n in names if str(n or "").strip()})
+    if not names:
+        return set()
+    ph = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"SELECT name FROM `tab{doctype}` WHERE name IN ({ph})",
+        tuple(names),
+    )
+    return {r[0] for r in rows}
+
+
+def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
+    """Background worker: import CLOSED/CANCELLED rows from an archive file.
+    Updates the PO Upload Log row with progress; final status Completed/Partial/Failed.
+    No auto-dispatch — these rows stay out of the workflow.
+
+    ``customer`` is optional. When empty, each row's customer is resolved from
+    its ``project_code`` → ``Project Control Center.customer``. Rows whose
+    project has no customer are recorded as failed in the per-PO breakdown.
+    """
+    try:
+        _archive_log_update(log_name, status="Running")
+        # Customer is now optional at the upload level — resolved per project.
+        fallback_cust = _resolve_customer_link_name(customer) if customer else None
+
+        file_path = _po_archive_resolve_local_path(file_url)
+        groups = {}  # keyed by (po_no, customer)
+        total_seen = 0
+        total_archive = 0
+        rows_missing_customer = 0
+        unresolved_projects = set()
+
+        # Build a project → customer map up-front
+        first_pass_projects = set()
+        all_rows = []
+        for row in _yield_po_archive_rows(file_path):
+            total_seen += 1
+            target = _archive_status_for(row.get("po_status"))
+            if not target:
+                continue
+            row["_target_status"] = target
+            all_rows.append(row)
+            if (row.get("project_code") or "").strip():
+                first_pass_projects.add(str(row["project_code"]).strip())
+        proj_cust_map = {}
+        if first_pass_projects:
+            ph = ", ".join(["%s"] * len(first_pass_projects))
+            for r in frappe.db.sql(
+                f"SELECT name, customer FROM `tabProject Control Center` WHERE name IN ({ph})",
+                tuple(first_pass_projects), as_dict=True,
+            ) or []:
+                if r.customer:
+                    proj_cust_map[r.name] = r.customer
+
+        for row in all_rows:
+            po_no = str(row.get("po_no") or "").strip()
+            if not po_no:
+                continue
+            proj = (row.get("project_code") or "").strip()
+            cust = proj_cust_map.get(proj) or fallback_cust
+            if not cust:
+                rows_missing_customer += 1
+                if proj:
+                    unresolved_projects.add(proj)
+                # Skip — will surface in summary
+                continue
+            groups.setdefault((po_no, cust), []).append(row)
+            total_archive += 1
+
+        if total_archive == 0 and rows_missing_customer == 0:
+            _archive_log_update(
+                log_name, status="Completed",
+                total_rows=total_seen, lines_imported=0, lines_skipped=0,
+                po_created=0, po_updated=0,
+                notes="No CLOSED or CANCELLED rows found in file.",
+            )
+            return
+        if total_archive == 0 and rows_missing_customer > 0:
+            _archive_log_update(
+                log_name, status="Failed",
+                total_rows=total_seen, lines_imported=0,
+                lines_skipped=rows_missing_customer,
+                po_created=0, po_updated=0,
+                notes=(
+                    f"All {rows_missing_customer} archive rows lack a resolvable customer "
+                    f"(missing on Project Control Center). Set customer on these projects first: "
+                    f"{', '.join(sorted(unresolved_projects)[:30])}"
+                ),
+            )
+            return
+
+        # Pre-resolve master existence so we don't run per-row checks.
+        all_projects = {str(l.get("project_code") or "").strip() for ls in groups.values() for l in ls if l.get("project_code")}
+        all_items = {str(l.get("item_code") or "").strip() for ls in groups.values() for l in ls if l.get("item_code")}
+        all_duids = {str(l.get("site_code") or "").strip() for ls in groups.values() for l in ls if l.get("site_code")}
+        all_uoms = {str(l.get("unit") or "").strip() for ls in groups.values() for l in ls if l.get("unit")}
+        existing_projects = _bulk_existing_set("Project Control Center", list(all_projects))
+        existing_items = _bulk_existing_set("Item", list(all_items))
+        existing_duids = _bulk_existing_set("DUID Master", list(all_duids))
+        existing_uoms = _bulk_existing_set("UOM", list(all_uoms))
+        # Case-insensitive lookup: file may say `Set`, DB says `SET`.
+        existing_uoms_ci = {str(x).strip().lower(): str(x) for x in existing_uoms}
+        cim_done = set()
+
+        def _ensure_project(line, resolved_cust):
+            code = str(line.get("project_code") or "").strip()
+            if not code:
+                return None
+            if code in existing_projects:
+                return code
+            try:
+                ok, _ = ensure_project_control_center(
+                    code, resolved_cust, line.get("project_name"), line.get("center_area"),
+                )
+                if ok:
+                    existing_projects.add(code)
+                    return code
+            except Exception:
+                pass
+            return None
+
+        def _ensure_item(line):
+            code = str(line.get("item_code") or "").strip()
+            if not code or code in existing_items:
+                return
+            try:
+                ok, _ = ensure_item_master(code, line.get("item_description"))
+                if ok:
+                    existing_items.add(code)
+            except Exception:
+                pass
+
+        def _ensure_duid(line):
+            code = str(line.get("site_code") or "").strip()
+            if not code or code in existing_duids:
+                return
+            try:
+                ok, _ = ensure_duid_master(code, line.get("site_name"), line.get("center_area"))
+                if ok:
+                    existing_duids.add(code)
+            except Exception:
+                pass
+
+        po_created = 0
+        po_updated = 0
+        lines_imported = 0
+        lines_skipped = 0
+        lines_failed = 0
+        per_po = []
+
+        group_keys = list(groups.keys())
+        for chunk_idx in range(0, len(group_keys), chunk_size):
+            chunk = group_keys[chunk_idx: chunk_idx + chunk_size]
+            for key in chunk:
+                po_no, group_customer = key
+                lines = groups[key]
+                statuses = {l.get("_target_status") for l in lines}
+                hdr_status = "CANCELLED" if statuses == {"Cancelled"} else "CLOSED"
+
+                existing_name = frappe.db.get_value("PO Intake", {"po_no": po_no}, "name")
+                existing_poids = set()
+                if existing_name:
+                    rows_existing = frappe.db.sql(
+                        "SELECT po_line_no, shipment_number, poid FROM `tabPO Intake Line` WHERE parent=%s",
+                        existing_name, as_dict=True,
+                    ) or []
+                    for r in rows_existing:
+                        pid = (r.poid or "").strip() or _make_poid(po_no, r.po_line_no, r.shipment_number)
+                        existing_poids.add(pid)
+
+                new_entries = []
+                po_skipped = 0
+                for line in lines:
+                    poid = _poid_for_upload_line(po_no, line)
+                    if poid in existing_poids:
+                        po_skipped += 1
+                        continue
+
+                    # Item code is mandatory on PO Intake Line for the standard
+                    # workflow, but archive imports may include legacy rows where
+                    # it's blank or set to "NA". Fall back to the description so
+                    # ``ensure_item_master`` can create something usable; if even
+                    # the description is empty we rely on ``flags.ignore_mandatory``
+                    # below to let the row through.
+                    item_code, used_desc = _resolve_item_code_with_fallback(line)
+                    if used_desc and item_code:
+                        line["item_code"] = item_code
+                        if not str(line.get("item_description") or "").strip():
+                            line["item_description"] = item_code
+
+                    proj = _ensure_project(line, group_customer)
+                    _ensure_item(line)
+                    _ensure_duid(line)
+
+                    if item_code:
+                        ck = (group_customer, item_code)
+                        if ck not in cim_done:
+                            try:
+                                ensure_customer_item_master(group_customer, item_code)
+                            except Exception:
+                                pass
+                            cim_done.add(ck)
+
+                    # UOM may not exist; setting an unknown link will fail
+                    # validation. Probe case-insensitively and use the canonical
+                    # DB name when found.
+                    raw_uom = (str(line.get("unit") or "").strip() or None)
+                    uom_value = existing_uoms_ci.get(raw_uom.lower()) if raw_uom else None
+
+                    line_center_area = line.get("center_area")
+                    line_region = region_type_from_center_area(line_center_area)
+                    desc = line.get("item_description")
+                    if isinstance(desc, str):
+                        desc = desc[:8000]  # Small Text upper bound, generous
+
+                    append_row = {
+                        "source_id": line.get("source_id"),
+                        "po_line_no": cint(line.get("po_line_no") or 0),
+                        "shipment_number": _normalize_int_token(line.get("shipment_no")) or None,
+                        "poid": poid,
+                        "site_code": str(line.get("site_code") or "").strip() or None,
+                        "site_name": line.get("site_name"),
+                        "item_code": item_code,
+                        "item_description": desc,
+                        "uom": uom_value,
+                        "qty": flt(line.get("qty", 0)),
+                        "due_qty": flt(line.get("due_qty", 0)),
+                        "billed_quantity": flt(line.get("billed_quantity", 0)),
+                        "quantity_cancel": flt(line.get("quantity_cancel", 0)),
+                        "start_date": line.get("start_date") or None,
+                        "end_date": line.get("end_date") or None,
+                        "sub_contract_no": line.get("sub_contract_no"),
+                        "currency": line.get("currency"),
+                        "rate": flt(line.get("rate", 0)),
+                        "line_amount": flt(line.get("line_amount", 0)),
+                        "tax_rate": line.get("tax_rate"),
+                        "payment_terms": line.get("payment_terms"),
+                        "project_code": proj,
+                        "project_name": line.get("project_name"),
+                        "center_area": line_center_area,
+                        "region_type": line_region,
+                        "publish_date": line.get("publish_date") or None,
+                        "po_line_status": line.get("_target_status"),
+                        "dispatch_mode": "Manual",
+                    }
+                    new_entries.append((line, append_row))
+                    existing_poids.add(poid)
+
+                if not new_entries:
+                    lines_skipped += po_skipped
+                    if po_skipped > 0:
+                        per_po.append({
+                            "po_no": po_no, "intake_name": existing_name,
+                            "lines_added": 0, "lines_skipped": po_skipped, "is_new": False,
+                        })
+                    continue
+
+                try:
+                    if existing_name:
+                        doc = frappe.get_doc("PO Intake", existing_name)
+                        doc.status = _normalize_po_intake_status(hdr_status)
+                        for _src, append_row in new_entries:
+                            doc.append("po_lines", append_row)
+                        # Archive: legacy lines may have blank item_code / qty.
+                        doc.flags.ignore_mandatory = True
+                        doc.save(ignore_permissions=True)
+                        is_new_po = False
+                        po_updated += 1
+                    else:
+                        doc = frappe.new_doc("PO Intake")
+                        doc.po_no = po_no
+                        doc.customer = group_customer
+                        doc.status = _normalize_po_intake_status(hdr_status)
+                        doc.publish_date = lines[0].get("publish_date") or None
+                        doc.center_area = lines[0].get("center_area")
+                        for _src, append_row in new_entries:
+                            doc.append("po_lines", append_row)
+                        doc.flags.ignore_mandatory = True
+                        doc.insert(ignore_permissions=True)
+                        is_new_po = True
+                        po_created += 1
+                except Exception as e:
+                    frappe.db.rollback()
+                    # Capture the FULL error text so the user can read it from the log,
+                    # along with which row triggered it where determinable.
+                    err_msg = frappe.utils.cstr(e)[:1000]
+                    lines_failed += len(new_entries)
+                    per_po.append({
+                        "po_no": po_no, "intake_name": existing_name,
+                        "lines_added": 0, "lines_skipped": len(new_entries),
+                        "is_new": not bool(existing_name), "error": err_msg,
+                    })
+                    continue
+
+                child_sql_rows = frappe.db.sql(
+                    "SELECT name, po_line_no, shipment_number, poid FROM `tabPO Intake Line` WHERE parent=%s",
+                    doc.name, as_dict=True,
+                ) or []
+                new_poid_map = {ar["poid"]: ar for _src, ar in new_entries}
+                for r in child_sql_rows:
+                    got_poid = (r.poid or "").strip() or _make_poid(po_no, r.po_line_no, r.shipment_number)
+                    if got_poid not in new_poid_map:
+                        continue
+                    line_dict = dict(new_poid_map[got_poid])
+                    line_dict["name"] = r.name
+                    line_dict["parent"] = doc.name
+                    target_status = next(
+                        (l["_target_status"] for l in lines if _poid_for_upload_line(po_no, l) == got_poid),
+                        "Closed",
+                    )
+                    try:
+                        _upsert_po_dispatch_for_line(
+                            doc.name, po_no, line_dict,
+                            customer=group_customer,
+                            dispatch_status=target_status,
+                            dispatch_mode="Manual",
+                        )
+                    except Exception as e:
+                        per_po.append({
+                            "po_no": po_no, "intake_name": doc.name,
+                            "lines_added": 0, "lines_skipped": 1,
+                            "is_new": False, "error": f"dispatch error: {frappe.utils.cstr(e)[:800]}",
+                        })
+
+                lines_imported += len(new_entries)
+                lines_skipped += po_skipped
+                per_po.append({
+                    "po_no": po_no, "intake_name": doc.name,
+                    "lines_added": len(new_entries),
+                    "lines_skipped": po_skipped,
+                    "is_new": is_new_po,
+                })
+                frappe.db.commit()
+
+            _archive_log_update(
+                log_name,
+                total_rows=total_archive,
+                lines_imported=lines_imported,
+                lines_skipped=lines_skipped,
+                po_created=po_created,
+                po_updated=po_updated,
+                notes=f"Processed {min(chunk_idx + chunk_size, len(group_keys))}/{len(group_keys)} POs",
+            )
+
+        try:
+            log_doc = frappe.get_doc("PO Upload Log", log_name)
+            log_doc.set("po_details", [])
+            for d in per_po[:5000]:
+                if d.get("error"):
+                    detail_status = "Failed"
+                elif d.get("lines_added"):
+                    detail_status = "New" if d.get("is_new") else "Appended"
+                else:
+                    detail_status = "Duplicate"
+                log_doc.append("po_details", {
+                    "po_no": d.get("po_no"),
+                    "intake_name": d.get("intake_name"),
+                    "status": detail_status,
+                    "lines_added": d.get("lines_added") or 0,
+                    "lines_skipped": d.get("lines_skipped") or 0,
+                    "error": d.get("error") or "",
+                })
+            log_doc.status = "Completed" if lines_failed == 0 else "Partial"
+            log_doc.total_rows = total_archive
+            log_doc.lines_imported = lines_imported
+            log_doc.lines_skipped = lines_skipped + lines_failed
+            log_doc.po_created = po_created
+            log_doc.po_updated = po_updated
+            log_doc.auto_dispatched = 0
+            log_doc.notes = (
+                f"Archive import: {total_archive} archive rows; "
+                f"{lines_imported} imported, {lines_skipped} skipped (duplicate), "
+                f"{lines_failed} failed."
+            )
+            log_doc.save(ignore_permissions=True)
+            frappe.db.commit()
+        except Exception:
+            _archive_log_update(
+                log_name, status="Partial",
+                total_rows=total_archive,
+                lines_imported=lines_imported,
+                lines_skipped=lines_skipped + lines_failed,
+                po_created=po_created, po_updated=po_updated,
+                notes="Imported but failed to write per-PO breakdown.",
+            )
+    except Exception as e:
+        frappe.log_error(title="PO archive import failed", message=frappe.get_traceback())
+        _archive_log_update(log_name, status="Failed", notes=f"Error: {str(e)[:240]}")
+
+
+@frappe.whitelist()
+def start_po_archive_import(file_url, customer=None):
+    """Kick off an archive import in the background. Returns a log_name to poll.
+
+    ``customer`` is optional — if not given, each row's customer is resolved
+    from its ``project_code``. The file is attached to the PO Upload Log doc
+    so admins can re-download what was imported.
+    """
+    if not file_url:
+        frappe.throw("file_url is required")
+    file_path = _po_archive_resolve_local_path(file_url)
+    if not os.path.exists(file_path):
+        frappe.throw(f"File not found on server: {file_url}")
+    resolved_cust = None
+    if customer:
+        resolved_cust = _resolve_customer_link_name(customer)
+        if not resolved_cust:
+            frappe.throw(f"Customer not found: {customer}")
+
+    log = frappe.new_doc("PO Upload Log")
+    log.uploaded_by = frappe.session.user
+    log.uploaded_at = frappe.utils.now_datetime()
+    log.customer = resolved_cust
+    log.file_name = os.path.basename(file_path)
+    log.file_url = file_url
+    log.upload_mode = "Archive"
+    log.status = "Queued"
+    log.total_rows = 0
+    log.lines_imported = 0
+    log.lines_skipped = 0
+    log.po_created = 0
+    log.po_updated = 0
+    log.auto_dispatched = 0
+    log.insert(ignore_permissions=True)
+
+    # Attach the source file to the log so it stays linked.
+    try:
+        attach = frappe.get_doc({
+            "doctype": "File",
+            "file_url": file_url,
+            "file_name": os.path.basename(file_path),
+            "attached_to_doctype": "PO Upload Log",
+            "attached_to_name": log.name,
+            "is_private": 1 if "/private/" in (file_url or "") else 0,
+        })
+        attach.insert(ignore_permissions=True, ignore_links=True)
+    except Exception:
+        # Non-fatal: the import still runs; the file_url is on the log doc.
+        pass
+
+    frappe.db.commit()
+
+    frappe.enqueue(
+        "inet_app.api.command_center._run_po_archive_import",
+        queue="long", timeout=3600,
+        file_url=file_url, customer=resolved_cust, log_name=log.name,
+    )
+    return {"log_name": log.name, "status": log.status}
+
+
+@frappe.whitelist()
+def get_po_archive_import_status(log_name):
+    """Lightweight status snapshot for the FE poller."""
+    if not frappe.db.exists("PO Upload Log", log_name):
+        frappe.throw(f"PO Upload Log not found: {log_name}")
+    row = frappe.db.get_value(
+        "PO Upload Log", log_name,
+        ["status", "total_rows", "lines_imported", "lines_skipped",
+         "po_created", "po_updated", "notes", "uploaded_at", "file_name"],
+        as_dict=True,
+    ) or {}
+    row["log_name"] = log_name
+    return row

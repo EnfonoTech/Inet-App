@@ -49,9 +49,10 @@
   },
   {
    "default": "OPEN",
+   "description": "Hidden — status / workflow are tracked per line on PO Intake Line.",
    "fieldname": "status",
    "fieldtype": "Select",
-   "in_list_view": 1,
+   "hidden": 1,
    "label": "PO Status",
    "options": "OPEN\nCLOSED\nCANCELLED"
   },

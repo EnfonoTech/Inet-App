@@ -84,9 +84,10 @@ export default function IMPOIntake() {
       if (duidFilter.length) portal.site_code = duidFilter;
       const res = await pmApi.listPODispatches(filters, rowLimit, portal);
       const arr = Array.isArray(res) ? res : [];
-      // Subcon dispatches still have target_month=NULL, so they'd otherwise leak
-      // into this view — filter them out client-side.
-      const visible = arr.filter((r) => (r.dispatch_status || "") !== "Sub-Contracted");
+      // Subcon / Closed / Cancelled dispatches still have target_month=NULL,
+      // so they'd otherwise leak into this view — filter them out client-side.
+      const TERMINAL = new Set(["Sub-Contracted", "Closed", "Cancelled", "Completed"]);
+      const visible = arr.filter((r) => !TERMINAL.has(r.dispatch_status || ""));
       setRows(visible);
       setSelected(new Set());
     } catch (err) {

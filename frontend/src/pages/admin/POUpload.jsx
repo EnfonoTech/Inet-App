@@ -123,6 +123,16 @@ export default function POUpload() {
   const [step, setStep] = useState(0);
   const [customer, setCustomer] = useState("");
   const [customers, setCustomers] = useState([]);
+
+  // ── Archive Import (closed/cancelled lines, no workflow) ───────
+  const [archivePreview, setArchivePreview] = useState(null);
+  const [archivePreviewing, setArchivePreviewing] = useState(false);
+  const [archiveFileUrl, setArchiveFileUrl] = useState("");
+  const [archiveFileName, setArchiveFileName] = useState("");
+  const [archiveError, setArchiveError] = useState(null);
+  const [archiveJob, setArchiveJob] = useState(null); // { log_name, status, ... }
+  const [archiveStarting, setArchiveStarting] = useState(false);
+  const [uploadTab, setUploadTab] = useState("standard"); // "standard" | "archive"
   const [parseResult, setParseResult] = useState(null); // { valid_rows, error_rows }
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState(null);
@@ -277,6 +287,75 @@ export default function POUpload() {
     setConfirmError(null);
   }
 
+  // ── Archive Import handlers ─────────────────────────────────
+  async function handleArchiveFileUploaded(file_url, file_name) {
+    setArchiveFileUrl(file_url || "");
+    setArchiveFileName(file_name || "");
+    setArchiveError(null);
+    setArchivePreview(null);
+    setArchivePreviewing(true);
+    try {
+      const res = await pmApi.previewPOArchiveFile(file_url);
+      setArchivePreview(res || null);
+    } catch (err) {
+      setArchiveError(err.message || "Failed to preview file");
+    } finally {
+      setArchivePreviewing(false);
+    }
+  }
+
+  async function handleStartArchiveImport() {
+    if (!archiveFileUrl) {
+      setArchiveError("Upload a file first");
+      return;
+    }
+    setArchiveError(null);
+    setArchiveStarting(true);
+    try {
+      // Customer is optional — backend resolves per-line from project_code.
+      const res = await pmApi.startPOArchiveImport(archiveFileUrl, customer || "");
+      setArchiveJob(res || null);
+    } catch (err) {
+      setArchiveError(err.message || "Failed to start import");
+    } finally {
+      setArchiveStarting(false);
+    }
+  }
+
+  // Poll for status while a job is queued/running
+  useEffect(() => {
+    if (!archiveJob?.log_name) return;
+    if (!["Queued", "Running"].includes(archiveJob.status || "")) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const next = await pmApi.getPOArchiveImportStatus(archiveJob.log_name);
+        if (cancelled) return;
+        setArchiveJob({ log_name: archiveJob.log_name, ...next });
+        if (["Queued", "Running"].includes(next?.status || "")) {
+          setTimeout(tick, 3000);
+        } else {
+          // Final status — refresh recent logs
+          refreshRecentLogs?.();
+        }
+      } catch {
+        // keep polling on transient errors
+        if (!cancelled) setTimeout(tick, 5000);
+      }
+    };
+    const t = setTimeout(tick, 2000);
+    return () => { cancelled = true; clearTimeout(t); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [archiveJob?.log_name, archiveJob?.status]);
+
+  function handleResetArchive() {
+    setArchivePreview(null);
+    setArchiveFileUrl("");
+    setArchiveFileName("");
+    setArchiveError(null);
+    setArchiveJob(null);
+  }
+
   const validRows = parseResult?.valid_rows || [];
   const errorRows = parseResult?.error_rows || [];
   const newItems = [...new Set(errorRows.filter(r => (r._errors || []).some(e => String(e).includes("Customer Item Master"))).map(r => r.item_code).filter(Boolean))];
@@ -288,8 +367,7 @@ export default function POUpload() {
         <div>
           <h1 className="page-title">PO Upload</h1>
           <div className="page-subtitle">
-            Upload Purchase Order data from Excel or CSV. Missing projects and items are created automatically when a
-            customer is selected (minimal defaults).
+            Upload PO data from Excel or CSV.
           </div>
         </div>
       </div>
@@ -300,62 +378,243 @@ export default function POUpload() {
         {/* ── Step 0: Upload ─────────────────────────────────── */}
         {step === 0 && (
           <div style={{ maxWidth: 600 }}>
-            {/* Customer selector */}
-            <div style={{
-              background: "var(--bg-white, #fff)",
-              border: "1px solid var(--border, #e2e8f0)",
-              borderRadius: "var(--radius, 10px)",
-              padding: "20px 24px",
-              marginBottom: 20,
-              boxShadow: "var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06))",
-            }}>
-              <label style={{
-                display: "block",
-                fontSize: "0.8rem",
-                fontWeight: 700,
-                color: "var(--text-secondary, #64748b)",
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
-                marginBottom: 8,
-              }}>
-                Select Customer
-              </label>
-              <select
-                value={customer}
-                onChange={e => setCustomer(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "10px 14px",
-                  fontSize: "0.9rem",
-                  fontWeight: 600,
-                  border: "1px solid var(--border, #e2e8f0)",
-                  borderRadius: "var(--radius-sm, 6px)",
-                  background: "var(--bg, #f6f8fb)",
-                  color: "var(--text, #1e293b)",
-                  cursor: "pointer",
-                }}
-              >
-                <option value="">-- Choose Customer --</option>
-                {customers.map(c => (
-                  <option key={c.name} value={c.customer_name || c.name}>{c.customer_name || c.name}</option>
-                ))}
-              </select>
-              <p style={{ fontSize: "0.78rem", color: "var(--text-muted, #94a3b8)", marginTop: 6, marginBottom: 0 }}>
-                All PO lines in this file will be assigned to this customer.
-              </p>
+            {/* Upload mode tabs */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 20, borderBottom: "1px solid #e2e8f0" }}>
+              {[
+                { id: "standard", label: "Standard upload" },
+                { id: "archive",  label: "Archive (closed / cancelled)" },
+              ].map((t) => {
+                const active = uploadTab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setUploadTab(t.id)}
+                    style={{
+                      padding: "10px 16px", fontSize: "0.85rem", fontWeight: 600,
+                      border: "none", background: "none", cursor: "pointer",
+                      color: active ? "#1e293b" : "#64748b",
+                      borderBottom: active ? "2px solid #2563eb" : "2px solid transparent",
+                      marginBottom: -1,
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
 
-            {parsing ? (
-              <div className="notice info">
-                <span>⏳</span> Parsing file, please wait…
-              </div>
-            ) : (
-              <FileUpload onFileUploaded={handleFileUploaded} accept=".xlsx,.csv" />
+            {uploadTab === "standard" && (
+              <>
+                {/* Customer selector */}
+                <div style={{
+                  background: "var(--bg-white, #fff)",
+                  border: "1px solid var(--border, #e2e8f0)",
+                  borderRadius: "var(--radius, 10px)",
+                  padding: "20px 24px",
+                  marginBottom: 20,
+                  boxShadow: "var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06))",
+                }}>
+                  <label style={{
+                    display: "block",
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    color: "var(--text-secondary, #64748b)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                    marginBottom: 8,
+                  }}>
+                    Select Customer
+                  </label>
+                  <select
+                    value={customer}
+                    onChange={e => setCustomer(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 14px",
+                      fontSize: "0.9rem",
+                      fontWeight: 600,
+                      border: "1px solid var(--border, #e2e8f0)",
+                      borderRadius: "var(--radius-sm, 6px)",
+                      background: "var(--bg, #f6f8fb)",
+                      color: "var(--text, #1e293b)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <option value="">-- Choose Customer --</option>
+                    {customers.map(c => (
+                      <option key={c.name} value={c.customer_name || c.name}>{c.customer_name || c.name}</option>
+                    ))}
+                  </select>
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted, #94a3b8)", marginTop: 6, marginBottom: 0 }}>
+                    All PO lines in this file will be assigned to this customer.
+                  </p>
+                </div>
+
+                {parsing ? (
+                  <div className="notice info">
+                    <span>⏳</span> Parsing file, please wait…
+                  </div>
+                ) : (
+                  <FileUpload onFileUploaded={handleFileUploaded} accept=".xlsx,.csv" />
+                )}
+                {parseError && (
+                  <div className="notice error" style={{ marginTop: 12 }}>
+                    <span>⚠</span> {parseError}
+                  </div>
+                )}
+              </>
             )}
-            {parseError && (
-              <div className="notice error" style={{ marginTop: 12 }}>
-                <span>⚠</span> {parseError}
+
+            {uploadTab === "archive" && (
+            <div style={{
+              background: "#fff",
+              border: "1px solid #e2e8f0",
+              borderRadius: 10,
+              padding: "20px 24px",
+              boxShadow: "var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06))",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <h3 style={{ margin: 0, fontSize: "0.95rem", color: "#0f172a" }}>
+                  Import Closed / Cancelled lines
+                </h3>
+                {archiveJob && (
+                  <button type="button" className="btn-secondary" onClick={handleResetArchive} style={{ padding: "4px 10px", fontSize: "0.78rem" }}>
+                    Reset
+                  </button>
+                )}
               </div>
+              <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: 12 }}>
+                Backfill closed / cancelled PO lines. No workflow runs.
+              </div>
+
+              {!archiveJob && (
+                <>
+                  {archivePreviewing ? (
+                    <div className="notice info"><span>⏳</span> Scanning file…</div>
+                  ) : !archivePreview ? (
+                    <FileUpload onFileUploaded={handleArchiveFileUploaded} accept=".xlsb,.xlsx,.csv" />
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: "0.78rem", color: "#475569", marginBottom: 8 }}>
+                        <strong>{archiveFileName}</strong> · {archivePreview.total_rows} total rows
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                        <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(16,185,129,0.12)", color: "#047857", fontSize: "0.74rem", fontWeight: 700 }}>
+                          {archivePreview.counts?.CLOSED || 0} CLOSED
+                        </span>
+                        <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(239,68,68,0.10)", color: "#b91c1c", fontSize: "0.74rem", fontWeight: 700 }}>
+                          {archivePreview.counts?.CANCELLED || 0} CANCELLED
+                        </span>
+                        <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(100,116,139,0.10)", color: "#64748b", fontSize: "0.74rem" }}>
+                          {archivePreview.counts?.OPEN || 0} OPEN (skipped)
+                        </span>
+                        {(archivePreview.counts?.OTHER || 0) > 0 && (
+                          <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(245,158,11,0.10)", color: "#b45309", fontSize: "0.74rem" }}>
+                            {archivePreview.counts.OTHER} other (skipped)
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: "0.78rem", color: "#475569", marginBottom: 10 }}>
+                        Will import <strong>{archivePreview.to_import || 0}</strong> closed / cancelled rows.
+                        Customer per row resolved from{" "}
+                        <strong>{archivePreview.unique_projects || 0}</strong>{" "}
+                        unique project{(archivePreview.unique_projects || 0) !== 1 ? "s" : ""}.
+                      </div>
+
+                      {(archivePreview.missing_uoms?.length || 0) > 0 && (
+                        <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(245,158,11,0.08)", border: "1px solid #fde68a", borderRadius: 6, fontSize: "0.78rem" }}>
+                          <strong style={{ color: "#b45309" }}>⚠ {archivePreview.missing_uoms.length} UOM{archivePreview.missing_uoms.length !== 1 ? "s" : ""} not in master:</strong>{" "}
+                          <span style={{ color: "#475569" }}>{archivePreview.missing_uoms.slice(0, 20).join(", ")}{archivePreview.missing_uoms.length > 20 ? `, +${archivePreview.missing_uoms.length - 20} more` : ""}</span>
+                          <div style={{ marginTop: 4, color: "#78350f" }}>
+                            These rows will still import but the UOM will be left blank. Add them under <strong>UOM</strong> master if you want them populated.
+                          </div>
+                        </div>
+                      )}
+
+                      {(archivePreview.missing_items?.length || 0) > 0 && (
+                        <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(99,102,241,0.06)", border: "1px solid #c7d2fe", borderRadius: 6, fontSize: "0.78rem" }}>
+                          <strong style={{ color: "#4338ca" }}>ℹ {archivePreview.missing_items.length} new Item{archivePreview.missing_items.length !== 1 ? "s" : ""}</strong>
+                          <span style={{ color: "#475569" }}> — auto-created during import.</span>
+                        </div>
+                      )}
+
+                      {(archivePreview.missing_projects?.length || 0) > 0 && (
+                        <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(99,102,241,0.06)", border: "1px solid #c7d2fe", borderRadius: 6, fontSize: "0.78rem" }}>
+                          <strong style={{ color: "#4338ca" }}>ℹ {archivePreview.missing_projects.length} new Project{archivePreview.missing_projects.length !== 1 ? "s" : ""}</strong>
+                          <span style={{ color: "#475569" }}>{customer ? " — auto-created with the chosen customer." : " — auto-created (a customer fallback above is required for these)."}</span>
+                        </div>
+                      )}
+
+                      {(archivePreview.projects_without_customer?.length || 0) > 0 && (
+                        <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(239,68,68,0.06)", border: "1px solid #fecaca", borderRadius: 6, fontSize: "0.78rem" }}>
+                          <strong style={{ color: "#b91c1c" }}>✕ {archivePreview.projects_without_customer.length} project{archivePreview.projects_without_customer.length !== 1 ? "s" : ""} have no customer set</strong>{" "}
+                          <span style={{ color: "#475569" }}>— rows under these projects will fail unless you {customer ? "remove the customer fallback above OR " : ""}set a customer on each project first.</span>
+                          <div style={{ marginTop: 4, fontFamily: "monospace", fontSize: "0.74rem", color: "#7f1d1d" }}>
+                            {archivePreview.projects_without_customer.slice(0, 20).join(", ")}{archivePreview.projects_without_customer.length > 20 ? `, +${archivePreview.projects_without_customer.length - 20} more` : ""}
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={handleStartArchiveImport}
+                          disabled={archiveStarting || !archivePreview.to_import}
+                        >
+                          {archiveStarting ? "Starting…" : `Start archive import (${archivePreview.to_import || 0})`}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={handleResetArchive}
+                          disabled={archiveStarting}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {archiveJob && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ fontSize: "0.82rem", marginBottom: 8 }}>
+                    Status:{" "}
+                    <strong style={{
+                      color: archiveJob.status === "Completed" ? "#047857"
+                            : archiveJob.status === "Failed" ? "#b91c1c"
+                            : archiveJob.status === "Partial" ? "#b45309"
+                            : "#2563eb",
+                    }}>
+                      {archiveJob.status}
+                    </strong>
+                    {" — "}
+                    {archiveJob.lines_imported || 0} imported · {archiveJob.lines_skipped || 0} skipped ·
+                    {" "}{archiveJob.po_created || 0} new POs · {archiveJob.po_updated || 0} updated POs
+                  </div>
+                  {archiveJob.notes && (
+                    <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: 8 }}>{archiveJob.notes}</div>
+                  )}
+                  {["Queued", "Running"].includes(archiveJob.status) && (
+                    <div style={{ height: 4, background: "rgba(99,102,241,0.15)", borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
+                      <div style={{ height: "100%", width: "40%", background: "#6366f1", animation: "po-archive-bar 1.2s linear infinite" }} />
+                    </div>
+                  )}
+                  <div style={{ fontSize: "0.74rem", color: "#94a3b8" }}>
+                    Log: <code>{archiveJob.log_name}</code>
+                  </div>
+                </div>
+              )}
+
+              {archiveError && (
+                <div className="notice error" style={{ marginTop: 12 }}>
+                  <span>⚠</span> {archiveError}
+                </div>
+              )}
+            </div>
             )}
           </div>
         )}

@@ -146,7 +146,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Pending\nDispatched\nPlanned\nSub-Contracted\nCompleted\nCancelled"
+   "options": "Pending\nDispatched\nPlanned\nSub-Contracted\nCompleted\nClosed\nCancelled"
   },
   {
    "default": "Manual",

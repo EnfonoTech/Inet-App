@@ -80,7 +80,7 @@
    "fieldname": "po_line_status",
    "fieldtype": "Select",
    "label": "Line Status",
-   "options": "New\nDispatched\nCompleted"
+   "options": "New\nDispatched\nCompleted\nClosed\nCancelled"
   },
   {
    "fieldname": "item_code",
@@ -92,7 +92,7 @@
   },
   {
    "fieldname": "item_description",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "label": "Item Description",
    "read_only": 1
   },
