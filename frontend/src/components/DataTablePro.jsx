@@ -198,6 +198,12 @@ export default function DataTablePro() {
           widths: { ...(saved.widths || {}) },
           filters: { ...(saved.filters || {}) },
           show_filters: !!saved.show_filters,
+          // Row sort: { key: <colKey> | null, dir: "asc" | "desc" }. Sorting
+          // is applied to the rendered tbody after every (re-)init so it
+          // survives data-refresh tbody swaps.
+          sort: (saved.sort && typeof saved.sort === "object")
+            ? { key: saved.sort.key || null, dir: saved.sort.dir === "asc" ? "asc" : "desc" }
+            : { key: null, dir: "desc" },
           dynamic_fields: savedDyn,
         };
         let availableFields = [];
@@ -242,6 +248,7 @@ export default function DataTablePro() {
             widths: state.widths,
             filters: state.filters,
             show_filters: state.show_filters ? 1 : 0,
+            sort: state.sort && state.sort.key ? { key: state.sort.key, dir: state.sort.dir } : null,
             dynamic_fields: state.dynamic_fields,
           });
         };
@@ -480,6 +487,55 @@ export default function DataTablePro() {
           });
         };
 
+        /**
+         * Reorder tbody rows by the chosen sort key + direction. Reads each
+         * row's cell text content for that column (numeric-aware compare).
+         * No-op when state.sort.key is null or the column isn't found.
+         */
+        const applySort = () => {
+          const key = state.sort?.key;
+          if (!key) return;
+          const tbody = table.querySelector("tbody");
+          if (!tbody) return;
+          const rows = Array.from(tbody.children).filter((r) => r.tagName === "TR");
+          if (rows.length < 2) return;
+
+          const valueFor = (row) => {
+            // Avoid CSS.escape edge cases — iterate children directly.
+            let cell = null;
+            for (const c of row.children) {
+              if (c.dataset && c.dataset.colKey === key) { cell = c; break; }
+            }
+            if (!cell) return "";
+            // Prefer the title attribute when set (often holds the full,
+            // un-truncated value); else fall back to text content.
+            const raw = (cell.getAttribute("title") || cell.textContent || "").trim();
+            return raw;
+          };
+
+          const numericProbe = /^[-+]?[\d,]*\.?\d+(?:[eE][-+]?\d+)?$/;
+          const toNum = (s) => Number(String(s).replace(/,/g, ""));
+
+          const sign = state.sort.dir === "asc" ? 1 : -1;
+          const sorted = rows.slice().sort((a, b) => {
+            const av = valueFor(a);
+            const bv = valueFor(b);
+            const aEmpty = !av || av === "—";
+            const bEmpty = !bv || bv === "—";
+            // Empty / placeholder values always sink to the bottom.
+            if (aEmpty && bEmpty) return 0;
+            if (aEmpty) return 1;
+            if (bEmpty) return -1;
+            if (numericProbe.test(av) && numericProbe.test(bv)) {
+              return (toNum(av) - toNum(bv)) * sign;
+            }
+            return av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" }) * sign;
+          });
+          // appendChild on an already-attached node moves it. Reattaching in
+          // sorted order is the cheapest way to reorder rows.
+          sorted.forEach((r) => tbody.appendChild(r));
+        };
+
         const applyWidths = () => {
           const setCellPx = (cell, width) => {
             if (width) {
@@ -675,6 +731,9 @@ export default function DataTablePro() {
           applyFilters();
           addResizeHandles();
           applyFrozen();
+          // Sort runs last so it operates on the final cell layout.
+          applySort();
+          updateSortButtonLabel();
         };
 
         const toolbar = document.createElement("div");
@@ -683,6 +742,11 @@ export default function DataTablePro() {
           <button type="button" class="btn-secondary tablepro-btn-columns" title="Manage Table">⚙ Manage Table</button>
           <button type="button" class="btn-secondary tablepro-btn-filters">Filters</button>
           <button type="button" class="btn-secondary tablepro-btn-reset">Reset</button>
+          <button type="button" class="btn-secondary tablepro-btn-sort" title="Sort rows by column">
+            <span class="tablepro-sort-icon">↕</span>
+            <span class="tablepro-sort-label">Sort by</span>
+            <span class="tablepro-sort-dir"></span>
+          </button>
         `;
         wrapper.parentElement?.insertBefore(toolbar, wrapper);
         tracked.push({ table, toolbar });
@@ -701,6 +765,82 @@ export default function DataTablePro() {
         panel.className = "tablepro-panel";
         panel.style.display = "none";
         toolbar.appendChild(panel);
+
+        // Separate panel for the Sort menu so it doesn't share state with the
+        // (busier) Manage Table panel.
+        const sortPanel = document.createElement("div");
+        sortPanel.className = "tablepro-panel tablepro-sort-panel";
+        sortPanel.style.display = "none";
+        toolbar.appendChild(sortPanel);
+
+        // Keep the toolbar Sort button in sync with the active selection so
+        // users see e.g. "Sort by: Last Updated On ↓" without opening the menu.
+        const updateSortButtonLabel = () => {
+          const labelEl = toolbar.querySelector(".tablepro-btn-sort .tablepro-sort-label");
+          const dirEl = toolbar.querySelector(".tablepro-btn-sort .tablepro-sort-dir");
+          if (!labelEl || !dirEl) return;
+          if (state.sort?.key) {
+            const meta = getColumnMeta(state.sort.key);
+            labelEl.textContent = meta?.label || state.sort.key;
+            dirEl.textContent = state.sort.dir === "asc" ? "↑" : "↓";
+          } else {
+            labelEl.textContent = "Sort by";
+            dirEl.textContent = "";
+          }
+        };
+
+        const renderSortPanel = () => {
+          sortPanel.innerHTML = "";
+          const head = document.createElement("div");
+          head.className = "tablepro-panel-title";
+          head.textContent = "Sort rows by";
+          sortPanel.appendChild(head);
+
+          // Keep visible columns only; ignore the select-checkbox column.
+          state.order.forEach((key) => {
+            if (selectColumnKey && key === selectColumnKey) return;
+            if (state.hidden.has(key)) return;
+            const meta = getColumnMeta(key);
+            if (!meta) return;
+            const row = document.createElement("div");
+            const isActive = state.sort?.key === key;
+            row.className = `tablepro-sort-row${isActive ? " is-active" : ""}`;
+            const arrow = isActive ? (state.sort.dir === "asc" ? "↑" : "↓") : "";
+            row.innerHTML = `
+              <span class="arrow">${arrow}</span>
+              <span style="flex:1;">${escAttr(meta.label)}</span>
+            `;
+            // Click toggles direction when the same column is clicked again,
+            // otherwise switches to that column with descending (the natural
+            // default for "newest first" / "biggest first").
+            row.addEventListener("click", () => {
+              if (state.sort?.key === key) {
+                state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+              } else {
+                state.sort = { key, dir: "desc" };
+              }
+              renderSortPanel();
+              updateSortButtonLabel();
+              applySort();
+              persist();
+            });
+            sortPanel.appendChild(row);
+          });
+
+          if (state.sort?.key) {
+            const clear = document.createElement("div");
+            clear.className = "tablepro-sort-clear";
+            clear.textContent = "✕  Clear sort";
+            clear.addEventListener("click", async () => {
+              state.sort = { key: null, dir: "desc" };
+              renderSortPanel();
+              updateSortButtonLabel();
+              await applyAll();
+              persist();
+            });
+            sortPanel.appendChild(clear);
+          }
+        };
 
         const getColumnMeta = (key) => {
           const col = columns.find((c) => c.key === key);
@@ -803,7 +943,13 @@ export default function DataTablePro() {
 
         toolbar.querySelector(".tablepro-btn-columns")?.addEventListener("click", () => {
           panel.style.display = panel.style.display === "none" ? "block" : "none";
+          sortPanel.style.display = "none";
           if (panel.style.display === "block") renderPanel();
+        });
+        toolbar.querySelector(".tablepro-btn-sort")?.addEventListener("click", () => {
+          sortPanel.style.display = sortPanel.style.display === "none" ? "block" : "none";
+          panel.style.display = "none";
+          if (sortPanel.style.display === "block") renderSortPanel();
         });
         toolbar.querySelector(".tablepro-btn-filters")?.addEventListener("click", () => {
           state.show_filters = !state.show_filters;
@@ -818,17 +964,18 @@ export default function DataTablePro() {
           state.widths = {};
           state.filters = {};
           state.show_filters = false;
+          state.sort = { key: null, dir: "desc" };
           state.dynamic_fields = [];
           renderPanel();
+          renderSortPanel();
           await applyAll();
           persist();
         });
 
         const onDocClick = (ev) => {
-          if (panel.style.display === "none") return;
-          if (!toolbar.contains(ev.target)) {
-            panel.style.display = "none";
-          }
+          if (toolbar.contains(ev.target)) return;
+          if (panel.style.display !== "none") panel.style.display = "none";
+          if (sortPanel.style.display !== "none") sortPanel.style.display = "none";
         };
         document.addEventListener("mousedown", onDocClick);
 

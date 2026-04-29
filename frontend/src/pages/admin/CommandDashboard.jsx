@@ -103,8 +103,16 @@ export default function CommandDashboard() {
 
   useEffect(() => {
     fetchData(range);
-    intervalRef.current = setInterval(() => fetchData(range), 60_000);
-    return () => clearInterval(intervalRef.current);
+    // Dashboards refresh every 5 minutes so KPIs stay current without manual
+    // clicks. List pages stay manual — surprise re-fetches there interrupt
+    // long edit sessions.
+    intervalRef.current = setInterval(() => fetchData(range), 5 * 60_000);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range.from, range.to]);
 

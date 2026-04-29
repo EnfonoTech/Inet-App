@@ -720,6 +720,84 @@
   line-height: 1.2;
 }
 
+/* Sort button is the rightmost control on the toolbar. Pushing it via
+   margin-left:auto keeps the rest of the buttons left-anchored. */
+.tablepro-btn-sort {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.tablepro-btn-sort .tablepro-sort-icon {
+  font-size: 0.85rem;
+  line-height: 1;
+  opacity: 0.85;
+}
+.tablepro-btn-sort .tablepro-sort-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tablepro-btn-sort .tablepro-sort-dir {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+/* Sort panel anchors to the right edge of the toolbar (the button is on the
+   right). Compact width — like the ERPNext list sort menu.
+   Combined-class selector keeps these from being overridden by the generic
+   .tablepro-panel rules that are declared further down in this file. */
+.tablepro-panel.tablepro-sort-panel {
+  left: auto;
+  right: 0;
+  width: 220px;
+  min-width: 220px;
+  max-width: 240px;
+  padding: 6px 0;
+}
+.tablepro-sort-panel .tablepro-panel-title {
+  padding: 6px 14px;
+  margin-bottom: 0;
+}
+.tablepro-sort-panel .tablepro-sort-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #0f172a;
+  user-select: none;
+}
+.tablepro-sort-panel .tablepro-sort-row:hover {
+  background: #f1f5f9;
+}
+.tablepro-sort-panel .tablepro-sort-row.is-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+.tablepro-sort-panel .tablepro-sort-row .arrow {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+.tablepro-sort-panel .tablepro-sort-clear {
+  border-top: 1px solid #f1f5f9;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: #b91c1c;
+  user-select: none;
+}
+.tablepro-sort-panel .tablepro-sort-clear:hover {
+  background: #fef2f2;
+}
+
 .tablepro-panel {
   position: absolute;
   top: calc(100% + 6px);

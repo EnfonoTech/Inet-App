@@ -163,7 +163,6 @@ export default function IMDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [range, setRange] = useState(defaultRange);
-  const [tick, setTick] = useState(0);
   const [fetchedAt, setFetchedAt] = useState(null);
 
   async function loadData(r = range) {
@@ -190,16 +189,13 @@ export default function IMDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imName, range.from, range.to]);
 
-  // Live: refresh every 60s
+  // Dashboards refresh every 5 minutes so KPIs stay current without manual
+  // clicks. List pages stay manual.
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 60_000);
+    const t = setInterval(() => loadData(range), 5 * 60_000);
     return () => clearInterval(t);
-  }, []);
-  useEffect(() => {
-    if (tick === 0) return;
-    loadData(range);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick]);
+  }, [range.from, range.to, imName]);
 
   const k = data?.site_kpi || {};
   const team_perf = Array.isArray(data?.team_perf) ? data.team_perf : [];

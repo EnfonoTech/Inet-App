@@ -211,8 +211,15 @@ export default function ExecutionMonitor() {
 
   useEffect(() => {
     loadData();
-    intervalRef.current = setInterval(loadData, 30_000);
-    return () => clearInterval(intervalRef.current);
+    // Auto-refresh removed — the page reloads only when filters change or
+    // when the user clicks Refresh. Avoids surprising re-fetches on long
+    // edit sessions. Keep intervalRef cleanup for safety on remount.
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
   }, [loadData]);
 
   function formatTime(d) {
@@ -244,13 +251,12 @@ export default function ExecutionMonitor() {
             Today's live execution status
             {lastRefresh && (
               <span style={{ marginLeft: 8, color: "var(--text-muted)" }}>
-                · Last refreshed {formatTime(lastRefresh)} · Auto-refreshes every 30s
+                · Last refreshed {formatTime(lastRefresh)}
               </span>
             )}
           </div>
         </div>
         <div className="page-actions">
-          <span className="live-dot" style={{ marginRight: 4 }} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
