@@ -5847,16 +5847,22 @@ def get_im_dashboard(im=None, from_date=None, to_date=None):
                 })
 
     # ── Site status table: latest rollout plans for this IM ──────────────
+    # Site ID = DUID code from PO Dispatch (joins to DUID Master).
+    # Location = Area Master.area_name via DUID Master.area. No fallback to
+    # center_area / site_name — if the DUID has no Area set, the cell stays
+    # empty so it's obvious where the master data is missing.
     site_status = frappe.db.sql(
         f"""
-        SELECT rp.name AS site_id,
-               COALESCE(pd.site_name, pd.site_code) AS location,
+        SELECT pd.site_code AS site_id,
+               am.area_name AS location,
                pd.project_code AS project,
                rp.plan_status AS status,
                rp.modified AS last_update,
                rp.issue_category AS issue
         FROM `tabRollout Plan` rp
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabDUID Master` dm ON dm.name = pd.site_code
+        LEFT JOIN `tabArea Master` am ON am.name = dm.area
         WHERE (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
         ORDER BY rp.modified DESC
         LIMIT 8
@@ -5866,7 +5872,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None):
     )
     site_status = [
         {
-            "site_id": r.site_id,
+            "site_id": r.site_id or "—",
             "location": r.location or "—",
             "project": r.project or "—",
             "status": r.status or "—",

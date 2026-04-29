@@ -7,6 +7,7 @@
  "field_order": [
   "duid",
   "site_name",
+  "area",
   "center_area",
   "region_type",
   "latitude",
@@ -27,6 +28,15 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Site Name"
+  },
+  {
+   "description": "Logical area / location grouping. Used as the 'Location' label across the dashboards.",
+   "fieldname": "area",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Area",
+   "options": "Area Master"
   },
   {
    "fieldname": "center_area",
