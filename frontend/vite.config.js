@@ -12,7 +12,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "prompt",
+      // autoUpdate so a stale wider-scope SW from an earlier deploy is
+      // replaced silently; users no longer need to manually unregister it.
+      registerType: "autoUpdate",
       manifestFilename: "pms-manifest.webmanifest",
       injectRegister: null,
       manifest: {
@@ -20,7 +22,10 @@ export default defineConfig({
         short_name: "INET PMS",
         description: "INET telecom field execution, QC, and time logging.",
         start_url: "/pms/today",
-        scope: "/",
+        // Scope strictly to /pms — wider scope ("/") makes the service worker
+        // intercept every URL on the origin (including the Frappe Desk at /app),
+        // which serves the cached PMS shell and looks like a hung blank page.
+        scope: "/pms/",
         display: "standalone",
         orientation: "portrait-primary",
         theme_color: "#1a2744",
@@ -43,6 +48,10 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2,json,webmanifest}"],
         globIgnores: ["**/node_modules/**/*"],
+        // Only intercept navigations under /pms/. Without this, navigations
+        // to /app, /login, etc. fall back to the cached SPA shell.
+        navigateFallback: "/pms",
+        navigateFallbackAllowlist: [/^\/pms(\/|$)/],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

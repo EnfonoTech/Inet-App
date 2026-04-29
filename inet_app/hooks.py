@@ -10,6 +10,13 @@ website_route_rules = [
 	{"from_route": "/pms/<path:app_path>", "to_route": "pms"},
 ]
 
+# Send the bare site root to the Frappe / ERPNext Desk so a "blank" / no
+# longer surprises users. (PMS portal users still land on /pms via
+# role_home_page below after login.)
+website_redirects = [
+	{"source": r"^/$", "target": "/app", "redirect_http_status": 302},
+]
+
 fixtures = [
 	{
 		"dt": "Custom Field",
