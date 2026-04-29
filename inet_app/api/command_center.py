@@ -701,6 +701,8 @@ def _upsert_po_dispatch_for_line(
         # Copy payment_terms from the intake line so the PO Dispatch validate
         # hook can parse MS1/MS2 percentages without joining back to the parent.
         "payment_terms": line_dict.get("payment_terms") or "",
+        # PIC list view surfaces tax_rate alongside the line amount.
+        "tax_rate": line_dict.get("tax_rate") or "",
         "customer": customer,
         "im": im,
         "target_month": target_month,

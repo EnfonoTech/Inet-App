@@ -33,6 +33,8 @@ import IMTimesheets from "./pages/im/IMTimesheets";
 import IMDispatch from "./pages/im/IMDispatch";
 import IMPOIntake from "./pages/im/IMPOIntake";
 import IMSubcon from "./pages/im/IMSubcon";
+import PICDashboard from "./pages/pic/PICDashboard";
+import PICTracker from "./pages/pic/PICTracker";
 import IMWorkDone from "./pages/im/IMWorkDone";
 import IMIssuesRisks from "./pages/im/IMIssuesRisks";
 import OperationsOverview from "./pages/OperationsOverview";
@@ -61,6 +63,7 @@ function DefaultRedirect() {
   const { role } = useAuth();
   if (role === "im") return <Navigate to="/im-dashboard" replace />;
   if (role === "field") return <Navigate to="/today" replace />;
+  if (role === "pic") return <Navigate to="/pic-dashboard" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -134,6 +137,21 @@ function AppContent() {
             <Route path="/field-qc-ciag" element={<FieldQcCiag />} />
             <Route path="/field-history" element={<FieldHistory />} />
             <Route path="/field-timesheet" element={<FieldTimesheet />} />
+          </>
+        )}
+
+        {/* -- PIC routes ---------------------------------------- */}
+        {role === "pic" && (
+          <>
+            <Route path="/pic-dashboard" element={<PICDashboard />} />
+            <Route path="/pic-tracker" element={<PICTracker />} />
+          </>
+        )}
+        {/* Admins also reach PIC pages so they can support / audit. */}
+        {role === "admin" && (
+          <>
+            <Route path="/pic-dashboard" element={<PICDashboard />} />
+            <Route path="/pic-tracker" element={<PICTracker />} />
           </>
         )}
 

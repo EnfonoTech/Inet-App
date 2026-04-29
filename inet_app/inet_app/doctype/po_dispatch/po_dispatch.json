@@ -17,6 +17,8 @@
   "qty",
   "rate",
   "line_amount",
+  "tax_rate",
+  "project_domain",
   "section_assignment",
   "project_code",
   "customer",
@@ -137,6 +139,16 @@
    "fieldtype": "Currency",
    "in_list_view": 1,
    "label": "Line Amount (SAR)"
+  },
+  {
+   "fieldname": "tax_rate",
+   "fieldtype": "Data",
+   "label": "Tax Rate"
+  },
+  {
+   "fieldname": "project_domain",
+   "fieldtype": "Data",
+   "label": "Project Domain"
   },
   {
    "fieldname": "section_assignment",

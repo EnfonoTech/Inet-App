@@ -191,9 +191,29 @@ export default function DataTablePro() {
             });
           }
         });
+        const baseOrder = columns.map((c) => c.key);
+        // Filter saved.order to current keys, but fall back to baseOrder if
+        // none survive — otherwise applyAll() would strip every body cell
+        // (allowed = new Set([])) and the tbody would render invisible.
+        const restoredOrder = Array.isArray(saved.order)
+          ? saved.order.filter((k) => columns.some((c) => c.key === k))
+          : baseOrder;
+        // Append any current column keys missing from restoredOrder so newly
+        // added columns become visible the first time after a release.
+        baseOrder.forEach((k) => {
+          if (!restoredOrder.includes(k)) restoredOrder.push(k);
+        });
+        const validKeys = new Set(restoredOrder);
+        const filteredHidden = Array.isArray(saved.hidden)
+          ? saved.hidden.filter((k) => validKeys.has(k))
+          : [];
+        // Defensive: if every visible column ends up hidden (stale prefs from
+        // an older release), wipe the set so the table doesn't look broken.
+        const visibleCount = restoredOrder.length - filteredHidden.length;
+        const safeHidden = visibleCount <= 0 ? [] : filteredHidden;
         const state = {
-          order: Array.isArray(saved.order) ? saved.order.filter((k) => columns.some((c) => c.key === k)) : columns.map((c) => c.key),
-          hidden: new Set(Array.isArray(saved.hidden) ? saved.hidden : []),
+          order: restoredOrder.length ? restoredOrder : baseOrder,
+          hidden: new Set(safeHidden),
           frozen: new Set(Array.isArray(saved.frozen) ? saved.frozen : []),
           widths: { ...(saved.widths || {}) },
           filters: { ...(saved.filters || {}) },

@@ -426,6 +426,27 @@ export const pmApi = {
   getPoRemarks: (po_dispatch) => call("inet_app.api.command_center.get_po_remarks", { po_dispatch }),
   updatePoRemark: (po_dispatch, remark_type, value) => call("inet_app.api.command_center.update_po_remark", { po_dispatch, remark_type, value }),
 
+  // PIC (Project Invoice Controller) endpoints
+  listPicRows: (portalFilters, limit) => call("inet_app.api.pic.list_pic_rows", {
+    portal_filters: JSON.stringify(portalFilters || {}),
+    // 0 = "All" (no LIMIT). Anything else is a positive cap.
+    limit: Number.isFinite(Number(limit)) ? Number(limit) : 500,
+  }),
+  updatePicRow: (po_dispatch, fields) => call("inet_app.api.pic.update_pic_row", {
+    po_dispatch,
+    fields: JSON.stringify(fields || {}),
+  }),
+  bulkUpdatePicStatus: (po_dispatches, pic_status, milestone, remark) => call("inet_app.api.pic.bulk_update_pic_status", {
+    po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
+    pic_status,
+    milestone: milestone || "MS1",
+    remark: remark || "",
+  }),
+  getPicDashboard: (from_date, to_date) => call("inet_app.api.pic.get_pic_dashboard", {
+    from_date: from_date || "",
+    to_date: to_date || "",
+  }),
+
   // Sub-Contract flow — IM-driven, lives outside the rollout chain
   getMySubconCapability: (im) => call("inet_app.api.command_center.get_my_subcon_capability", im ? { im } : {}),
   listSubconTeamsForPicker: (search) => call("inet_app.api.command_center.list_subcon_teams_for_picker", { search: search || "", limit: 200 }),

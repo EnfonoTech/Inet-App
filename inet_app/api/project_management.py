@@ -657,6 +657,8 @@ def get_logged_user():
 
     if user == "Administrator" or "System Manager" in user_roles or "INET Admin" in user_roles:
         app_role = "admin"
+    elif "INET PIC" in user_roles:
+        app_role = "pic"
     elif "INET IM" in user_roles:
         app_role = "im"
         try:

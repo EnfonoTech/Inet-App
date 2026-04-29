@@ -124,6 +124,11 @@ const imNav = [
   { to: "/im-timesheets", label: "Time logs",   icon: "clock" },
 ];
 
+const picNav = [
+  { to: "/pic-dashboard", label: "PIC Dashboard",   icon: "dashboard" },
+  { to: "/pic-tracker",   label: "Invoice Tracker", icon: "barChart" },
+];
+
 const fieldNav = [
   { to: "/today", label: "Today's Work", shortLabel: "Today", icon: "clipboard" },
   { to: "/field-execute", label: "Execute", shortLabel: "Execute", icon: "tool" },
@@ -184,6 +189,7 @@ export default function AppShell() {
       return out;
     }
     if (role === "field") return fieldNav;
+    if (role === "pic") return picNav;
     return adminNav;
   }, [role, imCanSubcon]);
 
