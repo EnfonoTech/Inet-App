@@ -698,6 +698,9 @@ def _upsert_po_dispatch_for_line(
         "qty": flt(line_dict.get("qty", 0)),
         "rate": flt(line_dict.get("rate", 0)),
         "line_amount": flt(line_dict.get("line_amount", 0)),
+        # Copy payment_terms from the intake line so the PO Dispatch validate
+        # hook can parse MS1/MS2 percentages without joining back to the parent.
+        "payment_terms": line_dict.get("payment_terms") or "",
         "customer": customer,
         "im": im,
         "target_month": target_month,
@@ -7955,8 +7958,161 @@ _PO_ARCHIVE_ALIAS = {
     "Publish Date": "publish_date",
     "Huawei Owner": "huawei_owner",
     "Inet Owner": "inet_owner",
-    "Inet IM Remarks": "im_remark",
+    "Inet IM Remarks": "manager_remark",
+    # PIC / invoice tracking columns
+    "SQC Status": "sqc_status",
+    "PAT Status": "pat_status",
+    "IM's Remarks on Rejection": "im_rejection_remark",
+    "PIC Remarks": "pic_status",
+    "ISDP / I-Buy Owner": "isdp_ibuy_owner",
+    "MS1": "ms1_amount",
+    "MS2": "ms2_amount",
+    "PIC Remarks (2nd Milestone)": "pic_status_ms2",
+    "ISD / I-Buy Owner (2nd Milestone)": "isdp_owner_ms2",
+    "Remaining Milestone": "remaining_milestone_pct",
+    "1st Payment PO Amount": "ms1_amount",
+    "1st Payment Invoiced": "ms1_invoiced",
+    "Subcon Per% MS1": "subcon_pct_ms1",
+    "Inet Per% MS1": "inet_pct_ms1",
+    "2nd Payment PO Amount": "ms2_amount",
+    "2nd Payment Invoiced": "ms2_invoiced",
+    "Subcon Per% MS2": "subcon_pct_ms2",
+    "Inet Per% MS2": "inet_pct_ms2",
+    "Invoicing Month (First Payment Milestone)": "ms1_invoice_month",
+    "Invoicing Month (Second Payment Milestone)": "ms2_invoice_month",
+    # Duplicate-named cols ("Applied Date", "IBUY / INV date", "Payment Received
+    # Date", "Detail Remarks/Dependency") are disambiguated positionally by
+    # ``_resolve_archive_header_keys`` using the most recent "PIC Remarks"
+    # anchor as the milestone marker.
 }
+
+
+def _resolve_archive_header_keys(headers):
+    """Return ``{col_index: standard_key}`` for a Master-Tracker header row.
+
+    The Master Tracker has several columns whose **header text repeats** —
+    ``Detail Remarks/Dependency`` appears 3× (IM, MS1 PIC, MS2 PIC),
+    ``Applied Date`` 2× (MS1, MS2), ``IBUY / INV date`` 2× and
+    ``Payment Received Date`` 2×. A plain dict keyed by header name would
+    collapse them onto the same field.
+
+    We walk the header row left-to-right, tracking the current milestone
+    context: after seeing ``PIC Remarks`` we're in MS1; after
+    ``PIC Remarks (2nd Milestone)`` we're in MS2; before either anchor the
+    duplicate columns are treated as IM-side and skipped.
+    """
+    out = {}
+    milestone = 0  # 0 = pre-PIC, 1 = MS1, 2 = MS2
+
+    DUP_BY_MS = {
+        ("Detail Remarks/Dependency", 1): "pic_detail_remark",
+        ("Detail Remarks/Dependency", 2): "pic_detail_remark_ms2",
+        ("Applied Date", 1): "ms1_applied_date",
+        ("Applied Date", 2): "ms2_applied_date",
+        ("IBUY / INV date", 1): "ms1_ibuy_inv_date",
+        ("IBUY / INV date", 2): "ms2_ibuy_inv_date",
+        ("Payment Received Date", 1): "ms1_payment_received_date",
+        ("Payment Received Date", 2): "ms2_payment_received_date",
+    }
+    DUP_NAMES = {h for (h, _) in DUP_BY_MS.keys()}
+
+    for i, h in enumerate(headers or []):
+        h = str(h or "").strip() if h is not None else ""
+        if not h:
+            continue
+        if h == "PIC Remarks":
+            milestone = 1
+            out[i] = "pic_status"
+            continue
+        if h == "PIC Remarks (2nd Milestone)":
+            milestone = 2
+            out[i] = "pic_status_ms2"
+            continue
+        if h in DUP_NAMES:
+            key = DUP_BY_MS.get((h, milestone))
+            if key:
+                out[i] = key
+            # Pre-PIC duplicates (e.g. col 30 IM detail) are left unmapped.
+            continue
+        alias = _PO_ARCHIVE_ALIAS.get(h)
+        if alias:
+            out[i] = alias
+    return out
+
+
+def _stamp_archive_pic_fields(dispatch_name, src_line):
+    """Copy PIC / invoice tracking fields from an archive row onto a PO Dispatch.
+
+    Bypasses ``doc.save()`` (which would be expensive for 12k+ rows) and writes
+    via ``frappe.db.set_value`` directly. Computes ``ms1_unbilled`` /
+    ``ms2_unbilled`` here so they don't drift when validate hasn't run.
+    """
+    PIC_KEYS = (
+        "sqc_status", "pat_status", "im_rejection_remark",
+        "pic_status", "pic_status_ms2",
+        "isdp_ibuy_owner", "isdp_owner_ms2",
+        "pic_detail_remark", "pic_detail_remark_ms2",
+        "ms1_applied_date", "ms2_applied_date",
+        "ms1_amount", "ms2_amount",
+        "ms1_invoiced", "ms2_invoiced",
+        "subcon_pct_ms1", "inet_pct_ms1",
+        "subcon_pct_ms2", "inet_pct_ms2",
+        "remaining_milestone_pct",
+        "ms1_invoice_month", "ms2_invoice_month",
+        "ms1_ibuy_inv_date", "ms2_ibuy_inv_date",
+        "ms1_payment_received_date", "ms2_payment_received_date",
+        "manager_remark",
+    )
+    NUMERIC = {
+        "ms1_amount", "ms2_amount", "ms1_invoiced", "ms2_invoiced",
+        "subcon_pct_ms1", "inet_pct_ms1", "subcon_pct_ms2", "inet_pct_ms2",
+        "remaining_milestone_pct",
+    }
+    updates = {}
+    for k in PIC_KEYS:
+        v = src_line.get(k)
+        if v is None or v == "":
+            continue
+        if k in NUMERIC:
+            try:
+                updates[k] = flt(v)
+            except Exception:
+                continue
+        else:
+            updates[k] = str(v).strip()[:8000] if isinstance(v, str) else v
+    # Always normalize ms1/ms2_unbilled when we touched the matching amount or
+    # invoiced value — keeps the archive data consistent without running validate.
+    if "ms1_amount" in updates or "ms1_invoiced" in updates:
+        amt = updates.get("ms1_amount")
+        if amt is None:
+            amt = flt(frappe.db.get_value("PO Dispatch", dispatch_name, "ms1_amount") or 0)
+        inv = flt(updates.get("ms1_invoiced", 0))
+        updates["ms1_unbilled"] = round(flt(amt) - inv, 4)
+    if "ms2_amount" in updates or "ms2_invoiced" in updates:
+        amt = updates.get("ms2_amount")
+        if amt is None:
+            amt = flt(frappe.db.get_value("PO Dispatch", dispatch_name, "ms2_amount") or 0)
+        inv = flt(updates.get("ms2_invoiced", 0))
+        updates["ms2_unbilled"] = round(flt(amt) - inv, 4)
+    if updates:
+        frappe.db.set_value("PO Dispatch", dispatch_name, updates, update_modified=False)
+
+
+def _archive_date_keys():
+    """All archive-row keys whose source values are Excel date serials in xlsb."""
+    return (
+        "start_date",
+        "end_date",
+        "publish_date",
+        "ms1_applied_date",
+        "ms2_applied_date",
+        "ms1_invoice_month",
+        "ms2_invoice_month",
+        "ms1_ibuy_inv_date",
+        "ms2_ibuy_inv_date",
+        "ms1_payment_received_date",
+        "ms2_payment_received_date",
+    )
 
 
 def _excel_serial_to_date_str(value):
@@ -8023,17 +8179,18 @@ def _yield_po_archive_rows(file_path, sheet_hint="PO Tracker"):
                 headers, py_iter = _detect_archive_header_row(py_iter)
                 if not headers:
                     return
+                col_map = _resolve_archive_header_keys(headers)
+                date_keys = _archive_date_keys()
                 for vals in py_iter:
                     if not any(v not in (None, "") for v in vals):
                         continue
                     row_dict = {}
                     for col_idx, cell_val in enumerate(vals):
-                        h = headers[col_idx] if col_idx < len(headers) else ""
-                        std_key = _PO_ARCHIVE_ALIAS.get(h)
+                        std_key = col_map.get(col_idx)
                         if std_key:
                             row_dict[std_key] = cell_val
                     if row_dict:
-                        for k in ("start_date", "end_date", "publish_date"):
+                        for k in date_keys:
                             if k in row_dict:
                                 row_dict[k] = _excel_serial_to_date_str(row_dict[k])
                         # Whole-number ints come back as floats from xlsb; clean
@@ -8055,13 +8212,13 @@ def _yield_po_archive_rows(file_path, sheet_hint="PO Tracker"):
         headers, py_iter = _detect_archive_header_row(py_iter)
         if not headers:
             return
+        col_map = _resolve_archive_header_keys(headers)
         for vals in py_iter:
             if not any(v not in (None, "") for v in vals):
                 continue
             row_dict = {}
             for col_idx, cell_val in enumerate(vals):
-                h = headers[col_idx] if col_idx < len(headers) else ""
-                std_key = _PO_ARCHIVE_ALIAS.get(h)
+                std_key = col_map.get(col_idx)
                 if std_key:
                     row_dict[std_key] = cell_val
             if row_dict:
@@ -8075,13 +8232,13 @@ def _yield_po_archive_rows(file_path, sheet_hint="PO Tracker"):
         headers, py_iter = _detect_archive_header_row(py_iter)
         if not headers:
             return
+        col_map = _resolve_archive_header_keys(headers)
         for vals in py_iter:
             if not any(v not in (None, "") for v in vals):
                 continue
             row_dict = {}
             for col_idx, cell_val in enumerate(vals):
-                h = headers[col_idx] if col_idx < len(headers) else ""
-                std_key = _PO_ARCHIVE_ALIAS.get(h)
+                std_key = col_map.get(col_idx)
                 if std_key:
                     row_dict[std_key] = cell_val
             if row_dict:
@@ -8522,12 +8679,20 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                         "Closed",
                     )
                     try:
-                        _upsert_po_dispatch_for_line(
+                        dispatch_name = _upsert_po_dispatch_for_line(
                             doc.name, po_no, line_dict,
                             customer=group_customer,
                             dispatch_status=target_status,
                             dispatch_mode="Manual",
                         )
+                        # Stamp the rich PIC / invoice-tracking fields from
+                        # the source archive row onto the just-upserted dispatch.
+                        src_line = next(
+                            (l for l in lines if _poid_for_upload_line(po_no, l) == got_poid),
+                            None,
+                        )
+                        if dispatch_name and src_line:
+                            _stamp_archive_pic_fields(dispatch_name, src_line)
                     except Exception as e:
                         per_po.append({
                             "po_no": po_no, "intake_name": doc.name,

@@ -24,7 +24,7 @@ fixtures = [
 	},
 	{
 		"dt": "Role",
-		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team"]]],
+		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team", "INET PIC"]]],
 	},
 ]
 
@@ -91,6 +91,7 @@ role_home_page = {
 	"INET Field Team": "pms/today",
 	"INET IM": "pms/im-dashboard",
 	"INET Admin": "pms/dashboard",
+	"INET PIC": "pms/pic-dashboard",
 }
 
 # Generators

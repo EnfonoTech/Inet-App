@@ -42,7 +42,41 @@
   "subcon_submission_status",
   "column_break_subcon",
   "subcon_completed_on",
-  "subcon_remark"
+  "subcon_remark",
+  "section_pic",
+  "sqc_status",
+  "pat_status",
+  "im_rejection_remark",
+  "payment_terms",
+  "ms1_pct",
+  "ms2_pct",
+  "ms1_amount",
+  "ms2_amount",
+  "remaining_milestone_pct",
+  "column_break_pic1",
+  "pic_status",
+  "isdp_ibuy_owner",
+  "pic_detail_remark",
+  "ms1_applied_date",
+  "ms1_invoiced",
+  "ms1_unbilled",
+  "subcon_pct_ms1",
+  "inet_pct_ms1",
+  "ms1_invoice_month",
+  "ms1_ibuy_inv_date",
+  "ms1_payment_received_date",
+  "column_break_pic2",
+  "pic_status_ms2",
+  "isdp_owner_ms2",
+  "pic_detail_remark_ms2",
+  "ms2_applied_date",
+  "ms2_invoiced",
+  "ms2_unbilled",
+  "subcon_pct_ms2",
+  "inet_pct_ms2",
+  "ms2_invoice_month",
+  "ms2_ibuy_inv_date",
+  "ms2_payment_received_date"
  ],
  "fields": [
   {
@@ -267,6 +301,201 @@
   {
    "fieldname": "column_break_subcon",
    "fieldtype": "Column Break"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.payment_terms || doc.pic_status || doc.ms1_amount",
+   "fieldname": "section_pic",
+   "fieldtype": "Section Break",
+   "label": "Invoice Tracking (PIC)"
+  },
+  {
+   "fieldname": "sqc_status",
+   "fieldtype": "Data",
+   "label": "SQC Status"
+  },
+  {
+   "fieldname": "pat_status",
+   "fieldtype": "Data",
+   "label": "PAT Status"
+  },
+  {
+   "fieldname": "im_rejection_remark",
+   "fieldtype": "Small Text",
+   "label": "IM's Remarks on Rejection"
+  },
+  {
+   "description": "Copied from PO Intake Line on upsert. Drives the MS1/MS2 percentage parser.",
+   "fieldname": "payment_terms",
+   "fieldtype": "Data",
+   "label": "Payment Terms",
+   "read_only": 1
+  },
+  {
+   "description": "Parsed from Payment Terms (AC1 …% / AC2 …%). Default 100 if no AC markers found. Editable.",
+   "fieldname": "ms1_pct",
+   "fieldtype": "Percent",
+   "label": "MS1 %",
+   "default": "100"
+  },
+  {
+   "description": "Parsed from Payment Terms (AC2 …%). Default 0.",
+   "fieldname": "ms2_pct",
+   "fieldtype": "Percent",
+   "label": "MS2 %",
+   "default": "0"
+  },
+  {
+   "description": "Read-only — line_amount × ms1_pct / 100. Updated by validate.",
+   "fieldname": "ms1_amount",
+   "fieldtype": "Currency",
+   "label": "MS1 Amount (1st Payment PO Amount)",
+   "read_only": 1
+  },
+  {
+   "description": "Read-only — line_amount × ms2_pct / 100.",
+   "fieldname": "ms2_amount",
+   "fieldtype": "Currency",
+   "label": "MS2 Amount (2nd Payment PO Amount)",
+   "read_only": 1
+  },
+  {
+   "description": "Defaults to 100; PIC nudges down as milestones close.",
+   "fieldname": "remaining_milestone_pct",
+   "fieldtype": "Percent",
+   "label": "Remaining Milestone %",
+   "default": "100"
+  },
+  {
+   "fieldname": "column_break_pic1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "PIC Remarks (MS1) — drives the dashboard buckets.",
+   "fieldname": "pic_status",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "PIC Status (MS1)",
+   "options": "\nWork Not Done\nUnder Process to Apply\nUnder I-BUY\nUnder ISDP\nI-BUY Rejected\nISDP Rejected\nReady for Invoice\nCommercial Invoice Submitted\nCommercial Invoice Closed\nPO Need to Cancel\nPO Line Canceled"
+  },
+  {
+   "fieldname": "isdp_ibuy_owner",
+   "fieldtype": "Data",
+   "label": "ISDP / I-Buy Owner (MS1)"
+  },
+  {
+   "fieldname": "pic_detail_remark",
+   "fieldtype": "Small Text",
+   "label": "Detail Remarks / Dependency (MS1)"
+  },
+  {
+   "fieldname": "ms1_applied_date",
+   "fieldtype": "Date",
+   "label": "Applied Date (MS1)"
+  },
+  {
+   "fieldname": "ms1_invoiced",
+   "fieldtype": "Currency",
+   "label": "MS1 Invoiced",
+   "default": "0"
+  },
+  {
+   "description": "Read-only — ms1_amount − ms1_invoiced.",
+   "fieldname": "ms1_unbilled",
+   "fieldtype": "Currency",
+   "label": "MS1 Unbilled",
+   "read_only": 1
+  },
+  {
+   "description": "Default copied from the assigned team's Subcontractor Master.sub_payout_pct.",
+   "fieldname": "subcon_pct_ms1",
+   "fieldtype": "Percent",
+   "label": "Subcon % (MS1)"
+  },
+  {
+   "description": "Default copied from the assigned team's Subcontractor Master.inet_margin_pct.",
+   "fieldname": "inet_pct_ms1",
+   "fieldtype": "Percent",
+   "label": "Inet % (MS1)"
+  },
+  {
+   "fieldname": "ms1_invoice_month",
+   "fieldtype": "Date",
+   "label": "Invoicing Month (MS1)"
+  },
+  {
+   "fieldname": "ms1_ibuy_inv_date",
+   "fieldtype": "Date",
+   "label": "IBUY / INV Date (MS1)"
+  },
+  {
+   "fieldname": "ms1_payment_received_date",
+   "fieldtype": "Date",
+   "label": "Payment Received Date (MS1)"
+  },
+  {
+   "fieldname": "column_break_pic2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pic_status_ms2",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "PIC Status (MS2)",
+   "options": "\nWork Not Done\nUnder Process to Apply\nUnder I-BUY\nUnder ISDP\nI-BUY Rejected\nISDP Rejected\nReady for Invoice\nCommercial Invoice Submitted\nCommercial Invoice Closed\nPO Need to Cancel\nPO Line Canceled"
+  },
+  {
+   "fieldname": "isdp_owner_ms2",
+   "fieldtype": "Data",
+   "label": "ISDP / I-Buy Owner (MS2)"
+  },
+  {
+   "fieldname": "pic_detail_remark_ms2",
+   "fieldtype": "Small Text",
+   "label": "Detail Remarks / Dependency (MS2)"
+  },
+  {
+   "fieldname": "ms2_applied_date",
+   "fieldtype": "Date",
+   "label": "Applied Date (MS2)"
+  },
+  {
+   "fieldname": "ms2_invoiced",
+   "fieldtype": "Currency",
+   "label": "MS2 Invoiced",
+   "default": "0"
+  },
+  {
+   "description": "Read-only — ms2_amount − ms2_invoiced.",
+   "fieldname": "ms2_unbilled",
+   "fieldtype": "Currency",
+   "label": "MS2 Unbilled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "subcon_pct_ms2",
+   "fieldtype": "Percent",
+   "label": "Subcon % (MS2)"
+  },
+  {
+   "fieldname": "inet_pct_ms2",
+   "fieldtype": "Percent",
+   "label": "Inet % (MS2)"
+  },
+  {
+   "fieldname": "ms2_invoice_month",
+   "fieldtype": "Date",
+   "label": "Invoicing Month (MS2)"
+  },
+  {
+   "fieldname": "ms2_ibuy_inv_date",
+   "fieldtype": "Date",
+   "label": "IBUY / INV Date (MS2)"
+  },
+  {
+   "fieldname": "ms2_payment_received_date",
+   "fieldtype": "Date",
+   "label": "Payment Received Date (MS2)"
   }
  ],
  "index_web_pages_for_search": 1,
@@ -307,6 +536,14 @@
    "read": 1,
    "report": 1,
    "role": "INET IM",
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET PIC",
    "write": 1
   }
  ],
