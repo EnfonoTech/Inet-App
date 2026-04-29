@@ -147,53 +147,76 @@ export default function PICDashboard() {
         </div>
       )}
 
-      {/* Acceptance pipeline as cards (instead of a flat table) */}
+      {/* Acceptance pipeline — flat summary table mirroring the spreadsheet:
+          Acceptance Remarks · No. of PO Lines · First Payment Amount ·
+          2nd Payment Amount · Total Amount. Status pill keeps the colour
+          coding without taking the whole tile. */}
       <SectionTitle>Acceptance Pipeline</SectionTitle>
       <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-        gap: 12,
-        padding: "0 16px 16px",
+        margin: "0 16px 16px",
+        background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12,
+        overflow: "hidden", boxShadow: "0 1px 2px rgba(15,23,42,0.03)",
       }}>
-        {BUCKET_ORDER.map((key) => {
-          const row = bucketByKey[key] || { bucket: key, line_count: 0, ms1_total: 0, ms2_total: 0, total: 0 };
-          const tone = BUCKET_TONE[key];
-          const isEmpty = (row.line_count || 0) === 0;
-          return (
-            <div key={key} style={{
-              background: tone.bg,
-              border: `1px solid ${tone.border}`,
-              borderRadius: 10,
-              padding: "12px 14px",
-              opacity: isEmpty ? 0.6 : 1,
-              boxShadow: isEmpty ? "none" : "0 1px 2px rgba(15,23,42,0.04)",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.74rem", fontWeight: 700, color: tone.fg, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                  <span style={{ display: "inline-block", width: 18, textAlign: "center" }}>{tone.icon}</span>
-                  {key}
-                </span>
-              </div>
-              <div style={{ fontSize: "1.6rem", fontWeight: 800, color: tone.fg, fontVariantNumeric: "tabular-nums" }}>
-                {fmt.format(row.line_count || 0)}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 8, fontSize: "0.74rem" }}>
-                <div>
-                  <div style={{ color: "#94a3b8", fontWeight: 600 }}>MS1 Amt</div>
-                  <div style={{ color: "#0f172a", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(row.ms1_total || 0)}</div>
-                </div>
-                <div>
-                  <div style={{ color: "#94a3b8", fontWeight: 600 }}>MS2 Amt</div>
-                  <div style={{ color: "#0f172a", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(row.ms2_total || 0)}</div>
-                </div>
-              </div>
-              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${tone.border}` }}>
-                <div style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: 600 }}>Total</div>
-                <div style={{ fontSize: "0.95rem", color: "#0f172a", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(row.total || 0)}</div>
-              </div>
-            </div>
-          );
-        })}
+        <div style={{ overflowX: "auto" }}>
+        <table className="data-table" style={{ width: "100%" }}>
+          <thead>
+            <tr>
+              <th>Acceptance Remarks</th>
+              <th style={{ textAlign: "right" }}>No. of PO Lines</th>
+              <th style={{ textAlign: "right" }}>First Payment Amount</th>
+              <th style={{ textAlign: "right" }}>2nd Payment Amount</th>
+              <th style={{ textAlign: "right" }}>Total Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {BUCKET_ORDER.map((key) => {
+              const row = bucketByKey[key] || { bucket: key, line_count: 0, ms1_total: 0, ms2_total: 0, total: 0 };
+              const tone = BUCKET_TONE[key];
+              const dim = (row.line_count || 0) === 0;
+              return (
+                <tr key={key} style={dim ? { color: "#94a3b8" } : undefined}>
+                  <td style={{ fontWeight: 600 }}>
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "2px 10px", borderRadius: 999,
+                      fontSize: "0.74rem", fontWeight: 700,
+                      background: tone.bg, color: tone.fg, border: `1px solid ${tone.border}`,
+                    }}>
+                      <span style={{ width: 12, textAlign: "center" }}>{tone.icon}</span>
+                      {key}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: row.line_count ? 700 : 400 }}>
+                    {fmt.format(row.line_count || 0)}
+                  </td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(row.ms1_total || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(row.ms2_total || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: row.total ? 700 : 400, color: row.total ? "#0f172a" : undefined }}>
+                    {fmtMoney.format(row.total || 0)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
+              <td>Total</td>
+              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {fmt.format(buckets.reduce((s, b) => s + (Number(b.line_count) || 0), 0))}
+              </td>
+              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {fmtMoney.format(buckets.reduce((s, b) => s + (Number(b.ms1_total) || 0), 0))}
+              </td>
+              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {fmtMoney.format(buckets.reduce((s, b) => s + (Number(b.ms2_total) || 0), 0))}
+              </td>
+              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {fmtMoney.format(buckets.reduce((s, b) => s + (Number(b.total) || 0), 0))}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+        </div>
       </div>
 
       {/* Two-column row: Monthly invoicing + INET vs Subcon */}

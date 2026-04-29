@@ -35,6 +35,7 @@ import IMPOIntake from "./pages/im/IMPOIntake";
 import IMSubcon from "./pages/im/IMSubcon";
 import PICDashboard from "./pages/pic/PICDashboard";
 import PICTracker from "./pages/pic/PICTracker";
+import PICReports from "./pages/pic/PICReports";
 import IMWorkDone from "./pages/im/IMWorkDone";
 import IMIssuesRisks from "./pages/im/IMIssuesRisks";
 import OperationsOverview from "./pages/OperationsOverview";
@@ -145,6 +146,7 @@ function AppContent() {
           <>
             <Route path="/pic-dashboard" element={<PICDashboard />} />
             <Route path="/pic-tracker" element={<PICTracker />} />
+            <Route path="/pic-reports" element={<PICReports />} />
           </>
         )}
         {/* Admins also reach PIC pages so they can support / audit. */}
@@ -152,6 +154,7 @@ function AppContent() {
           <>
             <Route path="/pic-dashboard" element={<PICDashboard />} />
             <Route path="/pic-tracker" element={<PICTracker />} />
+            <Route path="/pic-reports" element={<PICReports />} />
           </>
         )}
 

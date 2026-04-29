@@ -24,6 +24,76 @@ const PIC_STATUSES = [
   "PO Line Canceled",
 ];
 
+// Columns the CSV includes — subset of the table columns the user actually
+// works with day-to-day. Dynamic doctype fields added via Manage Table aren't
+// included to keep the export deterministic.
+const CSV_COLUMNS = [
+  ["poid", "POID"],
+  ["po_no", "PO No"],
+  ["dispatch_status", "PO Status"],
+  ["project_domain", "Project Domain"],
+  ["project_code", "Project"],
+  ["project_name", "Project Name"],
+  ["item_code", "Item Code"],
+  ["item_description", "Item Description"],
+  ["site_code", "DUID"],
+  ["site_name", "Site Name"],
+  ["qty", "Qty"],
+  ["rate", "Unit Price"],
+  ["line_amount", "Line Amount"],
+  ["tax_rate", "Tax Rate"],
+  ["payment_terms", "Payment Terms"],
+  ["sqc_status", "SQC Status"],
+  ["pat_status", "PAT Status"],
+  ["pic_status_effective", "PIC Status (MS1)"],
+  ["isdp_ibuy_owner", "I-BUY/ISDP Owner"],
+  ["pic_detail_remark", "Detail Remarks (MS1)"],
+  ["ms1_applied_date", "Applied Date (MS1)"],
+  ["ms1_pct", "MS1 %"],
+  ["ms1_amount", "MS1 Amount"],
+  ["ms1_invoiced", "MS1 Invoiced"],
+  ["ms1_unbilled", "MS1 Unbilled"],
+  ["ms1_invoice_month", "MS1 Invoicing Month"],
+  ["ms1_ibuy_inv_date", "MS1 IBUY/INV Date"],
+  ["ms1_payment_received_date", "MS1 Payment Received"],
+  ["pic_status_ms2", "PIC Status (MS2)"],
+  ["isdp_owner_ms2", "I-BUY/ISDP Owner (MS2)"],
+  ["pic_detail_remark_ms2", "Detail Remarks (MS2)"],
+  ["ms2_applied_date", "Applied Date (MS2)"],
+  ["ms2_pct", "MS2 %"],
+  ["ms2_amount", "MS2 Amount"],
+  ["ms2_invoiced", "MS2 Invoiced"],
+  ["ms2_unbilled", "MS2 Unbilled"],
+  ["ms2_invoice_month", "MS2 Invoicing Month"],
+  ["ms2_ibuy_inv_date", "MS2 IBUY/INV Date"],
+  ["ms2_payment_received_date", "MS2 Payment Received"],
+  ["remaining_milestone_pct", "Remaining Milestone %"],
+];
+
+function downloadPicTrackerCsv(rows) {
+  if (!rows || !rows.length) return;
+  const esc = (v) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = CSV_COLUMNS.map(([, label]) => esc(label)).join(",");
+  const lines = [header];
+  rows.forEach((r) => {
+    lines.push(CSV_COLUMNS.map(([k]) => {
+      let v = r[k];
+      // Dates often arrive as full ISO with time; trim to YYYY-MM-DD for spreadsheet friendliness.
+      if (v && /_date$|_month$/.test(k)) v = String(v).slice(0, 10);
+      return esc(v);
+    }).join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `pic-tracker-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function StatusPill({ value }) {
   if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
   const v = String(value);
@@ -222,6 +292,9 @@ export default function PICTracker() {
           </div>
         </div>
         <div className="page-actions">
+          <button type="button" className="btn-secondary" onClick={() => downloadPicTrackerCsv(rows)} disabled={!rows.length}>
+            Download CSV
+          </button>
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>

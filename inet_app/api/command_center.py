@@ -162,6 +162,28 @@ def _sql_search_clause(concat_expr, term):
     return f"({ors})", patterns
 
 
+_PIC_STATUS_TO_BILLING = {
+    # PIC scale (11 values) → Work Done billing bucket (Pending / Invoiced / Closed).
+    "Commercial Invoice Closed":    "Closed",
+    "PO Line Canceled":             "Closed",
+    "Commercial Invoice Submitted": "Invoiced",
+    "Ready for Invoice":            "Invoiced",
+    "Under I-BUY":                  "Invoiced",
+    "Under ISDP":                   "Invoiced",
+    # Anything else (Work Not Done, Under Process to Apply, both Rejected
+    # variants, PO Need to Cancel) maps to Pending.
+}
+
+
+def _billing_status_from_pic(pic_status, fallback=None):
+    """Roll the 11-value PIC scale up to the 3-bucket billing_status used by
+    PM / IM Work Done views. Falls back to the existing Work Done value when
+    no PIC status has been set yet."""
+    if pic_status:
+        return _PIC_STATUS_TO_BILLING.get(pic_status, "Pending")
+    return fallback or "Pending"
+
+
 def _normalize_int_token(value):
     """Render a numeric value as a clean integer string when it has no fractional part.
 
@@ -3998,7 +4020,18 @@ def list_work_done_rows(filters=None, limit=500):
 
     wheres = ["1=1"]
     params = []
-    for col, key in (("wd.billing_status", "billing_status"),
+    # Billing status filter uses the same PIC roll-up that the response shows,
+    # so picking "Closed" returns rows where the PIC has marked
+    # "Commercial Invoice Closed" / "PO Line Canceled". Falls back to the
+    # legacy wd.billing_status for rows that haven't been touched by PIC yet.
+    billing_expr = (
+        "CASE "
+        "WHEN pd.pic_status IN ('Commercial Invoice Closed','PO Line Canceled') THEN 'Closed' "
+        "WHEN pd.pic_status IN ('Commercial Invoice Submitted','Ready for Invoice','Under I-BUY','Under ISDP') THEN 'Invoiced' "
+        "WHEN IFNULL(pd.pic_status,'') != '' THEN 'Pending' "
+        "ELSE IFNULL(wd.billing_status, 'Pending') END"
+    )
+    for col, key in ((billing_expr, "billing_status"),
                      ("IFNULL(rp.team, de.team)", "team"),
                      ("IFNULL(pd.project_code,'')", "project_code"),
                      ("IFNULL(pd.site_code,'')", "site_code")):
@@ -4135,6 +4168,10 @@ def list_work_done_rows(filters=None, limit=500):
             pd_fields_wd.append("region_type")
         if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
             pd_fields_wd.append("original_dummy_poid")
+        if frappe.db.has_column("PO Dispatch", "pic_status"):
+            pd_fields_wd.append("pic_status")
+        if frappe.db.has_column("PO Dispatch", "subcon_submission_status"):
+            pd_fields_wd.append("subcon_submission_status")
         pd_rows = frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", dispatch_names]},
@@ -4186,9 +4223,16 @@ def list_work_done_rows(filters=None, limit=500):
         rp_im_row = rp.get("im") if rp and frappe.db.has_column("Rollout Plan", "im") else None
         pd_im_row = pd.get("im") if pd else None
         im_row = rp_im_row or pd_im_row
+        # Billing status now follows the PIC's invoice status. The PM/IM
+        # bucket (Pending / Invoiced / Closed) is rolled up from the 11-value
+        # PIC scale so existing widgets/filters keep working.
+        pic_status_val = pd.get("pic_status") if pd else None
+        billing_override = _billing_status_from_pic(pic_status_val, r.get("billing_status"))
         out.append(
             {
                 **r,
+                "billing_status": billing_override,
+                "pic_status": pic_status_val,
                 "po_dispatch": rp.po_dispatch if rp else None,
                 # Business POID from dispatch (fall back to dispatch name on legacy docs).
                 "poid": ((pd.get("poid") if pd else None) or (pd.name if pd else None) or (rp.po_dispatch if rp else None)),

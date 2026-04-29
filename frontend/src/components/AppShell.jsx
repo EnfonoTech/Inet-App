@@ -127,6 +127,7 @@ const imNav = [
 const picNav = [
   { to: "/pic-dashboard", label: "PIC Dashboard",   icon: "dashboard" },
   { to: "/pic-tracker",   label: "Invoice Tracker", icon: "barChart" },
+  { to: "/pic-reports",   label: "Reports",         icon: "clipboard" },
 ];
 
 const fieldNav = [

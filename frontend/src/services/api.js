@@ -446,6 +446,13 @@ export const pmApi = {
     from_date: from_date || "",
     to_date: to_date || "",
   }),
+  getPicReport: (kind, params) => call("inet_app.api.pic.get_pic_report", {
+    kind: kind || "pipeline",
+    from_date: params?.from_date || "",
+    to_date: params?.to_date || "",
+    project_code: params?.project_code || "",
+    owner: params?.owner || "",
+  }),
 
   // Sub-Contract flow — IM-driven, lives outside the rollout chain
   getMySubconCapability: (im) => call("inet_app.api.command_center.get_my_subcon_capability", im ? { im } : {}),

@@ -315,29 +315,45 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
 def get_pic_dashboard(from_date=None, to_date=None):
     """KPIs + bucket counts + monthly invoicing roll-up for the PIC dashboard.
 
-    Mirrors the spreadsheet's "Cash Flow Summary" sheet:
-      - Acceptance bucket counts + amounts (per pic_status)
-      - Pending approvals by ISDP / I-Buy owner
-      - Monthly invoicing roll-up (MS1 + MS2 invoiced per month)
-      - INET vs Subcon split by team_type
+    The date range scopes **time-series** panels only — monthly invoicing
+    roll-up and the I-BUY / ISDP pending-owner tables (filtered by
+    applied date). Bucket counts, INET-vs-Subcon split, and top-line KPIs
+    always show the full pipeline so they don't collapse to almost-empty
+    when the user picks a date range that excludes the typical "Work Not
+    Done" pile (those rows have no applied date yet).
     """
     _pic_role_or_throw()
 
     fd = getdate(from_date) if from_date else None
     td = getdate(to_date) if to_date else None
-    range_clause = ""
-    range_params = []
+
+    # Time-series clauses — applied to monthly + pending-owner panels only.
+    applied_clause = ""
+    applied_params = []
     if fd and td:
-        range_clause = "AND IFNULL(pd.ms1_applied_date, pd.ms2_applied_date) BETWEEN %s AND %s"
-        range_params = [fd, td]
+        applied_clause = "AND pd.ms1_applied_date BETWEEN %s AND %s"
+        applied_params = [fd, td]
     elif fd:
-        range_clause = "AND IFNULL(pd.ms1_applied_date, pd.ms2_applied_date) >= %s"
-        range_params = [fd]
+        applied_clause = "AND pd.ms1_applied_date >= %s"
+        applied_params = [fd]
     elif td:
-        range_clause = "AND IFNULL(pd.ms1_applied_date, pd.ms2_applied_date) <= %s"
-        range_params = [td]
+        applied_clause = "AND pd.ms1_applied_date <= %s"
+        applied_params = [td]
+
+    invoice_clause = ""
+    invoice_params = []
+    if fd and td:
+        invoice_clause = "WHERE m BETWEEN DATE_FORMAT(%s, '%%Y-%%m') AND DATE_FORMAT(%s, '%%Y-%%m')"
+        invoice_params = [fd, td]
+    elif fd:
+        invoice_clause = "WHERE m >= DATE_FORMAT(%s, '%%Y-%%m')"
+        invoice_params = [fd]
+    elif td:
+        invoice_clause = "WHERE m <= DATE_FORMAT(%s, '%%Y-%%m')"
+        invoice_params = [td]
 
     # ── Acceptance buckets — count + 1st/2nd/total amounts per pic_status.
+    # NO date filter — these are the live pipeline counts.
     bucket_rows = frappe.db.sql(
         f"""
         SELECT bucket,
@@ -351,16 +367,14 @@ def get_pic_dashboard(from_date=None, to_date=None):
             pd.ms1_amount, pd.ms2_amount
           {_PIC_FROM_JOIN}
           WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
-          {range_clause}
         ) t
         GROUP BY bucket
         ORDER BY line_count DESC
         """,
-        tuple(range_params),
         as_dict=True,
     )
 
-    # ── Pending approvals by I-Buy / ISDP owner (split by who's holding the line).
+    # ── Pending approvals by I-Buy / ISDP owner — date scopes the rows.
     pending_ibuy = frappe.db.sql(
         f"""
         SELECT pd.isdp_ibuy_owner AS owner,
@@ -371,12 +385,12 @@ def get_pic_dashboard(from_date=None, to_date=None):
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
           AND IFNULL(pd.isdp_ibuy_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under I-BUY'
-          {range_clause}
+          {applied_clause}
         GROUP BY pd.isdp_ibuy_owner
         ORDER BY line_count DESC
         LIMIT 50
         """,
-        tuple(range_params),
+        tuple(applied_params),
         as_dict=True,
     )
     pending_isdp = frappe.db.sql(
@@ -389,42 +403,43 @@ def get_pic_dashboard(from_date=None, to_date=None):
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
           AND IFNULL(pd.isdp_ibuy_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under ISDP'
-          {range_clause}
+          {applied_clause}
         GROUP BY pd.isdp_ibuy_owner
         ORDER BY line_count DESC
         LIMIT 50
         """,
-        tuple(range_params),
+        tuple(applied_params),
         as_dict=True,
     )
 
-    # ── Monthly invoicing roll-up: from ms1_invoice_month / ms2_invoice_month.
+    # ── Monthly invoicing roll-up — date scopes the YYYY-MM bucket.
     monthly = frappe.db.sql(
-        """
+        f"""
         SELECT m AS invoice_month,
                COALESCE(SUM(ms1_inv), 0) AS ms1_invoiced,
                COALESCE(SUM(ms2_inv), 0) AS ms2_invoiced,
                COALESCE(SUM(ms1_inv + ms2_inv), 0) AS total
         FROM (
-          SELECT DATE_FORMAT(ms1_invoice_month, '%Y-%m') AS m,
+          SELECT DATE_FORMAT(ms1_invoice_month, '%%Y-%%m') AS m,
                  ms1_invoiced AS ms1_inv, 0 AS ms2_inv
           FROM `tabPO Dispatch`
           WHERE ms1_invoice_month IS NOT NULL
           UNION ALL
-          SELECT DATE_FORMAT(ms2_invoice_month, '%Y-%m') AS m,
+          SELECT DATE_FORMAT(ms2_invoice_month, '%%Y-%%m') AS m,
                  0 AS ms1_inv, ms2_invoiced AS ms2_inv
           FROM `tabPO Dispatch`
           WHERE ms2_invoice_month IS NOT NULL
         ) u
-        WHERE m IS NOT NULL
+        {invoice_clause}
         GROUP BY m
         ORDER BY m DESC
         LIMIT 36
         """,
+        tuple(invoice_params),
         as_dict=True,
     )
 
-    # ── INET vs Subcon split — based on the assigned team's team_type.
+    # ── INET vs Subcon split — full pipeline (no date filter).
     inet_subcon = frappe.db.sql(
         f"""
         SELECT COALESCE(plan.team_type, 'INET') AS team_type,
@@ -433,14 +448,12 @@ def get_pic_dashboard(from_date=None, to_date=None):
                COALESCE(SUM(pd.ms1_amount + pd.ms2_amount), 0) AS po_total
         {_PIC_FROM_JOIN}
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
-          {range_clause}
         GROUP BY COALESCE(plan.team_type, 'INET')
         """,
-        tuple(range_params),
         as_dict=True,
     )
 
-    # ── Top-line KPIs.
+    # ── Top-line KPIs — full pipeline.
     kpi = frappe.db.sql(
         f"""
         SELECT
@@ -450,9 +463,7 @@ def get_pic_dashboard(from_date=None, to_date=None):
           COUNT(*) AS line_count
         {_PIC_FROM_JOIN}
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
-          {range_clause}
         """,
-        tuple(range_params),
         as_dict=True,
     )
     kpi = (kpi[0] if kpi else {}) or {}
@@ -472,6 +483,241 @@ def get_pic_dashboard(from_date=None, to_date=None):
         "monthly": monthly,
         "inet_subcon": inet_subcon,
     }
+
+
+@frappe.whitelist()
+def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=None, owner=None):
+    """Canned PIC reports — exposed as a single endpoint to keep the FE simple.
+
+    Each report has its own column shape (returned in ``columns``) so the
+    front-end can render the table generically and download CSV without
+    keeping the column list in sync.
+
+    ``kind``:
+      - ``pipeline``    — bucket breakdown (lines + MS1/MS2 amounts).
+      - ``monthly``     — invoicing roll-up by month from MS1/MS2 invoice month.
+      - ``aging``       — POIDs in Under I-BUY / Under ISDP with days_since_applied.
+      - ``closed``      — POIDs that reached Commercial Invoice Closed (date-bounded).
+      - ``rejected``    — POIDs in I-BUY Rejected / ISDP Rejected.
+    """
+    _pic_role_or_throw()
+    kind = (kind or "pipeline").lower()
+    fd = getdate(from_date) if from_date else None
+    td = getdate(to_date) if to_date else None
+
+    project_clause = ""
+    project_params = []
+    if project_code:
+        c, p = _sql_in_or_eq("pd.project_code", project_code)
+        if c:
+            project_clause = f" AND {c}"
+            project_params = list(p)
+
+    if kind == "pipeline":
+        return {
+            "kind": kind,
+            "columns": [
+                {"key": "bucket", "label": "PIC Status"},
+                {"key": "line_count", "label": "Lines", "numeric": True},
+                {"key": "ms1_total", "label": "MS1 Amount", "numeric": True, "money": True},
+                {"key": "ms2_total", "label": "MS2 Amount", "numeric": True, "money": True},
+                {"key": "total", "label": "Total", "numeric": True, "money": True},
+            ],
+            "rows": frappe.db.sql(
+                f"""
+                SELECT bucket,
+                       COUNT(*) AS line_count,
+                       COALESCE(SUM(ms1_amount), 0) AS ms1_total,
+                       COALESCE(SUM(ms2_amount), 0) AS ms2_total,
+                       COALESCE(SUM(ms1_amount + ms2_amount), 0) AS total
+                FROM (
+                  SELECT
+                    ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
+                    pd.ms1_amount, pd.ms2_amount
+                  {_PIC_FROM_JOIN}
+                  WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+                  {project_clause}
+                ) t
+                GROUP BY bucket
+                ORDER BY line_count DESC
+                """,
+                tuple(project_params),
+                as_dict=True,
+            ),
+        }
+
+    if kind == "monthly":
+        # Optional date scope on the YYYY-MM bucket.
+        invoice_clause = ""
+        invoice_params = []
+        if fd and td:
+            invoice_clause = "WHERE m BETWEEN DATE_FORMAT(%s, '%%Y-%%m') AND DATE_FORMAT(%s, '%%Y-%%m')"
+            invoice_params = [fd, td]
+        elif fd:
+            invoice_clause = "WHERE m >= DATE_FORMAT(%s, '%%Y-%%m')"
+            invoice_params = [fd]
+        elif td:
+            invoice_clause = "WHERE m <= DATE_FORMAT(%s, '%%Y-%%m')"
+            invoice_params = [td]
+        return {
+            "kind": kind,
+            "columns": [
+                {"key": "invoice_month", "label": "Invoicing Month"},
+                {"key": "ms1_invoiced", "label": "MS1 Invoiced", "numeric": True, "money": True},
+                {"key": "ms2_invoiced", "label": "MS2 Invoiced", "numeric": True, "money": True},
+                {"key": "total", "label": "Total", "numeric": True, "money": True},
+            ],
+            "rows": frappe.db.sql(
+                f"""
+                SELECT m AS invoice_month,
+                       COALESCE(SUM(ms1_inv), 0) AS ms1_invoiced,
+                       COALESCE(SUM(ms2_inv), 0) AS ms2_invoiced,
+                       COALESCE(SUM(ms1_inv + ms2_inv), 0) AS total
+                FROM (
+                  SELECT DATE_FORMAT(ms1_invoice_month, '%%Y-%%m') AS m,
+                         ms1_invoiced AS ms1_inv, 0 AS ms2_inv
+                  FROM `tabPO Dispatch`
+                  WHERE ms1_invoice_month IS NOT NULL
+                  UNION ALL
+                  SELECT DATE_FORMAT(ms2_invoice_month, '%%Y-%%m') AS m,
+                         0 AS ms1_inv, ms2_invoiced AS ms2_inv
+                  FROM `tabPO Dispatch`
+                  WHERE ms2_invoice_month IS NOT NULL
+                ) u
+                {invoice_clause}
+                GROUP BY m
+                ORDER BY m DESC
+                """,
+                tuple(invoice_params),
+                as_dict=True,
+            ),
+        }
+
+    if kind == "aging":
+        # POIDs sitting in Under I-BUY / Under ISDP, with days since applied.
+        owner_clause = ""
+        owner_params = []
+        if owner:
+            owner_clause = " AND pd.isdp_ibuy_owner = %s"
+            owner_params = [owner]
+        return {
+            "kind": kind,
+            "columns": [
+                {"key": "poid", "label": "POID"},
+                {"key": "po_no", "label": "PO No"},
+                {"key": "project_code", "label": "Project"},
+                {"key": "site_code", "label": "DUID"},
+                {"key": "pic_status", "label": "PIC Status"},
+                {"key": "isdp_ibuy_owner", "label": "Owner"},
+                {"key": "ms1_applied_date", "label": "Applied"},
+                {"key": "days_since_applied", "label": "Days Aging", "numeric": True},
+                {"key": "ms1_amount", "label": "MS1 Amount", "numeric": True, "money": True},
+            ],
+            "rows": frappe.db.sql(
+                f"""
+                SELECT pd.poid AS poid,
+                       pd.po_no, pd.project_code, pd.site_code,
+                       pd.pic_status,
+                       pd.isdp_ibuy_owner,
+                       pd.ms1_applied_date,
+                       DATEDIFF(CURDATE(), pd.ms1_applied_date) AS days_since_applied,
+                       pd.ms1_amount
+                {_PIC_FROM_JOIN}
+                WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+                  AND pd.pic_status IN ('Under I-BUY', 'Under ISDP')
+                  AND pd.ms1_applied_date IS NOT NULL
+                  {project_clause}
+                  {owner_clause}
+                ORDER BY days_since_applied DESC
+                LIMIT 2000
+                """,
+                tuple(project_params + owner_params),
+                as_dict=True,
+            ),
+        }
+
+    if kind == "closed":
+        # POIDs that reached Commercial Invoice Closed.
+        # Date scope on ms1_payment_received_date when set, else ms1_invoice_month.
+        date_clause = ""
+        date_params = []
+        if fd and td:
+            date_clause = "AND COALESCE(pd.ms1_payment_received_date, pd.ms1_invoice_month) BETWEEN %s AND %s"
+            date_params = [fd, td]
+        elif fd:
+            date_clause = "AND COALESCE(pd.ms1_payment_received_date, pd.ms1_invoice_month) >= %s"
+            date_params = [fd]
+        elif td:
+            date_clause = "AND COALESCE(pd.ms1_payment_received_date, pd.ms1_invoice_month) <= %s"
+            date_params = [td]
+        return {
+            "kind": kind,
+            "columns": [
+                {"key": "poid", "label": "POID"},
+                {"key": "po_no", "label": "PO No"},
+                {"key": "project_code", "label": "Project"},
+                {"key": "site_code", "label": "DUID"},
+                {"key": "ms1_invoice_month", "label": "Invoice Month"},
+                {"key": "ms1_payment_received_date", "label": "Payment Received"},
+                {"key": "ms1_amount", "label": "MS1 Amount", "numeric": True, "money": True},
+                {"key": "ms2_amount", "label": "MS2 Amount", "numeric": True, "money": True},
+                {"key": "total", "label": "Total", "numeric": True, "money": True},
+            ],
+            "rows": frappe.db.sql(
+                f"""
+                SELECT pd.poid, pd.po_no, pd.project_code, pd.site_code,
+                       pd.ms1_invoice_month,
+                       pd.ms1_payment_received_date,
+                       pd.ms1_amount,
+                       pd.ms2_amount,
+                       (pd.ms1_amount + pd.ms2_amount) AS total
+                {_PIC_FROM_JOIN}
+                WHERE pd.pic_status = 'Commercial Invoice Closed'
+                  {project_clause}
+                  {date_clause}
+                ORDER BY pd.ms1_payment_received_date DESC, pd.ms1_invoice_month DESC
+                LIMIT 5000
+                """,
+                tuple(project_params + date_params),
+                as_dict=True,
+            ),
+        }
+
+    if kind == "rejected":
+        return {
+            "kind": kind,
+            "columns": [
+                {"key": "poid", "label": "POID"},
+                {"key": "po_no", "label": "PO No"},
+                {"key": "project_code", "label": "Project"},
+                {"key": "site_code", "label": "DUID"},
+                {"key": "pic_status", "label": "Rejected At"},
+                {"key": "isdp_ibuy_owner", "label": "Owner"},
+                {"key": "im_rejection_remark", "label": "IM Rejection Remark"},
+                {"key": "pic_detail_remark", "label": "PIC Note"},
+                {"key": "ms1_amount", "label": "MS1 Amount", "numeric": True, "money": True},
+            ],
+            "rows": frappe.db.sql(
+                f"""
+                SELECT pd.poid, pd.po_no, pd.project_code, pd.site_code,
+                       pd.pic_status,
+                       pd.isdp_ibuy_owner,
+                       pd.im_rejection_remark,
+                       pd.pic_detail_remark,
+                       pd.ms1_amount
+                {_PIC_FROM_JOIN}
+                WHERE pd.pic_status IN ('I-BUY Rejected', 'ISDP Rejected')
+                  AND IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+                  {project_clause}
+                ORDER BY pd.modified DESC
+                LIMIT 2000
+                """,
+                tuple(project_params),
+                as_dict=True,
+            ),
+        }
+
+    frappe.throw(f"Unknown report kind: {kind}")
 
 
 @frappe.whitelist()
