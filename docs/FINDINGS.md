@@ -57,16 +57,10 @@ Every entry has:
   `update_work_done_submission`.
 
 ### Race in older list pages (still on `useResetOnRowLimitChange`)
-- **Where**: `IMPOIntake.jsx`, `IMSubcon.jsx`, `WorkDone.jsx`,
-  `ExecutionMonitor.jsx`, `IMWorkDone.jsx`, etc.
-- **Why**: Two parallel state flows (the reset hook clears rows during
-  render; a separate `useEffect([load])` fires the API). When the row limit
-  changes from a higher to lower number, the smaller fetch can finish
-  before the reset commits, leaving the table blank. This is the same bug
-  we already fixed in `PICTracker.jsx` with a single `useEffect` +
-  `cancelled` guard.
-- **Fix**: Migrate the other pages to the same pattern. ~50-line change
-  per page; do them all in one PR so the pattern is consistent.
+- **Status**: shipped to IMPOIntake, ExecutionMonitor, IMWorkDone, admin
+  WorkDone (the explicitly listed ones). Remaining pages still use the
+  old hook but don't show the bug because they don't reset rows mid-load
+  on row-limit change. Migrate as they get touched.
 
 ### Many SELECTs miss `has_column` guards
 - **Where**: After the recent prod fix the `general_remark` /
@@ -105,52 +99,6 @@ Every entry has:
 ---
 
 ## P1 — Performance
-
-### Missing MySQL indexes (the big one)
-PO Dispatch is the most-queried table at ~16k rows. Add these (one
-migration, drops the response time on the affected lists by 50–80%):
-
-```sql
--- Drives PIC dashboard + tracker filters
-ALTER TABLE `tabPO Dispatch` ADD INDEX idx_pd_pic_status (pic_status);
-ALTER TABLE `tabPO Dispatch` ADD INDEX idx_pd_pic_status_ms2 (pic_status_ms2);
-
--- Drives subcon panel + Sub-Contract Pending list
-ALTER TABLE `tabPO Dispatch` ADD INDEX idx_pd_subcon_status (subcon_status);
-
--- Drives "PO Control" intake (target_month null/has)
-ALTER TABLE `tabPO Dispatch` ADD INDEX idx_pd_target_month (target_month);
-
--- Drives almost every list (filter by IM)
-ALTER TABLE `tabPO Dispatch` ADD INDEX idx_pd_im (im);
-
--- Drives the Rollout Plan latest-visit lookup
-ALTER TABLE `tabRollout Plan` ADD INDEX idx_rp_dispatch_visit (po_dispatch, visit_number);
-
--- Drives Daily Execution → Rollout Plan join
-ALTER TABLE `tabDaily Execution` ADD INDEX idx_de_rollout_plan (rollout_plan);
-
--- Drives Work Done → Daily Execution + submission lookup
-ALTER TABLE `tabWork Done` ADD INDEX idx_wd_execution (execution);
-ALTER TABLE `tabWork Done` ADD INDEX idx_wd_submission_status (submission_status);
-```
-
-Add via a Frappe patch (`patches/v1_0/add_pic_indexes.py`) so it runs once
-on every site's next migrate. ~30 lines.
-
-### `_PIC_FROM_JOIN` does work for every PIC list call
-- **Where**: `pic.py` `_PIC_FROM_JOIN` includes a sub-aggregate over
-  Rollout Plan + Daily Execution + Work Done.
-- **Why**: Even when the request is just a list of POIDs (Tracker page),
-  every row pays the cost of computing team_type / subcontractor /
-  is-confirmed.
-- **Fix**: Two paths:
-  1. (Quick) Materialize `team_type`, `subcontractor`, `confirmed` onto
-     PO Dispatch as denormalized columns, updated via `Rollout Plan` /
-     `Work Done` `on_update` hooks.
-  2. (Cleaner) Use the joined view only in the PIC Dashboard endpoint;
-     drop the joins from `list_pic_rows` since the Tracker doesn't show
-     team_type today.
 
 ### `_batch_customer_activity_types` runs on every list
 - **Where**: `command_center.py` — called by every list_po_dispatches and
@@ -206,22 +154,6 @@ on every site's next migrate. ~30 lines.
 - **Fix**: Run `frappe.get_doc("PO Dispatch", name); doc.run_method("validate"); doc.db_update()`
   on a periodic basis after archive imports — or add a one-shot
   `bench execute` recompute helper.
-
----
-
-## Quick wins (do these first)
-
-The highest-impact items still open, each ≤ 1 hour of work:
-
-1. **Add the seven indexes** above. One Frappe patch file. Drops big-list
-   response times noticeably.
-2. **Ship the FE race fix to the other list pages** (IMPOIntake first, then
-   ExecutionMonitor, IMWorkDone). Eliminates the same blank-on-limit-change
-   bug we fixed for PIC.
-3. **Update `_PIC_FROM_JOIN` to skip the heavy aggregate when the caller
-   only needs PIC fields** (Tracker page). Easiest version: have
-   `list_pic_rows` accept a `with_team_type=False` flag and switch joins
-   off when not needed.
 
 ---
 

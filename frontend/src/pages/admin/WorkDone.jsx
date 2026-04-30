@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
@@ -134,33 +134,37 @@ export default function WorkDone() {
     }
   }
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
+  const loadData = useCallback(() => setRefreshKey((k) => k + 1), []);
 
-  const loadData = useCallback(async () => {
+  // Single useEffect with cancellation guard. Replaces the older
+  // useResetOnRowLimitChange + separate-load pattern that left the table
+  // blank when going from a higher to a lower row limit.
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    try {
-      const filters = {};
-      if (billingFilter.length) filters.billing_status = billingFilter;
-      if (teamFilter.length) filters.team = teamFilter;
-      if (projectFilter.length) filters.project_code = projectFilter;
-      if (duidFilter.length) filters.site_code = duidFilter;
-      if (fromDate) filters.from_date = fromDate;
-      if (toDate) filters.to_date = toDate;
-      if (search.trim()) filters.search = search.trim();
-      const list = await pmApi.listWorkDoneRows(filters, rowLimit);
-      setRows(Array.isArray(list) ? list : []);
-    } catch (err) {
-      setError(err.message || "Failed to load work done data");
-    } finally {
-      setLoading(false);
-    }
-  }, [rowLimit, search, billingFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate]);
-
-  useEffect(() => { loadData(); }, [loadData]);
+    (async () => {
+      try {
+        const filters = {};
+        if (billingFilter.length) filters.billing_status = billingFilter;
+        if (teamFilter.length) filters.team = teamFilter;
+        if (projectFilter.length) filters.project_code = projectFilter;
+        if (duidFilter.length) filters.site_code = duidFilter;
+        if (fromDate) filters.from_date = fromDate;
+        if (toDate) filters.to_date = toDate;
+        if (search.trim()) filters.search = search.trim();
+        const list = await pmApi.listWorkDoneRows(filters, rowLimit);
+        if (cancelled) return;
+        setRows(Array.isArray(list) ? list : []);
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Failed to load work done data");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rowLimit, search, billingFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
 
   const hasFilters = !!(search || billingFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.

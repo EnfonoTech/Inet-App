@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -180,47 +180,49 @@ export default function ExecutionMonitor() {
     }
   }
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
+  const loadData = useCallback(() => setRefreshKey((k) => k + 1), []);
 
-  const loadData = useCallback(async () => {
+  // Single useEffect with cancellation guard. Replaces the older
+  // useResetOnRowLimitChange + separate-load pattern that left the table
+  // blank when going from a higher to a lower row limit.
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    try {
-      const filters = {};
-      if (planStatusFilter.length) filters.status = planStatusFilter;
-      if (executionStatusFilter.length) filters.execution_status = executionStatusFilter;
-      if (visitFilter.length) filters.visit_type = visitFilter;
-      if (teamFilter.length) filters.team = teamFilter;
-      if (projectFilter.length) filters.project_code = projectFilter;
-      if (duidFilter.length) filters.site_code = duidFilter;
-      if (fromDate) filters.from_date = fromDate;
-      if (toDate) filters.to_date = toDate;
-      if (search.trim()) filters.search = search.trim();
-      const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
-      setRows(Array.isArray(list) ? list : []);
-      setLastRefresh(new Date());
-    } catch (err) {
-      setError(err.message || "Failed to load execution data");
-    } finally {
-      setLoading(false);
-    }
-  }, [rowLimit, search, planStatusFilter, executionStatusFilter, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate]);
-
-  useEffect(() => {
-    loadData();
+    (async () => {
+      try {
+        const filters = {};
+        if (planStatusFilter.length) filters.status = planStatusFilter;
+        if (executionStatusFilter.length) filters.execution_status = executionStatusFilter;
+        if (visitFilter.length) filters.visit_type = visitFilter;
+        if (teamFilter.length) filters.team = teamFilter;
+        if (projectFilter.length) filters.project_code = projectFilter;
+        if (duidFilter.length) filters.site_code = duidFilter;
+        if (fromDate) filters.from_date = fromDate;
+        if (toDate) filters.to_date = toDate;
+        if (search.trim()) filters.search = search.trim();
+        const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
+        if (cancelled) return;
+        setRows(Array.isArray(list) ? list : []);
+        setLastRefresh(new Date());
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Failed to load execution data");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
     // Auto-refresh removed — the page reloads only when filters change or
     // when the user clicks Refresh. Avoids surprising re-fetches on long
     // edit sessions. Keep intervalRef cleanup for safety on remount.
     return () => {
+      cancelled = true;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     };
-  }, [loadData]);
+  }, [rowLimit, search, planStatusFilter, executionStatusFilter, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey]);
 
   function formatTime(d) {
     if (!d) return "";

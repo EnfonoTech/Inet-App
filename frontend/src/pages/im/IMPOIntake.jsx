@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -62,52 +62,49 @@ export default function IMPOIntake() {
   const [subconBusy, setSubconBusy] = useState(false);
   const [subconError, setSubconError] = useState(null);
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
+  const load = useCallback(() => setRefreshKey((k) => k + 1), []);
 
-  const load = useCallback(async () => {
+  // One useEffect, one fetch, scoped cancellation. Replaces the older
+  // useResetOnRowLimitChange + separate-load pattern that left the table
+  // blank when going from a higher to a lower row limit (the smaller fetch
+  // could finish before the reset commits).
+  useEffect(() => {
+    if (!imName) { setRows([]); setLoading(false); return; }
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    try {
-      if (!imName) {
-        setRows([]);
-        setLoading(false);
-        return;
+    (async () => {
+      try {
+        const TERMINAL_STATUSES = [
+          "Sub-Contracted", "Closed", "Cancelled", "Cancelled (in System)", "Completed",
+        ];
+        const filters = [
+          ["im", "=", imName],
+          ["dispatch_status", "not in", TERMINAL_STATUSES],
+        ];
+        const portal = { has_target_month: "no" };
+        if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
+        if (projectFilter.length) portal.project_code = projectFilter;
+        if (duidFilter.length) portal.site_code = duidFilter;
+        const res = await pmApi.listPODispatches(filters, rowLimit, portal);
+        if (cancelled) return;
+        const arr = Array.isArray(res) ? res : [];
+        // Server-side filter is the primary; this client-side guard catches
+        // anything that slips through (e.g. an older bundle on the server).
+        const TERMINAL = new Set(TERMINAL_STATUSES);
+        const visible = arr.filter((r) => !TERMINAL.has(r.dispatch_status || ""));
+        setRows(visible);
+        setSelected(new Set());
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Failed to load PO intake");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      const TERMINAL_STATUSES = [
-        "Sub-Contracted",
-        "Closed",
-        "Cancelled",
-        "Cancelled (in System)",
-        "Completed",
-      ];
-      const filters = [
-        ["im", "=", imName],
-        ["dispatch_status", "not in", TERMINAL_STATUSES],
-      ];
-      const portal = { has_target_month: "no" };
-      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-      if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
-      if (projectFilter.length) portal.project_code = projectFilter;
-      if (duidFilter.length) portal.site_code = duidFilter;
-      const res = await pmApi.listPODispatches(filters, rowLimit, portal);
-      const arr = Array.isArray(res) ? res : [];
-      // Server-side filter is the primary; this client-side guard catches
-      // anything that slips through (e.g. an older bundle on the server).
-      const TERMINAL = new Set(TERMINAL_STATUSES);
-      const visible = arr.filter((r) => !TERMINAL.has(r.dispatch_status || ""));
-      setRows(visible);
-      setSelected(new Set());
-    } catch (err) {
-      setError(err.message || "Failed to load PO intake");
-    } finally {
-      setLoading(false);
-    }
-  }, [imName, rowLimit, searchDebounced, modeFilter, projectFilter, duidFilter]);
-
-  useEffect(() => { load(); }, [load]);
+    })();
+    return () => { cancelled = true; };
+  }, [imName, rowLimit, searchDebounced, modeFilter, projectFilter, duidFilter, refreshKey]);
 
   useEffect(() => {
     let cancelled = false;

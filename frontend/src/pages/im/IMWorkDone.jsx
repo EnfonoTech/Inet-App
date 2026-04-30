@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -109,31 +109,35 @@ export default function IMWorkDone() {
     }
   }
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
+  const loadData = () => setRefreshKey((k) => k + 1);
 
-  async function loadData() {
+  // Single useEffect with cancellation guard. Replaces the older
+  // useResetOnRowLimitChange + separate-load pattern that left the table
+  // blank when going from a higher to a lower row limit.
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    try {
-      const filters = { im: imName || "" };
-      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
-      if (billingFilter.length) filters.billing_status = billingFilter;
-      if (projectFilter.length) filters.project_code = projectFilter;
-      if (duidFilter.length) filters.site_code = duidFilter;
-      if (fromDate) filters.from_date = fromDate;
-      if (toDate) filters.to_date = toDate;
-      const list = await pmApi.listWorkDoneRows(filters, rowLimit);
-      setRows(Array.isArray(list) ? list : []);
-    } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { loadData(); }, [imName, rowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate]);
+    (async () => {
+      try {
+        const filters = { im: imName || "" };
+        if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        if (billingFilter.length) filters.billing_status = billingFilter;
+        if (projectFilter.length) filters.project_code = projectFilter;
+        if (duidFilter.length) filters.site_code = duidFilter;
+        if (fromDate) filters.from_date = fromDate;
+        if (toDate) filters.to_date = toDate;
+        const list = await pmApi.listWorkDoneRows(filters, rowLimit);
+        if (cancelled) return;
+        setRows(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, rowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
 
   const filteredRows = useMemo(() => rows.filter((r) => {
     if (submissionFilter.length) {
