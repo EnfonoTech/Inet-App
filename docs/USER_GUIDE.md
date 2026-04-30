@@ -153,14 +153,14 @@ IM users use **`/pms/im-dispatch`** for the IM-scoped dispatch UI.
 ### 2.6 Rollout Planning (`/pms/planning`)
 
 1. Select dispatched lines.
-2. Set **plan date** and **visit type** (e.g. Work Done, Re-Visit, Extra Visit).
+2. Set **plan date** and **visit type** (e.g. Execution, Re-Visit, Extra Visit).
 3. **Create plans** → **Rollout Plan** records; visit multipliers come from **Visit Multiplier Master** where applicable.
 
 **Visit types (typical multipliers)**
 
 | Type | Multiplier | Use |
 |------|------------|-----|
-| Work Done | 1.0× | First execution visit |
+| Execution | 1.0× | First execution visit |
 | Re-Visit | 0.5× | Rework / return |
 | Extra Visit | 1.5× | Extra mobilisation |
 

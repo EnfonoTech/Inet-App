@@ -3,8 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-
 function greeting() {
   const h = new Date().getHours();
   if (h < 12) return "Good morning";
@@ -101,12 +99,6 @@ function SummaryChips({ plans }) {
 }
 
 function WorkCard({ plan, onClick }) {
-  // ``target_amount`` / ``achieved_amount`` are SAR (revenue), not qty —
-  // the label below spells out the unit so field users (who think in qty)
-  // don't read "Progress 0/525" as 0 of 525 jobs.
-  const target = plan.target_amount || plan.target || 0;
-  const achieved = plan.achieved_amount || plan.achieved || 0;
-  const pct = target > 0 ? Math.min(100, Math.round((achieved / target) * 100)) : null;
   const accentColor = cardAccentColor(plan.plan_status);
   const isActive = ["in-execution", "in-progress"].includes((plan.plan_status || "").toLowerCase());
   const imConfirmed = plan.execution_status === "Completed";
@@ -193,36 +185,6 @@ function WorkCard({ plan, onClick }) {
           </div>
         )}
       </div>
-
-      {target > 0 && (
-        <div className="work-card-progress">
-          <div className="work-card-progress-labels">
-            <span className="progress-label-text">Revenue (SAR)</span>
-            <span className="progress-label-stats">
-              <span style={{ fontWeight: 700, color: "var(--text)" }}>{fmt.format(achieved)}</span>
-              <span style={{ color: "var(--text-muted)" }}> / {fmt.format(target)}</span>
-              {pct !== null && (
-                <span
-                  className="progress-pct-badge"
-                  style={{
-                    background: pct >= 100 ? "var(--green-bg)" : "var(--blue-bg)",
-                    color: pct >= 100 ? "var(--green)" : "var(--blue)",
-                    border: `1px solid ${pct >= 100 ? "var(--green-border)" : "var(--blue-border)"}`,
-                  }}
-                >
-                  {pct}%
-                </span>
-              )}
-            </span>
-          </div>
-          <div className="progress-bar" style={{ marginTop: 6 }}>
-            <div
-              className={`progress-bar-fill ${pct >= 100 ? "green" : "blue"}`}
-              style={{ width: `${pct ?? 0}%` }}
-            />
-          </div>
-        </div>
-      )}
 
       <div className="work-card-footer">
         <span className="work-card-cta">

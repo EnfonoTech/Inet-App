@@ -7,3 +7,4 @@ inet_app.patches.migrate_inet_team_member_employee
 # Patches added in this section will be executed after doctypes are migrated
 inet_app.patches.migrate_im_to_master
 inet_app.patches.v1_0.add_pic_indexes
+inet_app.patches.v1_0.rename_visit_type_work_done_to_execution

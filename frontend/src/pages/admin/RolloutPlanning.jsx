@@ -117,7 +117,7 @@ export default function RolloutPlanning() {
   const [accessPeriod, setAccessPeriod] = useState("");
   const [teamsList, setTeamsList] = useState([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
-  const [visitType, setVisitType] = useState("Work Done");
+  const [visitType, setVisitType] = useState("Execution");
   const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
   const [createError, setCreateError] = useState(null);

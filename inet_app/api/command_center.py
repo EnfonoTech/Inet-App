@@ -2973,7 +2973,7 @@ def create_rollout_plans(payload):
         "team": "TEAM-001",  # required INET Team name (IM chooses at planning; stored on Rollout Plan only)
         "access_time": "",  # optional
         "access_period": "Day" | "Night" | "",  # optional
-        "visit_type": "Work Done",
+        "visit_type": "Execution",
     }
 
     Returns
@@ -6678,7 +6678,10 @@ def _build_rollout_by_duid_groups(dispatches, plans, executions, work_done):
     for p in plans:
         key = duid_for_plan_name(p.name)
         g = ensure_group(key)
-        vt = (p.get("visit_type") or "Work Done").strip()
+        # Default the visit-type bucket to the new "Execution" label;
+        # legacy plans stored as "Work Done" still bucket here too because
+        # the test below only routes "Re-Visit" / "Extra Visit" elsewhere.
+        vt = (p.get("visit_type") or "Execution").strip()
         if vt in additional_visit_types:
             g["additional_activities"].append(p)
         else:

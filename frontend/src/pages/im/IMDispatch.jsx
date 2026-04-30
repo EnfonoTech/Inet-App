@@ -176,7 +176,7 @@ export default function IMDispatch() {
   const [accessPeriod, setAccessPeriod] = useState("");
   const [teamsList, setTeamsList] = useState([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
-  const [visitType, setVisitType] = useState("Work Done");
+  const [visitType, setVisitType] = useState("Execution");
   const [managerRemark, setManagerRemark] = useState("");
   const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
