@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_import": 1,
  "autoname": "field:subcontractor_name",
  "creation": "2026-04-04 00:00:00",
  "doctype": "DocType",
@@ -73,7 +74,7 @@
   }
  ],
  "links": [],
- "modified": "2026-04-10 12:50:43.037161",
+ "modified": "2026-04-30 09:36:43.833414",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "Subcontractor Master",
