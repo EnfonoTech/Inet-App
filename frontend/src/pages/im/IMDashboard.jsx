@@ -169,12 +169,22 @@ export default function IMDashboard() {
     setError(null);
     setLoading(true);
     try {
-      const result = await pmApi.getIMDashboard(imName, { from_date: r.from, to_date: r.to });
-      setData(result);
-      // Server returns last_updated as a naive string in server-local time
-      // (typically UTC), which the browser then misreads as the user's local
-      // time and ends up off by the timezone offset (the "Updated 3h ago"
-      // bug). The client's own clock is the truthful "freshness" anchor.
+      const result = await pmApi.getIMDashboard(imName, {
+        from_date: r.from,
+        to_date: r.to,
+        etag: data?.etag || "",
+      });
+      // Short-circuit: if the server says nothing has changed, keep the
+      // existing payload and just refresh fetchedAt + last_updated.
+      if (result && result.unchanged) {
+        setData((prev) => (prev ? { ...prev, last_updated: result.last_updated } : prev));
+      } else {
+        setData(result);
+      }
+      // last_updated is now an offset-aware ISO string, but we still anchor
+      // "Updated Xm ago" to the client clock — it measures "how stale is what
+      // I'm looking at right now," which is a property of this client, not
+      // the server.
       setFetchedAt(new Date());
     } catch (err) {
       setError(err.message || "Failed to load dashboard");

@@ -292,7 +292,12 @@ export default function IMReports() {
 
           {payload.last_updated && (
             <p style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: 20 }}>
-              Last updated: {String(payload.last_updated)}
+              Last updated: {(() => {
+                const d = new Date(String(payload.last_updated).replace(" ", "T"));
+                return Number.isNaN(d.getTime())
+                  ? String(payload.last_updated)
+                  : d.toLocaleString();
+              })()}
             </p>
           )}
         </div>

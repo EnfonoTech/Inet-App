@@ -90,8 +90,19 @@ export default function CommandDashboard() {
   async function fetchData(r = range) {
     try {
       setFetchError(null);
-      const res = await pmApi.getCommandDashboard({ from_date: r.from, to_date: r.to });
-      setData(res);
+      const res = await pmApi.getCommandDashboard({
+        from_date: r.from,
+        to_date: r.to,
+        etag: data?.etag || "",
+      });
+      // Server short-circuits with {unchanged: true} when underlying data
+      // hasn't moved since our last poll — keep current state, just bump
+      // last_updated so the timestamp UI doesn't lie.
+      if (res && res.unchanged) {
+        setData((prev) => (prev ? { ...prev, last_updated: res.last_updated } : prev));
+      } else {
+        setData(res);
+      }
     } catch (err) {
       console.error("Command Dashboard fetch error:", err);
       setFetchError(err.message || "Failed to load dashboard");

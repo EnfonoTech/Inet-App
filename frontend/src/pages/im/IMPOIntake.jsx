@@ -76,7 +76,17 @@ export default function IMPOIntake() {
         setLoading(false);
         return;
       }
-      const filters = [["im", "=", imName]];
+      const TERMINAL_STATUSES = [
+        "Sub-Contracted",
+        "Closed",
+        "Cancelled",
+        "Cancelled (in System)",
+        "Completed",
+      ];
+      const filters = [
+        ["im", "=", imName],
+        ["dispatch_status", "not in", TERMINAL_STATUSES],
+      ];
       const portal = { has_target_month: "no" };
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
       if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
@@ -84,9 +94,9 @@ export default function IMPOIntake() {
       if (duidFilter.length) portal.site_code = duidFilter;
       const res = await pmApi.listPODispatches(filters, rowLimit, portal);
       const arr = Array.isArray(res) ? res : [];
-      // Subcon / Closed / Cancelled dispatches still have target_month=NULL,
-      // so they'd otherwise leak into this view — filter them out client-side.
-      const TERMINAL = new Set(["Sub-Contracted", "Closed", "Cancelled", "Completed"]);
+      // Server-side filter is the primary; this client-side guard catches
+      // anything that slips through (e.g. an older bundle on the server).
+      const TERMINAL = new Set(TERMINAL_STATUSES);
       const visible = arr.filter((r) => !TERMINAL.has(r.dispatch_status || ""));
       setRows(visible);
       setSelected(new Set());

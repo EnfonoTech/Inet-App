@@ -45,8 +45,15 @@ export default function PICDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await pmApi.getPicDashboard(range.from, range.to);
-      setData(res || null);
+      const res = await pmApi.getPicDashboard(range.from, range.to, data?.etag || "");
+      // Server short-circuits with {unchanged: true} when nothing in the
+      // backing tables changed since the last poll — keep current payload
+      // and just refresh the timestamp.
+      if (res && res.unchanged) {
+        setData((prev) => (prev ? { ...prev, last_updated: res.last_updated } : prev));
+      } else {
+        setData(res || null);
+      }
       setFetchedAt(new Date());
     } catch (err) {
       setError(err.message || "Failed to load PIC dashboard");

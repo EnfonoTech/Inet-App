@@ -119,9 +119,10 @@
   },
   {
    "fieldname": "item_code",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Item Code"
+   "label": "Item Code",
+   "options": "Item"
   },
   {
    "fieldname": "item_description",
@@ -168,8 +169,9 @@
   },
   {
    "fieldname": "customer",
-   "fieldtype": "Data",
-   "label": "Customer"
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
   },
   {
    "fieldname": "im",

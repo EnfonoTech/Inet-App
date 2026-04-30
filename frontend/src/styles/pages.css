@@ -798,6 +798,21 @@
   background: #fef2f2;
 }
 
+/* Sort indicator on the active column header — mirrors the Sort panel's
+   choice so the user can see at a glance which column is sorting. */
+.data-table thead th.is-sorted-asc,
+.data-table thead th.is-sorted-desc {
+  background: linear-gradient(0deg, rgba(56, 132, 255, 0.06), transparent);
+  color: #1d4ed8;
+}
+.data-table thead th .tablepro-header-sort-arrow {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 0.85em;
+  color: #2563eb;
+  font-weight: 600;
+}
+
 .tablepro-panel {
   position: absolute;
   top: calc(100% + 6px);

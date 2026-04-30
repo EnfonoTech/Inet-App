@@ -193,8 +193,8 @@ export const pmApi = {
 
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
-  getCommandDashboard:  (args = {})  => call("inet_app.api.command_center.get_command_dashboard", args),
-  getIMDashboard:       (im, args = {}) => call("inet_app.api.command_center.get_im_dashboard", { im, ...args }),
+  getCommandDashboard:  (args = {})  => call("inet_app.api.command_center.get_command_dashboard", { ...args, etag: args?.etag || "" }),
+  getIMDashboard:       (im, args = {}) => call("inet_app.api.command_center.get_im_dashboard", { im, ...args, etag: args?.etag || "" }),
   getIMReports:         ()          => call("inet_app.api.command_center.get_im_reports"),
   listIMRolloutPlans:   (im, planStatus, limit, portalFilters) => {
     const args = {
@@ -442,9 +442,10 @@ export const pmApi = {
     milestone: milestone || "MS1",
     remark: remark || "",
   }),
-  getPicDashboard: (from_date, to_date) => call("inet_app.api.pic.get_pic_dashboard", {
+  getPicDashboard: (from_date, to_date, etag) => call("inet_app.api.pic.get_pic_dashboard", {
     from_date: from_date || "",
     to_date: to_date || "",
+    etag: etag || "",
   }),
   getPicReport: (kind, params) => call("inet_app.api.pic.get_pic_report", {
     kind: kind || "pipeline",

@@ -29,6 +29,66 @@ from frappe.utils import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _dashboard_etag(*discriminators):
+    """Cheap version tag for dashboard payloads.
+
+    Reads ``MAX(modified)`` from the three tables that any dashboard pulls
+    from (PO Dispatch, Daily Execution, Work Done), plus the caller's
+    discriminators (user, im, date range). Hashed to a short opaque token.
+
+    Used for an If-None-Match-style short-circuit: if the FE passes the
+    same token it had last time, the endpoint returns a tiny ``unchanged``
+    payload instead of regenerating 5–15kB of JSON.
+    """
+    import hashlib
+    try:
+        rows = frappe.db.sql(
+            """
+            SELECT
+              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabPO Dispatch`)    AS pd,
+              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabDaily Execution`) AS de,
+              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabWork Done`)       AS wd
+            """,
+            as_dict=True,
+        )
+        row = rows[0] if rows else {}
+    except Exception:
+        row = {}
+    parts = [
+        str(row.get("pd") or 0),
+        str(row.get("de") or 0),
+        str(row.get("wd") or 0),
+    ]
+    for d in discriminators:
+        parts.append("" if d is None else str(d))
+    h = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+    return h[:16]
+
+
+def _iso_now():
+    """Return current time as ISO-8601 with the site timezone offset.
+
+    `frappe.utils.now()` returns a naive string in the site timezone with no
+    offset, so a browser in a different timezone parses it as its own local
+    time and the displayed "last updated" drifts by the offset. Emitting an
+    offset-aware string makes the FE's `new Date(s)` parse to the correct
+    instant regardless of browser timezone.
+    """
+    tz_name = frappe.utils.get_system_timezone() or "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        try:
+            import pytz
+            tz = pytz.timezone(tz_name)
+        except Exception:
+            import datetime as _dt
+            return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+    import datetime as _dt
+    return _dt.datetime.now(tz).isoformat(timespec="seconds")
+
+
 def _parse_rows(rows):
     """Accept a JSON string or a Python list/dict and always return a list."""
     if isinstance(rows, str):
@@ -4786,7 +4846,7 @@ def _days_in_month(today=None):
 
 
 @frappe.whitelist()
-def get_command_dashboard(from_date=None, to_date=None):
+def get_command_dashboard(from_date=None, to_date=None, etag=None):
     """
     Return ALL data for the admin Command Dashboard in a single API call.
 
@@ -4794,7 +4854,14 @@ def get_command_dashboard(from_date=None, to_date=None):
     month window for date-scoped metrics (closed activities, revenue, cost,
     team activity, etc.). Strategic targets still use the running-month
     baseline so the pro-rated "target today" calc stays meaningful.
+
+    If the caller passes the ``etag`` it last received, and nothing in the
+    underlying tables has changed since, returns a small ``{"unchanged":
+    True, "etag": ...}`` payload so polling clients save a full re-render.
     """
+    current_etag = _dashboard_etag("cmd", from_date, to_date)
+    if etag and etag == current_etag:
+        return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
     today_str = nowdate()
     today = getdate(today_str)
     first_day, last_day, _ = _month_bounds()
@@ -5136,7 +5203,8 @@ def get_command_dashboard(from_date=None, to_date=None):
         "im_performance": im_perf,
         "team_status": team_status,
         "watchlist": watchlist,
-        "last_updated": frappe.utils.now(),
+        "last_updated": _iso_now(),
+        "etag": current_etag,
     }
 
 
@@ -5677,7 +5745,7 @@ def backfill_rollout_and_execution_im():
 
 
 @frappe.whitelist()
-def get_im_dashboard(im=None, from_date=None, to_date=None):
+def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     """
     Filtered dashboard for a single IM.
     Resolves the IM Master record name in multiple ways so mismatched
@@ -5685,7 +5753,13 @@ def get_im_dashboard(im=None, from_date=None, to_date=None):
 
     Optional ``from_date`` / ``to_date`` (ISO YYYY-MM-DD) override the
     default month window for date-scoped metrics.
+
+    If the caller passes an ``etag`` matching the current data version,
+    short-circuits with ``{"unchanged": True, "etag": ...}``.
     """
+    current_etag = _dashboard_etag("im", im or "", from_date, to_date)
+    if etag and etag == current_etag:
+        return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
         return {
@@ -5695,6 +5769,8 @@ def get_im_dashboard(im=None, from_date=None, to_date=None):
             "kpi": {},
             "action_items": {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0},
             "debug": {"error": "Could not resolve IM from session or parameter"},
+            "etag": current_etag,
+            "last_updated": _iso_now(),
         }
 
     im = im_resolved
@@ -5756,7 +5832,8 @@ def get_im_dashboard(im=None, from_date=None, to_date=None):
                 f"In INET Team master set 'Implementation Manager' to one of those values."
             ),
             "debug": debug_info,
-            "last_updated": frappe.utils.now(),
+            "last_updated": _iso_now(),
+            "etag": current_etag,
         }
 
     placeholders = ", ".join(["%s"] * len(team_ids))
@@ -6083,7 +6160,8 @@ def get_im_dashboard(im=None, from_date=None, to_date=None):
             "planned_activities": planned_activities,
         },
         "debug": debug_info,
-        "last_updated": frappe.utils.now(),
+        "last_updated": _iso_now(),
+        "etag": current_etag,
     }
 
 
@@ -6255,7 +6333,7 @@ def get_im_reports():
 
     return {
         "im": im_resolved,
-        "last_updated": frappe.utils.now(),
+        "last_updated": _iso_now(),
         "period": {"from": first_day, "to": last_day},
         "dispatch_summary": {
             "total_lines": total_lines,
@@ -6293,7 +6371,7 @@ def get_field_team_dashboard(team_id=None):
     today_str = nowdate()
 
     if not team_id:
-        return {"team": None, "today": today_str, "planned": [], "last_updated": frappe.utils.now()}
+        return {"team": None, "today": today_str, "planned": [], "last_updated": _iso_now()}
 
     # Rollout Plans for this team today
     plans = frappe.db.sql(
@@ -6316,7 +6394,7 @@ def get_field_team_dashboard(team_id=None):
             "team": team_id,
             "today": today_str,
             "planned": [],
-            "last_updated": frappe.utils.now(),
+            "last_updated": _iso_now(),
         }
 
     dispatch_names = [p.po_dispatch for p in plans if p.po_dispatch]
@@ -6366,7 +6444,7 @@ def get_field_team_dashboard(team_id=None):
         "team": team_id,
         "today": today_str,
         "planned": enriched,
-        "last_updated": frappe.utils.now(),
+        "last_updated": _iso_now(),
     }
 
 

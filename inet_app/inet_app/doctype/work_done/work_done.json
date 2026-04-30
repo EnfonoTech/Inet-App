@@ -25,8 +25,9 @@
  "fields": [
   {
    "fieldname": "system_id",
-   "fieldtype": "Data",
-   "label": "System ID"
+   "fieldtype": "Link",
+   "label": "System ID",
+   "options": "PO Dispatch"
   },
   {
    "fieldname": "execution",
@@ -45,9 +46,10 @@
   },
   {
    "fieldname": "item_code",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Item Code"
+   "label": "Item Code",
+   "options": "Item"
   },
   {
    "fieldname": "executed_qty",

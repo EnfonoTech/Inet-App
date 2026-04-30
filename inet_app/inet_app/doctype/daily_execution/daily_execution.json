@@ -28,8 +28,9 @@
  "fields": [
   {
    "fieldname": "system_id",
-   "fieldtype": "Data",
-   "label": "System ID"
+   "fieldtype": "Link",
+   "label": "System ID",
+   "options": "PO Dispatch"
   },
   {
    "fieldname": "rollout_plan",

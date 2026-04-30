@@ -10,7 +10,9 @@ import frappe
 from frappe.utils import cint, flt, getdate, nowdate
 
 from inet_app.api.command_center import (
+    _dashboard_etag,
     _ensure_list,
+    _iso_now,
     _portal_filters_dict,
     _portal_row_limit,
     _sql_in_or_eq,
@@ -257,6 +259,47 @@ def update_pic_row(po_dispatch, fields):
     }
 
 
+def _write_pic_activity_log(action, milestone, field_changed, new_value, updated, old_values, remark=None):
+    """Persist one PIC Activity Log row per touched PO Dispatch.
+
+    The whole batch shares a single ``batch_id`` and ``row_count`` so a
+    reviewer can group/sort by batch and see "this user flipped 47 rows in
+    one click at HH:MM."
+    """
+    if not updated:
+        return
+    try:
+        batch_id = frappe.generate_hash(length=10)
+        performed_at = frappe.utils.now_datetime()
+        user = frappe.session.user
+        full_name = (
+            frappe.db.get_value("User", user, "full_name") if user else None
+        ) or user or "Guest"
+        row_count = len(updated)
+        for entry in updated:
+            doc = frappe.get_doc({
+                "doctype": "PIC Activity Log",
+                "action": action,
+                "po_dispatch": entry.get("po_dispatch"),
+                "milestone": milestone,
+                "field_changed": field_changed,
+                "old_value": frappe.utils.cstr(old_values.get(entry.get("po_dispatch"), "") or ""),
+                "new_value": frappe.utils.cstr(new_value or ""),
+                "user": user,
+                "user_full_name": full_name,
+                "performed_at": performed_at,
+                "batch_id": batch_id,
+                "row_count": row_count,
+                "remark": (str(remark)[:1000] if remark else None),
+            })
+            doc.flags.ignore_permissions = True
+            doc.insert(ignore_permissions=True)
+    except Exception:
+        # Audit-trail writes must never block the user's primary action.
+        # Surfaced in error log; the bulk update itself already committed.
+        frappe.log_error(frappe.get_traceback(), "PIC Activity Log write failed")
+
+
 @frappe.whitelist()
 def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=None):
     """Set ``pic_status`` (MS1) or ``pic_status_ms2`` (MS2) on N rows at once."""
@@ -279,6 +322,19 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
         status_field = "pic_status"
         remark_field = "pic_detail_remark"
 
+    # Snapshot old values up front so the audit log can record before/after.
+    names_to_check = [str(n or "").strip() for n in po_dispatches]
+    names_to_check = [n for n in names_to_check if n]
+    old_values = {}
+    if names_to_check:
+        for row in frappe.db.sql(
+            f"SELECT name, `{status_field}` AS old_status "
+            f"FROM `tabPO Dispatch` WHERE name IN ({', '.join(['%s'] * len(names_to_check))})",
+            tuple(names_to_check),
+            as_dict=True,
+        ):
+            old_values[row["name"]] = row.get("old_status")
+
     updated = []
     errors = []
     for name in po_dispatches:
@@ -297,6 +353,17 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
         except Exception as e:
             errors.append({"po_dispatch": name, "error": frappe.utils.cstr(e)[:500]})
 
+    if updated:
+        _write_pic_activity_log(
+            action="Bulk Status Update",
+            milestone=milestone,
+            field_changed=status_field,
+            new_value=pic_status,
+            updated=updated,
+            old_values=old_values,
+            remark=remark,
+        )
+
     frappe.db.commit()
     return {
         "updated": updated,
@@ -312,7 +379,7 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
 
 
 @frappe.whitelist()
-def get_pic_dashboard(from_date=None, to_date=None):
+def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     """KPIs + bucket counts + monthly invoicing roll-up for the PIC dashboard.
 
     The date range scopes **time-series** panels only — monthly invoicing
@@ -321,8 +388,15 @@ def get_pic_dashboard(from_date=None, to_date=None):
     always show the full pipeline so they don't collapse to almost-empty
     when the user picks a date range that excludes the typical "Work Not
     Done" pile (those rows have no applied date yet).
+
+    If the caller passes ``etag`` matching the current data version,
+    short-circuits with ``{"unchanged": True, "etag": ...}``.
     """
     _pic_role_or_throw()
+
+    current_etag = _dashboard_etag("pic", from_date, to_date)
+    if etag and etag == current_etag:
+        return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
 
     fd = getdate(from_date) if from_date else None
     td = getdate(to_date) if to_date else None
@@ -482,6 +556,8 @@ def get_pic_dashboard(from_date=None, to_date=None):
         "pending_isdp": pending_isdp,
         "monthly": monthly,
         "inet_subcon": inet_subcon,
+        "etag": current_etag,
+        "last_updated": _iso_now(),
     }
 
 

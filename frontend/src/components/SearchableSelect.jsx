@@ -58,6 +58,19 @@ export default function SearchableSelect({
     });
   }, [normalized, tokens]);
 
+  // Cap rendered rows. With 5,000+ DUIDs the dropdown used to commit one DOM
+  // node per option, freezing scroll on lower-end machines. We render the
+  // first MAX_VISIBLE matches and tell the user to narrow their search if
+  // there's more. The full ``filtered`` list is still used by
+  // ``selectAllTokenMatches`` so a "select all that match these tokens"
+  // bulk action stays unaffected.
+  const MAX_VISIBLE = 200;
+  const visible = useMemo(
+    () => (filtered.length > MAX_VISIBLE ? filtered.slice(0, MAX_VISIBLE) : filtered),
+    [filtered],
+  );
+  const hiddenCount = filtered.length - visible.length;
+
   const currentLabel = useMemo(() => {
     if (!selectedIds.length) return "";
     if (!multi) {
@@ -131,7 +144,7 @@ export default function SearchableSelect({
   function onKeyDownInput(e) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIdx((i) => Math.min((i < 0 ? -1 : i) + 1, filtered.length - 1));
+      setActiveIdx((i) => Math.min((i < 0 ? -1 : i) + 1, visible.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActiveIdx((i) => Math.max(i - 1, 0));
@@ -139,11 +152,11 @@ export default function SearchableSelect({
       e.preventDefault();
       if (multi) {
         if (tokens.length > 1) selectAllTokenMatches();
-        else if (activeIdx >= 0 && filtered[activeIdx]) toggleMulti(filtered[activeIdx].id);
-        else if (filtered.length === 1) toggleMulti(filtered[0].id);
+        else if (activeIdx >= 0 && visible[activeIdx]) toggleMulti(visible[activeIdx].id);
+        else if (visible.length === 1) toggleMulti(visible[0].id);
       } else {
-        if (activeIdx >= 0 && filtered[activeIdx]) commitSingle(filtered[activeIdx].id);
-        else if (filtered.length === 1) commitSingle(filtered[0].id);
+        if (activeIdx >= 0 && visible[activeIdx]) commitSingle(visible[activeIdx].id);
+        else if (visible.length === 1) commitSingle(visible[0].id);
       }
     }
   }
@@ -293,44 +306,59 @@ export default function SearchableSelect({
                 No matches
               </div>
             ) : (
-              filtered.map((o, idx) => {
-                const selected = selectedIds.includes(o.id);
-                const active = idx === activeIdx;
-                return (
-                  <div
-                    key={o.id}
-                    data-idx={idx}
-                    onMouseEnter={() => setActiveIdx(idx)}
-                    onClick={() => (multi ? toggleMulti(o.id) : commitSingle(o.id))}
-                    style={{
-                      padding: "7px 12px",
-                      fontSize: "0.84rem",
-                      cursor: "pointer",
-                      background: selected ? "rgba(37,99,235,0.10)" : active ? "rgba(100,116,139,0.08)" : "transparent",
-                      color: selected ? "var(--primary, #2563eb)" : "var(--text, #1e293b)",
-                      fontWeight: selected ? 700 : 500,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                    title={o.label}
-                  >
-                    {multi && (
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => toggleMulti(o.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ margin: 0, cursor: "pointer" }}
-                      />
-                    )}
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{o.label}</span>
+              <>
+                {visible.map((o, idx) => {
+                  const selected = selectedIds.includes(o.id);
+                  const active = idx === activeIdx;
+                  return (
+                    <div
+                      key={o.id}
+                      data-idx={idx}
+                      onMouseEnter={() => setActiveIdx(idx)}
+                      onClick={() => (multi ? toggleMulti(o.id) : commitSingle(o.id))}
+                      style={{
+                        padding: "7px 12px",
+                        fontSize: "0.84rem",
+                        cursor: "pointer",
+                        background: selected ? "rgba(37,99,235,0.10)" : active ? "rgba(100,116,139,0.08)" : "transparent",
+                        color: selected ? "var(--primary, #2563eb)" : "var(--text, #1e293b)",
+                        fontWeight: selected ? 700 : 500,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                      title={o.label}
+                    >
+                      {multi && (
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleMulti(o.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ margin: 0, cursor: "pointer" }}
+                        />
+                      )}
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{o.label}</span>
+                    </div>
+                  );
+                })}
+                {hiddenCount > 0 && (
+                  <div style={{
+                    padding: "8px 12px",
+                    fontSize: "0.74rem",
+                    color: "#64748b",
+                    background: "#f8fafc",
+                    borderTop: "1px solid #f1f5f9",
+                    textAlign: "center",
+                  }}>
+                    {hiddenCount.toLocaleString()} more not shown — type to narrow
+                    {multi && tokens.length > 1 && " (use the “Add matches” button to bulk-select)"}
                   </div>
-                );
-              })
+                )}
+              </>
             )}
           </div>
         </div>

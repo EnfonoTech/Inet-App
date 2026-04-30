@@ -508,11 +508,36 @@ export default function DataTablePro() {
         };
 
         /**
+         * Mirror the active sort onto column headers — an arrow + active
+         * class so the user can see at a glance which column is sorting,
+         * without having to reopen the Sort panel.
+         */
+        const refreshHeaderSortIndicators = () => {
+          const headerCells = Array.from(table.querySelectorAll("thead tr:first-child > th"));
+          const activeKey = state.sort?.key || null;
+          const dir = state.sort?.dir === "desc" ? "desc" : "asc";
+          headerCells.forEach((th) => {
+            const k = th.dataset.colKey;
+            const old = th.querySelector(".tablepro-header-sort-arrow");
+            if (old) old.remove();
+            th.classList.remove("is-sorted-asc", "is-sorted-desc");
+            if (k && activeKey && k === activeKey) {
+              th.classList.add(dir === "asc" ? "is-sorted-asc" : "is-sorted-desc");
+              const arrow = document.createElement("span");
+              arrow.className = "tablepro-header-sort-arrow";
+              arrow.textContent = dir === "asc" ? " ↑" : " ↓";
+              th.appendChild(arrow);
+            }
+          });
+        };
+
+        /**
          * Reorder tbody rows by the chosen sort key + direction. Reads each
          * row's cell text content for that column (numeric-aware compare).
          * No-op when state.sort.key is null or the column isn't found.
          */
         const applySort = () => {
+          refreshHeaderSortIndicators();
           const key = state.sort?.key;
           if (!key) return;
           const tbody = table.querySelector("tbody");
