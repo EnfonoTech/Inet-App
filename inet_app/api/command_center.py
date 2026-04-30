@@ -3172,18 +3172,36 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
     """
     Keep Rollout Plan plan_status (and optional amounts) in sync with Daily Execution.
     Options: Planned, Planning with Issue, In Execution, Completed, Cancelled.
+
+    Two completion signals are honoured, in priority order:
+    1. ``execution_status`` — the IM's authoritative confirmation.
+    2. ``tl_status``        — the field team lead's "I'm done" flag, which
+       reaches the system before the IM has a chance to confirm.
+
+    Either one flipping to *Completed* moves the Rollout Plan to *Completed*
+    so the line surfaces in the field team's QC / CIAG queue immediately;
+    the IM's later confirmation only updates ``execution_status`` (read-only
+    on the field side). This removes the chicken-and-egg where the field
+    team marked work done but couldn't see it on the QC page until the IM
+    happened to flip a separate flag.
     """
     if not rollout_plan or not exec_doc:
         return
     st = exec_doc.execution_status
+    tls = getattr(exec_doc, "tl_status", None) or ""
+    # ``effective`` is the status that drives plan_status: prefer the IM's
+    # confirmed value, fall back to the team lead's signal.
+    effective = st or tls
     updates = {}
 
-    if st in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE:
+    if (st in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE) or (
+        not st and tls in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE
+    ):
         cur = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
         if cur == "Planned":
             updates["plan_status"] = "In Execution"
 
-    elif st == "Completed":
+    elif effective == "Completed":
         qc = str(getattr(exec_doc, "qc_status", None) or "")
         ach_amt = flt(getattr(exec_doc, "achieved_amount", None) or 0)
         tgt = flt(frappe.db.get_value("Rollout Plan", rollout_plan, "target_amount") or 0)
@@ -3199,10 +3217,10 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         if tgt > 0 and ach_amt >= 0:
             updates["completion_pct"] = min(100.0, (ach_amt / tgt) * 100.0)
 
-    elif st == "Cancelled":
+    elif effective == "Cancelled":
         updates["plan_status"] = "Cancelled"
 
-    elif st == "Postponed":
+    elif effective == "Postponed":
         updates["plan_status"] = "Planned"
 
     # Hold: keep current plan status (still on site / in progress)
@@ -3383,6 +3401,99 @@ def get_field_execution_for_rollout(rollout_plan):
 
 
 @frappe.whitelist()
+def get_rollout_plan_details(rollout_plan):
+    """Return a single Rollout Plan enriched with PO Dispatch context.
+
+    Used by the Field Execute form to render the Plan Details panel —
+    item description, activity type, DUID, POID, qty, target amount, and
+    the IM's confirmed ``execution_status`` (read-only badge).
+
+    The plain ``frappe.client.get_list`` call only returns Rollout Plan
+    columns, so the FE was missing item / qty / customer / poid until now.
+    """
+    rollout_plan = (rollout_plan or "").strip()
+    if not rollout_plan:
+        return None
+
+    rp_cols = (
+        "name, po_dispatch, im, region_type, team, plan_date, plan_end_date, "
+        "visit_type, visit_number, visit_multiplier, target_amount, "
+        "achieved_amount, completion_pct, plan_status, modified"
+    )
+    rp_rows = frappe.db.sql(
+        f"SELECT {rp_cols} FROM `tabRollout Plan` WHERE name = %s LIMIT 1",
+        (rollout_plan,),
+        as_dict=True,
+    )
+    if not rp_rows:
+        return None
+    plan = rp_rows[0]
+
+    pd_name = plan.get("po_dispatch")
+    if pd_name:
+        pd = frappe.db.get_value(
+            "PO Dispatch",
+            pd_name,
+            [
+                "poid", "po_no", "po_line_no",
+                "item_code", "item_description", "qty", "rate", "line_amount",
+                "project_code", "customer", "site_code", "site_name",
+                "center_area", "region_type",
+            ],
+            as_dict=True,
+        ) or {}
+        plan["poid"] = pd.get("poid")
+        plan["po_no"] = pd.get("po_no")
+        plan["po_line_no"] = pd.get("po_line_no")
+        plan["item_code"] = pd.get("item_code")
+        plan["item_description"] = pd.get("item_description")
+        plan["qty"] = pd.get("qty")
+        plan["rate"] = pd.get("rate")
+        plan["line_amount"] = pd.get("line_amount")
+        plan["project_code"] = pd.get("project_code")
+        plan["customer"] = pd.get("customer")
+        plan["site_code"] = pd.get("site_code")
+        plan["site_name"] = pd.get("site_name")
+        plan["center_area"] = pd.get("center_area")
+        if not plan.get("region_type"):
+            plan["region_type"] = pd.get("region_type") or region_type_from_center_area(
+                pd.get("center_area")
+            )
+        # Activity type is keyed by (customer, item_code) in CIM master.
+        cim_map = _batch_customer_activity_types([{"customer": pd.get("customer"), "item_code": pd.get("item_code")}])
+        plan["customer_activity_type"] = cim_map.get(
+            (pd.get("customer") or "", pd.get("item_code") or "")
+        )
+
+    # Pull the latest Daily Execution for this plan so the form can show
+    # the IM's confirmed ``execution_status`` and the field team's own
+    # ``tl_status`` without a second round-trip.
+    de_rows = frappe.db.sql(
+        "SELECT name, execution_status, tl_status, qc_status, ciag_status, "
+        "       achieved_qty, achieved_amount "
+        "FROM `tabDaily Execution` WHERE rollout_plan = %s "
+        "ORDER BY modified DESC LIMIT 1",
+        (rollout_plan,),
+        as_dict=True,
+    )
+    if de_rows:
+        de = de_rows[0]
+        plan["execution_status"] = de.get("execution_status")
+        plan["tl_status"] = de.get("tl_status")
+        plan["qc_status"] = de.get("qc_status")
+        plan["ciag_status"] = de.get("ciag_status")
+        plan["execution_name"] = de.get("name")
+    else:
+        plan["execution_status"] = None
+        plan["tl_status"] = None
+        plan["qc_status"] = None
+        plan["ciag_status"] = None
+        plan["execution_name"] = None
+
+    return plan
+
+
+@frappe.whitelist()
 def update_execution(payload):
     """
     Create or update a Daily Execution record.
@@ -3500,9 +3611,19 @@ def update_execution(payload):
                 )
             )
 
-    # QC / CIAG is only allowed once execution is completed.
-    if ("qc_status" in payload or "ciag_status" in payload) and doc.execution_status != "Completed":
-        frappe.throw("QC and CIAG can only be updated when execution status is Completed.")
+    # QC / CIAG is only allowed once the work is done — either side counts.
+    # Field team's tl_status reaches us before the IM's execution_status, so
+    # gating only on execution_status would block the field user from
+    # recording QC / CIAG until the IM confirms. tl_status === Completed is
+    # the field-side "done" signal.
+    if "qc_status" in payload or "ciag_status" in payload:
+        _exec_done = (doc.execution_status == "Completed")
+        _tl_done = (getattr(doc, "tl_status", None) == "Completed")
+        if not (_exec_done or _tl_done):
+            frappe.throw(
+                "QC and CIAG can only be updated once Execution is marked Completed "
+                "(by the field team via TL Status, or confirmed by the IM)."
+            )
 
     # Keep achieved amount server-driven from achieved qty * billing rate.
     if hasattr(doc, "achieved_qty") and hasattr(doc, "achieved_amount"):
@@ -6398,13 +6519,15 @@ def get_field_team_dashboard(team_id=None):
         }
 
     dispatch_names = [p.po_dispatch for p in plans if p.po_dispatch]
+    plan_names = [p.name for p in plans]
     dispatch_map = {}
 
     if dispatch_names:
         placeholders = ", ".join(["%s"] * len(dispatch_names))
         dispatch_rows = frappe.db.sql(
             f"""
-            SELECT name, item_code, item_description, project_code, site_name, site_code, center_area, region_type
+            SELECT name, poid, item_code, item_description, qty, project_code,
+                   customer, site_name, site_code, center_area, region_type
             FROM `tabPO Dispatch`
             WHERE name IN ({placeholders})
             """,
@@ -6413,10 +6536,38 @@ def get_field_team_dashboard(team_id=None):
         )
         dispatch_map = {d.name: d for d in dispatch_rows}
 
+    # Latest Daily Execution per plan: powers the IM-confirmation badge and
+    # the field team's own tl_status indicator on the card. One pass.
+    exec_map = {}
+    if plan_names:
+        ex_placeholders = ", ".join(["%s"] * len(plan_names))
+        exec_rows = frappe.db.sql(
+            f"""
+            SELECT de.rollout_plan, de.execution_status, de.tl_status,
+                   de.qc_status, de.ciag_status, de.achieved_qty, de.achieved_amount
+            FROM `tabDaily Execution` de
+            INNER JOIN (
+              SELECT rollout_plan, MAX(modified) AS m
+              FROM `tabDaily Execution`
+              WHERE rollout_plan IN ({ex_placeholders})
+              GROUP BY rollout_plan
+            ) t ON t.rollout_plan = de.rollout_plan AND t.m = de.modified
+            """,
+            tuple(plan_names),
+            as_dict=True,
+        )
+        exec_map = {r["rollout_plan"]: r for r in exec_rows}
+
+    # Customer Activity Type lookup, keyed by (customer, item_code).
+    cim_map = _batch_customer_activity_types(
+        [{"customer": (d or {}).get("customer"), "item_code": (d or {}).get("item_code")} for d in dispatch_map.values()]
+    )
+
     # Merge dispatch data into plan records
     enriched = []
     for plan in plans:
         dispatch_info = dispatch_map.get(plan.po_dispatch) or {}
+        ex = exec_map.get(plan.name) or {}
         enriched.append(
             {
                 "name": plan.name,
@@ -6429,14 +6580,25 @@ def get_field_team_dashboard(team_id=None):
                 "achieved_amount": plan.achieved_amount,
                 "completion_pct": plan.completion_pct,
                 "plan_status": plan.plan_status,
+                "poid": dispatch_info.get("poid"),
                 "item_code": dispatch_info.get("item_code"),
                 "item_description": dispatch_info.get("item_description"),
+                "qty": dispatch_info.get("qty"),
                 "project_code": dispatch_info.get("project_code"),
                 "site_name": dispatch_info.get("site_name"),
                 "site_code": dispatch_info.get("site_code"),
                 "center_area": dispatch_info.get("center_area"),
                 "region_type": dispatch_info.get("region_type")
                 or region_type_from_center_area(dispatch_info.get("center_area")),
+                "customer_activity_type": cim_map.get(
+                    (dispatch_info.get("customer") or "", dispatch_info.get("item_code") or "")
+                ),
+                # IM-confirmed and field-side execution flags so the card
+                # can show "IM ✓" or "Awaiting IM" without a second fetch.
+                "execution_status": ex.get("execution_status"),
+                "tl_status": ex.get("tl_status"),
+                "qc_status": ex.get("qc_status"),
+                "ciag_status": ex.get("ciag_status"),
             }
         )
 

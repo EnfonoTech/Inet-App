@@ -101,11 +101,15 @@ function SummaryChips({ plans }) {
 }
 
 function WorkCard({ plan, onClick }) {
+  // ``target_amount`` / ``achieved_amount`` are SAR (revenue), not qty —
+  // the label below spells out the unit so field users (who think in qty)
+  // don't read "Progress 0/525" as 0 of 525 jobs.
   const target = plan.target_amount || plan.target || 0;
-  const achieved = plan.achieved || 0;
+  const achieved = plan.achieved_amount || plan.achieved || 0;
   const pct = target > 0 ? Math.min(100, Math.round((achieved / target) * 100)) : null;
   const accentColor = cardAccentColor(plan.plan_status);
   const isActive = ["in-execution", "in-progress"].includes((plan.plan_status || "").toLowerCase());
+  const imConfirmed = plan.execution_status === "Completed";
 
   return (
     <div
@@ -116,9 +120,29 @@ function WorkCard({ plan, onClick }) {
       <div className="work-card-header">
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="work-card-title">{plan.item_description || plan.item_code || "Work Item"}</div>
-          <div className="work-card-id">{plan.name}</div>
+          <div className="work-card-id">
+            {plan.poid ? <strong>{plan.poid}</strong> : plan.name}
+            {plan.poid && (
+              <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: "0.7rem" }}>
+                · {plan.name}
+              </span>
+            )}
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          {imConfirmed && (
+            <span
+              title="IM has confirmed this execution"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 3,
+                padding: "2px 8px", borderRadius: 999,
+                background: "var(--green-bg, #d1fae5)", color: "var(--green, #047857)",
+                fontSize: "0.66rem", fontWeight: 700, whiteSpace: "nowrap",
+              }}
+            >
+              IM ✓
+            </span>
+          )}
           <span className={`status-badge ${statusBadgeClass(plan.plan_status)}`}>
             <span className="status-dot" />
             {plan.plan_status || "Planned"}
@@ -127,12 +151,24 @@ function WorkCard({ plan, onClick }) {
       </div>
 
       <div className="work-card-meta">
-        {plan.site_name && (
+        {(plan.site_code || plan.site_name) && (
           <div className="meta-row">
             <svg className="meta-svg-icon" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
             </svg>
-            <span>{plan.site_name}</span>
+            <span>
+              {plan.site_code ? <strong>{plan.site_code}</strong> : null}
+              {plan.site_code && plan.site_name ? " · " : ""}
+              {plan.site_name || ""}
+            </span>
+          </div>
+        )}
+        {plan.customer_activity_type && (
+          <div className="meta-row">
+            <svg className="meta-svg-icon" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z" clipRule="evenodd" />
+            </svg>
+            <span>{plan.customer_activity_type}</span>
           </div>
         )}
         {plan.project_code && (
@@ -144,12 +180,16 @@ function WorkCard({ plan, onClick }) {
             <span>{plan.project_code}</span>
           </div>
         )}
-        {plan.visit_type && (
+        {(plan.visit_type || plan.qty != null) && (
           <div className="meta-row">
             <svg className="meta-svg-icon" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
             </svg>
-            <span>{plan.visit_type}</span>
+            <span>
+              {plan.visit_type || ""}
+              {plan.visit_type && plan.qty != null ? " · " : ""}
+              {plan.qty != null ? `Qty ${Number(plan.qty)}` : ""}
+            </span>
           </div>
         )}
       </div>
@@ -157,7 +197,7 @@ function WorkCard({ plan, onClick }) {
       {target > 0 && (
         <div className="work-card-progress">
           <div className="work-card-progress-labels">
-            <span className="progress-label-text">Progress</span>
+            <span className="progress-label-text">Revenue (SAR)</span>
             <span className="progress-label-stats">
               <span style={{ fontWeight: 700, color: "var(--text)" }}>{fmt.format(achieved)}</span>
               <span style={{ color: "var(--text-muted)" }}> / {fmt.format(target)}</span>

@@ -103,9 +103,8 @@ export default function ExecutionForm() {
   const [achievedQty, setAchievedQty] = useState("");
   const [gpsLocation, setGpsLocation] = useState("");
   const [remarks, setRemarks] = useState("");
-  const [activityCode, setActivityCode] = useState("");
-  const [activityCost, setActivityCost] = useState(null);
-  const [activities, setActivities] = useState([]);
+  const [qcStatus, setQcStatus] = useState("Pending");
+  const [ciagStatus, setCiagStatus] = useState("Open");
   const [capturingGps, setCapturingGps] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
@@ -158,8 +157,10 @@ export default function ExecutionForm() {
     setLoadingPlan(true);
     (async () => {
       try {
-        const list = await pmApi.listRolloutPlans({ name: id });
-        const found = Array.isArray(list) && list.length > 0 ? list[0] : null;
+        // Use the enriched endpoint so we get item description, qty,
+        // activity type, DUID, POID, plus the IM-confirmed
+        // execution_status (read-only badge for the field user).
+        const found = await pmApi.getRolloutPlanDetails(id);
         if (!found) throw new Error("Plan not found");
         setPlan(found);
       } catch (err) {
@@ -181,16 +182,18 @@ export default function ExecutionForm() {
   }, [teamId, id]);
 
   useEffect(() => {
-    pmApi.listActivityCosts().then((res) => setActivities(res || [])).catch(() => {});
-  }, []);
-
-  useEffect(() => {
     if (!id || success || (isFieldPortal && !teamId)) { setExistingExec(null); return; }
     let cancelled = false;
     pmApi.getFieldExecutionForRollout(id).then((ex) => {
       if (cancelled) return;
       setExistingExec(ex || null);
-      if (ex) setAttachments(parsePhotoList(ex.photos));
+      if (ex) {
+        setAttachments(parsePhotoList(ex.photos));
+        // Pre-fill QC / CIAG selects from existing execution so a return
+        // visit doesn't overwrite values silently.
+        if (ex.qc_status) setQcStatus(ex.qc_status);
+        if (ex.ciag_status) setCiagStatus(ex.ciag_status);
+      }
     }).catch(() => { if (!cancelled) setExistingExec(null); });
     return () => { cancelled = true; };
   }, [id, teamId, success, isFieldPortal]);
@@ -203,12 +206,6 @@ export default function ExecutionForm() {
     if (String(achievedQty || "").trim() !== "") return;
     setAchievedQty(defaultAchievedQtyFromPlan(plan));
   }, [plan, achievedQty, success, id]);
-
-  function handleActivityChange(code) {
-    setActivityCode(code);
-    const found = activities.find((a) => a.name === code);
-    setActivityCost(found ? found.base_cost_sar : null);
-  }
 
   async function uploadAttachment(file) {
     if (!file) return;
@@ -309,20 +306,26 @@ export default function ExecutionForm() {
     if (!id) { setSubmitError("No rollout plan selected."); return; }
     setSubmitting(true); setSubmitError(null);
     try {
-      await pmApi.updateExecution({
+      // Field (Team Lead) submits tl_status, achieved qty, GPS, photos,
+      // remarks, and — when marking Completed — QC + CIAG in one shot.
+      // The IM's confirmation is a separate edit (sets execution_status)
+      // and is read-only here.
+      const payload = {
         rollout_plan: id,
-        // Field (Team Lead) sets tl_status. Execution status is the IM's
-        // confirmation and is edited from the IM Execution screen.
         tl_status: execStatus,
         achieved_qty: parseFloat(achievedQty) || 0,
         gps_location: gpsLocation,
         remarks,
-        activity_code: activityCode || undefined,
         photos: attachments.length ? attachments.join("\n") : undefined,
-      });
+      };
+      if (execStatus === "Completed") {
+        payload.qc_status = qcStatus;
+        payload.ciag_status = ciagStatus;
+      }
+      await pmApi.updateExecution(payload);
       try {
-        const plist = await pmApi.listRolloutPlans({ name: id });
-        setSubmittedPlanStatus((Array.isArray(plist) && plist[0])?.plan_status || null);
+        const refreshed = await pmApi.getRolloutPlanDetails(id);
+        setSubmittedPlanStatus(refreshed?.plan_status || null);
       } catch { setSubmittedPlanStatus(null); }
       setSuccess(true);
     } catch (err) {
@@ -402,7 +405,7 @@ export default function ExecutionForm() {
           <div className="exec-success-title">Execution Submitted!</div>
           <div className="exec-success-msg">
             Your update has been recorded.
-            {execStatus === "Completed" && " The IM will review QC and create the Work Done record when QC passes."}
+            {execStatus === "Completed" && " The IM will confirm execution and create the Work Done record once QC passes."}
           </div>
           {submittedPlanStatus && (
             <div className="exec-success-status">
@@ -531,35 +534,72 @@ export default function ExecutionForm() {
             <div className="exec-section">
               <div className="exec-section-title">Plan Details</div>
               <div className="exec-plan-chip-row">
-                {plan.site_name && (
-                  <div className="exec-plan-chip">
-                    <IconPin />
-                    <span>{plan.site_name}</span>
+                {plan.poid && (
+                  <div className="exec-plan-chip" title="POID (PO Dispatch identifier)">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M17.707 9.293a1 1 0 010 1.414l-7 7a1 1 0 01-1.414 0l-7-7A.997.997 0 012 10V5a3 3 0 013-3h5c.256 0 .512.098.707.293l7 7zM5 6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd"/></svg>
+                    <span><strong>{plan.poid}</strong></span>
                   </div>
                 )}
                 {plan.project_code && (
-                  <div className="exec-plan-chip">
+                  <div className="exec-plan-chip" title="Project">
                     <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd"/></svg>
                     <span><strong>{plan.project_code}</strong></span>
                   </div>
                 )}
+                {plan.site_code && (
+                  <div className="exec-plan-chip" title="DUID">
+                    <IconPin />
+                    <span>{plan.site_code}{plan.site_name ? ` · ${plan.site_name}` : ""}</span>
+                  </div>
+                )}
                 {plan.visit_type && (
-                  <div className="exec-plan-chip">
+                  <div className="exec-plan-chip" title="Visit type">
                     <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd"/></svg>
                     <span>{plan.visit_type}</span>
                   </div>
                 )}
                 {plan.plan_date && (
-                  <div className="exec-plan-chip">
+                  <div className="exec-plan-chip" title="Plan date">
                     <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd"/></svg>
                     <span>{plan.plan_date}</span>
                   </div>
                 )}
+                {plan.qty != null && (
+                  <div className="exec-plan-chip" title="Planned qty">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 16a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"/></svg>
+                    <span>Qty {Number(plan.qty)}</span>
+                  </div>
+                )}
+                {plan.customer_activity_type && (
+                  <div className="exec-plan-chip" title="Activity type">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z" clipRule="evenodd"/></svg>
+                    <span>{plan.customer_activity_type}</span>
+                  </div>
+                )}
                 {plan.item_code && (
-                  <div className="exec-plan-chip">
-                    <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M17.707 9.293a1 1 0 010 1.414l-7 7a1 1 0 01-1.414 0l-7-7A.997.997 0 012 10V5a3 3 0 013-3h5c.256 0 .512.098.707.293l7 7zM5 6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd"/></svg>
+                  <div className="exec-plan-chip" title="Item">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 2L3 6v8l7 4 7-4V6l-7-4zM5 7.5l5-2.857L15 7.5v.001l-5 2.857-5-2.857V7.5z" clipRule="evenodd"/></svg>
                     <span>{plan.item_code}</span>
                   </div>
+                )}
+              </div>
+              {plan.item_description && (
+                <div style={{ fontSize: "0.84rem", color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.4 }}>
+                  {plan.item_description}
+                </div>
+              )}
+              {/* IM-confirmed status — read-only badge so the field user
+                  knows whether the IM has signed off or not. */}
+              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem" }}>
+                <span style={{ color: "var(--text-muted)" }}>IM Confirmation:</span>
+                {plan.execution_status ? (
+                  <span className={`status-badge ${statusBadgeClass(plan.execution_status)}`}>
+                    <span className="status-dot" />{plan.execution_status}
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>
+                    Awaiting IM
+                  </span>
                 )}
               </div>
             </div>
@@ -594,25 +634,29 @@ export default function ExecutionForm() {
               />
             </div>
 
-            <div className="exec-field">
-              <label>Activity Code</label>
-              <select value={activityCode} onChange={(e) => handleActivityChange(e.target.value)}>
-                <option value="">— No Activity —</option>
-                {activities.map((a) => (
-                  <option key={a.name} value={a.name}>
-                    {a.activity_code} — {a.standard_activity}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {activityCost != null && (
-              <div className="exec-field">
-                <label>Activity Cost (SAR)</label>
-                <div className="exec-field-readonly">
-                  SAR {Number(activityCost).toLocaleString()}
+            {/* QC + CIAG inline — visible when marking the work Completed
+                so the field user can record the full closing state in one
+                form. Backend accepts these as long as tl_status is
+                Completed (no need to wait for IM confirmation). */}
+            {execStatus === "Completed" && (
+              <>
+                <div className="exec-field">
+                  <label>QC Status *</label>
+                  <select value={qcStatus} onChange={(e) => setQcStatus(e.target.value)} required>
+                    {["Pending", "Pass", "Fail"].map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
                 </div>
-              </div>
+                <div className="exec-field">
+                  <label>CIAG Status *</label>
+                  <select value={ciagStatus} onChange={(e) => setCiagStatus(e.target.value)} required>
+                    {["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"].map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
             )}
           </div>
 
@@ -740,7 +784,8 @@ export default function ExecutionForm() {
           )}
           {execStatus === "Completed" && (
             <div className="notice info">
-              After submitting as Completed, the IM reviews QC and creates the Work Done record when QC passes.
+              Submit your QC + CIAG values along with Completed. The IM
+              still confirms execution before Work Done is generated.
             </div>
           )}
 

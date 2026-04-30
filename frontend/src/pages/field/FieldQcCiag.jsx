@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -172,13 +172,11 @@ export default function FieldQcCiag() {
   const [selectedPlans, setSelectedPlans] = useState(new Set());
   const [editRow, setEditRow] = useState(null);
 
-  useResetOnRowLimitChange(() => { setRows([]); setLoading(true); });
-
   useEffect(() => {
     let cancelled = false;
+    if (!teamId) { setRows([]); setLoading(false); return; }
+    setLoading(true);
     (async () => {
-      if (!teamId) return;
-      setLoading(true);
       try {
         const filters = { status: "Completed", team: teamId };
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();

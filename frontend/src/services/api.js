@@ -319,6 +319,8 @@ export const pmApi = {
   generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),
   getFieldExecutionForRollout: (rollout_plan) =>
     call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),
+  getRolloutPlanDetails: (rollout_plan) =>
+    call("inet_app.api.command_center.get_rollout_plan_details", { rollout_plan }),
   exportPODump: (from_date, to_date, statuses, limit) => {
     const args = {
       from_date: from_date || "",
