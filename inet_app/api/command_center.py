@@ -3173,30 +3173,37 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
     Keep Rollout Plan plan_status (and optional amounts) in sync with Daily Execution.
     Options: Planned, Planning with Issue, In Execution, Completed, Cancelled.
 
-    Two completion signals are honoured, in priority order:
-    1. ``execution_status`` — the IM's authoritative confirmation.
-    2. ``tl_status``        — the field team lead's "I'm done" flag, which
-       reaches the system before the IM has a chance to confirm.
+    Two signals are honoured:
+    - ``execution_status`` — the IM's authoritative confirmation.
+    - ``tl_status``        — the field team lead's "I'm done" flag, which
+                              reaches the system before the IM confirms.
 
-    Either one flipping to *Completed* moves the Rollout Plan to *Completed*
-    so the line surfaces in the field team's QC / CIAG queue immediately;
-    the IM's later confirmation only updates ``execution_status`` (read-only
-    on the field side). This removes the chicken-and-egg where the field
-    team marked work done but couldn't see it on the QC page until the IM
-    happened to flip a separate flag.
+    Precedence rule (important): a *terminal* state from **either** side
+    wins over a non-terminal state on the other. Concretely, if the IM
+    had previously flipped execution_status to "In Progress" and the
+    field user later marks tl_status="Completed", the plan must move to
+    Completed — not stay In Execution because the older execution_status
+    happens to be truthy. Earlier code preferred execution_status by
+    truthiness which produced exactly that bug.
     """
     if not rollout_plan or not exec_doc:
         return
-    st = exec_doc.execution_status
+    st = exec_doc.execution_status or ""
     tls = getattr(exec_doc, "tl_status", None) or ""
-    # ``effective`` is the status that drives plan_status: prefer the IM's
-    # confirmed value, fall back to the team lead's signal.
-    effective = st or tls
-    updates = {}
 
-    if (st in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE) or (
-        not st and tls in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE
-    ):
+    _TERMINAL = {"Completed", "Cancelled", "Postponed"}
+    # Terminal from either side wins. Otherwise fall back to whichever
+    # side has a value (IM's execution_status preferred when both are
+    # non-terminal, since that's the IM's read of in-progress reality).
+    if st in _TERMINAL:
+        effective = st
+    elif tls in _TERMINAL:
+        effective = tls
+    else:
+        effective = st or tls
+
+    updates = {}
+    if effective in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE:
         cur = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
         if cur == "Planned":
             updates["plan_status"] = "In Execution"
@@ -3643,6 +3650,27 @@ def update_execution(payload):
         doc.insert(ignore_permissions=True)
     else:
         doc.save(ignore_permissions=True)
+
+    # Propagate the field team's "Team Lead Remark" up to PO Dispatch so
+    # IM and PM views (which read pd.team_lead_remark via RemarksCell)
+    # see what the field user wrote. Without this, the remark stayed
+    # only on Daily Execution and the IM/PM remarks column appeared
+    # empty even after the TL submitted.
+    tl_remark = payload.get("team_lead_remark")
+    if tl_remark is not None and doc.rollout_plan:
+        try:
+            pd_name = frappe.db.get_value("Rollout Plan", doc.rollout_plan, "po_dispatch")
+            if pd_name and frappe.db.has_column("PO Dispatch", "team_lead_remark"):
+                frappe.db.set_value(
+                    "PO Dispatch", pd_name,
+                    "team_lead_remark", str(tl_remark)[:8000],
+                    update_modified=True,
+                )
+        except Exception:
+            frappe.log_error(
+                frappe.get_traceback(),
+                "update_execution: failed to propagate team_lead_remark",
+            )
 
     _sync_rollout_plan_from_daily_execution(doc.rollout_plan, doc)
     qc = str(getattr(doc, "qc_status", None) or "")
@@ -6494,7 +6522,10 @@ def get_field_team_dashboard(team_id=None):
     if not team_id:
         return {"team": None, "today": today_str, "planned": [], "last_updated": _iso_now()}
 
-    # Rollout Plans for this team today
+    # Rollout Plans for this team today.
+    # Drop plans the field team has *already* completed (tl_status or
+    # execution_status = Completed) so cards don't reappear after the
+    # team has wrapped up the day's job.
     plans = frappe.db.sql(
         """
         SELECT rp.name, rp.po_dispatch, rp.plan_date, rp.visit_type,
@@ -6504,6 +6535,11 @@ def get_field_team_dashboard(team_id=None):
         WHERE rp.team = %s
         AND rp.plan_date = %s
         AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution', 'Planning with Issue')
+        AND NOT EXISTS (
+          SELECT 1 FROM `tabDaily Execution` de
+          WHERE de.rollout_plan = rp.name
+            AND (de.tl_status = 'Completed' OR de.execution_status = 'Completed')
+        )
         ORDER BY rp.name
         """,
         (team_id, today_str),
@@ -6608,6 +6644,177 @@ def get_field_team_dashboard(team_id=None):
         "planned": enriched,
         "last_updated": _iso_now(),
     }
+
+
+@frappe.whitelist()
+def list_field_team_actionable_plans(team_id=None):
+    """All Rollout Plans for a team that the field user can still act on.
+
+    Used by the Field Execute page (when entered without a specific plan
+    id) so the dropdown shows planned + in-execution work — not just
+    rows already flipped to "In Execution". Each row is enriched with
+    PO Dispatch context (POID, item, project, DUID, qty, customer
+    activity type) so the dropdown is actually useful — picking by
+    plan id alone gave no context about which job it is.
+
+    No date filter: a plan from yesterday that's still open is just as
+    valid to act on as today's. ``plan_status`` is constrained to
+    actionable values; *Completed* / *Cancelled* are excluded.
+    """
+    if not team_id:
+        return []
+
+    # Exclude plans where the field team has *already* marked
+    # tl_status=Completed (they're done — picking them again would be
+    # confusing). Defensive: catches sites where plan_status sync hasn't
+    # caught up yet.
+    plans = frappe.db.sql(
+        """
+        SELECT rp.name, rp.po_dispatch, rp.plan_date, rp.visit_type,
+               rp.visit_number, rp.visit_multiplier, rp.target_amount,
+               rp.achieved_amount, rp.completion_pct, rp.plan_status
+        FROM `tabRollout Plan` rp
+        WHERE rp.team = %s
+          AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution', 'Planning with Issue')
+          AND NOT EXISTS (
+            SELECT 1 FROM `tabDaily Execution` de
+            WHERE de.rollout_plan = rp.name
+              AND (de.tl_status = 'Completed' OR de.execution_status = 'Completed')
+          )
+        ORDER BY rp.plan_date DESC, rp.modified DESC
+        """,
+        (team_id,),
+        as_dict=True,
+    )
+
+    if not plans:
+        return []
+
+    dispatch_names = list({p.po_dispatch for p in plans if p.po_dispatch})
+    dispatch_map = {}
+    if dispatch_names:
+        placeholders = ", ".join(["%s"] * len(dispatch_names))
+        dispatch_rows = frappe.db.sql(
+            f"""
+            SELECT name, poid, item_code, item_description, qty, project_code,
+                   customer, site_name, site_code, center_area, region_type
+            FROM `tabPO Dispatch`
+            WHERE name IN ({placeholders})
+            """,
+            tuple(dispatch_names),
+            as_dict=True,
+        )
+        dispatch_map = {d.name: d for d in dispatch_rows}
+
+    cim_map = _batch_customer_activity_types(
+        [{"customer": (d or {}).get("customer"), "item_code": (d or {}).get("item_code")} for d in dispatch_map.values()]
+    )
+
+    out = []
+    for p in plans:
+        d = dispatch_map.get(p.po_dispatch) or {}
+        out.append({
+            "name": p.name,
+            "po_dispatch": p.po_dispatch,
+            "plan_date": p.plan_date,
+            "plan_status": p.plan_status,
+            "visit_type": p.visit_type,
+            "visit_number": p.visit_number,
+            "target_amount": p.target_amount,
+            "poid": d.get("poid"),
+            "item_code": d.get("item_code"),
+            "item_description": d.get("item_description"),
+            "qty": d.get("qty"),
+            "project_code": d.get("project_code"),
+            "site_code": d.get("site_code"),
+            "site_name": d.get("site_name"),
+            "customer_activity_type": cim_map.get(
+                (d.get("customer") or "", d.get("item_code") or "")
+            ),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Field Remark Templates — checklist of saved TL remarks
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def list_field_remark_templates():
+    """Active templates the field team can pick from on Execute.
+
+    Sorted by category then text so related items group together
+    (Power-Up Done / Power-Up Pending / etc.).
+    """
+    if not frappe.db.table_exists("Field Remark Template"):
+        return []
+    rows = frappe.get_all(
+        "Field Remark Template",
+        filters={"is_active": 1},
+        fields=["name", "remark_text", "category", "usage_count"],
+        order_by="category asc, usage_count desc, remark_text asc",
+        limit_page_length=500,
+    )
+    return rows
+
+
+@frappe.whitelist()
+def create_field_remark_template(remark_text, category=None):
+    """Create a new template from the field-execute picker."""
+    txt = (remark_text or "").strip()
+    if not txt:
+        frappe.throw("Remark text is required.")
+    if len(txt) > 140:
+        frappe.throw("Keep templates under 140 characters — long phrases belong in the textarea.")
+    if frappe.db.exists("Field Remark Template", txt):
+        return frappe.db.get_value(
+            "Field Remark Template", txt,
+            ["name", "remark_text", "category", "usage_count"],
+            as_dict=True,
+        )
+    doc = frappe.get_doc({
+        "doctype": "Field Remark Template",
+        "remark_text": txt,
+        "category": (category or "").strip() or None,
+        "is_active": 1,
+        "created_by_user": frappe.session.user,
+    })
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {
+        "name": doc.name,
+        "remark_text": doc.remark_text,
+        "category": doc.category,
+        "usage_count": 0,
+    }
+
+
+@frappe.whitelist()
+def bump_field_remark_template_usage(remark_texts):
+    """Increment usage_count for the picked templates so frequently-used
+    items rise to the top of the list. Called after a successful submit."""
+    if isinstance(remark_texts, str):
+        try:
+            remark_texts = frappe.parse_json(remark_texts)
+        except Exception:
+            remark_texts = [remark_texts]
+    if not isinstance(remark_texts, (list, tuple)):
+        return {"updated": 0}
+    names = [str(n).strip() for n in remark_texts if str(n).strip()]
+    if not names:
+        return {"updated": 0}
+    placeholders = ", ".join(["%s"] * len(names))
+    try:
+        frappe.db.sql(
+            f"UPDATE `tabField Remark Template` "
+            f"SET usage_count = COALESCE(usage_count, 0) + 1 "
+            f"WHERE name IN ({placeholders})",
+            tuple(names),
+        )
+        frappe.db.commit()
+        return {"updated": len(names)}
+    except Exception:
+        return {"updated": 0}
 
 
 # ---------------------------------------------------------------------------

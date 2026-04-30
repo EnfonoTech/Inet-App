@@ -688,8 +688,13 @@ export default function IMExecution() {
                         {e.issue_category || "— Set —"}
                       </button>
                     </td>
+                    {/* QC and CIAG are recorded by the field team alongside
+                        TL Status=Completed. We show the value as soon as
+                        either side has marked the work Completed —
+                        otherwise the IM page hid Pass/Approved values that
+                        were already in the database. */}
                     <td>
-                      {String(e.execution_status || "") !== "Completed" ? (
+                      {!(e.execution_status === "Completed" || e.tl_status === "Completed") ? (
                         <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>
                       ) : (
                         <button
@@ -708,7 +713,7 @@ export default function IMExecution() {
                       )}
                     </td>
                     <td>
-                      {String(e.execution_status || "") !== "Completed" ? (
+                      {!(e.execution_status === "Completed" || e.tl_status === "Completed") ? (
                         <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>
                       ) : (
                         <button

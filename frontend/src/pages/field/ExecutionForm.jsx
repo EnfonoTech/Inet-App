@@ -85,6 +85,160 @@ const IconWarn = () => (
   </svg>
 );
 
+/**
+ * Searchable single-pick remark picker. Type to filter the existing
+ * templates; if the typed text doesn't match any (case-insensitive)
+ * template, a "+ Add new …" row appears at the end of the list and
+ * tapping it creates the template + picks it.
+ */
+function TlRemarkPicker({ templates, picked, creating, onPick, onCreate }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef(null);
+  const inputRef = useRef(null);
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e) => {
+      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 0);
+  }, [open]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = (templates || [])
+    .filter((t) => !picked.has(t.remark_text))
+    .filter((t) => !q || (t.remark_text || "").toLowerCase().includes(q));
+  const exactMatch = (templates || []).some(
+    (t) => (t.remark_text || "").trim().toLowerCase() === q && q.length > 0
+  );
+  const trimmedQuery = query.trim();
+  const showAddNew = trimmedQuery.length > 0 && !exactMatch;
+  const placeholder = picked.size > 0 ? "+ Add another remark" : "Select a remark…";
+
+  function handlePick(text) {
+    onPick(text);
+    setQuery("");
+    setOpen(false);
+  }
+
+  async function handleAddNew() {
+    const txt = trimmedQuery;
+    if (!txt) return;
+    await onCreate(txt);
+    setQuery("");
+    setOpen(false);
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: "100%", textAlign: "left",
+          padding: "10px 36px 10px 12px", borderRadius: 8,
+          border: "1px solid #e2e8f0", fontSize: "0.86rem",
+          background: "#fff", boxSizing: "border-box",
+          color: "var(--text)", cursor: "pointer", position: "relative",
+        }}
+      >
+        {placeholder}
+        <span style={{
+          position: "absolute", right: 12, top: "50%",
+          transform: "translateY(-50%)", color: "#94a3b8", fontSize: "0.72rem",
+          pointerEvents: "none",
+        }}>{open ? "▲" : "▾"}</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+          zIndex: 60, background: "#fff",
+          border: "1px solid #e2e8f0", borderRadius: 8,
+          boxShadow: "0 10px 25px rgba(15,23,42,0.15)",
+          overflow: "hidden",
+        }}>
+          <div style={{ padding: 8, borderBottom: "1px solid #f1f5f9" }}>
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search or type a new remark…"
+              maxLength={140}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (filtered.length === 1) handlePick(filtered[0].remark_text);
+                  else if (showAddNew) handleAddNew();
+                }
+              }}
+              style={{
+                width: "100%", padding: "8px 10px",
+                border: "1px solid #e2e8f0", borderRadius: 6,
+                fontSize: "0.84rem", boxSizing: "border-box", outline: "none",
+              }}
+            />
+          </div>
+          <div style={{ maxHeight: 260, overflowY: "auto", padding: "4px 0" }}>
+            {filtered.length === 0 && !showAddNew && (
+              <div style={{ padding: "10px 12px", fontSize: "0.78rem", color: "var(--text-muted)", textAlign: "center" }}>
+                No matches
+              </div>
+            )}
+            {filtered.map((t) => (
+              <div
+                key={t.name}
+                onClick={() => handlePick(t.remark_text)}
+                style={{
+                  padding: "8px 12px", cursor: "pointer", fontSize: "0.84rem",
+                  color: "var(--text)",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(100,116,139,0.08)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
+              >
+                {t.remark_text}
+              </div>
+            ))}
+            {showAddNew && (
+              <div
+                onClick={() => { if (!creating) handleAddNew(); }}
+                style={{
+                  padding: "10px 12px", cursor: creating ? "wait" : "pointer",
+                  fontSize: "0.84rem", color: "var(--blue, #2563eb)",
+                  fontWeight: 600,
+                  background: "#eff6ff",
+                  borderTop: filtered.length > 0 ? "1px solid #f1f5f9" : "none",
+                  display: "flex", alignItems: "center", gap: 8,
+                }}
+              >
+                <span style={{
+                  width: 22, height: 22, borderRadius: 999,
+                  background: "#2563eb", color: "#fff",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 14, fontWeight: 700,
+                }}>+</span>
+                {creating ? `Saving "${trimmedQuery}"…` : `Add "${trimmedQuery}" as new remark`}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ExecutionForm() {
   const { id: idParam } = useParams();
   const id = idParam ? decodeURIComponent(idParam) : undefined;
@@ -102,10 +256,20 @@ export default function ExecutionForm() {
   const [execStatus, setExecStatus] = useState("In Progress");
   const [achievedQty, setAchievedQty] = useState("");
   const [gpsLocation, setGpsLocation] = useState("");
-  const [remarks, setRemarks] = useState("");
   const [qcStatus, setQcStatus] = useState("Pending");
   const [ciagStatus, setCiagStatus] = useState("Open");
   const [capturingGps, setCapturingGps] = useState(false);
+
+  // Team Lead Remark — checklist picker over saved templates plus a free
+  // text textarea. The combined value goes to PO Dispatch.team_lead_remark
+  // so IM and PM views see it in their remarks column.
+  const [tlRemarkTemplates, setTlRemarkTemplates] = useState([]);
+  const [tlRemarkPicked, setTlRemarkPicked] = useState(new Set()); // Set<remark_text>
+  const [tlRemarkExtra, setTlRemarkExtra] = useState("");
+  const [tlRemarkAdding, setTlRemarkAdding] = useState(false);
+  const [newTemplateText, setNewTemplateText] = useState("");
+  const [newTemplateBusy, setNewTemplateBusy] = useState(false);
+  const [newTemplateErr, setNewTemplateErr] = useState(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
@@ -174,7 +338,11 @@ export default function ExecutionForm() {
     setLoadingInExec(true);
     (async () => {
       try {
-        const list = teamId ? await pmApi.listRolloutPlans({ team: teamId, plan_status: "In Execution" }) : [];
+        // Includes Planned, In Execution, Planning with Issue — i.e. any
+        // plan the team can still act on. Previously this fetched only
+        // "In Execution" plans, so a team with planned-but-not-started
+        // work saw "No active executions" even with valid jobs queued.
+        const list = teamId ? await pmApi.listFieldTeamActionablePlans(teamId) : [];
         setInExecPlans(Array.isArray(list) ? list : []);
       } catch { setInExecPlans([]); }
       finally { setLoadingInExec(false); }
@@ -197,6 +365,74 @@ export default function ExecutionForm() {
     }).catch(() => { if (!cancelled) setExistingExec(null); });
     return () => { cancelled = true; };
   }, [id, teamId, success, isFieldPortal]);
+
+  // Load saved remark templates once the page mounts.
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.listFieldRemarkTemplates()
+      .then((res) => { if (!cancelled) setTlRemarkTemplates(Array.isArray(res) ? res : []); })
+      .catch(() => { if (!cancelled) setTlRemarkTemplates([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Pre-populate the picked checklist + extra textarea from the
+  // existing PO Dispatch.team_lead_remark so a follow-up edit doesn't
+  // lose what the previous TL wrote.
+  useEffect(() => {
+    const existing = (plan?.team_lead_remark || "").trim();
+    if (!existing) return;
+    const lines = existing.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const tplSet = new Set(tlRemarkTemplates.map((t) => t.remark_text));
+    const picked = new Set();
+    const extra = [];
+    for (const ln of lines) {
+      if (tplSet.has(ln)) picked.add(ln);
+      else extra.push(ln);
+    }
+    setTlRemarkPicked(picked);
+    setTlRemarkExtra(extra.join("\n"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.team_lead_remark, tlRemarkTemplates.length]);
+
+  function toggleTlRemark(text) {
+    setTlRemarkPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(text)) next.delete(text);
+      else next.add(text);
+      return next;
+    });
+  }
+
+  async function handleCreateTemplate() {
+    const txt = newTemplateText.trim();
+    if (!txt) { setNewTemplateErr("Remark text is required."); return; }
+    setNewTemplateBusy(true); setNewTemplateErr(null);
+    try {
+      const created = await pmApi.createFieldRemarkTemplate(txt);
+      const list = await pmApi.listFieldRemarkTemplates();
+      setTlRemarkTemplates(Array.isArray(list) ? list : []);
+      // Auto-pick the just-created template so it goes into the next save.
+      const key = (created && created.remark_text) || txt;
+      setTlRemarkPicked((prev) => { const next = new Set(prev); next.add(key); return next; });
+      setNewTemplateText("");
+      setTlRemarkAdding(false);
+    } catch (err) {
+      setNewTemplateErr(err.message || "Could not create template.");
+    } finally {
+      setNewTemplateBusy(false);
+    }
+  }
+
+  // Build the final TL remark string: checked templates joined with
+  // newlines, then the free-text extras appended.
+  function buildTlRemark() {
+    const picked = Array.from(tlRemarkPicked);
+    const extra = (tlRemarkExtra || "").trim();
+    const parts = [];
+    if (picked.length) parts.push(picked.join("\n"));
+    if (extra) parts.push(extra);
+    return parts.join("\n").trim();
+  }
 
   useEffect(() => { setAchievedQty(""); }, [id]);
 
@@ -310,12 +546,17 @@ export default function ExecutionForm() {
       // remarks, and — when marking Completed — QC + CIAG in one shot.
       // The IM's confirmation is a separate edit (sets execution_status)
       // and is read-only here.
+      const tlRemark = buildTlRemark();
       const payload = {
         rollout_plan: id,
         tl_status: execStatus,
         achieved_qty: parseFloat(achievedQty) || 0,
         gps_location: gpsLocation,
-        remarks,
+        // team_lead_remark goes to PO Dispatch.team_lead_remark via the
+        // backend so it surfaces in IM / PM remarks columns. Empty
+        // string is fine — we don't want stale remarks lingering after
+        // a TL clears them.
+        team_lead_remark: tlRemark,
         photos: attachments.length ? attachments.join("\n") : undefined,
       };
       if (execStatus === "Completed") {
@@ -323,6 +564,11 @@ export default function ExecutionForm() {
         payload.ciag_status = ciagStatus;
       }
       await pmApi.updateExecution(payload);
+      // Bump usage_count for picked templates so frequently-used items
+      // surface to the top of the list next time. Fire-and-forget.
+      if (tlRemarkPicked.size > 0) {
+        pmApi.bumpFieldRemarkTemplateUsage(Array.from(tlRemarkPicked)).catch(() => {});
+      }
       try {
         const refreshed = await pmApi.getRolloutPlanDetails(id);
         setSubmittedPlanStatus(refreshed?.plan_status || null);
@@ -333,42 +579,105 @@ export default function ExecutionForm() {
     } finally { setSubmitting(false); }
   }
 
-  /* ── No-ID state: pick an in-execution plan ─────────────── */
+  /* ── No-ID state: pick a plan to execute ─────────────────── */
   if (!id) {
     return (
       <div className="exec-page">
         <div className="page-header">
           <div>
             <h1 className="page-title">Execute</h1>
-            <div className="page-subtitle">Select an In Execution plan to continue</div>
+            <div className="page-subtitle">Pick a planned or in-progress job to continue</div>
           </div>
         </div>
         <div className="exec-body">
           <div className="exec-section">
-            <div className="exec-section-title">In Execution Plans</div>
+            <div className="exec-section-title">
+              Open Plans for Your Team
+              {!loadingInExec && inExecPlans.length > 0 && (
+                <span style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginLeft: 8, fontWeight: 500 }}>
+                  · {inExecPlans.length} open
+                </span>
+              )}
+            </div>
             {loadingInExec ? (
               <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "8px 0" }}>Loading…</div>
             ) : inExecPlans.length === 0 ? (
               <div className="empty-state" style={{ padding: "24px 0" }}>
                 <div className="empty-icon">🔧</div>
-                <h3>No active executions</h3>
-                <p>Go to Today's Work to start a new execution.</p>
+                <h3>Nothing open right now</h3>
+                <p>Your team has no Planned or In-Execution rollouts. New work appears here once an IM dispatches it.</p>
               </div>
             ) : (
-              <div className="exec-field">
-                <label>Select Rollout Plan</label>
-                <select
-                  className="exec-field select"
-                  value=""
-                  onChange={(e) => { if (e.target.value) navigate(`/field-execute/${encodeURIComponent(e.target.value)}`); }}
-                >
-                  <option value="">— Select —</option>
-                  {inExecPlans.map((p) => (
-                    <option key={p.name} value={p.name}>
-                      {p.name} · {p.site_name || p.project_code || p.visit_type || "In Execution"}
-                    </option>
-                  ))}
-                </select>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {inExecPlans.map((p) => {
+                  const isInExec = p.plan_status === "In Execution";
+                  const accent = isInExec ? "#f59e0b" : "#3b82f6";
+                  return (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => navigate(`/field-execute/${encodeURIComponent(p.name)}`)}
+                      style={{
+                        textAlign: "left", width: "100%", padding: 14,
+                        borderRadius: 12, border: "1px solid #e2e8f0",
+                        borderLeft: `4px solid ${accent}`,
+                        background: "#fff", cursor: "pointer",
+                        boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+                        transition: "transform 0.05s ease, box-shadow 0.15s ease",
+                      }}
+                      onMouseDown={(e) => { e.currentTarget.style.transform = "scale(0.99)"; }}
+                      onMouseUp={(e) => { e.currentTarget.style.transform = ""; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}
+                    >
+                      {/* Header row: POID + status pill */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--text)", fontFamily: "monospace" }}>
+                            {p.poid || p.name}
+                          </div>
+                          {p.item_description && (
+                            <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: 2, lineHeight: 1.35, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                              {p.item_description}
+                            </div>
+                          )}
+                        </div>
+                        <span style={{
+                          flexShrink: 0, fontSize: "0.66rem", fontWeight: 700,
+                          padding: "3px 8px", borderRadius: 999,
+                          background: isInExec ? "rgba(245,158,11,0.12)" : "rgba(59,130,246,0.12)",
+                          color: isInExec ? "#b45309" : "#1d4ed8",
+                          textTransform: "uppercase", letterSpacing: 0.4,
+                        }}>
+                          {p.plan_status}
+                        </span>
+                      </div>
+
+                      {/* Meta chips */}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", fontSize: "0.74rem", color: "var(--text-muted)" }}>
+                        {p.project_code && (
+                          <span>Project: <strong style={{ color: "var(--text)" }}>{p.project_code}</strong></span>
+                        )}
+                        {p.site_code && (
+                          <span>DUID: <strong style={{ color: "var(--text)" }}>{p.site_code}</strong></span>
+                        )}
+                        {p.item_code && (
+                          <span>Item: <strong style={{ color: "var(--text)" }}>{p.item_code}</strong></span>
+                        )}
+                        {p.qty != null && (
+                          <span>Qty: <strong style={{ color: "var(--text)" }}>{Number(p.qty)}</strong></span>
+                        )}
+                        {p.visit_type && <span>{p.visit_type}</span>}
+                        {p.plan_date && <span>{p.plan_date}</span>}
+                      </div>
+
+                      {p.customer_activity_type && (
+                        <div style={{ marginTop: 6, fontSize: "0.72rem", color: "#475569" }}>
+                          Activity: <strong>{p.customer_activity_type}</strong>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -405,7 +714,6 @@ export default function ExecutionForm() {
           <div className="exec-success-title">Execution Submitted!</div>
           <div className="exec-success-msg">
             Your update has been recorded.
-            {execStatus === "Completed" && " The IM will confirm execution and create the Work Done record once QC passes."}
           </div>
           {submittedPlanStatus && (
             <div className="exec-success-status">
@@ -680,15 +988,80 @@ export default function ExecutionForm() {
             )}
           </div>
 
-          {/* ── Remarks ──────────────────────────────────────── */}
+          {/* ── Team Lead Remark ─────────────────────────────── */}
           <div className="exec-section">
-            <div className="exec-section-title">Notes & Remarks</div>
-            <div className="exec-field" style={{ marginBottom: 0 }}>
+            <div className="exec-section-title">Team Lead Remark</div>
+
+            {/* Selected remarks render as chips above the picker.
+                Each chip is removable so a wrong pick is one tap to undo. */}
+            {tlRemarkPicked.size > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                {Array.from(tlRemarkPicked).map((txt) => (
+                  <span
+                    key={txt}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "5px 10px", borderRadius: 999,
+                      background: "rgba(37,99,235,0.1)", color: "#1d4ed8",
+                      border: "1px solid #bfdbfe",
+                      fontSize: "0.78rem", fontWeight: 600,
+                    }}
+                  >
+                    {txt}
+                    <button
+                      type="button"
+                      onClick={() => toggleTlRemark(txt)}
+                      title="Remove"
+                      style={{
+                        background: "none", border: "none", padding: 0,
+                        cursor: "pointer", color: "#1d4ed8", fontSize: 16,
+                        lineHeight: 1, marginLeft: 2,
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Searchable picker. Type to filter. If no template matches
+                the typed text, a "+ Add" row appears at the end of the
+                list and tapping it creates a new template + auto-picks
+                it. Picked templates are hidden from the dropdown. */}
+            <TlRemarkPicker
+              templates={tlRemarkTemplates}
+              picked={tlRemarkPicked}
+              creating={newTemplateBusy}
+              onPick={(text) => toggleTlRemark(text)}
+              onCreate={async (text) => {
+                setNewTemplateText(text);
+                setNewTemplateBusy(true); setNewTemplateErr(null);
+                try {
+                  const created = await pmApi.createFieldRemarkTemplate(text);
+                  const list = await pmApi.listFieldRemarkTemplates();
+                  setTlRemarkTemplates(Array.isArray(list) ? list : []);
+                  const key = (created && created.remark_text) || text;
+                  setTlRemarkPicked((prev) => { const n = new Set(prev); n.add(key); return n; });
+                } catch (err) {
+                  setNewTemplateErr(err.message || "Could not create template.");
+                } finally {
+                  setNewTemplateBusy(false);
+                }
+              }}
+            />
+            {newTemplateErr && (
+              <div style={{ color: "#b91c1c", fontSize: "0.74rem", marginTop: 6 }}>{newTemplateErr}</div>
+            )}
+
+            {/* Free-text extras for anything not in the list */}
+            <div className="exec-field" style={{ marginTop: 12, marginBottom: 0 }}>
+              <label style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>Extra notes (optional)</label>
               <textarea
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                placeholder="Any notes about this execution…"
-                rows={4}
+                value={tlRemarkExtra}
+                onChange={(e) => setTlRemarkExtra(e.target.value)}
+                placeholder="Anything specific not in the list…"
+                rows={2}
               />
             </div>
           </div>
@@ -780,12 +1153,6 @@ export default function ExecutionForm() {
           {submitError && (
             <div className="notice error" style={{ display: "flex", gap: 8 }}>
               <IconWarn /> {submitError}
-            </div>
-          )}
-          {execStatus === "Completed" && (
-            <div className="notice info">
-              Submit your QC + CIAG values along with Completed. The IM
-              still confirms execution before Work Done is generated.
             </div>
           )}
 

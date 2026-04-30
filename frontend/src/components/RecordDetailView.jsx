@@ -44,6 +44,11 @@ function isEmpty(v) {
 function classifyField(key, value) {
   const k = String(key || "");
   if (AREA_FIELD_RX.test(k)) return "area";
+  // Multi-line remarks (TL checklist values) — render as pill list,
+  // not as one wall of text. Single-line remarks stay as plain "long".
+  if (/remark/i.test(k) && typeof value === "string" && /\r?\n/.test(value)) {
+    return "remark_multi";
+  }
   if (LONG_FIELD_RX.test(k)) return "long";
   if (STATUS_FIELD_RX.test(k)) return "status";
   if (NUMERIC_FIELD_RX.test(k) && (typeof value === "number" || (!isNaN(parseFloat(value)) && value !== ""))) return "number";
@@ -109,6 +114,30 @@ function renderValue(kind, value) {
             borderRadius: 6, padding: "2px 8px",
             fontSize: 12, fontWeight: 500,
           }}>{p}</span>
+        ))}
+      </div>
+    );
+  }
+  if (kind === "remark_multi") {
+    const parts = String(value).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) return <span style={{ color: "#94a3b8" }}>—</span>;
+    return (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {parts.map((p, i) => (
+          <span key={i} style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            background: "#fff",
+            color: "#0f172a",
+            border: "1px solid #e2e8f0",
+            borderRadius: 999, padding: "4px 11px",
+            fontSize: 12.5, lineHeight: 1.3,
+          }}>
+            <span style={{
+              width: 6, height: 6, borderRadius: 999, background: "#10b981",
+              flexShrink: 0,
+            }} />
+            {p}
+          </span>
         ))}
       </div>
     );
@@ -195,7 +224,7 @@ export default function RecordDetailView({ row, pills, hero, hiddenFields, keyOr
 
   const fields = ordered.map(([k, v]) => {
     const kind = classifyField(k, v);
-    const span = kind === "long" || kind === "area" ? "full" : "auto";
+    const span = kind === "long" || kind === "area" || kind === "remark_multi" ? "full" : "auto";
     return { key: k, label: humanizeLabel(k), kind, span, value: renderValue(kind, v) };
   });
 

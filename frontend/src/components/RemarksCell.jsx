@@ -1,6 +1,83 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { pmApi } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+
+/**
+ * Inline pill row that fits as many remarks as possible into the cell
+ * width, then shows a "+N" counter for the rest. Implementation:
+ *   1. Render all pills with the counter at the end, all visible.
+ *   2. After layout, if we're overflowing the container, decrement
+ *      visibleCount and re-measure. Repeat until no overflow.
+ *   3. Reset to "all" on container resize so widening the column
+ *      reveals more.
+ */
+function AdaptivePillRow({ lines, dot }) {
+  const wrapRef = useRef(null);
+  const [visibleCount, setVisibleCount] = useState(lines.length);
+
+  // After every render, check if we still overflow; shrink one pill if so.
+  useLayoutEffect(() => {
+    if (!wrapRef.current) return;
+    const el = wrapRef.current;
+    if (el.scrollWidth > el.clientWidth + 1 && visibleCount > 1) {
+      setVisibleCount((c) => Math.max(1, c - 1));
+    }
+  }, [visibleCount, lines]);
+
+  // On column-width change, optimistically reset to all and let the
+  // shrink loop run again.
+  useEffect(() => {
+    if (!wrapRef.current) return;
+    let raf = null;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => setVisibleCount(lines.length));
+    });
+    ro.observe(wrapRef.current);
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
+  }, [lines.length]);
+
+  const visible = lines.slice(0, visibleCount);
+  const overflow = lines.length - visibleCount;
+
+  return (
+    <span
+      ref={wrapRef}
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        flex: 1, minWidth: 0,
+        overflow: "hidden", whiteSpace: "nowrap",
+      }}
+    >
+      {visible.map((ln, i) => (
+        <span
+          key={i}
+          style={{
+            flexShrink: 0,
+            display: "inline-block",
+            padding: "1px 8px", borderRadius: 999,
+            background: "#fff", border: "1px solid #e2e8f0",
+            fontSize: "0.74rem",
+            maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {ln}
+        </span>
+      ))}
+      {overflow > 0 && (
+        <span style={{
+          flexShrink: 0, fontSize: "0.7rem", fontWeight: 700,
+          padding: "1px 7px", borderRadius: 999,
+          background: dot + "20", color: dot,
+          border: `1px solid ${dot}40`,
+        }}>
+          +{overflow}
+        </span>
+      )}
+    </span>
+  );
+}
 
 /**
  * Edit rules — kept in sync with the backend `update_po_remark`:
@@ -63,6 +140,12 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
   const text = (value || "").toString().trim();
   const t = TONES[tone] || TONES.general;
   const remarkType = tone;
+  // Multiple remarks (TL flow) are stored newline-separated. The
+  // single-row list cell shows the first one + a "+N" counter; the
+  // edit modal expands them into a chip list.
+  const lines = text
+    ? text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+    : [];
 
   async function doSave() {
     if (!poDispatch) { setOpen(false); return; }
@@ -79,29 +162,38 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
     }
   }
 
+  const fullText = lines.join(" • ");
   return (
     <>
       <span
-        title={text || (clickable ? `Click to set ${t.label.toLowerCase()} remark` : `${t.label} (read-only)`)}
+        title={fullText || (clickable ? `Click to set ${t.label.toLowerCase()} remark` : `${t.label} (read-only)`)}
         onClick={() => clickable && setOpen(true)}
         style={{
-          display: "inline-flex",
+          display: "flex",
           alignItems: "center",
           gap: 6,
-          maxWidth: 220,
+          width: "100%",
+          minWidth: 0,
           fontSize: "0.78rem",
           color: text ? "#1e293b" : "#94a3b8",
           cursor: clickable ? "pointer" : "default",
           padding: "2px 4px",
           borderRadius: 4,
+          overflow: "hidden",
         }}
         onMouseEnter={(e) => { if (clickable) e.currentTarget.style.background = "#f1f5f9"; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
       >
         <span style={{ width: 6, height: 6, borderRadius: 999, background: t.dot, flexShrink: 0 }} />
-        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {text || "—"}
-        </span>
+        {lines.length === 0 ? (
+          <span style={{ whiteSpace: "nowrap" }}>—</span>
+        ) : lines.length === 1 ? (
+          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {lines[0]}
+          </span>
+        ) : (
+          <AdaptivePillRow lines={lines} dot={t.dot} />
+        )}
       </span>
 
       {open && (
@@ -143,6 +235,32 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
                 POID: {poid || poDispatch}
               </div>
             )}
+            {/* Rendered list view of the current value above the editor —
+                each newline-separated remark gets its own pill so the
+                reader sees the items as a checklist. */}
+            {lines.length > 0 && (
+              <div style={{
+                display: "flex", flexWrap: "wrap", gap: 6,
+                padding: 10, background: "#f8fafc",
+                border: "1px solid #f1f5f9", borderRadius: 8,
+                marginBottom: 10,
+              }}>
+                {lines.map((ln, i) => (
+                  <span key={i} style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "5px 10px", borderRadius: 999,
+                    background: "#fff", border: "1px solid #e2e8f0",
+                    fontSize: "0.78rem", color: "#1e293b",
+                  }}>
+                    <span style={{ width: 6, height: 6, borderRadius: 999, background: t.dot }} />
+                    {ln}
+                  </span>
+                ))}
+              </div>
+            )}
+            <label style={{ fontSize: "0.74rem", color: "#64748b", display: "block", marginBottom: 4 }}>
+              Edit remark (one per line):
+            </label>
             <textarea
               ref={textareaRef}
               value={draft}

@@ -65,14 +65,17 @@ function QcEditModal({ row, onClose, onSaved }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
           <div>
             <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "var(--text)" }}>QC / CIAG Update</div>
-            <div style={{ fontFamily: "monospace", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>{row.name}</div>
+            <div style={{ fontFamily: "monospace", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
+              {row.poid || row.po_dispatch || row.name}
+            </div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: "var(--text-muted)", cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
         </div>
 
         <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 14, display: "flex", flexDirection: "column", gap: 3 }}>
           {row.project_code && <span>Project: <strong>{row.project_code}</strong></span>}
-          {row.site_name && <span>Site: <strong>{row.site_name}</strong></span>}
+          {(row.site_code || row.site_name) && <span>Site: <strong>{row.site_code || ""}{row.site_code && row.site_name ? " · " : ""}{row.site_name || ""}</strong></span>}
+          {row.item_code && <span>Item: <strong>{row.item_code}</strong>{row.item_description ? ` — ${row.item_description}` : ""}</span>}
           {row.plan_date && <span>Date: <strong>{row.plan_date}</strong> · {row.visit_type || ""}</span>}
         </div>
 
@@ -133,9 +136,11 @@ function QcCard({ row, selected, onToggle, onOpen }) {
               style={{ width: 16, height: 16, accentColor: "var(--blue)", cursor: "pointer", flexShrink: 0 }}
               onClick={(e) => e.stopPropagation()}
             />
-            <div className="qc-card-id">{row.name}</div>
+            <div className="qc-card-id">{row.poid || row.po_dispatch || row.name}</div>
           </div>
-          {row.po_dispatch && <div className="qc-card-poid">POID: {row.po_dispatch}</div>}
+          {row.po_dispatch && row.poid && row.poid !== row.po_dispatch && (
+            <div className="qc-card-poid">System: {row.po_dispatch}</div>
+          )}
         </div>
         <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" style={{ color: "var(--text-muted)", flexShrink: 0, opacity: 0.4 }}>
           <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd"/>
@@ -181,7 +186,13 @@ export default function FieldQcCiag() {
         const filters = { status: "Completed", team: teamId };
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
-        if (!cancelled) setRows(Array.isArray(list) ? list : []);
+        // Hide rows where the IM has already confirmed (execution_status
+        // = "Completed") — at that point QC/CIAG is the IM's call, no
+        // longer the field team's queue.
+        const visible = (Array.isArray(list) ? list : []).filter(
+          (r) => String(r.execution_status || "") !== "Completed"
+        );
+        if (!cancelled) setRows(visible);
       } catch { if (!cancelled) setRows([]); }
       finally { if (!cancelled) setLoading(false); }
     })();
@@ -330,9 +341,11 @@ export default function FieldQcCiag() {
                       />
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.name}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.po_dispatch || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }} title={r.po_dispatch ? `System ID: ${r.po_dispatch}` : ""}>
+                      {r.poid || r.po_dispatch || "—"}
+                    </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }}>
-                      {(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.po_dispatch || "")
+                      {(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.poid || r.po_dispatch || "")
                         ? (r.original_dummy_poid || "").trim() : "—"}
                     </td>
                     <td>{r.project_code || "—"}</td>
@@ -367,11 +380,15 @@ export default function FieldQcCiag() {
           onClose={() => setEditRow(null)}
           onSaved={() => {
             setEditRow(null);
-            // refresh rows
+            // refresh rows; same IM-confirmed filter as the initial load.
             const filters = { status: "Completed", team: teamId };
             if (searchDebounced.trim()) filters.search = searchDebounced.trim();
             pmApi.listExecutionMonitorRows(filters, rowLimit)
-              .then((list) => setRows(Array.isArray(list) ? list : []))
+              .then((list) => setRows(
+                (Array.isArray(list) ? list : []).filter(
+                  (r) => String(r.execution_status || "") !== "Completed"
+                )
+              ))
               .catch(() => {});
           }}
         />

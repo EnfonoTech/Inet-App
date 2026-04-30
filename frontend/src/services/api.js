@@ -321,6 +321,14 @@ export const pmApi = {
     call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),
   getRolloutPlanDetails: (rollout_plan) =>
     call("inet_app.api.command_center.get_rollout_plan_details", { rollout_plan }),
+  listFieldTeamActionablePlans: (team_id) =>
+    call("inet_app.api.command_center.list_field_team_actionable_plans", { team_id }),
+  listFieldRemarkTemplates: () =>
+    call("inet_app.api.command_center.list_field_remark_templates", {}),
+  createFieldRemarkTemplate: (remark_text, category) =>
+    call("inet_app.api.command_center.create_field_remark_template", { remark_text, category: category || "" }),
+  bumpFieldRemarkTemplateUsage: (remark_texts) =>
+    call("inet_app.api.command_center.bump_field_remark_template_usage", { remark_texts: JSON.stringify(remark_texts || []) }),
   exportPODump: (from_date, to_date, statuses, limit) => {
     const args = {
       from_date: from_date || "",
