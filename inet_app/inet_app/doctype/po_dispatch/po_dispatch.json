@@ -38,6 +38,10 @@
   "site_code",
   "column_break_wuyp",
   "site_name",
+  "section_remarks",
+  "general_remark",
+  "manager_remark",
+  "team_lead_remark",
   "section_subcon",
   "subcon_team",
   "subcon_status",
@@ -273,6 +277,30 @@
   {
    "fieldname": "column_break_wuyp",
    "fieldtype": "Column Break"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_remarks",
+   "fieldtype": "Section Break",
+   "label": "Remarks (Role-Scoped)"
+  },
+  {
+   "description": "PM-only remark for this POID. Visible across PM / IM / Field views.",
+   "fieldname": "general_remark",
+   "fieldtype": "Long Text",
+   "label": "General Remark (PM)"
+  },
+  {
+   "description": "PM + IM remark for this POID. Visible across PM / IM / Field views.",
+   "fieldname": "manager_remark",
+   "fieldtype": "Long Text",
+   "label": "Manager Remark (IM)"
+  },
+  {
+   "description": "PM + IM + Field-team remark for this POID.",
+   "fieldname": "team_lead_remark",
+   "fieldtype": "Long Text",
+   "label": "Team Lead Remark (Field)"
   },
   {
    "collapsible": 1,

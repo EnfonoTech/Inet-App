@@ -162,6 +162,27 @@ def _sql_search_clause(concat_expr, term):
     return f"({ors})", patterns
 
 
+def _po_dispatch_col_expr(col, alias=None, prefix="pd"):
+    """Return ``"<prefix>.<col> AS <alias>"`` if the column exists on PO Dispatch,
+    otherwise ``"NULL AS <alias>"``. Lets queries that touch optional columns
+    survive on environments where a migration hasn't run yet.
+    """
+    alias = alias or col
+    if frappe.db.has_column("PO Dispatch", col):
+        return f"{prefix}.{col} AS {alias}"
+    return f"NULL AS {alias}"
+
+
+def _remark_select(prefix="pd"):
+    """SELECT-clause fragment for the role-scoped remark trio. Falls back to
+    NULLs on environments that haven't migrated the new columns yet."""
+    return ", ".join([
+        _po_dispatch_col_expr("general_remark", prefix=prefix),
+        _po_dispatch_col_expr("manager_remark", prefix=prefix),
+        _po_dispatch_col_expr("team_lead_remark", prefix=prefix),
+    ])
+
+
 _PIC_STATUS_TO_BILLING = {
     # PIC scale (11 values) → Work Done billing bucket (Pending / Invoiced / Closed).
     "Commercial Invoice Closed":    "Closed",
@@ -4020,17 +4041,21 @@ def list_work_done_rows(filters=None, limit=500):
 
     wheres = ["1=1"]
     params = []
-    # Billing status filter uses the same PIC roll-up that the response shows,
-    # so picking "Closed" returns rows where the PIC has marked
+    # Billing status filter uses the same PIC roll-up that the response shows
+    # — picking "Closed" returns rows where the PIC has marked
     # "Commercial Invoice Closed" / "PO Line Canceled". Falls back to the
-    # legacy wd.billing_status for rows that haven't been touched by PIC yet.
-    billing_expr = (
-        "CASE "
-        "WHEN pd.pic_status IN ('Commercial Invoice Closed','PO Line Canceled') THEN 'Closed' "
-        "WHEN pd.pic_status IN ('Commercial Invoice Submitted','Ready for Invoice','Under I-BUY','Under ISDP') THEN 'Invoiced' "
-        "WHEN IFNULL(pd.pic_status,'') != '' THEN 'Pending' "
-        "ELSE IFNULL(wd.billing_status, 'Pending') END"
-    )
+    # legacy wd.billing_status for rows that haven't been touched by PIC yet,
+    # OR for sites where the pic_status column hasn't migrated.
+    if frappe.db.has_column("PO Dispatch", "pic_status"):
+        billing_expr = (
+            "CASE "
+            "WHEN pd.pic_status IN ('Commercial Invoice Closed','PO Line Canceled') THEN 'Closed' "
+            "WHEN pd.pic_status IN ('Commercial Invoice Submitted','Ready for Invoice','Under I-BUY','Under ISDP') THEN 'Invoiced' "
+            "WHEN IFNULL(pd.pic_status,'') != '' THEN 'Pending' "
+            "ELSE IFNULL(wd.billing_status, 'Pending') END"
+        )
+    else:
+        billing_expr = "IFNULL(wd.billing_status, 'Pending')"
     for col, key in ((billing_expr, "billing_status"),
                      ("IFNULL(rp.team, de.team)", "team"),
                      ("IFNULL(pd.project_code,'')", "project_code"),
@@ -4157,7 +4182,10 @@ def list_work_done_rows(filters=None, limit=500):
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
     pd_map = {}
     if dispatch_names:
-        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer", "line_amount", "po_line_no", "dispatch_status", "general_remark", "manager_remark", "team_lead_remark"]
+        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer", "line_amount", "po_line_no", "dispatch_status"]
+        for opt in ("general_remark", "manager_remark", "team_lead_remark"):
+            if frappe.db.has_column("PO Dispatch", opt):
+                pd_fields_wd.append(opt)
         if frappe.db.has_column("PO Dispatch", "poid"):
             pd_fields_wd.append("poid")
         if frappe.db.has_column("PO Dispatch", "im"):
@@ -4225,8 +4253,10 @@ def list_work_done_rows(filters=None, limit=500):
         im_row = rp_im_row or pd_im_row
         # Billing status now follows the PIC's invoice status. The PM/IM
         # bucket (Pending / Invoiced / Closed) is rolled up from the 11-value
-        # PIC scale so existing widgets/filters keep working.
-        pic_status_val = pd.get("pic_status") if pd else None
+        # PIC scale so existing widgets/filters keep working. Falls back to
+        # the legacy stored billing_status on sites that haven't migrated
+        # the new pic_status column yet.
+        pic_status_val = pd.get("pic_status") if pd and "pic_status" in pd else None
         billing_override = _billing_status_from_pic(pic_status_val, r.get("billing_status"))
         out.append(
             {
@@ -4362,7 +4392,7 @@ def _synthesize_subcon_workdone_rows(filters):
         "pd.dispatch_status, pd.im, "
         "pd.subcon_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark, "
         f"{sub_sub_col}, "
-        "pd.general_remark, pd.manager_remark, pd.team_lead_remark, "
+        f"{_remark_select()}, "
         "t.team_id AS subcon_team_id, t.team_name AS subcon_team_name, "
         "pd.modified "
         "FROM `tabPO Dispatch` pd "
@@ -4661,9 +4691,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             pd.line_amount,
             pd.center_area,
             pd.region_type,
-            pd.general_remark,
-            pd.manager_remark,
-            pd.team_lead_remark,
+            {_remark_select()},
             de.name AS execution_name,
             de.execution_date,
             de.execution_status,
@@ -5286,9 +5314,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                pd.customer AS customer, pd.item_description,
-               pd.general_remark AS general_remark,
-               pd.manager_remark AS manager_remark,
-               pd.team_lead_remark AS team_lead_remark,
+               {_remark_select()},
                it.team_name AS team_name,
                {im_full_sql}
                {im_plan_extra_sql}
@@ -5426,9 +5452,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag, de.photos,
                pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
                pd.customer AS customer,
-               pd.general_remark AS general_remark,
-               pd.manager_remark AS manager_remark,
-               pd.team_lead_remark AS team_lead_remark,
+               {_remark_select()},
                (SELECT wd.name FROM `tabWork Done` wd WHERE wd.execution = de.name LIMIT 1) AS work_done,
                it.team_name AS team_name,
                {im_full_sql_ex}
@@ -7502,9 +7526,11 @@ def get_po_remarks(po_dispatch):
     if role is None:
         frappe.throw("Not permitted", frappe.PermissionError)
     name = _resolve_dispatch_for_remarks(po_dispatch)
+    remark_cols = [c for c in ("general_remark", "manager_remark", "team_lead_remark")
+                   if frappe.db.has_column("PO Dispatch", c)]
     row = frappe.db.get_value(
         "PO Dispatch", name,
-        ["name", "poid", "general_remark", "manager_remark", "team_lead_remark"],
+        ["name", "poid", *remark_cols],
         as_dict=True,
     ) or {}
 
@@ -7557,6 +7583,12 @@ def update_po_remark(po_dispatch, remark_type, value):
     text = str(value or "")
     if len(text) > 8000:
         text = text[:8000]
+    if not frappe.db.has_column("PO Dispatch", field):
+        frappe.throw(
+            f"Field {field} is not yet available on this site — run "
+            "`bench --site <site> migrate` to add the role-scoped remark columns.",
+            frappe.ValidationError,
+        )
     frappe.db.set_value("PO Dispatch", name, field, text, update_modified=True)
     frappe.db.commit()
     return {"po_dispatch": name, "remark_type": rtype, "value": text}
