@@ -54,13 +54,12 @@
   },
   {
    "default": "Field Team",
-   "description": "Field Team works through Rollout Plan + Daily Execution. Sub-Contract Team is assigned via Subcon flow and reports back outside the system.",
    "fieldname": "team_category",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Team Category",
-   "options": "Field Team\nSub-Contract Team",
+   "options": "Field Team\nBackend Team",
    "reqd": 1
   },
   {

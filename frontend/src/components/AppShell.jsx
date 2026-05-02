@@ -160,17 +160,17 @@ export default function AppShell() {
     setMobileNavOpen(false);
   }, [location.pathname]);
 
-  /* IMs with `can_subcon=1` get the Sub-Contract menu item injected. */
-  const [imCanSubcon, setImCanSubcon] = useState(false);
+  /* IMs with `can_assign_backend=1` get the Backend menu item injected. */
+  const [imCanBackend, setImCanBackend] = useState(false);
   useEffect(() => {
     if (role !== "im") return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await pmApi.getMySubconCapability();
-        if (!cancelled) setImCanSubcon(!!res?.can_subcon);
+        const res = await pmApi.getMyBackendCapability();
+        if (!cancelled) setImCanBackend(!!res?.can_assign_backend);
       } catch {
-        if (!cancelled) setImCanSubcon(false);
+        if (!cancelled) setImCanBackend(false);
       }
     })();
     return () => { cancelled = true; };
@@ -179,12 +179,12 @@ export default function AppShell() {
   /* Pick nav items based on role */
   const navItems = useMemo(() => {
     if (role === "im") {
-      if (!imCanSubcon) return imNav;
+      if (!imCanBackend) return imNav;
       const out = [];
       imNav.forEach((item) => {
         out.push(item);
         if (item.to === "/im-po-intake") {
-          out.push({ to: "/im-subcon", label: "Sub-Contract", icon: "briefcase" });
+          out.push({ to: "/im-backend", label: "Backend", icon: "briefcase" });
         }
       });
       return out;
@@ -192,7 +192,7 @@ export default function AppShell() {
     if (role === "field") return fieldNav;
     if (role === "pic") return picNav;
     return adminNav;
-  }, [role, imCanSubcon]);
+  }, [role, imCanBackend]);
 
   /* Current page title for topbar */
   const current = useMemo(

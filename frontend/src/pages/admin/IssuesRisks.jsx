@@ -150,7 +150,7 @@ export default function IssuesRisks() {
       try {
         const list = await pmApi.listINETTeams({ status: "Active" });
         const fieldOnly = (Array.isArray(list) ? list : []).filter(
-          (t) => (t.team_category || "Field Team") !== "Sub-Contract Team"
+          (t) => (t.team_category || "Field Team") !== "Backend Team"
         );
         if (!cancelled) setTeamsList(fieldOnly);
       } catch {

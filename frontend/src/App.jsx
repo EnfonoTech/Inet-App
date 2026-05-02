@@ -32,7 +32,7 @@ import IMReports from "./pages/im/IMReports";
 import IMTimesheets from "./pages/im/IMTimesheets";
 import IMDispatch from "./pages/im/IMDispatch";
 import IMPOIntake from "./pages/im/IMPOIntake";
-import IMSubcon from "./pages/im/IMSubcon";
+import IMBackend from "./pages/im/IMBackend";
 import PICDashboard from "./pages/pic/PICDashboard";
 import PICTracker from "./pages/pic/PICTracker";
 import PICReports from "./pages/pic/PICReports";
@@ -118,7 +118,9 @@ function AppContent() {
             <Route path="/im-projects" element={<IMProjects />} />
             <Route path="/im-teams" element={<IMTeams />} />
             <Route path="/im-po-intake" element={<IMPOIntake />} />
-            <Route path="/im-subcon" element={<IMSubcon />} />
+            <Route path="/im-backend" element={<IMBackend />} />
+            {/* Back-compat alias for the old /im-subcon URL */}
+            <Route path="/im-subcon" element={<IMBackend />} />
             <Route path="/im-dispatch" element={<IMDispatch />} />
             <Route path="/im-planning" element={<IMPlanning />} />
             <Route path="/im-execution" element={<IMExecution />} />

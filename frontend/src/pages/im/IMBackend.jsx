@@ -28,8 +28,8 @@ function StatusPill({ value }) {
   );
 }
 
-export default function IMSubcon() {
-  const [canSubcon, setCanSubcon] = useState(true);
+export default function IMBackend() {
+  const [canBackend, setCanBackend] = useState(true);
   const [capChecked, setCapChecked] = useState(false);
 
   const [rows, setRows] = useState([]);
@@ -55,10 +55,10 @@ export default function IMSubcon() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await pmApi.getMySubconCapability();
-        if (!cancelled) setCanSubcon(!!res?.can_subcon);
+        const res = await pmApi.getMyBackendCapability();
+        if (!cancelled) setCanBackend(!!res?.can_assign_backend);
       } catch {
-        if (!cancelled) setCanSubcon(false);
+        if (!cancelled) setCanBackend(false);
       } finally {
         if (!cancelled) setCapChecked(true);
       }
@@ -75,11 +75,11 @@ export default function IMSubcon() {
       if (projectFilter.length) params.project_code = projectFilter;
       if (duidFilter.length) params.site_code = duidFilter;
       if (teamFilter.length) params.subcon_team = teamFilter;
-      const res = await pmApi.listSubconDispatches(params);
+      const res = await pmApi.listBackendDispatches(params);
       setRows(Array.isArray(res) ? res : []);
       setSelected(new Set());
     } catch (err) {
-      setError(err.message || "Failed to load sub-contract list");
+      setError(err.message || "Failed to load backend-assignment list");
     } finally {
       setLoading(false);
     }
@@ -147,7 +147,7 @@ export default function IMSubcon() {
     setDoneBusy(true);
     setDoneError(null);
     try {
-      const res = await pmApi.markSubconWorkDone(ids, doneDate || "", doneRemark || "");
+      const res = await pmApi.markBackendWorkDone(ids, doneDate || "", doneRemark || "");
       const summary = res?.summary || {};
       const okN = summary.updated_count ?? 0;
       const errN = summary.error_count ?? 0;
@@ -170,18 +170,18 @@ export default function IMSubcon() {
     }
   }
 
-  if (capChecked && !canSubcon) {
+  if (capChecked && !canBackend) {
     return (
       <div>
         <div className="page-header">
           <div>
-            <h1 className="page-title">Sub-Contract</h1>
+            <h1 className="page-title">Backend</h1>
           </div>
         </div>
         <div className="empty-state" style={{ margin: 16 }}>
           <div className="empty-icon">🔒</div>
-          <h3>Sub-contracting is not enabled</h3>
-          <p>Ask the admin to enable "Can Sub-Contract" on your IM Master record.</p>
+          <h3>Backend assignment is not enabled</h3>
+          <p>Ask the admin to enable "Can Assign Backend Team" on your IM Master record.</p>
         </div>
       </div>
     );
@@ -194,10 +194,7 @@ export default function IMSubcon() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Sub-Contract</h1>
-          <div className="page-subtitle">
-            POIDs sub-contracted to non-field teams. Select rows and Mark Work Done once the team reports completion.
-          </div>
+          <h1 className="page-title">Backend</h1>
         </div>
         <div className="page-actions">
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
@@ -265,11 +262,11 @@ export default function IMSubcon() {
           ) : rows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📤</div>
-              <h3>{hasFilters ? "No matching sub-contracted POIDs" : "No sub-contracted POIDs"}</h3>
+              <h3>{hasFilters ? "No matching backend-assigned POIDs" : "No backend-assigned POIDs"}</h3>
               <p>
                 {hasFilters
                   ? "Try adjusting your search or filters."
-                  : "Sub-contract POIDs from the PO Control page. They'll show up here for tracking and Mark Work Done."}
+                  : "Assign POIDs to a backend team from the PO Control page. They'll show up here for tracking and Mark Work Done."}
               </p>
             </div>
           ) : (
@@ -293,7 +290,7 @@ export default function IMSubcon() {
                   <th style={{ textAlign: "right" }}>Amount (SAR)</th>
                   <th>DUID</th>
                   <th>Center area</th>
-                  <th>Sub-Contract Team</th>
+                  <th>Backend Team</th>
                   <th>Status</th>
                   <th>Completed</th>
                   <th>Note</th>
@@ -379,7 +376,7 @@ export default function IMSubcon() {
                 rows={3}
                 value={doneRemark}
                 onChange={(e) => setDoneRemark(e.target.value)}
-                placeholder="Closing note from the sub-contract team…"
+                placeholder="Closing note from the backend team…"
                 disabled={doneBusy}
                 style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }}
               />

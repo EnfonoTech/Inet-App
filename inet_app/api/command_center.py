@@ -4943,7 +4943,7 @@ def update_subcon_submission(po_dispatch, submission_status):
         frappe.throw("Submission status can only be set on completed sub-contract POIDs.")
     if role == "im":
         _, im_identifiers, _ = resolve_im_for_session()
-        if not _can_subcon_dispatch(role, im_identifiers, pd):
+        if not _can_assign_backend_dispatch(role, im_identifiers, pd):
             frappe.throw("Not permitted", frappe.PermissionError)
     frappe.db.set_value(
         "PO Dispatch", name,
@@ -8290,7 +8290,7 @@ def update_po_remark(po_dispatch, remark_type, value):
 # ──────────────────────────────────────────────────────────────────────
 # Sub-Contract flow — IM-driven, lives outside the rollout chain
 # ──────────────────────────────────────────────────────────────────────
-def _can_subcon_dispatch(role, im_identifiers, pd):
+def _can_assign_backend_dispatch(role, im_identifiers, pd):
     if role == "pm":
         return True
     if role != "im":
@@ -8302,20 +8302,20 @@ def _can_subcon_dispatch(role, im_identifiers, pd):
 
 
 @frappe.whitelist()
-def get_my_subcon_capability(im=None):
+def get_my_backend_capability(im=None):
     """Return whether the current session can sub-contract POIDs.
 
-    PM/admin: always True. IM: True only if `IM Master.can_subcon = 1`.
+    PM/admin: always True. IM: True only if `IM Master.can_assign_backend = 1`.
     Field: never.
     """
     role = _user_role_class()
     if role == "pm":
-        return {"role": role, "can_subcon": True, "im": None}
+        return {"role": role, "can_assign_backend": True, "im": None}
     if role != "im":
-        return {"role": role, "can_subcon": False, "im": None}
+        return {"role": role, "can_assign_backend": False, "im": None}
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
-        return {"role": role, "can_subcon": False, "im": None}
+        return {"role": role, "can_assign_backend": False, "im": None}
     # `im_resolved` is the IM Master name; `im_identifiers` is an unordered
     # set-derived list (may contain email / full_name / etc.). Probe both.
     target = im_resolved if im_resolved and frappe.db.exists("IM Master", im_resolved) else None
@@ -8326,18 +8326,18 @@ def get_my_subcon_capability(im=None):
                 break
     flag = 0
     if target:
-        flag = cint(frappe.db.get_value("IM Master", target, "can_subcon") or 0)
-    return {"role": role, "can_subcon": bool(flag), "im": target}
+        flag = cint(frappe.db.get_value("IM Master", target, "can_assign_backend") or 0)
+    return {"role": role, "can_assign_backend": bool(flag), "im": target}
 
 
 @frappe.whitelist()
-def list_subcon_teams_for_picker(search=None, limit=200):
-    """Sub-Contract Team picker — only teams with category 'Sub-Contract Team'."""
+def list_backend_teams_for_picker(search=None, limit=200):
+    """Backend Team picker — only teams with category 'Backend Team'."""
     role = _user_role_class()
     if role not in ("pm", "im"):
         frappe.throw("Not permitted", frappe.PermissionError)
     s = (search or "").strip()
-    where = ["IFNULL(team_category,'Field Team') = 'Sub-Contract Team'", "IFNULL(status,'Active') = 'Active'"]
+    where = ["IFNULL(team_category,'Field Team') = 'Backend Team'", "IFNULL(status,'Active') = 'Active'"]
     params = []
     if s:
         where.append("(name LIKE %s OR IFNULL(team_id,'') LIKE %s OR IFNULL(team_name,'') LIKE %s)")
@@ -8353,7 +8353,7 @@ def list_subcon_teams_for_picker(search=None, limit=200):
     return frappe.db.sql(sql, tuple(params), as_dict=True)
 
 
-def _assign_subcon_one(role, im_identifiers, name, team, remark):
+def _assign_backend_one(role, im_identifiers, name, team, remark):
     """Stamp subcon fields on a single PO Dispatch. Returns (ok, info_or_error)."""
     pd = frappe.db.get_value(
         "PO Dispatch", name,
@@ -8376,7 +8376,7 @@ def _assign_subcon_one(role, im_identifiers, name, team, remark):
         return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Map the dummy PO to a real PO line before sub-contracting."}
 
     if role == "im":
-        if not _can_subcon_dispatch(role, im_identifiers, pd):
+        if not _can_assign_backend_dispatch(role, im_identifiers, pd):
             return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Not assigned to you."}
 
     updates = {
@@ -8399,7 +8399,7 @@ def _assign_subcon_one(role, im_identifiers, name, team, remark):
 
 
 @frappe.whitelist()
-def assign_subcon(po_dispatch=None, po_dispatches=None, subcon_team=None, remark=None):
+def assign_backend(po_dispatch=None, po_dispatches=None, subcon_team=None, remark=None):
     """Sub-contract one or many PO Dispatches to a non-field team.
 
     Accepts either ``po_dispatch`` (single name) or ``po_dispatches`` (list / JSON
@@ -8446,15 +8446,15 @@ def assign_subcon(po_dispatch=None, po_dispatches=None, subcon_team=None, remark
     )
     if not team:
         frappe.throw(f"INET Team not found: {subcon_team}")
-    if (team.get("team_category") or "Field Team") != "Sub-Contract Team":
-        frappe.throw("Sub-contracting is only allowed to teams with category 'Sub-Contract Team'.")
+    if (team.get("team_category") or "Field Team") != "Backend Team":
+        frappe.throw("Backend assignment is only allowed to teams with category 'Backend Team'.")
     if (team.get("status") or "Active") != "Active":
         frappe.throw("Selected team is not Active.")
 
     im_identifiers = []
     if role == "im":
         im_resolved, im_identifiers, _ = resolve_im_for_session()
-        # Gate by IM Master.can_subcon. resolve_im_for_session returns
+        # Gate by IM Master.can_assign_backend. resolve_im_for_session returns
         # `im_resolved` = IM Master name; `im_identifiers` is an unordered
         # set-derived list that can include email / full_name / etc., so
         # always look up the IM Master row by the resolved name (or by any
@@ -8467,7 +8467,7 @@ def assign_subcon(po_dispatch=None, po_dispatches=None, subcon_team=None, remark
                     break
         if not my_im:
             frappe.throw("Could not resolve your IM Master record.", frappe.PermissionError)
-        if not cint(frappe.db.get_value("IM Master", my_im, "can_subcon") or 0):
+        if not cint(frappe.db.get_value("IM Master", my_im, "can_assign_backend") or 0):
             frappe.throw("Sub-contracting is not enabled for your IM profile. Ask the admin to enable 'Can Sub-Contract' on your IM Master.", frappe.PermissionError)
 
     # Resolve POIDs / system_ids to real names
@@ -8484,7 +8484,7 @@ def assign_subcon(po_dispatch=None, po_dispatches=None, subcon_team=None, remark
         if not name:
             errors.append({"po_dispatch": candidates[i], "error": "PO Dispatch not found"})
             continue
-        ok, info = _assign_subcon_one(role, im_identifiers, name, team, remark)
+        ok, info = _assign_backend_one(role, im_identifiers, name, team, remark)
         (updated if ok else errors).append(info)
 
     frappe.db.commit()
@@ -8501,7 +8501,7 @@ def assign_subcon(po_dispatch=None, po_dispatches=None, subcon_team=None, remark
     }
 
 
-def _mark_subcon_done_one(role, im_identifiers, name, completed, remark):
+def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
     pd = frappe.db.get_value(
         "PO Dispatch", name,
         ["name", "im", "dispatch_status", "subcon_status", "subcon_team", "subcon_remark", "poid"],
@@ -8511,7 +8511,7 @@ def _mark_subcon_done_one(role, im_identifiers, name, completed, remark):
         return False, {"po_dispatch": name, "error": "PO Dispatch not found"}
     if (pd.get("subcon_status") or "") != "Pending":
         return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Not in 'Sub-Contract Pending' state."}
-    if role == "im" and not _can_subcon_dispatch(role, im_identifiers, pd):
+    if role == "im" and not _can_assign_backend_dispatch(role, im_identifiers, pd):
         return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Not assigned to you."}
 
     updates = {
@@ -8542,7 +8542,7 @@ def _mark_subcon_done_one(role, im_identifiers, name, completed, remark):
 
 
 @frappe.whitelist()
-def mark_subcon_work_done(po_dispatch=None, po_dispatches=None, completed_on=None, remark=None):
+def mark_backend_work_done(po_dispatch=None, po_dispatches=None, completed_on=None, remark=None):
     """Mark one or many sub-contracted POIDs as Work Done.
 
     Accepts either ``po_dispatch`` (single name) or ``po_dispatches`` (list / JSON).
@@ -8591,7 +8591,7 @@ def mark_subcon_work_done(po_dispatch=None, po_dispatches=None, completed_on=Non
         if not name:
             errors.append({"po_dispatch": candidates[i], "error": "PO Dispatch not found"})
             continue
-        ok, info = _mark_subcon_done_one(role, im_identifiers, name, completed, remark)
+        ok, info = _mark_backend_done_one(role, im_identifiers, name, completed, remark)
         (updated if ok else errors).append(info)
 
     frappe.db.commit()
@@ -8608,7 +8608,7 @@ def mark_subcon_work_done(po_dispatch=None, po_dispatches=None, completed_on=Non
 
 
 @frappe.whitelist()
-def list_subcon_dispatches(
+def list_backend_dispatches(
     im=None, search=None, status="all", limit=300,
     project_code=None, site_code=None, subcon_team=None,
 ):

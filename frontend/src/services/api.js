@@ -465,25 +465,27 @@ export const pmApi = {
     owner: params?.owner || "",
   }),
 
-  // Sub-Contract flow — IM-driven, lives outside the rollout chain
-  getMySubconCapability: (im) => call("inet_app.api.command_center.get_my_subcon_capability", im ? { im } : {}),
-  listSubconTeamsForPicker: (search) => call("inet_app.api.command_center.list_subcon_teams_for_picker", { search: search || "", limit: 200 }),
-  assignSubcon: (po_dispatches, subcon_team, remark) => call("inet_app.api.command_center.assign_subcon", {
+  // Backend-team assignment flow — IM-driven, lives outside the rollout chain
+  getMyBackendCapability: (im) => call("inet_app.api.command_center.get_my_backend_capability", im ? { im } : {}),
+  listBackendTeamsForPicker: (search) => call("inet_app.api.command_center.list_backend_teams_for_picker", { search: search || "", limit: 200 }),
+  assignBackend: (po_dispatches, backend_team, remark) => call("inet_app.api.command_center.assign_backend", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
-    subcon_team,
+    subcon_team: backend_team,
     remark: remark || "",
   }),
-  markSubconWorkDone: (po_dispatches, completed_on, remark) => call("inet_app.api.command_center.mark_subcon_work_done", {
+  markBackendWorkDone: (po_dispatches, completed_on, remark) => call("inet_app.api.command_center.mark_backend_work_done", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
     completed_on: completed_on || "",
     remark: remark || "",
   }),
-  listSubconDispatches: (params) => {
+  listBackendDispatches: (params) => {
     const args = { ...(params || {}) };
+    // The PO Dispatch column itself stays subcon_team (vendor-side concept);
+    // we just renamed the user-facing terminology.
     ["project_code", "site_code", "subcon_team"].forEach((k) => {
       if (Array.isArray(args[k])) args[k] = JSON.stringify(args[k]);
     });
-    return call("inet_app.api.command_center.list_subcon_dispatches", args);
+    return call("inet_app.api.command_center.list_backend_dispatches", args);
   },
 
   listPODispatches:  (filters, limitPageLength, portalFilters) => {

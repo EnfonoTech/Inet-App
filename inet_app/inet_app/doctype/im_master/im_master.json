@@ -13,7 +13,7 @@
   "employee",
   "user",
   "status",
-  "can_subcon",
+  "can_assign_backend",
   "section_break_cost",
   "monthly_cost_sar",
   "column_break_pozg",
@@ -73,11 +73,10 @@
   },
   {
    "default": "0",
-   "description": "When enabled, this IM can sub-contract POIDs to non-field teams from the PO Control page.",
-   "fieldname": "can_subcon",
+   "fieldname": "can_assign_backend",
    "fieldtype": "Check",
    "in_list_view": 1,
-   "label": "Can Sub-Contract"
+   "label": "Can Assign Backend Team"
   },
   {
    "fieldname": "section_break_cost",

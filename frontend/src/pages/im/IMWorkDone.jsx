@@ -312,7 +312,7 @@ export default function IMWorkDone() {
                 ? (submissionFor.poid || submissionFor.po_dispatch)
                 : submissionFor.name}
               {submissionFor.is_subcon && (
-                <span style={{ marginLeft: 8, fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, background: "rgba(167,139,250,0.15)", color: "#7c3aed", fontWeight: 700 }}>Sub-Contract</span>
+                <span style={{ marginLeft: 8, fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, background: "rgba(167,139,250,0.15)", color: "#7c3aed", fontWeight: 700 }}>Backend</span>
               )}
             </h4>
             {submissionErr && <div className="notice error" style={{ marginBottom: 10 }}>{submissionErr}</div>}

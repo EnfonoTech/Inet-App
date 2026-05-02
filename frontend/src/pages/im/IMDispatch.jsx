@@ -282,7 +282,7 @@ export default function IMDispatch() {
       try {
         const list = await pmApi.listINETTeams({ im: imName, status: "Active" });
         const fieldOnly = (Array.isArray(list) ? list : []).filter(
-          (t) => (t.team_category || "Field Team") !== "Sub-Contract Team"
+          (t) => (t.team_category || "Field Team") !== "Backend Team"
         );
         if (!cancelled) setTeamsList(fieldOnly);
       } catch {
