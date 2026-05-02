@@ -2028,6 +2028,16 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         if imn:
             line["dispatched_im_full_name"] = im_fn_map.get(imn)
 
+    # Customer Activity Type — keyed by (customer, item_code) in Customer
+    # Item Master. Other listing endpoints (list_po_dispatches, monitor,
+    # field dashboard) all enrich this; this one was missing it, which is
+    # why the Activity Type column on PO Dispatch rendered empty.
+    cim_map = _batch_customer_activity_types(lines)
+    for line in lines:
+        line["customer_activity_type"] = cim_map.get(
+            (line.get("customer") or "", line.get("item_code") or "")
+        )
+
     return lines
 
 
@@ -2383,33 +2393,59 @@ def _next_visit_number_for_dispatch(po_dispatch_name):
 
 
 def _batch_customer_activity_types(rows, customer_key="customer", item_key="item_code"):
-    """Return {(customer, item_code): customer_activity_type} from Customer
-    Item Master for every unique (customer, item) pair in `rows`. Picks the
-    active-flag row first when multiple exist for a pair."""
+    """Return {(customer, item_code): activity_type} for every unique
+    (customer, item_code) pair in ``rows``.
+
+    Source of truth is the ``Item.activity_type`` Custom Field — activity
+    type doesn't vary per customer, so we key strictly by item_code now.
+    The output is still a (customer, item_code) → activity_type dict so
+    existing callers don't break. Falls back to the legacy
+    ``Customer Item Master.customer_activity_type`` mapping when the
+    Custom Field hasn't been added yet.
+    """
     pairs = {(r.get(customer_key) or "", r.get(item_key) or "") for r in rows or []}
-    pairs = {p for p in pairs if p[0] and p[1]}
+    pairs = {p for p in pairs if p[1]}  # item_code is the only required key
     if not pairs:
         return {}
-    customers = list({p[0] for p in pairs})
     items = list({p[1] for p in pairs})
-    c_ph = ",".join(["%s"] * len(customers))
-    i_ph = ",".join(["%s"] * len(items))
-    try:
-        cim_rows = frappe.db.sql(
-            f"SELECT customer, item_code, customer_activity_type, IFNULL(active_flag, 0) AS active "
-            f"FROM `tabCustomer Item Master` "
-            f"WHERE customer IN ({c_ph}) AND item_code IN ({i_ph}) "
-            f"ORDER BY IFNULL(active_flag, 0) DESC",
-            tuple(customers) + tuple(items),
-            as_dict=True,
-        )
-    except Exception:
-        return {}
+    item_to_activity = {}
+    if frappe.db.has_column("Item", "activity_type"):
+        i_ph = ",".join(["%s"] * len(items))
+        try:
+            for r in frappe.db.sql(
+                f"SELECT name, activity_type FROM `tabItem` "
+                f"WHERE name IN ({i_ph}) AND IFNULL(activity_type, '') != ''",
+                tuple(items), as_dict=True,
+            ) or []:
+                item_to_activity[r.name] = r.activity_type
+        except Exception:
+            pass
+    # Legacy fallback: any item still missing an activity_type falls back
+    # to the Customer Item Master mapping (per customer + item).
+    missing = [it for it in items if it not in item_to_activity]
+    cim_lookup = {}
+    if missing:
+        customers = list({p[0] for p in pairs if p[0]})
+        if customers:
+            c_ph = ",".join(["%s"] * len(customers))
+            i_ph = ",".join(["%s"] * len(missing))
+            try:
+                for r in frappe.db.sql(
+                    f"SELECT customer, item_code, customer_activity_type "
+                    f"FROM `tabCustomer Item Master` "
+                    f"WHERE customer IN ({c_ph}) AND item_code IN ({i_ph}) "
+                    f"ORDER BY IFNULL(active_flag, 0) DESC",
+                    tuple(customers) + tuple(missing), as_dict=True,
+                ) or []:
+                    if r.customer_activity_type:
+                        cim_lookup.setdefault((r.customer, r.item_code), r.customer_activity_type)
+            except Exception:
+                pass
     out = {}
-    for r in cim_rows:
-        k = (r.customer, r.item_code)
-        if k not in out and r.customer_activity_type:
-            out[k] = r.customer_activity_type
+    for cust, item in pairs:
+        v = item_to_activity.get(item) or cim_lookup.get((cust, item))
+        if v:
+            out[(cust, item)] = v
     return out
 
 

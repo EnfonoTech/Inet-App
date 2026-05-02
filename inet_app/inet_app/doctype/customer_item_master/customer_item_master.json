@@ -8,7 +8,6 @@
   "customer",
   "item_code",
   "standard_activity",
-  "customer_activity_type",
   "domain",
   "column_break_qeiy",
   "active_flag",
@@ -44,7 +43,7 @@
   {
    "fieldname": "customer_activity_type",
    "fieldtype": "Link",
-   "in_list_view": 1,
+   "hidden": 1,
    "label": "Customer Activity Type",
    "options": "Activity Type"
   },
