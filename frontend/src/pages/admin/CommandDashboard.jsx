@@ -155,6 +155,7 @@ export default function CommandDashboard() {
     operational = {},
     inet = {},
     subcon = {},
+    backend = {},
     company = {},
     top_teams = [],
     im_performance = [],
@@ -200,6 +201,7 @@ export default function CommandDashboard() {
     { label: "Planned", value: ts.planned || 0, color: "" },
     { label: "In Progress", value: ts.in_progress || 0, color: "green" },
   ];
+
 
   return (
     <div className="dashboard">
@@ -249,6 +251,14 @@ export default function CommandDashboard() {
         <KPICard label="Expense" value={subcon.sub_expense} />
         <KPICard label="INET Margin" value={subcon.inet_margin_sub} colorClass={(subcon.inet_margin_sub ?? 0) >= 0 ? "text-green" : "text-red"} />
         <KPICard label="Gap" value={subcon.sub_gap} colorClass="text-red" />
+      </div>
+
+      {/* ── Row 3b: Backend Teams ──────────────────────────── */}
+      <div className="section-label">Backend Teams</div>
+      <div className="kpi-row kpi-row-backend">
+        <KPICard label="Active Teams" value={backend.active_teams ?? 0} colorClass="text-green" />
+        <KPICard label="Pending" value={backend.assigned_pending ?? 0} colorClass="text-amber" />
+        <KPICard label="Completed" value={backend.completed_mtd ?? 0} colorClass="text-green" />
       </div>
 
       {/* ── Row 4: Company Financial Summary ───────────────── */}

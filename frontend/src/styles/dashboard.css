@@ -152,6 +152,12 @@
 }
 .dashboard .kpi-row-sub .kpi-label { color: var(--green); }
 
+/* Row theme: Backend Teams — violet left accent */
+.dashboard .kpi-row-backend .kpi-card {
+  border-left: 3px solid #7c3aed;
+}
+.dashboard .kpi-row-backend .kpi-label { color: #7c3aed; }
+
 /* Row theme: Company — slate/gray left accent */
 .dashboard .kpi-row-company .kpi-card {
   border-left: 3px solid var(--text-muted);

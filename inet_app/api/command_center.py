@@ -5253,12 +5253,29 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Legacy key: same as total open line amount (SAR)
     total_open_po = total_open_po_line_value
 
-    # Teams with at least one execution today
+    # Field-team-only baseline. Backend Team rows live outside the
+    # rollout/Daily-Execution chain so they would always count as
+    # "idle" — that wrecked the operational KPI. Filter to teams whose
+    # team_category is Field Team (or NULL on legacy rows that were
+    # created before the column existed; Frappe defaults that to Field
+    # Team).
+    has_team_category = frappe.db.has_column("INET Team", "team_category")
+    if has_team_category:
+        field_team_filter = (
+            "AND IFNULL(it.team_category, 'Field Team') != 'Backend Team'"
+        )
+    else:
+        field_team_filter = ""
+
+    # Teams with at least one execution today (field-team only)
     active_team_rows = frappe.db.sql(
-        """
-        SELECT DISTINCT team FROM `tabDaily Execution`
-        WHERE execution_date = %s
-        AND execution_status NOT IN ('Cancelled')
+        f"""
+        SELECT DISTINCT de.team AS team
+        FROM `tabDaily Execution` de
+        JOIN `tabINET Team` it ON it.name = de.team
+        WHERE de.execution_date = %s
+        AND de.execution_status NOT IN ('Cancelled')
+        {field_team_filter}
         """,
         (today_str,),
         as_dict=True,
@@ -5266,7 +5283,10 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     active_teams_count = len(active_team_rows)
     active_team_ids = {r.team for r in active_team_rows}
 
-    total_teams = frappe.db.count("INET Team", {"status": "Active"})
+    field_team_filters = {"status": "Active"}
+    if has_team_category:
+        field_team_filters["team_category"] = ["!=", "Backend Team"]
+    total_teams = frappe.db.count("INET Team", field_team_filters)
     idle_teams_count = max(0, total_teams - active_teams_count)
 
     planned_activities = frappe.db.count("Rollout Plan", {"plan_status": "Planned"})
@@ -5291,10 +5311,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         as_dict=True,
     )[0].cnt or 0
 
-    # ---- INET KPIs ---------------------------------------------------------
+    # ---- INET KPIs (field teams only — Backend Team category excluded) ----
+    inet_team_filters = {"team_type": "INET", "status": "Active"}
+    if has_team_category:
+        inet_team_filters["team_category"] = ["!=", "Backend Team"]
     inet_teams = frappe.get_all(
         "INET Team",
-        filters={"team_type": "INET", "status": "Active"},
+        filters=inet_team_filters,
         fields=["name", "team_id", "daily_cost", "im"],
     )
     active_inet_teams = len(inet_teams)
@@ -5313,13 +5336,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )
 
     inet_achieved_rows = frappe.db.sql(
-        """
+        f"""
         SELECT COALESCE(SUM(wd.revenue_sar), 0) AS total
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
         JOIN `tabINET Team` it ON it.name = exe.team
         WHERE it.team_type = 'INET'
         AND exe.execution_date BETWEEN %s AND %s
+        {field_team_filter}
         """,
         (first_day, last_day),
         as_dict=True,
@@ -5327,10 +5351,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_achieved = flt(inet_achieved_rows[0].total if inet_achieved_rows else 0)
     inet_gap_today = inet_target_today - inet_achieved
 
-    # ---- Subcontractor KPIs ------------------------------------------------
+    # ---- Subcontractor KPIs (field teams only — Backend Team excluded) -----
+    sub_team_filters = {"team_type": "SUB", "status": "Active"}
+    if has_team_category:
+        sub_team_filters["team_category"] = ["!=", "Backend Team"]
     sub_teams = frappe.get_all(
         "INET Team",
-        filters={"team_type": "SUB", "status": "Active"},
+        filters=sub_team_filters,
         fields=["name", "team_id"],
     )
     active_sub_teams = len(sub_teams)
@@ -5352,7 +5379,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         sub_target = flt(sub_tgt_rows[0].total if sub_tgt_rows else 0)
 
     sub_revenue_rows = frappe.db.sql(
-        """
+        f"""
         SELECT COALESCE(SUM(wd.revenue_sar), 0) AS rev,
                COALESCE(SUM(wd.total_cost_sar), 0) AS cost,
                COALESCE(AVG(wd.inet_margin_pct), 0) AS avg_margin
@@ -5361,6 +5388,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         JOIN `tabINET Team` it ON it.name = exe.team
         WHERE it.team_type = 'SUB'
         AND exe.execution_date BETWEEN %s AND %s
+        {field_team_filter}
         """,
         (first_day, last_day),
         as_dict=True,
@@ -5371,6 +5399,42 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_margin_sub = sub_revenue * (avg_margin_pct / 100.0)
     sub_gap = sub_target - sub_revenue
 
+    # ---- Backend Teams KPIs ------------------------------------------------
+    # Backend teams sit outside the rollout/Daily-Execution chain, so the
+    # tracked numbers come from PO Dispatch (the IM Backend assignment
+    # workflow) instead of revenue/cost rows.
+    backend_active_teams = 0
+    backend_monthly_cost = 0.0
+    if has_team_category:
+        backend_team_rows = frappe.get_all(
+            "INET Team",
+            filters={"team_category": "Backend Team", "status": "Active"},
+            fields=["name", "daily_cost"],
+        )
+        backend_active_teams = len(backend_team_rows)
+        backend_monthly_cost = sum(flt(t.daily_cost) * 26 for t in backend_team_rows)
+    backend_assigned_pending = 0
+    backend_completed_mtd = 0
+    if frappe.db.has_column("PO Dispatch", "subcon_status"):
+        # Currently-pending assignments (regardless of date)
+        _row = frappe.db.sql(
+            "SELECT COUNT(*) AS cnt FROM `tabPO Dispatch` WHERE IFNULL(subcon_status,'') = 'Pending'",
+            as_dict=True,
+        )
+        backend_assigned_pending = cint(_row[0].cnt if _row else 0)
+        # Completed this month (uses subcon_completed_on)
+        if frappe.db.has_column("PO Dispatch", "subcon_completed_on"):
+            _row = frappe.db.sql(
+                """
+                SELECT COUNT(*) AS cnt FROM `tabPO Dispatch`
+                WHERE IFNULL(subcon_status,'') = 'Work Done'
+                AND subcon_completed_on BETWEEN %s AND %s
+                """,
+                (first_day, last_day),
+                as_dict=True,
+            )
+            backend_completed_mtd = cint(_row[0].cnt if _row else 0)
+
     # ---- Company-level KPIs ------------------------------------------------
     company_target = inet_monthly_target + sub_target
     total_achieved = inet_achieved + sub_revenue
@@ -5379,14 +5443,16 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     profit_loss = total_achieved - total_cost
     coverage_pct = (total_achieved / company_target * 100.0) if company_target else 0.0
 
-    # ---- Top 5 teams by revenue this month ---------------------------------
+    # ---- Top 5 teams by revenue this month (field teams only) --------------
     top_teams = frappe.db.sql(
-        """
+        f"""
         SELECT exe.team AS team, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
+        JOIN `tabINET Team` it ON it.name = exe.team
         WHERE exe.execution_date BETWEEN %s AND %s
         AND exe.team IS NOT NULL AND exe.team != ''
+        {field_team_filter}
         GROUP BY exe.team
         ORDER BY revenue DESC
         LIMIT 5
@@ -5435,20 +5501,26 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         row["teams"] = cint(row.get("team_count") or 0)
         row["team_cost"] = flt(row.get("cost") or 0)
 
-    # ---- Team status summary -----------------------------------------------
+    # ---- Team status summary (field teams only) ----------------------------
     in_progress_count = frappe.db.sql(
-        """
-        SELECT COUNT(DISTINCT team) AS cnt FROM `tabDaily Execution`
-        WHERE execution_date = %s AND execution_status = 'In Progress'
+        f"""
+        SELECT COUNT(DISTINCT de.team) AS cnt
+        FROM `tabDaily Execution` de
+        JOIN `tabINET Team` it ON it.name = de.team
+        WHERE de.execution_date = %s AND de.execution_status = 'In Progress'
+        {field_team_filter}
         """,
         (today_str,),
         as_dict=True,
     )[0].cnt or 0
 
     planned_today = frappe.db.sql(
-        """
-        SELECT COUNT(DISTINCT team) AS cnt FROM `tabRollout Plan`
-        WHERE plan_date = %s AND plan_status = 'Planned'
+        f"""
+        SELECT COUNT(DISTINCT rp.team) AS cnt
+        FROM `tabRollout Plan` rp
+        JOIN `tabINET Team` it ON it.name = rp.team
+        WHERE rp.plan_date = %s AND rp.plan_status = 'Planned'
+        {field_team_filter}
         """,
         (today_str,),
         as_dict=True,
@@ -5551,6 +5623,12 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "sub_expense": sub_expense,
             "inet_margin_sub": inet_margin_sub,
             "sub_gap": sub_gap,
+        },
+        "backend": {
+            "active_teams": backend_active_teams,
+            "monthly_cost": backend_monthly_cost,
+            "assigned_pending": backend_assigned_pending,
+            "completed_mtd": backend_completed_mtd,
         },
         "company": {
             "company_target": company_target,
