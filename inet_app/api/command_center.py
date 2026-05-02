@@ -6771,7 +6771,12 @@ def get_field_team_dashboard(team_id=None):
         FROM `tabRollout Plan` rp
         WHERE rp.team = %s
         AND rp.plan_date = %s
-        AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution', 'Planning with Issue')
+        -- "Planning with Issue" is the IM's re-plan placeholder. The
+        -- actual replan is created from Issues & Risks (which calls
+        -- create_rollout_plans with details). Until that step lands,
+        -- the field user shouldn't see the placeholder in their
+        -- Today's Work — it has no team/date/access info yet.
+        AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution')
         AND NOT EXISTS (
           SELECT 1 FROM `tabDaily Execution` de
           WHERE de.rollout_plan = rp.name
@@ -6929,7 +6934,10 @@ def list_field_team_actionable_plans(team_id=None):
                rp.achieved_amount, rp.completion_pct, rp.plan_status{extra_cols}
         FROM `tabRollout Plan` rp
         WHERE rp.team = %s
-          AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution', 'Planning with Issue')
+          -- See note in get_field_team_dashboard: hide "Planning with
+          -- Issue" placeholders from the field user's Execute picker
+          -- until the IM finalises a replan via Issues & Risks.
+          AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution')
           AND NOT EXISTS (
             SELECT 1 FROM `tabDaily Execution` de
             WHERE de.rollout_plan = rp.name
