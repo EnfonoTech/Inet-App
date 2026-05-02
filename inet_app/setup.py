@@ -7,6 +7,47 @@ def after_migrate():
     _ensure_inet_roles()
     _ensure_item_activity_type_field()
     _hide_unused_activity_type_fields()
+    _drop_unused_customer_activity_type_doctype()
+    _resync_pms_workspace()
+
+
+def _resync_pms_workspace():
+    """Frappe only re-imports a workspace JSON when its `modified` is
+    newer than the DB row. Editors often touch the JSON without bumping
+    the timestamp, so the DB silently stays stale. Force a re-import on
+    every migrate by clearing the row and re-loading the file."""
+    try:
+        from frappe.modules.import_file import import_file_by_path
+    except Exception:
+        return
+    workspace_json = frappe.get_app_path(
+        "inet_app", "inet_app", "workspace", "pms", "pms.json",
+    )
+    try:
+        frappe.db.sql("DELETE FROM `tabWorkspace Shortcut` WHERE parent = 'PMS'")
+        frappe.db.sql("DELETE FROM `tabWorkspace Link` WHERE parent = 'PMS'")
+        frappe.db.sql("DELETE FROM `tabWorkspace` WHERE name = 'PMS'")
+        frappe.db.commit()
+        import_file_by_path(workspace_json, force=True)
+        frappe.db.commit()
+        frappe.clear_cache()
+    except Exception:
+        pass
+
+
+def _drop_unused_customer_activity_type_doctype():
+    """The 'Customer Activity Type' doctype is unused — Item.activity_type
+    and Customer Item Master.customer_activity_type both Link to ERPNext's
+    'Activity Type'. Drop the orphan DocType record (and its table) on
+    sites that still have it from an earlier install."""
+    name = "Customer Activity Type"
+    try:
+        if frappe.db.exists("DocType", name):
+            frappe.delete_doc("DocType", name, ignore_missing=True, force=True)
+            frappe.db.commit()
+    except Exception:
+        # Best-effort — don't break migrate if the delete fails.
+        pass
 
 
 def _hide_unused_activity_type_fields():
