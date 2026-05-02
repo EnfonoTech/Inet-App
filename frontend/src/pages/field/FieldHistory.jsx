@@ -127,7 +127,14 @@ export default function FieldHistory() {
         // /api/resource/Daily Execution returned only DE columns and
         // forced the table to render with mostly empty cells.
         const list = await pmApi.listExecutionMonitorRows({ team: teamId }, rowLimit);
-        setRecords(Array.isArray(list) ? list : []);
+        // History = rows where the field team has actually started or
+        // recorded execution. Plain plans with no Daily Execution yet
+        // (no execution_name) are still in "today's work" territory and
+        // shouldn't clutter the history list.
+        const onlyExecuted = (Array.isArray(list) ? list : []).filter(
+          (r) => !!r.execution_name
+        );
+        setRecords(onlyExecuted);
       } catch { setRecords([]); }
       setLoading(false);
     }
