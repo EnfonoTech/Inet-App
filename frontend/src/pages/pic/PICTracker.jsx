@@ -433,33 +433,48 @@ export default function PICTracker() {
                 ))}
               </tbody>
               <tfoot>
+                {/* 27 columns total. Empty cells preserve alignment with
+                    the header so totals land under the right column. */}
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
+                  {/* 1 checkbox · 2-3 POID/PO No (row count colspan) */}
                   <td></td>
                   <td colSpan={2} style={{ fontSize: "0.78rem", color: "#475569" }}>
                     {fmtInt.format(rows.length)} row{rows.length !== 1 ? "s" : ""}
                   </td>
+                  {/* 4 PO Status · 5 Project Domain · 6 Project ·
+                      7 Item · 8 Description · 9 DUID */}
                   <td></td>
                   <td></td>
                   <td></td>
                   <td></td>
                   <td></td>
                   <td></td>
+                  {/* 10 Qty */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtInt.format(totals.qty)}</td>
+                  {/* 11 Unit Price */}
                   <td></td>
+                  {/* 12 Line Amount */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.line_amount)}</td>
+                  {/* 13 Tax · 14 Payment Terms · 15 PIC MS1 ·
+                      16 ISDP Owner · 17 Applied MS1 */}
                   <td></td>
                   <td></td>
                   <td></td>
                   <td></td>
+                  <td></td>
+                  {/* 18 MS1 % (no total) · 19-21 MS1 Amt / Invoiced / Unbilled */}
                   <td></td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms1_invoiced)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>{fmt.format(totals.ms1_unbilled)}</td>
+                  {/* 22 PIC MS2 · 23 Applied MS2 */}
                   <td></td>
                   <td></td>
+                  {/* 24 MS2 % (no total) · 25 MS2 Amt · 26 MS2 Invoiced */}
                   <td></td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms2_invoiced)}</td>
+                  {/* 27 Edit */}
                   <td></td>
                 </tr>
               </tfoot>
