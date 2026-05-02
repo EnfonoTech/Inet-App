@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
+import { isNotRequired } from "../../utils/qcCiagFlags";
 
 function greeting() {
   const h = new Date().getHours();
@@ -182,6 +183,35 @@ function WorkCard({ plan, onClick }) {
               {plan.visit_type && plan.qty != null ? " · " : ""}
               {plan.qty != null ? `Qty ${Number(plan.qty)}` : ""}
             </span>
+          </div>
+        )}
+        {(plan.access_time || plan.access_period) && (
+          <div className="meta-row">
+            <svg className="meta-svg-icon" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 101.06-1.06l-2.78-2.78V5z" clipRule="evenodd" />
+            </svg>
+            <span>
+              Access: {plan.access_time || "—"}
+              {plan.access_period ? ` (${plan.access_period})` : ""}
+            </span>
+          </div>
+        )}
+        {(isNotRequired(plan.qc_required) || isNotRequired(plan.ciag_required)) && (
+          <div className="meta-row" style={{ flexWrap: "wrap", gap: 6 }}>
+            {isNotRequired(plan.qc_required) && (
+              <span style={{
+                display: "inline-block", padding: "1px 8px", borderRadius: 999,
+                background: "#fef3c7", color: "#92400e",
+                fontSize: "0.68rem", fontWeight: 700,
+              }}>QC Not Required</span>
+            )}
+            {isNotRequired(plan.ciag_required) && (
+              <span style={{
+                display: "inline-block", padding: "1px 8px", borderRadius: 999,
+                background: "#fef3c7", color: "#92400e",
+                fontSize: "0.68rem", fontWeight: 700,
+              }}>CIAG Not Required</span>
+            )}
           </div>
         )}
       </div>

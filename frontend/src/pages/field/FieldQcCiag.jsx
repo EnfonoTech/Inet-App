@@ -14,7 +14,16 @@ function statusBadgeClass(status) {
   if (s === "pass" || s === "approved") return "completed";
   if (s === "fail" || s === "rejected") return "cancelled";
   if (s === "pending" || s === "open" || s.includes("progress") || s === "submitted") return "in-progress";
+  if (s === "not applicable" || s === "n/a") return "new";
   return "new";
+}
+
+// Backend Check fields can come back as 0/false/"0" depending on the
+// transport, so accept all of them as the not-required signal.
+function isNotRequired(v) {
+  if (v === 0 || v === false || v === "0") return true;
+  if (typeof v === "string" && v.toLowerCase() === "false") return true;
+  return false;
 }
 
 /* QC/CIAG edit modal — shared by mobile and desktop */
@@ -25,23 +34,40 @@ function QcEditModal({ row, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  // Read the plan-level _required flags from whichever source has them.
+  // The row payload from listExecutionMonitorRows may be stale (cached
+  // before the backstop landed), so prefer the freshly-fetched execution
+  // object when it carries the flag.
+  const [qcReqRaw, setQcReqRaw] = useState(row?.qc_required);
+  const [ciagReqRaw, setCiagReqRaw] = useState(row?.ciag_required);
+  const qcRequired = !isNotRequired(qcReqRaw);
+  const ciagRequired = !isNotRequired(ciagReqRaw);
 
   useEffect(() => {
     if (!row) return;
     setMsg(null); setLoadError(null);
+    setQcReqRaw(row.qc_required);
+    setCiagReqRaw(row.ciag_required);
     pmApi.getFieldExecutionForRollout(row.name).then((ex) => {
       if (!ex?.name) { setLoadError("No execution record found for this plan."); return; }
       setExecutionName(ex.name);
       setQcStatus(ex.qc_status || "Pending");
       setCiagStatus(ex.ciag_status || "Open");
+      // getFieldExecutionForRollout is the authoritative source — its
+      // raw-SQL backstop reads the flags directly from the DB column.
+      if (ex.qc_required !== undefined) setQcReqRaw(ex.qc_required);
+      if (ex.ciag_required !== undefined) setCiagReqRaw(ex.ciag_required);
     }).catch(() => setLoadError("Could not load execution details."));
-  }, [row?.name]);
+  }, [row?.name, row?.qc_required, row?.ciag_required]);
 
   async function save() {
     if (!executionName) return;
     setSaving(true); setMsg(null);
     try {
-      await pmApi.updateExecution({ name: executionName, qc_status: qcStatus, ciag_status: ciagStatus });
+      const payload = { name: executionName };
+      if (qcRequired) payload.qc_status = qcStatus;
+      if (ciagRequired) payload.ciag_status = ciagStatus;
+      await pmApi.updateExecution(payload);
       setMsg("Saved successfully.");
       onSaved?.();
     } catch (e) { setMsg(e.message || "Could not save."); }
@@ -83,18 +109,30 @@ function QcEditModal({ row, onClose, onSaved }) {
           <div className="notice error" style={{ marginBottom: 14 }}>{loadError}</div>
         ) : (
           <>
-            <div className="exec-field" style={{ marginBottom: 12 }}>
-              <label>QC Status</label>
-              <select value={qcStatus} onChange={(e) => setQcStatus(e.target.value)}>
-                {TEAM_QC_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div className="exec-field" style={{ marginBottom: 16 }}>
-              <label>CIAG Status</label>
-              <select value={ciagStatus} onChange={(e) => setCiagStatus(e.target.value)}>
-                {TEAM_CIAG_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
+            {qcRequired ? (
+              <div className="exec-field" style={{ marginBottom: 12 }}>
+                <label>QC Status</label>
+                <select value={qcStatus} onChange={(e) => setQcStatus(e.target.value)}>
+                  {TEAM_QC_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div style={{ marginBottom: 12, padding: "8px 10px", background: "#fef3c7", color: "#92400e", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600 }}>
+                QC not required for this plan.
+              </div>
+            )}
+            {ciagRequired ? (
+              <div className="exec-field" style={{ marginBottom: 16 }}>
+                <label>CIAG Status</label>
+                <select value={ciagStatus} onChange={(e) => setCiagStatus(e.target.value)}>
+                  {TEAM_CIAG_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div style={{ marginBottom: 16, padding: "8px 10px", background: "#fef3c7", color: "#92400e", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600 }}>
+                CIAG not required for this plan.
+              </div>
+            )}
           </>
         )}
 
@@ -155,12 +193,14 @@ function QcCard({ row, selected, onToggle, onOpen }) {
 
       <div className="qc-badge-row">
         <span className="qc-badge-label">QC</span>
-        <span className={`status-badge ${statusBadgeClass(row.qc_status || "Pending")}`}>
-          <span className="status-dot" />{row.qc_status || "Pending"}
+        <span className={`status-badge ${statusBadgeClass(isNotRequired(row.qc_required) ? "Not Applicable" : (row.qc_status || "Pending"))}`}>
+          <span className="status-dot" />
+          {isNotRequired(row.qc_required) ? "Not Applicable" : (row.qc_status || "Pending")}
         </span>
         <span className="qc-badge-label" style={{ marginLeft: 6 }}>CIAG</span>
-        <span className={`status-badge ${statusBadgeClass(row.ciag_status || "Open")}`}>
-          <span className="status-dot" />{row.ciag_status || "Open"}
+        <span className={`status-badge ${statusBadgeClass(isNotRequired(row.ciag_required) ? "Not Applicable" : (row.ciag_status || "Open"))}`}>
+          <span className="status-dot" />
+          {isNotRequired(row.ciag_required) ? "Not Applicable" : (row.ciag_status || "Open")}
         </span>
       </div>
     </div>
@@ -190,7 +230,11 @@ export default function FieldQcCiag() {
         // = "Completed") — at that point QC/CIAG is the IM's call, no
         // longer the field team's queue.
         const visible = (Array.isArray(list) ? list : []).filter(
-          (r) => String(r.execution_status || "") !== "Completed"
+          (r) =>
+            String(r.execution_status || "") !== "Completed" &&
+            // Drop rows where the IM/PM has disabled both QC and CIAG —
+            // there's nothing for the field user to act on.
+            !(isNotRequired(r.qc_required) && isNotRequired(r.ciag_required))
         );
         if (!cancelled) setRows(visible);
       } catch { if (!cancelled) setRows([]); }
@@ -355,13 +399,15 @@ export default function FieldQcCiag() {
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }}>{r.center_area || "—"}</td>
                     <td>{r.region_type || "—"}</td>
                     <td>
-                      <span className={`status-badge ${statusBadgeClass(r.qc_status || "Pending")}`}>
-                        <span className="status-dot" />{r.qc_status || "Pending"}
+                      <span className={`status-badge ${statusBadgeClass(isNotRequired(r.qc_required) ? "Not Applicable" : (r.qc_status || "Pending"))}`}>
+                        <span className="status-dot" />
+                        {isNotRequired(r.qc_required) ? "Not Applicable" : (r.qc_status || "Pending")}
                       </span>
                     </td>
                     <td>
-                      <span className={`status-badge ${statusBadgeClass(r.ciag_status || "Open")}`}>
-                        <span className="status-dot" />{r.ciag_status || "Open"}
+                      <span className={`status-badge ${statusBadgeClass(isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "Open"))}`}>
+                        <span className="status-dot" />
+                        {isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "Open")}
                       </span>
                     </td>
                   </tr>

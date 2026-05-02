@@ -8,6 +8,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import RemarksPanel from "../../components/RemarksPanel";
+import { isNotRequired } from "../../utils/qcCiagFlags";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 
@@ -24,6 +25,8 @@ function badgeTone(value) {
     hold: { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" },
     cancelled: { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" },
     postponed: { bg: "#fefce8", fg: "#a16207", dot: "#eab308" },
+    "not applicable": { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8" },
+    "n/a": { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8" },
   };
   if (tones[s]) return tones[s];
   if (s.includes("complete") || s.includes("approved") || s.includes("done") || s.includes("pass")) return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
@@ -421,8 +424,8 @@ export default function ExecutionMonitor() {
                         ) : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}
                       </td>
                       <td><StatusPill value={row.execution_status} /></td>
-                      <td>{row.execution_name ? <StatusPill value={row.qc_status} /> : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}</td>
-                      <td>{row.execution_name ? <StatusPill value={row.ciag_status} /> : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}</td>
+                      <td>{isNotRequired(row.qc_required) ? <StatusPill value="Not Applicable" /> : row.execution_name ? <StatusPill value={row.qc_status} /> : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}</td>
+                      <td>{isNotRequired(row.ciag_required) ? <StatusPill value="Not Applicable" /> : row.execution_name ? <StatusPill value={row.ciag_status} /> : <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>}</td>
                       <td>
                         {row.execution_name ? (
                           <button

@@ -5,12 +5,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "remark_text",
-  "category",
-  "is_active",
-  "column_break_meta",
-  "created_by_user",
-  "usage_count"
+  "remark_text"
  ],
  "fields": [
   {
@@ -21,44 +16,10 @@
    "label": "Remark Text",
    "reqd": 1,
    "unique": 1
-  },
-  {
-   "fieldname": "category",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Category",
-   "options": "\nPower\nFiber\nAcceptance\nQC\nCIAG\nGeneral"
-  },
-  {
-   "default": "1",
-   "fieldname": "is_active",
-   "fieldtype": "Check",
-   "in_list_view": 1,
-   "label": "Active"
-  },
-  {
-   "fieldname": "column_break_meta",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "User who first created this template (for traceability).",
-   "fieldname": "created_by_user",
-   "fieldtype": "Link",
-   "label": "Created By",
-   "options": "User",
-   "read_only": 1
-  },
-  {
-   "default": "0",
-   "description": "How many times this template has been picked. Maintained by the picker.",
-   "fieldname": "usage_count",
-   "fieldtype": "Int",
-   "label": "Usage Count",
-   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-04-30 00:00:00",
+ "modified": "2026-04-30 13:00:00",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "Field Remark Template",
@@ -107,8 +68,8 @@
   }
  ],
  "row_format": "Dynamic",
- "sort_field": "category",
- "sort_order": "ASC",
+ "sort_field": "modified",
+ "sort_order": "DESC",
  "title_field": "remark_text",
  "track_changes": 1,
  "states": []

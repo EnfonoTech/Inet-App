@@ -11,6 +11,14 @@ import {
 import { defaultAchievedQtyFromPlan } from "../../utils/planDefaultQty";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 
+// Treat 0/false/"0"/"false" as the not-required signal. null/undefined
+// (legacy plans without the flag) defaults to required.
+function isNotRequired(v) {
+  if (v === 0 || v === false || v === "0") return true;
+  if (typeof v === "string" && v.toLowerCase() === "false") return true;
+  return false;
+}
+
 function parsePhotoList(raw) {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw.filter(Boolean).map((v) => String(v).trim()).filter(Boolean);
@@ -560,8 +568,8 @@ export default function ExecutionForm() {
         photos: attachments.length ? attachments.join("\n") : undefined,
       };
       if (execStatus === "Completed") {
-        payload.qc_status = qcStatus;
-        payload.ciag_status = ciagStatus;
+        if (!isNotRequired(plan?.qc_required)) payload.qc_status = qcStatus;
+        if (!isNotRequired(plan?.ciag_required)) payload.ciag_status = ciagStatus;
       }
       await pmApi.updateExecution(payload);
       // Bump usage_count for picked templates so frequently-used items
@@ -890,6 +898,25 @@ export default function ExecutionForm() {
                     <span>{plan.item_code}</span>
                   </div>
                 )}
+                {(plan.access_time || plan.access_period) && (
+                  <div className="exec-plan-chip" title="Planned access window">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 101.06-1.06l-2.78-2.78V5z" clipRule="evenodd"/></svg>
+                    <span>
+                      Access: {plan.access_time || "—"}
+                      {plan.access_period ? ` (${plan.access_period})` : ""}
+                    </span>
+                  </div>
+                )}
+                {isNotRequired(plan.qc_required) && (
+                  <div className="exec-plan-chip" title="QC not required for this plan" style={{ background: "#fef3c7", color: "#92400e" }}>
+                    <span>QC Not Required</span>
+                  </div>
+                )}
+                {isNotRequired(plan.ciag_required) && (
+                  <div className="exec-plan-chip" title="CIAG not required for this plan" style={{ background: "#fef3c7", color: "#92400e" }}>
+                    <span>CIAG Not Required</span>
+                  </div>
+                )}
               </div>
               {plan.item_description && (
                 <div style={{ fontSize: "0.84rem", color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.4 }}>
@@ -935,7 +962,7 @@ export default function ExecutionForm() {
               <input
                 type="number"
                 min="0"
-                step="0.01"
+                step="0.0001"
                 value={achievedQty}
                 onChange={(e) => setAchievedQty(e.target.value)}
                 placeholder="0"
@@ -945,25 +972,31 @@ export default function ExecutionForm() {
             {/* QC + CIAG inline — visible when marking the work Completed
                 so the field user can record the full closing state in one
                 form. Backend accepts these as long as tl_status is
-                Completed (no need to wait for IM confirmation). */}
+                Completed (no need to wait for IM confirmation). When the
+                plan has the corresponding _required flag turned off (set
+                by IM/PM at planning), we omit that control entirely. */}
             {execStatus === "Completed" && (
               <>
-                <div className="exec-field">
-                  <label>QC Status *</label>
-                  <select value={qcStatus} onChange={(e) => setQcStatus(e.target.value)} required>
-                    {["Pending", "Pass", "Fail"].map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="exec-field">
-                  <label>CIAG Status *</label>
-                  <select value={ciagStatus} onChange={(e) => setCiagStatus(e.target.value)} required>
-                    {["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"].map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
+                {!isNotRequired(plan?.qc_required) && (
+                  <div className="exec-field">
+                    <label>QC Status *</label>
+                    <select value={qcStatus} onChange={(e) => setQcStatus(e.target.value)} required>
+                      {["Pending", "Pass", "Fail"].map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {!isNotRequired(plan?.ciag_required) && (
+                  <div className="exec-field">
+                    <label>CIAG Status *</label>
+                    <select value={ciagStatus} onChange={(e) => setCiagStatus(e.target.value)} required>
+                      {["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"].map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </>
             )}
           </div>

@@ -96,7 +96,8 @@
   {
    "fieldname": "achieved_qty",
    "fieldtype": "Float",
-   "label": "Achieved Qty"
+   "label": "Achieved Qty",
+   "precision": "4"
   },
   {
    "fieldname": "achieved_amount",
@@ -119,14 +120,14 @@
    "fieldname": "qc_status",
    "fieldtype": "Select",
    "label": "QC Status",
-   "options": "Pending\nPass\nFail"
+   "options": "Pending\nPass\nFail\nNot Applicable"
   },
   {
    "default": "Open",
    "fieldname": "ciag_status",
    "fieldtype": "Select",
    "label": "CIAG Status",
-   "options": "Open\nIn Progress\nSubmitted\nApproved\nRejected\nN/A"
+   "options": "Open\nIn Progress\nSubmitted\nApproved\nRejected\nN/A\nNot Applicable"
   },
   {
    "default": "0",

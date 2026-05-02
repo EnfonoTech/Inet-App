@@ -2993,6 +2993,21 @@ def create_rollout_plans(payload):
         access_period = ""
     visit_type = payload.get("visit_type") or "Execution"
 
+    # Per-plan workflow toggles — IM/PM picks at planning time whether
+    # this job needs QC and/or CIAG. Default ON when caller omits the
+    # key; only an explicit 0/false value disables.
+    def _truthy(v):
+        if v is None:
+            return True
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return v != 0
+        s = str(v).strip().lower()
+        return s not in ("0", "false", "no", "off", "")
+    qc_required = 1 if _truthy(payload.get("qc_required")) else 0
+    ciag_required = 1 if _truthy(payload.get("ciag_required")) else 0
+
     pd = getdate(plan_date)
     ped = getdate(plan_end_date)
     if ped < pd:
@@ -3090,6 +3105,10 @@ def create_rollout_plans(payload):
                 "visit_type": visit_type,
                 "plan_status": "Planned",
             }
+            if frappe.db.has_column("Rollout Plan", "qc_required"):
+                updates["qc_required"] = qc_required
+            if frappe.db.has_column("Rollout Plan", "ciag_required"):
+                updates["ciag_required"] = ciag_required
             if payload.get("issue_category"):
                 updates["issue_category"] = str(payload["issue_category"])[:140]
             if payload.get("issue_remarks") and frappe.db.has_column("Rollout Plan", "issue_remarks"):
@@ -3120,6 +3139,10 @@ def create_rollout_plans(payload):
         doc.access_time = access_time
         doc.access_period = access_period or None
         doc.visit_type = visit_type
+        if hasattr(doc, "qc_required"):
+            doc.qc_required = qc_required
+        if hasattr(doc, "ciag_required"):
+            doc.ciag_required = ciag_required
         # Visit # advances per POID: 1st plan = 1, 2nd = 2 (Re-Visit), etc.
         doc.visit_number = _next_visit_number_for_dispatch(dispatch_name)
         doc.visit_multiplier = visit_multiplier
@@ -3137,6 +3160,19 @@ def create_rollout_plans(payload):
 
         doc.insert(ignore_permissions=True)
         frappe.db.commit()
+
+        # Backstop: ensure qc_required / ciag_required reflect the
+        # request even if the Document class wasn't reloaded after the
+        # column was added (in which case `hasattr(doc, …)` quietly
+        # drops the assignment and the row falls back to the default 1).
+        if frappe.db.has_column("Rollout Plan", "qc_required"):
+            frappe.db.set_value(
+                "Rollout Plan", doc.name, "qc_required", qc_required, update_modified=False,
+            )
+        if frappe.db.has_column("Rollout Plan", "ciag_required"):
+            frappe.db.set_value(
+                "Rollout Plan", doc.name, "ciag_required", ciag_required, update_modified=False,
+            )
 
         disp_updates = {"dispatch_status": "Planned"}
         disp_updates.update(remark_updates)
@@ -3393,18 +3429,39 @@ def get_field_execution_for_rollout(rollout_plan):
             order_by="modified desc",
             limit_page_length=1,
         )
-        return rows[0] if rows else None
-    team_id = _session_inet_field_team_id()
-    if not team_id:
-        return None
-    rows = frappe.get_all(
-        "Daily Execution",
-        filters={"rollout_plan": rollout_plan, "team": team_id},
-        fields=["name", "qc_status", "ciag_status", "execution_status", "photos"],
-        order_by="modified desc",
-        limit_page_length=1,
-    )
-    return rows[0] if rows else None
+        out = rows[0] if rows else None
+    else:
+        team_id = _session_inet_field_team_id()
+        if not team_id:
+            return None
+        rows = frappe.get_all(
+            "Daily Execution",
+            filters={"rollout_plan": rollout_plan, "team": team_id},
+            fields=["name", "qc_status", "ciag_status", "execution_status", "photos"],
+            order_by="modified desc",
+            limit_page_length=1,
+        )
+        out = rows[0] if rows else None
+    # Always tack on the plan-level _required flags via raw SQL (bypasses
+    # Document meta cache). The QcEditModal needs them to decide whether
+    # to render the editable selects vs. the "not required" note.
+    flag_cols = []
+    if frappe.db.has_column("Rollout Plan", "qc_required"):
+        flag_cols.append("qc_required")
+    if frappe.db.has_column("Rollout Plan", "ciag_required"):
+        flag_cols.append("ciag_required")
+    if flag_cols:
+        flag_row = frappe.db.sql(
+            f"SELECT {', '.join(flag_cols)} FROM `tabRollout Plan` WHERE name = %s",
+            (rollout_plan,),
+            as_dict=True,
+        )
+        if flag_row:
+            if out is None:
+                out = {}
+            for col in flag_cols:
+                out[col] = flag_row[0].get(col)
+    return out
 
 
 @frappe.whitelist()
@@ -3422,11 +3479,20 @@ def get_rollout_plan_details(rollout_plan):
     if not rollout_plan:
         return None
 
-    rp_cols = (
-        "name, po_dispatch, im, region_type, team, plan_date, plan_end_date, "
-        "visit_type, visit_number, visit_multiplier, target_amount, "
-        "achieved_amount, completion_pct, plan_status, modified"
-    )
+    rp_cols_list = [
+        "name", "po_dispatch", "im", "region_type", "team", "plan_date", "plan_end_date",
+        "visit_type", "visit_number", "visit_multiplier", "target_amount",
+        "achieved_amount", "completion_pct", "plan_status", "modified",
+    ]
+    if frappe.db.has_column("Rollout Plan", "access_time"):
+        rp_cols_list.append("access_time")
+    if frappe.db.has_column("Rollout Plan", "access_period"):
+        rp_cols_list.append("access_period")
+    if frappe.db.has_column("Rollout Plan", "qc_required"):
+        rp_cols_list.append("qc_required")
+    if frappe.db.has_column("Rollout Plan", "ciag_required"):
+        rp_cols_list.append("ciag_required")
+    rp_cols = ", ".join(rp_cols_list)
     rp_rows = frappe.db.sql(
         f"SELECT {rp_cols} FROM `tabRollout Plan` WHERE name = %s LIMIT 1",
         (rollout_plan,),
@@ -3500,6 +3566,46 @@ def get_rollout_plan_details(rollout_plan):
     return plan
 
 
+def _select_options(doctype, fieldname):
+    """Return the list of allowed Select options for a (doctype, field).
+    Empty list if the field can't be resolved — caller should fall back
+    to no-op rather than risk a validation throw."""
+    try:
+        meta = frappe.get_meta(doctype)
+        df = meta.get_field(fieldname)
+        if not df or df.fieldtype != "Select":
+            return []
+        return [s.strip() for s in (df.options or "").split("\n") if s.strip()]
+    except Exception:
+        return []
+
+
+def _apply_na_stamp_from_plan(doc, rollout_plan):
+    """Set qc_status / ciag_status = 'Not Applicable' on ``doc`` when the
+    Rollout Plan has the corresponding _required flag = 0 — but only when
+    the Daily Execution doctype actually allows that option.
+
+    Safe to call before save. If the option isn't migrated yet, the UI
+    still renders "Not Applicable" from the qc_required flag itself, so
+    skipping here doesn't break anything."""
+    if not rollout_plan:
+        return
+    cols = []
+    if frappe.db.has_column("Rollout Plan", "qc_required"):
+        cols.append("qc_required")
+    if frappe.db.has_column("Rollout Plan", "ciag_required"):
+        cols.append("ciag_required")
+    if not cols:
+        return
+    rp_flags = frappe.db.get_value("Rollout Plan", rollout_plan, cols, as_dict=True) or {}
+    qc_opts = _select_options("Daily Execution", "qc_status")
+    ciag_opts = _select_options("Daily Execution", "ciag_status")
+    if rp_flags.get("qc_required") == 0 and hasattr(doc, "qc_status") and "Not Applicable" in qc_opts:
+        doc.qc_status = "Not Applicable"
+    if rp_flags.get("ciag_required") == 0 and hasattr(doc, "ciag_status") and "Not Applicable" in ciag_opts:
+        doc.ciag_status = "Not Applicable"
+
+
 @frappe.whitelist()
 def update_execution(payload):
     """
@@ -3570,6 +3676,15 @@ def update_execution(payload):
             if im_v and hasattr(doc, "im"):
                 doc.im = im_v
 
+            # When plan was created with QC/CIAG not required, stamp the
+            # status to "Not Applicable" up front so list views show the
+            # right state instead of the default "Pending"/"Open".
+            # Defensive: only apply when "Not Applicable" exists as a
+            # valid Select option (i.e. doctype meta has been migrated).
+            # Otherwise the UI still renders "Not Applicable" from the
+            # qc_required flag — no DB stamp needed.
+            _apply_na_stamp_from_plan(doc, rollout_plan)
+
             if hasattr(doc, "region_type"):
                 doc.region_type = (rp.get("region_type") if rp else None) or None
                 if not doc.region_type and pd_name:
@@ -3622,7 +3737,46 @@ def update_execution(payload):
     # Field team's tl_status reaches us before the IM's execution_status, so
     # gating only on execution_status would block the field user from
     # recording QC / CIAG until the IM confirms. tl_status === Completed is
-    # the field-side "done" signal.
+    # the field-side "done" signal. Per-plan flags (qc_required /
+    # ciag_required) further allow the IM/PM to disable a step entirely
+    # at planning time — when off, we silently drop incoming values and
+    # don't gate on tl_status.
+    # Always reconcile QC/CIAG status with the plan-level _required flags.
+    # Drop incoming qc_status / ciag_status when the corresponding plan
+    # flag is 0 — the field shouldn't even be on the form in that case.
+    plan_flags = {}
+    if doc.rollout_plan and (
+        frappe.db.has_column("Rollout Plan", "qc_required")
+        or frappe.db.has_column("Rollout Plan", "ciag_required")
+    ):
+        _cols = []
+        if frappe.db.has_column("Rollout Plan", "qc_required"):
+            _cols.append("qc_required")
+        if frappe.db.has_column("Rollout Plan", "ciag_required"):
+            _cols.append("ciag_required")
+        plan_flags = frappe.db.get_value(
+            "Rollout Plan", doc.rollout_plan, _cols, as_dict=True
+        ) or {}
+    if plan_flags.get("qc_required") == 0:
+        payload.pop("qc_status", None)
+    if plan_flags.get("ciag_required") == 0:
+        payload.pop("ciag_status", None)
+    # Best-effort stamp — only writes when the doctype meta has the
+    # 'Not Applicable' option, so older sites without migrate keep
+    # working (UI handles the display from the qc_required flag).
+    _apply_na_stamp_from_plan(doc, doc.rollout_plan)
+
+    # Auto-confirm: if both QC and CIAG are flagged not-required and the
+    # field user just marked tl_status = Completed, flip the IM's
+    # execution_status to Completed too. There's nothing left for the
+    # IM to verify, so the plan can close without a manual confirm step.
+    if (
+        plan_flags.get("qc_required") == 0
+        and plan_flags.get("ciag_required") == 0
+        and getattr(doc, "tl_status", None) == "Completed"
+        and doc.execution_status != "Completed"
+    ):
+        doc.execution_status = "Completed"
     if "qc_status" in payload or "ciag_status" in payload:
         _exec_done = (doc.execution_status == "Completed")
         _tl_done = (getattr(doc, "tl_status", None) == "Completed")
@@ -3715,8 +3869,25 @@ def generate_work_done(execution_name):
             f"Execution {execution_name} is not Completed (status: {exec_doc.execution_status})."
         )
 
+    # Per-plan flag: when QC isn't required for this plan (set by IM/PM
+    # at planning), skip the QC=Pass gate so Work Done can be generated
+    # against the Completed execution alone.
+    rp_flags = {}
+    if exec_doc.rollout_plan and (
+        frappe.db.has_column("Rollout Plan", "qc_required")
+        or frappe.db.has_column("Rollout Plan", "ciag_required")
+    ):
+        cols = []
+        if frappe.db.has_column("Rollout Plan", "qc_required"):
+            cols.append("qc_required")
+        if frappe.db.has_column("Rollout Plan", "ciag_required"):
+            cols.append("ciag_required")
+        rp_flags = frappe.db.get_value(
+            "Rollout Plan", exec_doc.rollout_plan, cols, as_dict=True
+        ) or {}
+    qc_required = rp_flags.get("qc_required", 1) != 0
     qc = str(getattr(exec_doc, "qc_status", None) or "")
-    if qc != "Pass":
+    if qc_required and qc not in ("Pass", "Not Applicable"):
         frappe.throw("QC must be Pass before creating Work Done.")
 
     # Check if Work Done already exists
@@ -3932,6 +4103,14 @@ def list_execution_monitor_rows(filters=None, limit=500):
         rp_fields.append("region_type")
     if frappe.db.has_column("Rollout Plan", "im"):
         rp_fields.append("im")
+    if frappe.db.has_column("Rollout Plan", "qc_required"):
+        rp_fields.append("qc_required")
+    if frappe.db.has_column("Rollout Plan", "ciag_required"):
+        rp_fields.append("ciag_required")
+    if frappe.db.has_column("Rollout Plan", "access_time"):
+        rp_fields.append("access_time")
+    if frappe.db.has_column("Rollout Plan", "access_period"):
+        rp_fields.append("access_period")
     lim = _portal_row_limit(limit, 500)
 
     wheres = ["1=1"]
@@ -3976,16 +4155,20 @@ def list_execution_monitor_rows(filters=None, limit=500):
 
     # Once the line is fully closed (exec Completed + QC Pass + CIAG Approved)
     # AND the IM has created a Work Done record for that execution, hide it
-    # from the monitor — operators don't need to act on it anymore.
+    # from the monitor — operators don't need to act on it anymore. The
+    # OR short-circuit on each gate honours per-plan _required flags: when
+    # qc_required = 0 for that plan, we don't require qc_status = Pass.
     ciag_col = "de_wd.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
+    qc_req_col = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
+    ciag_req_col = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
     wheres.append(
         "NOT EXISTS ("
         " SELECT 1 FROM `tabDaily Execution` de_wd"
         " INNER JOIN `tabWork Done` wd0 ON wd0.execution = de_wd.name"
         " WHERE de_wd.rollout_plan = rp.name"
         " AND de_wd.execution_status = 'Completed'"
-        " AND IFNULL(de_wd.qc_status, '') = 'Pass'"
-        f" AND IFNULL({ciag_col}, '') = 'Approved'"
+        f" AND ({qc_req_col} = 0 OR IFNULL(de_wd.qc_status, '') IN ('Pass', 'Not Applicable'))"
+        f" AND ({ciag_req_col} = 0 OR IFNULL({ciag_col}, '') IN ('Approved', 'Not Applicable'))"
         ")"
     )
 
@@ -4074,6 +4257,35 @@ def list_execution_monitor_rows(filters=None, limit=500):
         limit_page_length=len(plan_names) + 1,
     )
     plans.sort(key=lambda x: order_index.get(x.name, 10**9))
+
+    # Backstop: frappe.get_all validates fields against in-memory doctype
+    # meta — if the Document class wasn't reloaded after migrate added
+    # qc_required / ciag_required, those keys get silently dropped from
+    # the result and the FE then renders the cells as still required.
+    # Re-fetch the plan-level flags via raw SQL (which bypasses meta) and
+    # merge them in.
+    flag_cols = []
+    if frappe.db.has_column("Rollout Plan", "qc_required"):
+        flag_cols.append("qc_required")
+    if frappe.db.has_column("Rollout Plan", "ciag_required"):
+        flag_cols.append("ciag_required")
+    if frappe.db.has_column("Rollout Plan", "access_time"):
+        flag_cols.append("access_time")
+    if frappe.db.has_column("Rollout Plan", "access_period"):
+        flag_cols.append("access_period")
+    if flag_cols:
+        ph = ", ".join(["%s"] * len(plan_names))
+        flag_sql = (
+            f"SELECT name, {', '.join(flag_cols)} "
+            f"FROM `tabRollout Plan` WHERE name IN ({ph})"
+        )
+        flag_rows = frappe.db.sql(flag_sql, tuple(plan_names), as_dict=True) or []
+        flag_map = {r["name"]: r for r in flag_rows}
+        for p in plans:
+            extra = flag_map.get(p.name)
+            if extra:
+                for col in flag_cols:
+                    p[col] = extra.get(col)
     dispatch_names = [p.po_dispatch for p in plans if p.po_dispatch]
 
     if lim:
@@ -5599,12 +5811,16 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
 
     # Once an execution is fully closed (Completed + Pass + Approved) AND has
     # been converted to Work Done, drop it — the IM has nothing left to do.
+    # The OR short-circuit on each gate honours per-plan _required flags:
+    # when qc_required = 0 for that plan, qc_status = Pass isn't required.
     ciag_col_hide = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
+    qc_req_col2 = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
+    ciag_req_col2 = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
     portal_clause += (
         " AND NOT ("
         " de.execution_status = 'Completed'"
-        " AND IFNULL(de.qc_status,'') = 'Pass'"
-        f" AND IFNULL({ciag_col_hide},'') = 'Approved'"
+        f" AND ({qc_req_col2} = 0 OR IFNULL(de.qc_status,'') IN ('Pass', 'Not Applicable'))"
+        f" AND ({ciag_req_col2} = 0 OR IFNULL({ciag_col_hide},'') IN ('Approved', 'Not Applicable'))"
         " AND EXISTS (SELECT 1 FROM `tabWork Done` wd0 WHERE wd0.execution = de.name)"
         ")"
     )
@@ -5657,6 +5873,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     if frappe.db.has_column("Rollout Plan", "im"):
         rp_im_join_ex = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
         im_full_sql_ex = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
+    qc_req_sel = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
+    ciag_req_sel = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
+    access_time_sel = "rp.access_time" if frappe.db.has_column("Rollout Plan", "access_time") else "NULL"
+    access_period_sel = "rp.access_period" if frappe.db.has_column("Rollout Plan", "access_period") else "NULL"
     lim_de = _portal_row_limit(limit, 500)
     rows = frappe.db.sql(
         f"""
@@ -5667,6 +5887,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                de.execution_status, de.tl_status, de.issue_category,
                de.achieved_qty, de.achieved_amount, de.gps_location,
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag, de.photos,
+               {qc_req_sel} AS qc_required,
+               {ciag_req_sel} AS ciag_required,
+               {access_time_sel} AS access_time,
+               {access_period_sel} AS access_period,
                pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
                pd.customer AS customer,
                {_remark_select()},
@@ -6526,11 +6750,24 @@ def get_field_team_dashboard(team_id=None):
     # Drop plans the field team has *already* completed (tl_status or
     # execution_status = Completed) so cards don't reappear after the
     # team has wrapped up the day's job.
+    has_access_time = frappe.db.has_column("Rollout Plan", "access_time")
+    has_access_period = frappe.db.has_column("Rollout Plan", "access_period")
+    has_qc_req = frappe.db.has_column("Rollout Plan", "qc_required")
+    has_ciag_req = frappe.db.has_column("Rollout Plan", "ciag_required")
+    extra_cols = ""
+    if has_access_time:
+        extra_cols += ", rp.access_time"
+    if has_access_period:
+        extra_cols += ", rp.access_period"
+    if has_qc_req:
+        extra_cols += ", rp.qc_required"
+    if has_ciag_req:
+        extra_cols += ", rp.ciag_required"
     plans = frappe.db.sql(
-        """
+        f"""
         SELECT rp.name, rp.po_dispatch, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount,
-               rp.achieved_amount, rp.completion_pct, rp.plan_status
+               rp.achieved_amount, rp.completion_pct, rp.plan_status{extra_cols}
         FROM `tabRollout Plan` rp
         WHERE rp.team = %s
         AND rp.plan_date = %s
@@ -6635,6 +6872,10 @@ def get_field_team_dashboard(team_id=None):
                 "tl_status": ex.get("tl_status"),
                 "qc_status": ex.get("qc_status"),
                 "ciag_status": ex.get("ciag_status"),
+                "access_time": plan.get("access_time") if has_access_time else None,
+                "access_period": plan.get("access_period") if has_access_period else None,
+                "qc_required": plan.get("qc_required", 1) if has_qc_req else 1,
+                "ciag_required": plan.get("ciag_required", 1) if has_ciag_req else 1,
             }
         )
 
@@ -6668,11 +6909,24 @@ def list_field_team_actionable_plans(team_id=None):
     # tl_status=Completed (they're done — picking them again would be
     # confusing). Defensive: catches sites where plan_status sync hasn't
     # caught up yet.
+    has_access_time = frappe.db.has_column("Rollout Plan", "access_time")
+    has_access_period = frappe.db.has_column("Rollout Plan", "access_period")
+    has_qc_req = frappe.db.has_column("Rollout Plan", "qc_required")
+    has_ciag_req = frappe.db.has_column("Rollout Plan", "ciag_required")
+    extra_cols = ""
+    if has_access_time:
+        extra_cols += ", rp.access_time"
+    if has_access_period:
+        extra_cols += ", rp.access_period"
+    if has_qc_req:
+        extra_cols += ", rp.qc_required"
+    if has_ciag_req:
+        extra_cols += ", rp.ciag_required"
     plans = frappe.db.sql(
-        """
+        f"""
         SELECT rp.name, rp.po_dispatch, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount,
-               rp.achieved_amount, rp.completion_pct, rp.plan_status
+               rp.achieved_amount, rp.completion_pct, rp.plan_status{extra_cols}
         FROM `tabRollout Plan` rp
         WHERE rp.team = %s
           AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution', 'Planning with Issue')
@@ -6731,6 +6985,10 @@ def list_field_team_actionable_plans(team_id=None):
             "customer_activity_type": cim_map.get(
                 (d.get("customer") or "", d.get("item_code") or "")
             ),
+            "access_time": p.get("access_time") if has_access_time else None,
+            "access_period": p.get("access_period") if has_access_period else None,
+            "qc_required": p.get("qc_required", 1) if has_qc_req else 1,
+            "ciag_required": p.get("ciag_required", 1) if has_ciag_req else 1,
         })
     return out
 
@@ -6741,18 +6999,16 @@ def list_field_team_actionable_plans(team_id=None):
 
 @frappe.whitelist()
 def list_field_remark_templates():
-    """Active templates the field team can pick from on Execute.
+    """Templates the field team can pick from on Execute.
 
-    Sorted by category then text so related items group together
-    (Power-Up Done / Power-Up Pending / etc.).
+    Returned alphabetically by remark_text.
     """
     if not frappe.db.table_exists("Field Remark Template"):
         return []
     rows = frappe.get_all(
         "Field Remark Template",
-        filters={"is_active": 1},
-        fields=["name", "remark_text", "category", "usage_count"],
-        order_by="category asc, usage_count desc, remark_text asc",
+        fields=["name", "remark_text"],
+        order_by="remark_text asc",
         limit_page_length=500,
     )
     return rows
@@ -6760,7 +7016,11 @@ def list_field_remark_templates():
 
 @frappe.whitelist()
 def create_field_remark_template(remark_text, category=None):
-    """Create a new template from the field-execute picker."""
+    """Create a new template from the field-execute picker.
+
+    The optional ``category`` arg is accepted for API back-compatibility
+    but ignored — the field was removed from the doctype.
+    """
     txt = (remark_text or "").strip()
     if not txt:
         frappe.throw("Remark text is required.")
@@ -6769,52 +7029,27 @@ def create_field_remark_template(remark_text, category=None):
     if frappe.db.exists("Field Remark Template", txt):
         return frappe.db.get_value(
             "Field Remark Template", txt,
-            ["name", "remark_text", "category", "usage_count"],
+            ["name", "remark_text"],
             as_dict=True,
         )
     doc = frappe.get_doc({
         "doctype": "Field Remark Template",
         "remark_text": txt,
-        "category": (category or "").strip() or None,
-        "is_active": 1,
-        "created_by_user": frappe.session.user,
     })
     doc.insert(ignore_permissions=True)
     frappe.db.commit()
     return {
         "name": doc.name,
         "remark_text": doc.remark_text,
-        "category": doc.category,
-        "usage_count": 0,
     }
 
 
 @frappe.whitelist()
 def bump_field_remark_template_usage(remark_texts):
-    """Increment usage_count for the picked templates so frequently-used
-    items rise to the top of the list. Called after a successful submit."""
-    if isinstance(remark_texts, str):
-        try:
-            remark_texts = frappe.parse_json(remark_texts)
-        except Exception:
-            remark_texts = [remark_texts]
-    if not isinstance(remark_texts, (list, tuple)):
-        return {"updated": 0}
-    names = [str(n).strip() for n in remark_texts if str(n).strip()]
-    if not names:
-        return {"updated": 0}
-    placeholders = ", ".join(["%s"] * len(names))
-    try:
-        frappe.db.sql(
-            f"UPDATE `tabField Remark Template` "
-            f"SET usage_count = COALESCE(usage_count, 0) + 1 "
-            f"WHERE name IN ({placeholders})",
-            tuple(names),
-        )
-        frappe.db.commit()
-        return {"updated": len(names)}
-    except Exception:
-        return {"updated": 0}
+    """No-op — usage_count was removed from Field Remark Template.
+    Kept as a stable endpoint so the FE doesn't need a coordinated
+    rollout."""
+    return {"updated": 0}
 
 
 # ---------------------------------------------------------------------------

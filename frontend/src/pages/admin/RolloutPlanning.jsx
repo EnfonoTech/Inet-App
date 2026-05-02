@@ -18,34 +18,45 @@ function todayDate() {
 }
 
 /* ── Modal ──────────────────────────────────────────────────────── */
-function Modal({ open, onClose, title, children, width = 460 }) {
+function Modal({ open, onClose, title, children, width = 460, footer = null }) {
   if (!open) return null;
   return (
     <div
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
         background: "rgba(15,23,42,0.5)", display: "flex",
-        alignItems: "center", justifyContent: "center",
+        alignItems: "center", justifyContent: "center", padding: 20,
       }}
       onClick={onClose}
     >
       <div
         style={{
-          background: "#fff", borderRadius: 14, padding: "28px 32px",
-          width, maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+          background: "#fff", borderRadius: 14,
+          width, maxWidth: "calc(100vw - 40px)",
+          maxHeight: "calc(100dvh - 40px)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+          display: "flex", flexDirection: "column", overflow: "hidden",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 28px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
           <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>{title}</h3>
           <button
+            type="button"
             onClick={onClose}
             style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}
           >
             &times;
           </button>
         </div>
-        {children}
+        <div style={{ padding: "20px 28px", overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
+          {children}
+        </div>
+        {footer && (
+          <div style={{ padding: "14px 28px", borderTop: "1px solid #e2e8f0", display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", flexShrink: 0, background: "#fff" }}>
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -115,6 +126,8 @@ export default function RolloutPlanning() {
   const [planTeam, setPlanTeam] = useState("");
   const [accessTime, setAccessTime] = useState("");
   const [accessPeriod, setAccessPeriod] = useState("");
+  const [qcRequired, setQcRequired] = useState(true);
+  const [ciagRequired, setCiagRequired] = useState(true);
   const [teamsList, setTeamsList] = useState([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [visitType, setVisitType] = useState("Execution");
@@ -223,6 +236,8 @@ export default function RolloutPlanning() {
     setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
+    setQcRequired(true);
+    setCiagRequired(true);
     setManagerRemark("");
     setShowModal(true);
   }
@@ -245,6 +260,8 @@ export default function RolloutPlanning() {
         team: planTeam,
         access_time: accessTime,
         access_period: accessPeriod,
+        qc_required: qcRequired ? 1 : 0,
+        ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType,
         manager_remark: managerRemark || undefined,
       });
@@ -473,7 +490,21 @@ export default function RolloutPlanning() {
         open={showModal}
         onClose={() => !creating && setShowModal(false)}
         title="Create rollout plans for selected DUIDs"
-        width={560}
+        width={840}
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setShowModal(false)} disabled={creating}>
+              Cancel
+            </button>
+            <button
+              className="btn-primary"
+              onClick={handleCreate}
+              disabled={creating || !planDate || !planEndDate || !visitType || !planTeam}
+            >
+              {creating ? "Creating…" : `Create ${selected.size} plan${selected.size !== 1 ? "s" : ""}`}
+            </button>
+          </>
+        }
       >
         <>
               <div style={{ marginBottom: 18 }}>
@@ -516,36 +547,37 @@ export default function RolloutPlanning() {
                 </div>
               </div>
 
-              <div style={{ marginBottom: 16 }}>
-                <label style={labelStyle}>Assigned team</label>
-                <select
-                  value={planTeam}
-                  onChange={(e) => setPlanTeam(e.target.value)}
-                  style={fieldStyle}
-                  disabled={teamsLoading}
-                >
-                  <option value="">{teamsLoading ? "Loading teams…" : "Select team"}</option>
-                  {teamsList.map((t) => (
-                    <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginBottom: 16 }}>
-                <label style={labelStyle}>Visit type</label>
-                <select
-                  value={visitType}
-                  onChange={(e) => setVisitType(e.target.value)}
-                  style={fieldStyle}
-                >
-                  {VISIT_TYPES.map((vt) => (
-                    <option key={vt} value={vt}>{vt}</option>
-                  ))}
-                </select>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 16px", marginBottom: 16 }}>
+                <div>
+                  <label style={labelStyle}>Assigned team</label>
+                  <select
+                    value={planTeam}
+                    onChange={(e) => setPlanTeam(e.target.value)}
+                    style={fieldStyle}
+                    disabled={teamsLoading}
+                  >
+                    <option value="">{teamsLoading ? "Loading teams…" : "Select team"}</option>
+                    {teamsList.map((t) => (
+                      <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>Visit type</label>
+                  <select
+                    value={visitType}
+                    onChange={(e) => setVisitType(e.target.value)}
+                    style={fieldStyle}
+                  >
+                    {VISIT_TYPES.map((vt) => (
+                      <option key={vt} value={vt}>{vt}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>ACCESS DETAILS</div>
-              <div style={{ display: "grid", gap: 16, marginBottom: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 16px", marginBottom: 20 }}>
                 <div>
                   <label style={labelStyle}>Planned start date</label>
                   <input
@@ -581,21 +613,40 @@ export default function RolloutPlanning() {
                 </div>
                 <div>
                   <label style={labelStyle}>Access period</label>
-                  <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+                  <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", padding: "9px 0" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
                       <input type="radio" name="access_period_rp" checked={accessPeriod === ""} onChange={() => setAccessPeriod("")} />
                       Not set
                     </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
                       <input type="radio" name="access_period_rp" checked={accessPeriod === "Day"} onChange={() => setAccessPeriod("Day")} />
                       Day
                     </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
                       <input type="radio" name="access_period_rp" checked={accessPeriod === "Night"} onChange={() => setAccessPeriod("Night")} />
                       Night
                     </label>
                   </div>
                 </div>
+              </div>
+
+              {/* Per-plan workflow toggles. When unchecked, the field
+                  team isn't asked for that step and the IM can close
+                  the plan to Work Done without recording it. */}
+              <div style={{
+                display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap",
+                padding: "10px 12px", background: "#f8fafc",
+                border: "1px solid #e2e8f0", borderRadius: 6,
+                marginTop: 12, marginBottom: 12,
+              }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
+                  <input type="checkbox" checked={qcRequired} onChange={(e) => setQcRequired(e.target.checked)} />
+                  QC Required
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
+                  <input type="checkbox" checked={ciagRequired} onChange={(e) => setCiagRequired(e.target.checked)} />
+                  CIAG Required
+                </label>
               </div>
 
               {/* Single remark — saved as the Manager remark on every
@@ -618,19 +669,6 @@ export default function RolloutPlanning() {
             <span>⚠</span> {createError}
           </div>
         )}
-
-        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
-          <button className="btn-secondary" onClick={() => setShowModal(false)} disabled={creating}>
-            Cancel
-          </button>
-          <button
-            className="btn-primary"
-            onClick={handleCreate}
-            disabled={creating || !planDate || !planEndDate || !visitType || !planTeam}
-          >
-            {creating ? "Creating…" : `Create ${selected.size} plan${selected.size !== 1 ? "s" : ""}`}
-          </button>
-        </div>
       </Modal>
 
       <Modal

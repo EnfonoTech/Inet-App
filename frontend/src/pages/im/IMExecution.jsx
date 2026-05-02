@@ -16,6 +16,14 @@ import DateRangePicker from "../../components/DateRangePicker";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
 
+// Backend Check fields can come back as 0/false/"0" depending on the
+// transport, so accept all of them as the not-required signal.
+function isNotRequired(v) {
+  if (v === 0 || v === false || v === "0") return true;
+  if (typeof v === "string" && v.toLowerCase() === "false") return true;
+  return false;
+}
+
 function badgeTone(value) {
   const s = String(value || "").toLowerCase();
   if (!s) return { bg: "#f1f5f9", fg: "#334155", dot: "#64748b" };
@@ -35,6 +43,8 @@ function badgeTone(value) {
     "late arrival": { bg: "#fff7ed", fg: "#9a3412", dot: "#f97316" },
     "quality issue": { bg: "#fef2f2", fg: "#991b1b", dot: "#ef4444" },
     travel: { bg: "#eef2ff", fg: "#3730a3", dot: "#6366f1" },
+    "not applicable": { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8" },
+    "n/a": { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8" },
   };
   if (tones[s]) return tones[s];
 
@@ -220,7 +230,11 @@ export default function IMExecution() {
   const duidOptions = dispOpts.site_code || [];
   const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
   const totalAchieved = executions.reduce((s, e) => s + (e.achieved_qty || 0), 0);
-  const eligibleForWorkDone = executions.filter((e) => e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done);
+  const eligibleForWorkDone = executions.filter((e) =>
+    e.execution_status === "Completed"
+    && (isNotRequired(e.qc_required) || e.qc_status === "Pass")
+    && !e.work_done
+  );
   const selectedEligible = eligibleForWorkDone.filter((e) => selectedExecs.has(e.name));
 
   async function submitReopen() {
@@ -615,7 +629,7 @@ export default function IMExecution() {
                     <td>
                       <input
                         type="checkbox"
-                        disabled={!(e.execution_status === "Completed" && e.qc_status === "Pass" && !e.work_done)}
+                        disabled={!(e.execution_status === "Completed" && (isNotRequired(e.qc_required) || e.qc_status === "Pass") && !e.work_done)}
                         checked={selectedExecs.has(e.name)}
                         onChange={() => {
                           setSelectedExecs((prev) => {
@@ -692,9 +706,13 @@ export default function IMExecution() {
                         TL Status=Completed. We show the value as soon as
                         either side has marked the work Completed —
                         otherwise the IM page hid Pass/Approved values that
-                        were already in the database. */}
+                        were already in the database. When the plan was
+                        created with QC/CIAG not required, show a
+                        non-clickable "Not Required" pill instead. */}
                     <td>
-                      {!(e.execution_status === "Completed" || e.tl_status === "Completed") ? (
+                      {isNotRequired(e.qc_required) ? (
+                        <StatusPill value="Not Applicable" />
+                      ) : !(e.execution_status === "Completed" || e.tl_status === "Completed") ? (
                         <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>
                       ) : (
                         <button
@@ -713,7 +731,9 @@ export default function IMExecution() {
                       )}
                     </td>
                     <td>
-                      {!(e.execution_status === "Completed" || e.tl_status === "Completed") ? (
+                      {isNotRequired(e.ciag_required) ? (
+                        <StatusPill value="Not Applicable" />
+                      ) : !(e.execution_status === "Completed" || e.tl_status === "Completed") ? (
                         <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>
                       ) : (
                         <button

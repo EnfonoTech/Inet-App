@@ -4,6 +4,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { pmApi } from "../../services/api";
+import { isNotRequired } from "../../utils/qcCiagFlags";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -80,11 +81,11 @@ function HistoryCard({ r }) {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 4 }}>
           <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: 0.4 }}>QC / CIAG</span>
           <span style={{ display: "flex", gap: 4 }}>
-            <span className={`status-badge ${statusBadgeClass(r.qc_status)}`} style={{ fontSize: "0.7rem" }}>
-              <span className="status-dot" />{r.qc_status || "—"}
+            <span className={`status-badge ${statusBadgeClass(isNotRequired(r.qc_required) ? "Not Applicable" : r.qc_status)}`} style={{ fontSize: "0.7rem" }}>
+              <span className="status-dot" />{isNotRequired(r.qc_required) ? "Not Applicable" : (r.qc_status || "—")}
             </span>
-            <span className={`status-badge ${statusBadgeClass(r.ciag_status)}`} style={{ fontSize: "0.7rem" }}>
-              <span className="status-dot" />{r.ciag_status || "—"}
+            <span className={`status-badge ${statusBadgeClass(isNotRequired(r.ciag_required) ? "Not Applicable" : r.ciag_status)}`} style={{ fontSize: "0.7rem" }}>
+              <span className="status-dot" />{isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "—")}
             </span>
           </span>
         </div>
@@ -227,13 +228,13 @@ export default function FieldHistory() {
                       </span>
                     </td>
                     <td>
-                      <span className={`status-badge ${statusBadgeClass(r.qc_status)}`}>
-                        <span className="status-dot" />{r.qc_status || "—"}
+                      <span className={`status-badge ${statusBadgeClass(isNotRequired(r.qc_required) ? "Not Applicable" : r.qc_status)}`}>
+                        <span className="status-dot" />{isNotRequired(r.qc_required) ? "Not Applicable" : (r.qc_status || "—")}
                       </span>
                     </td>
                     <td>
-                      <span className={`status-badge ${statusBadgeClass(r.ciag_status)}`}>
-                        <span className="status-dot" />{r.ciag_status || "—"}
+                      <span className={`status-badge ${statusBadgeClass(isNotRequired(r.ciag_required) ? "Not Applicable" : r.ciag_status)}`}>
+                        <span className="status-dot" />{isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "—")}
                       </span>
                     </td>
                     <td style={{ textAlign: "right" }}>{fmt.format(r.execution_achieved_qty || 0)}</td>

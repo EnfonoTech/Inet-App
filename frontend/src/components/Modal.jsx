@@ -1,4 +1,4 @@
-export default function Modal({ open, title, onClose, children, wide = false, width }) {
+export default function Modal({ open, title, onClose, children, wide = false, width, footer = null }) {
   if (!open) return null;
   const customStyle = width ? { width: typeof width === "number" ? `${width}px` : width, maxWidth: "calc(100vw - 32px)" } : undefined;
   return (
@@ -18,6 +18,7 @@ export default function Modal({ open, title, onClose, children, wide = false, wi
           </button>
         </div>
         <div className="modal-body">{children}</div>
+        {footer && <div className="modal-footer">{footer}</div>}
       </div>
     </div>
   );

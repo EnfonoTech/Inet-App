@@ -54,7 +54,8 @@
   {
    "fieldname": "executed_qty",
    "fieldtype": "Float",
-   "label": "Executed Qty"
+   "label": "Executed Qty",
+   "precision": "4"
   },
   {
    "fieldname": "billing_rate_sar",

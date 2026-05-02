@@ -38,29 +38,39 @@ function todayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function Modal({ open, onClose, title, children, width = 460 }) {
+function Modal({ open, onClose, title, children, width = 460, footer = null }) {
   if (!open) return null;
   return (
     <div
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
         background: "rgba(15,23,42,0.5)", display: "flex",
-        alignItems: "center", justifyContent: "center",
+        alignItems: "center", justifyContent: "center", padding: 20,
       }}
       onClick={onClose}
     >
       <div
         style={{
-          background: "#fff", borderRadius: 14, padding: "28px 32px",
-          width, maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+          background: "#fff", borderRadius: 14,
+          width, maxWidth: "calc(100vw - 40px)",
+          maxHeight: "calc(100dvh - 40px)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+          display: "flex", flexDirection: "column", overflow: "hidden",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 28px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
           <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>{title}</h3>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
         </div>
-        {children}
+        <div style={{ padding: "20px 28px", overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
+          {children}
+        </div>
+        {footer && (
+          <div style={{ padding: "14px 28px", borderTop: "1px solid #e2e8f0", display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", flexShrink: 0, background: "#fff" }}>
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -174,6 +184,8 @@ export default function IMDispatch() {
   const [planTeam, setPlanTeam] = useState("");
   const [accessTime, setAccessTime] = useState("");
   const [accessPeriod, setAccessPeriod] = useState("");
+  const [qcRequired, setQcRequired] = useState(true);
+  const [ciagRequired, setCiagRequired] = useState(true);
   const [teamsList, setTeamsList] = useState([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [visitType, setVisitType] = useState("Execution");
@@ -428,6 +440,8 @@ export default function IMDispatch() {
     setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
+    setQcRequired(true);
+    setCiagRequired(true);
     setManagerRemark("");
     setShowModal(true);
   }
@@ -450,6 +464,8 @@ export default function IMDispatch() {
         team: planTeam,
         access_time: accessTime,
         access_period: accessPeriod,
+        qc_required: qcRequired ? 1 : 0,
+        ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType,
         manager_remark: managerRemark || undefined,
       });
@@ -611,7 +627,20 @@ export default function IMDispatch() {
         </div>
       </div>
 
-      <Modal open={showModal} onClose={() => !creating && setShowModal(false)} title="Create rollout plans for selected DUIDs" width={560}>
+      <Modal
+        open={showModal}
+        onClose={() => !creating && setShowModal(false)}
+        title="Create rollout plans for selected DUIDs"
+        width={840}
+        footer={
+          <>
+            <button type="button" className="btn-secondary" disabled={creating} onClick={() => setShowModal(false)}>Cancel</button>
+            <button type="button" className="btn-primary" disabled={creating || !planDate || !planEndDate || !visitType || !planTeam} onClick={handleCreatePlans}>
+              {creating ? "Creating…" : "Create"}
+            </button>
+          </>
+        }
+      >
         {createError && <div className="notice error" style={{ marginBottom: 12 }}>{createError}</div>}
         <div style={{ marginBottom: 18 }}>
           <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 8 }}>SELECTED DUIDs</div>
@@ -644,66 +673,87 @@ export default function IMDispatch() {
           </p>
         </div>
 
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Assigned team</label>
-          <select
-            value={planTeam}
-            onChange={(e) => setPlanTeam(e.target.value)}
-            disabled={teamsLoading || !imName}
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
-          >
-            <option value="">{teamsLoading ? "Loading teams…" : !imName ? "Link IM to load teams" : "Select team"}</option>
-            {teamsList.map((t) => (
-              <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Visit type</label>
-          <select value={visitType} onChange={(e) => setVisitType(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}>
-            {VISIT_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 16px", marginBottom: 14 }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Assigned team</label>
+            <select
+              value={planTeam}
+              onChange={(e) => setPlanTeam(e.target.value)}
+              disabled={teamsLoading || !imName}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+            >
+              <option value="">{teamsLoading ? "Loading teams…" : !imName ? "Link IM to load teams" : "Select team"}</option>
+              {teamsList.map((t) => (
+                <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Visit type</label>
+            <select value={visitType} onChange={(e) => setVisitType(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}>
+              {VISIT_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
         </div>
 
         <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 10 }}>ACCESS DETAILS</div>
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Planned start date</label>
-          <input
-            type="date"
-            value={planDate}
-            onChange={(e) => {
-              const v = e.target.value;
-              setPlanDate(v);
-              setPlanEndDate((ed) => (ed < v ? v : ed));
-            }}
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
-          />
-        </div>
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Planned end date</label>
-          <input type="date" value={planEndDate} min={planDate} onChange={(e) => setPlanEndDate(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }} />
-        </div>
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Access time</label>
-          <input type="text" value={accessTime} onChange={(e) => setAccessTime(e.target.value)} placeholder="e.g. 08:00 or hours" style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }} />
-        </div>
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Access period</label>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
-              <input type="radio" name="access_period_im" checked={accessPeriod === ""} onChange={() => setAccessPeriod("")} />
-              Not set
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
-              <input type="radio" name="access_period_im" checked={accessPeriod === "Day"} onChange={() => setAccessPeriod("Day")} />
-              Day
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem", cursor: "pointer" }}>
-              <input type="radio" name="access_period_im" checked={accessPeriod === "Night"} onChange={() => setAccessPeriod("Night")} />
-              Night
-            </label>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 16px", marginBottom: 16 }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Planned start date</label>
+            <input
+              type="date"
+              value={planDate}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPlanDate(v);
+                setPlanEndDate((ed) => (ed < v ? v : ed));
+              }}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+            />
           </div>
+          <div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Planned end date</label>
+            <input type="date" value={planEndDate} min={planDate} onChange={(e) => setPlanEndDate(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Access time</label>
+            <input type="text" value={accessTime} onChange={(e) => setAccessTime(e.target.value)} placeholder="e.g. 08:00 or hours" style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Access period</label>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", padding: "9px 0" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
+                <input type="radio" name="access_period_im" checked={accessPeriod === ""} onChange={() => setAccessPeriod("")} />
+                Not set
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
+                <input type="radio" name="access_period_im" checked={accessPeriod === "Day"} onChange={() => setAccessPeriod("Day")} />
+                Day
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
+                <input type="radio" name="access_period_im" checked={accessPeriod === "Night"} onChange={() => setAccessPeriod("Night")} />
+                Night
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Per-plan workflow toggles. When unchecked, the field
+            team isn't asked for that step and the IM can close the
+            plan to Work Done without recording it. */}
+        <div style={{
+          display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap",
+          padding: "10px 12px", background: "#f8fafc",
+          border: "1px solid #e2e8f0", borderRadius: 6, marginBottom: 16,
+        }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
+            <input type="checkbox" checked={qcRequired} onChange={(e) => setQcRequired(e.target.checked)} />
+            QC Required
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
+            <input type="checkbox" checked={ciagRequired} onChange={(e) => setCiagRequired(e.target.checked)} />
+            CIAG Required
+          </label>
         </div>
 
         <div className="form-group" style={{ marginBottom: 16 }}>
@@ -715,13 +765,6 @@ export default function IMDispatch() {
             placeholder="Remark for these rollout plans…"
             style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: "0.86rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical", minHeight: 60 }}
           />
-        </div>
-
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button type="button" className="btn-secondary" disabled={creating} onClick={() => setShowModal(false)}>Cancel</button>
-          <button type="button" className="btn-primary" disabled={creating || !planDate || !planEndDate || !visitType || !planTeam} onClick={handleCreatePlans}>
-            {creating ? "Creating…" : "Create"}
-          </button>
         </div>
       </Modal>
 

@@ -602,22 +602,27 @@ tbody tr:last-child td {
   backdrop-filter: blur(4px);
   z-index: 1200;
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: flex-end;
   padding: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .modal {
   width: 520px;
   max-width: 100%;
   height: 100vh;
+  /* dvh handles mobile address bars / on-screen keyboards so the
+     modal frame stays exactly within the visible viewport */
+  height: 100dvh;
+  box-sizing: border-box;
   background: var(--bg-white);
   border-left: 1px solid var(--border);
   box-shadow: -8px 0 40px rgba(0, 0, 0, 0.12);
   animation: modal-slide-in 0.25s ease;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 @keyframes modal-slide-in {
@@ -631,10 +636,27 @@ tbody tr:last-child td {
 }
 
 .modal-overlay-center {
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   padding: 20px;
-  overflow-y: auto;
+  overflow: hidden;
+}
+
+/* Modals that opt into centered placement (any modal with a `width`
+   prop or `wide`) must NOT use the drawer's full 100dvh height — they
+   should size to content but never exceed the viewport, leaving the
+   20px overlay padding visible. */
+.modal-overlay-center .modal {
+  height: auto;
+  max-height: calc(100dvh - 40px);
+  border-left: none;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: modal-pop-in 0.22s ease;
 }
 
 .modal-wide {
@@ -648,6 +670,30 @@ tbody tr:last-child td {
   box-shadow: var(--shadow-lg);
   animation: modal-pop-in 0.22s ease;
   overflow: hidden;
+}
+
+/* Below the sidebar+drawer breakpoint the right-drawer modal must
+   collapse to a full-screen sheet, and the centered "wide" modal
+   must drop its 900px min-width so the layout fits portrait phones. */
+@media (max-width: 900px) {
+  .modal-overlay-center {
+    padding: 10px;
+  }
+  .modal {
+    width: 100vw;
+    max-width: 100vw;
+    border-left: none;
+  }
+  .modal-overlay-center .modal {
+    max-height: calc(100dvh - 20px);
+  }
+  .modal-wide {
+    width: 100%;
+    min-width: 0;
+  }
+  .modal-header { padding: 14px 16px; }
+  .modal-body { padding: 14px 16px; }
+  .modal-footer { padding: 12px 16px; }
 }
 
 @keyframes modal-pop-in {
@@ -675,11 +721,24 @@ tbody tr:last-child td {
 .modal-body {
   padding: 20px 24px;
   overflow-y: auto;
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .modal-wide .modal-body {
-  max-height: calc(100vh - 120px);
+  /* parent .modal already caps total height; just let body grow & scroll */
+  max-height: none;
+}
+
+.modal-footer {
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-white);
+  flex-shrink: 0;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .modal-close {
