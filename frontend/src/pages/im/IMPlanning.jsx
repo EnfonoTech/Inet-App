@@ -9,6 +9,7 @@ import IMPlanningExecutionModal from "./IMPlanningExecutionModal";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
+import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DateRangePicker from "../../components/DateRangePicker";
 import RemarksCell from "../../components/RemarksCell";
 
@@ -363,21 +364,30 @@ export default function IMPlanning() {
       />
 
       {detailRow && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDetailRow(null)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(840px, 94vw)", maxHeight: "78vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setDetailRow(null)}>
+          <div style={{
+            background: "#fff", borderRadius: 12,
+            width: "min(840px, 96vw)",
+            maxHeight: "calc(100dvh - 32px)",
+            display: "flex", flexDirection: "column", overflow: "hidden",
+            boxShadow: "0 24px 48px -16px rgba(0,0,0,0.3)",
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Plan Details</h3>
-              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
             </div>
-            <RecordDetailView
-              row={detailRow}
-              pills={[
-                { label: "POID", value: detailRow.poid || detailRow.po_dispatch || "—", tone: "blue" },
-                { label: "Team", value: detailRow.team_name || detailRow.team || "—", tone: "amber" },
-                { label: "DUID", value: detailRow.site_code || "—", tone: "green" },
-                detailRow.plan_status ? { label: "Status", value: detailRow.plan_status, tone: /complete/i.test(detailRow.plan_status) ? "green" : /cancel/i.test(detailRow.plan_status) ? "rose" : /issue/i.test(detailRow.plan_status) ? "amber" : "slate" } : null,
-              ].filter(Boolean)}
-            />
+            <div style={{ padding: 20, overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
+              <RecordDetailView
+                row={detailRow}
+                pills={[
+                  { label: "POID", value: detailRow.poid || detailRow.po_dispatch || "—", tone: "blue" },
+                  { label: "Team", value: detailRow.team_name || detailRow.team || "—", tone: "amber" },
+                  { label: "DUID", value: detailRow.site_code || "—", tone: "green" },
+                  detailRow.plan_status ? { label: "Status", value: detailRow.plan_status, tone: /complete/i.test(detailRow.plan_status) ? "green" : /cancel/i.test(detailRow.plan_status) ? "rose" : /issue/i.test(detailRow.plan_status) ? "amber" : "slate" } : null,
+                ].filter(Boolean)}
+              />
+              <PlanTeamsBreakdown rolloutPlan={detailRow.name} />
+            </div>
           </div>
         </div>
       )}

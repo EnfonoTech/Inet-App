@@ -9,6 +9,7 @@ import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constant
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
+import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import RemarksPanel from "../../components/RemarksPanel";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -230,11 +231,26 @@ export default function IMExecution() {
   const duidOptions = dispOpts.site_code || [];
   const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
   const totalAchieved = executions.reduce((s, e) => s + (e.achieved_qty || 0), 0);
-  const eligibleForWorkDone = executions.filter((e) =>
-    e.execution_status === "Completed"
-    && (isNotRequired(e.qc_required) || e.qc_status === "Pass")
-    && !e.work_done
-  );
+  // Multi-team plans have one Daily Execution per team but only ONE
+  // Work Done per plan. De-duplicate by rollout_plan: surface a single
+  // representative DE per plan so the "Create Work Done" button doesn't
+  // double-fire (and the row count matches the WD records actually
+  // created). The backend is also idempotent now, so accidental
+  // double-clicks are a no-op — but keeping the UI accurate matters.
+  const eligibleForWorkDone = (() => {
+    const seenPlans = new Set();
+    const out = [];
+    for (const e of executions) {
+      if (e.execution_status !== "Completed") continue;
+      if (!(isNotRequired(e.qc_required) || e.qc_status === "Pass")) continue;
+      if (e.work_done) continue;
+      const key = e.rollout_plan || e.name;
+      if (seenPlans.has(key)) continue;
+      seenPlans.add(key);
+      out.push(e);
+    }
+    return out;
+  })();
   const selectedEligible = eligibleForWorkDone.filter((e) => selectedExecs.has(e.name));
 
   async function submitReopen() {
@@ -806,31 +822,40 @@ export default function IMExecution() {
         />
       </div>
       {detailRow && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDetailRow(null)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(860px, 94vw)", maxHeight: "78vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setDetailRow(null)}>
+          <div style={{
+            background: "#fff", borderRadius: 12,
+            width: "min(860px, 96vw)",
+            maxHeight: "calc(100dvh - 32px)",
+            display: "flex", flexDirection: "column", overflow: "hidden",
+            boxShadow: "0 24px 48px -16px rgba(0,0,0,0.3)",
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Execution Details</h3>
-              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
             </div>
-            <RecordDetailView
-              row={detailRow}
-              pills={[
-                { label: "Execution", value: detailRow.name || "—", tone: "blue" },
-                { label: "PO", value: detailRow.po_no || "—", tone: "amber" },
-                { label: "Team", value: detailRow.team_name || detailRow.team || "—", tone: "green" },
-                detailRow.execution_status ? { label: "Status", value: detailRow.execution_status, tone: /complete/i.test(detailRow.execution_status) ? "green" : /cancel/i.test(detailRow.execution_status) ? "rose" : "slate" } : null,
-              ].filter(Boolean)}
-            />
-            {parseAttachments(detailRow.photos).length > 0 && (
-              <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>
-                {parseAttachments(detailRow.photos).map((url, idx) => (
-                  <div key={`${url}-${idx}`} style={{ marginBottom: 4, fontSize: 13 }}>
-                    <a href={url} target="_blank" rel="noreferrer" style={{ color: "#2563eb", wordBreak: "break-all" }}>{url}</a>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div style={{ padding: 20, overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
+              <RecordDetailView
+                row={detailRow}
+                pills={[
+                  { label: "Execution", value: detailRow.name || "—", tone: "blue" },
+                  { label: "PO", value: detailRow.po_no || "—", tone: "amber" },
+                  { label: "Team", value: detailRow.team_name || detailRow.team || "—", tone: "green" },
+                  detailRow.execution_status ? { label: "Status", value: detailRow.execution_status, tone: /complete/i.test(detailRow.execution_status) ? "green" : /cancel/i.test(detailRow.execution_status) ? "rose" : "slate" } : null,
+                ].filter(Boolean)}
+              />
+              <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
+              {parseAttachments(detailRow.photos).length > 0 && (
+                <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>
+                  {parseAttachments(detailRow.photos).map((url, idx) => (
+                    <div key={`${url}-${idx}`} style={{ marginBottom: 4, fontSize: 13 }}>
+                      <a href={url} target="_blank" rel="noreferrer" style={{ color: "#2563eb", wordBreak: "break-all" }}>{url}</a>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

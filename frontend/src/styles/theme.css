@@ -649,14 +649,10 @@ tbody tr:last-child td {
 .modal-overlay-center .modal {
   height: auto;
   max-height: calc(100dvh - 40px);
-  border-left: none;
+  border-left: 1px solid var(--border);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  animation: modal-pop-in 0.22s ease;
 }
 
 .modal-wide {

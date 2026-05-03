@@ -5,6 +5,7 @@ import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import { isNotRequired } from "../../utils/qcCiagFlags";
 
 const TEAM_QC_OPTIONS = ["Pending", "Pass", "Fail"];
 const TEAM_CIAG_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
@@ -18,30 +19,21 @@ function statusBadgeClass(status) {
   return "new";
 }
 
-// Backend Check fields can come back as 0/false/"0" depending on the
-// transport, so accept all of them as the not-required signal.
-function isNotRequired(v) {
-  if (v === 0 || v === false || v === "0") return true;
-  if (typeof v === "string" && v.toLowerCase() === "false") return true;
-  return false;
-}
-
 /* QC/CIAG edit modal — shared by mobile and desktop */
 function QcEditModal({ row, onClose, onSaved }) {
+  // Treat 0 / "0" / false as not-required so plans created with the
+  // toggle off render the "Not Applicable" pill instead of an editable
+  // "Pending" / "Open" select.
+  const [qcReqRaw, setQcReqRaw] = useState(row?.qc_required);
+  const [ciagReqRaw, setCiagReqRaw] = useState(row?.ciag_required);
+  const qcRequired = !isNotRequired(qcReqRaw);
+  const ciagRequired = !isNotRequired(ciagReqRaw);
   const [executionName, setExecutionName] = useState("");
   const [qcStatus, setQcStatus] = useState("Pending");
   const [ciagStatus, setCiagStatus] = useState("Open");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  // Read the plan-level _required flags from whichever source has them.
-  // The row payload from listExecutionMonitorRows may be stale (cached
-  // before the backstop landed), so prefer the freshly-fetched execution
-  // object when it carries the flag.
-  const [qcReqRaw, setQcReqRaw] = useState(row?.qc_required);
-  const [ciagReqRaw, setCiagReqRaw] = useState(row?.ciag_required);
-  const qcRequired = !isNotRequired(qcReqRaw);
-  const ciagRequired = !isNotRequired(ciagReqRaw);
 
   useEffect(() => {
     if (!row) return;
@@ -53,8 +45,8 @@ function QcEditModal({ row, onClose, onSaved }) {
       setExecutionName(ex.name);
       setQcStatus(ex.qc_status || "Pending");
       setCiagStatus(ex.ciag_status || "Open");
-      // getFieldExecutionForRollout is the authoritative source — its
-      // raw-SQL backstop reads the flags directly from the DB column.
+      // Authoritative source: getFieldExecutionForRollout backstops
+      // qc_required / ciag_required from Rollout Plan via raw SQL.
       if (ex.qc_required !== undefined) setQcReqRaw(ex.qc_required);
       if (ex.ciag_required !== undefined) setCiagReqRaw(ex.ciag_required);
     }).catch(() => setLoadError("Could not load execution details."));
@@ -193,14 +185,14 @@ function QcCard({ row, selected, onToggle, onOpen }) {
 
       <div className="qc-badge-row">
         <span className="qc-badge-label">QC</span>
-        <span className={`status-badge ${statusBadgeClass(isNotRequired(row.qc_required) ? "Not Applicable" : (row.qc_status || "Pending"))}`}>
+        <span className={`status-badge ${statusBadgeClass(row.qc_required === 0 ? "Not Applicable" : (row.qc_status || "Pending"))}`}>
           <span className="status-dot" />
-          {isNotRequired(row.qc_required) ? "Not Applicable" : (row.qc_status || "Pending")}
+          {row.qc_required === 0 ? "Not Applicable" : (row.qc_status || "Pending")}
         </span>
         <span className="qc-badge-label" style={{ marginLeft: 6 }}>CIAG</span>
-        <span className={`status-badge ${statusBadgeClass(isNotRequired(row.ciag_required) ? "Not Applicable" : (row.ciag_status || "Open"))}`}>
+        <span className={`status-badge ${statusBadgeClass(row.ciag_required === 0 ? "Not Applicable" : (row.ciag_status || "Open"))}`}>
           <span className="status-dot" />
-          {isNotRequired(row.ciag_required) ? "Not Applicable" : (row.ciag_status || "Open")}
+          {row.ciag_required === 0 ? "Not Applicable" : (row.ciag_status || "Open")}
         </span>
       </div>
     </div>
@@ -234,7 +226,7 @@ export default function FieldQcCiag() {
             String(r.execution_status || "") !== "Completed" &&
             // Drop rows where the IM/PM has disabled both QC and CIAG —
             // there's nothing for the field user to act on.
-            !(isNotRequired(r.qc_required) && isNotRequired(r.ciag_required))
+            !(r.qc_required === 0 && r.ciag_required === 0)
         );
         if (!cancelled) setRows(visible);
       } catch { if (!cancelled) setRows([]); }
@@ -399,16 +391,22 @@ export default function FieldQcCiag() {
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }}>{r.center_area || "—"}</td>
                     <td>{r.region_type || "—"}</td>
                     <td>
-                      <span className={`status-badge ${statusBadgeClass(isNotRequired(r.qc_required) ? "Not Applicable" : (r.qc_status || "Pending"))}`}>
-                        <span className="status-dot" />
-                        {isNotRequired(r.qc_required) ? "Not Applicable" : (r.qc_status || "Pending")}
-                      </span>
+                      {r.qc_required === 0 ? (
+                        <span className="status-badge" style={{ background: "#f1f5f9", color: "#64748b" }}>—</span>
+                      ) : (
+                        <span className={`status-badge ${statusBadgeClass(r.qc_status || "Pending")}`}>
+                          <span className="status-dot" />{r.qc_status || "Pending"}
+                        </span>
+                      )}
                     </td>
                     <td>
-                      <span className={`status-badge ${statusBadgeClass(isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "Open"))}`}>
-                        <span className="status-dot" />
-                        {isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "Open")}
-                      </span>
+                      {r.ciag_required === 0 ? (
+                        <span className="status-badge" style={{ background: "#f1f5f9", color: "#64748b" }}>—</span>
+                      ) : (
+                        <span className={`status-badge ${statusBadgeClass(r.ciag_status || "Open")}`}>
+                          <span className="status-dot" />{r.ciag_status || "Open"}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

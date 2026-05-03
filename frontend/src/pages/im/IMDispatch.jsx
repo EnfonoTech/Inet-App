@@ -182,6 +182,8 @@ export default function IMDispatch() {
   const [planDate, setPlanDate] = useState(todayDate());
   const [planEndDate, setPlanEndDate] = useState(todayDate());
   const [planTeam, setPlanTeam] = useState("");
+  // Multi-team assignment (lead team + extras with per-team qty).
+  const [planTeams, setPlanTeams] = useState([]);
   const [accessTime, setAccessTime] = useState("");
   const [accessPeriod, setAccessPeriod] = useState("");
   const [qcRequired, setQcRequired] = useState(true);
@@ -437,6 +439,7 @@ export default function IMDispatch() {
   function openCreatePlanModal() {
     setCreateError(null);
     setPlanTeam("");
+    setPlanTeams([]);
     setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
@@ -457,11 +460,24 @@ export default function IMDispatch() {
     setSuccessMsg(null);
     try {
       const dispatches = Array.from(selected);
+      const validExtras = (planTeams || []).filter((r) => r.team);
+      const teamsPayload = validExtras.length > 0
+        ? [
+            ...(validExtras.some((r) => r.team === planTeam)
+              ? []
+              : [{ team: planTeam, assigned_qty: 0 }]),
+            ...validExtras.map((r) => ({
+              team: r.team,
+              assigned_qty: Number(r.assigned_qty) || 0,
+            })),
+          ]
+        : [];
       const result = await pmApi.createRolloutPlans({
         dispatches,
         plan_date: planDate,
         plan_end_date: planEndDate,
         team: planTeam,
+        teams: teamsPayload,
         access_time: accessTime,
         access_period: accessPeriod,
         qc_required: qcRequired ? 1 : 0,
@@ -494,6 +510,11 @@ export default function IMDispatch() {
 
   const createPlanSelRows = rows.filter((r) => selected.has(r.name));
   const createPlanDuids = [...new Set(createPlanSelRows.map((r) => r.site_code || r.name).filter(Boolean))];
+  const createPlanTotalQty = createPlanSelRows.reduce((s, r) => s + Number(r.qty || 0), 0);
+  const planTeamsAssignedQty = (planTeams || [])
+    .filter((r) => r.team)
+    .reduce((s, r) => s + (Number(r.assigned_qty) || 0), 0);
+  const planTeamsRemaining = createPlanTotalQty - planTeamsAssignedQty;
 
   return (
     <div>
@@ -669,13 +690,13 @@ export default function IMDispatch() {
             ))}
           </div>
           <p style={{ fontSize: "0.78rem", color: "#64748b", margin: "8px 0 0" }}>
-            IM <strong>{imName || "—"}</strong> · {selected.size} line{selected.size !== 1 ? "s" : ""} → <strong>Planned</strong> · SAR {fmt.format(selectedAmt)}
+            IM <strong>{imName || "—"}</strong> · {selected.size} line{selected.size !== 1 ? "s" : ""} · Qty <strong style={{ color: "#0f172a" }}>{fmt.format(createPlanTotalQty)}</strong> → <strong>Planned</strong> · SAR {fmt.format(selectedAmt)}
           </p>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 16px", marginBottom: 14 }}>
           <div>
-            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Assigned team</label>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Lead team</label>
             <select
               value={planTeam}
               onChange={(e) => setPlanTeam(e.target.value)}
@@ -694,6 +715,78 @@ export default function IMDispatch() {
               {VISIT_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
+        </div>
+
+        {/* Optional multi-team split */}
+        <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569" }}>ADDITIONAL TEAMS (optional)</div>
+            <button
+              type="button"
+              onClick={() => setPlanTeams((arr) => [...arr, { team: "", assigned_qty: 0 }])}
+              style={{ fontSize: "0.74rem", padding: "4px 10px", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 600, color: "#1d4ed8" }}
+            >
+              + Add team
+            </button>
+          </div>
+          <div style={{
+            fontSize: "0.74rem", color: "#475569", marginBottom: 8,
+            padding: "6px 8px", borderRadius: 6,
+            background: planTeamsRemaining < 0 ? "#fef2f2" : "#eef2ff",
+            border: planTeamsRemaining < 0 ? "1px solid #fecaca" : "1px solid #c7d2fe",
+          }}>
+            Total qty <strong>{fmt.format(createPlanTotalQty)}</strong>
+            {" · Assigned to extras "}
+            <strong>{fmt.format(planTeamsAssignedQty)}</strong>
+            {" · Remaining for lead team "}
+            <strong style={{ color: planTeamsRemaining < 0 ? "#b91c1c" : "#1d4ed8" }}>
+              {fmt.format(planTeamsRemaining)}
+            </strong>
+            {planTeamsRemaining < 0 && (
+              <span style={{ marginLeft: 8, color: "#b91c1c", fontWeight: 700 }}>⚠ over total</span>
+            )}
+          </div>
+          {planTeams.length === 0 ? (
+            <div style={{ fontSize: "0.74rem", color: "#94a3b8" }}>
+              Single-team plan. Add another team to split the line.
+            </div>
+          ) : (
+            <div>
+              {planTeams.map((row, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                  <select
+                    value={row.team || ""}
+                    onChange={(e) => setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, team: e.target.value } : x))}
+                    style={{ flex: 2, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
+                  >
+                    <option value="">Select team</option>
+                    {teamsList.filter((t) => t.team_id !== planTeam || row.team === t.team_id).map((t) => (
+                      <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    value={row.assigned_qty || ""}
+                    onChange={(e) => setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: e.target.value } : x))}
+                    placeholder="Qty"
+                    style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPlanTeams((arr) => arr.filter((_, j) => j !== i))}
+                    style={{ fontSize: "0.78rem", padding: "4px 8px", borderRadius: 6, border: "1px solid #fecaca", background: "#fff", cursor: "pointer", color: "#b91c1c" }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: 4 }}>
+                Lead team gets the remaining qty if you leave it blank.
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 10 }}>ACCESS DETAILS</div>

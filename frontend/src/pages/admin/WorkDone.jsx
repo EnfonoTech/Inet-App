@@ -6,6 +6,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 
@@ -473,6 +474,7 @@ export default function WorkDone() {
                 "modified",
               ]}
             />
+            <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
           </div>
         </div>
       )}

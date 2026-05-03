@@ -22,6 +22,8 @@
   "achieved_amount",
   "completion_pct",
   "plan_status",
+  "section_teams",
+  "teams",
   "section_break_ceaq",
   "issue_category",
   "issue_remarks"
@@ -143,6 +145,19 @@
   {
    "fieldname": "column_break_dtdy",
    "fieldtype": "Column Break"
+  },
+  {
+   "collapsible": 1,
+   "description": "When more than one team is assigned, the IM splits the line qty across teams. Each team gets its own Daily Execution row.",
+   "fieldname": "section_teams",
+   "fieldtype": "Section Break",
+   "label": "Assigned Teams"
+  },
+  {
+   "fieldname": "teams",
+   "fieldtype": "Table",
+   "label": "Teams",
+   "options": "Rollout Plan Team"
   },
   {
    "fieldname": "section_break_ceaq",

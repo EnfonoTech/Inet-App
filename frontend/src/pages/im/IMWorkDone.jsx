@@ -8,6 +8,7 @@ import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
+import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import RemarksCell from "../../components/RemarksCell";
 
@@ -83,6 +84,7 @@ export default function IMWorkDone() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [submissionFor, setSubmissionFor] = useState(null);
+  const [detailRow, setDetailRow] = useState(null);
   const [submissionPick, setSubmissionPick] = useState("Ready for Confirmation");
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const [submissionErr, setSubmissionErr] = useState(null);
@@ -247,6 +249,7 @@ export default function IMWorkDone() {
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Billing Status</th>
                   <th>Submission Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -290,6 +293,16 @@ export default function IMWorkDone() {
                         <StatusPill value={r.submission_status} />
                       </button>
                     </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap" }}
+                        onClick={() => setDetailRow(r)}
+                      >
+                        View
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -303,6 +316,28 @@ export default function IMWorkDone() {
           filterActive={hasFilters}
         />
       </div>
+
+      {detailRow && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setDetailRow(null)}>
+          <div style={{ width: "min(720px, 96vw)", maxHeight: "calc(100dvh - 40px)", overflow: "auto", background: "#fff", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>
+                Work Done · {detailRow.poid || detailRow.po_dispatch || detailRow.name}
+              </h3>
+              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+            </div>
+            <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 8, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 6 }}>
+              <div><strong>Plan:</strong> {detailRow.rollout_plan || "—"}</div>
+              <div><strong>Execution:</strong> {detailRow.execution || detailRow.name || "—"}</div>
+              <div><strong>Project:</strong> {detailRow.project_code || "—"}</div>
+              <div><strong>Item:</strong> {detailRow.item_code || "—"}</div>
+              <div><strong>Lead Team:</strong> {detailRow.team_name || detailRow.team || "—"}</div>
+              <div><strong>Revenue:</strong> {fmt.format(detailRow.revenue_sar || 0)}</div>
+            </div>
+            <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
+          </div>
+        </div>
+      )}
 
       {submissionFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSubmissionFor(null)}>

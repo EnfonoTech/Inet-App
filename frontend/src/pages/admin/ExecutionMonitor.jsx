@@ -8,6 +8,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import RemarksPanel from "../../components/RemarksPanel";
+import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import { isNotRequired } from "../../utils/qcCiagFlags";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -516,17 +517,28 @@ export default function ExecutionMonitor() {
 
       {detailRow && (
         <div
-          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
           onClick={() => setDetailRow(null)}
         >
           <div
-            style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(860px, 94vw)", maxHeight: "78vh", overflow: "auto" }}
+            style={{
+              background: "#fff", borderRadius: 12,
+              width: "min(860px, 96vw)",
+              maxHeight: "calc(100dvh - 32px)",
+              display: "flex", flexDirection: "column", overflow: "hidden",
+              boxShadow: "0 24px 48px -16px rgba(0,0,0,0.3)",
+            }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "16px 20px", borderBottom: "1px solid #e2e8f0",
+              background: "#fff", flexShrink: 0,
+            }}>
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Execution Details</h3>
-              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+              <button type="button" onClick={() => setDetailRow(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
             </div>
+            <div style={{ padding: 20, overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
             <RecordDetailView
               row={{
                 ...detailRow,
@@ -584,6 +596,7 @@ export default function ExecutionMonitor() {
                 "gps_location",
               ]}
             />
+            <PlanTeamsBreakdown rolloutPlan={detailRow.name} />
             {parseAttachments(detailRow.photos).length > 0 && (
               <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>
@@ -594,6 +607,7 @@ export default function ExecutionMonitor() {
                 ))}
               </div>
             )}
+            </div>
           </div>
         </div>
       )}

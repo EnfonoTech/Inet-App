@@ -173,16 +173,27 @@ function WorkCard({ plan, onClick }) {
             <span>{plan.project_code}</span>
           </div>
         )}
-        {(plan.visit_type || plan.qty != null) && (
+        {(plan.visit_type || plan.qty != null || plan.my_assigned_qty != null) && (
           <div className="meta-row">
             <svg className="meta-svg-icon" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
             </svg>
             <span>
               {plan.visit_type || ""}
-              {plan.visit_type && plan.qty != null ? " · " : ""}
-              {plan.qty != null ? `Qty ${Number(plan.qty)}` : ""}
+              {plan.visit_type && (plan.my_assigned_qty != null || plan.qty != null) ? " · " : ""}
+              {Number(plan.my_assigned_qty || 0) > 0
+                ? `Your share ${Number(plan.my_assigned_qty)}`
+                : (plan.qty != null ? `Qty ${Number(plan.qty)}` : "")}
             </span>
+            {Number(plan.teams_total || 0) > 1 && (
+              <span style={{
+                marginLeft: 8, fontSize: "0.66rem", fontWeight: 700,
+                padding: "1px 7px", borderRadius: 999,
+                background: "#ede9fe", color: "#6d28d9",
+              }}>
+                +{Number(plan.teams_total) - 1} team{Number(plan.teams_total) > 2 ? "s" : ""}
+              </span>
+            )}
           </div>
         )}
         {(plan.access_time || plan.access_period) && (

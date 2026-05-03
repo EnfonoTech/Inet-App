@@ -1,0 +1,110 @@
+{
+ "actions": [],
+ "creation": "2026-05-02 14:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "team",
+  "team_name",
+  "field_user",
+  "column_break_a",
+  "assigned_qty",
+  "assigned_pct",
+  "assigned_amount",
+  "column_break_b",
+  "tl_status",
+  "achieved_qty",
+  "execution_name"
+ ],
+ "fields": [
+  {
+   "fieldname": "team",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Team",
+   "options": "INET Team",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "team.team_name",
+   "fieldname": "team_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Team Name",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "team.field_user",
+   "fieldname": "field_user",
+   "fieldtype": "Link",
+   "label": "Field User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_a",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Quantity assigned to this team by the IM (split of the POID line qty).",
+   "fieldname": "assigned_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Assigned Qty",
+   "precision": "4"
+  },
+  {
+   "description": "% of plan target (auto-calculated from qty).",
+   "fieldname": "assigned_pct",
+   "fieldtype": "Percent",
+   "label": "Share %",
+   "read_only": 1
+  },
+  {
+   "description": "Revenue share for this team (auto-calculated from rate × assigned_qty).",
+   "fieldname": "assigned_amount",
+   "fieldtype": "Currency",
+   "label": "Assigned Amount (SAR)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_b",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Latest TL status from this team's Daily Execution row.",
+   "fieldname": "tl_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "TL Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "achieved_qty",
+   "fieldtype": "Float",
+   "label": "Achieved Qty",
+   "precision": "4",
+   "read_only": 1
+  },
+  {
+   "fieldname": "execution_name",
+   "fieldtype": "Data",
+   "label": "Daily Execution",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-02 14:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Rollout Plan Team",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

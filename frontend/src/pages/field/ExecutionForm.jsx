@@ -10,6 +10,7 @@ import {
 } from "../../utils/executionTimerDisplay";
 import { defaultAchievedQtyFromPlan } from "../../utils/planDefaultQty";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
+import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 
 // Treat 0/false/"0"/"false" as the not-required signal. null/undefined
 // (legacy plans without the flag) defaults to required.
@@ -567,6 +568,12 @@ export default function ExecutionForm() {
         team_lead_remark: tlRemark,
         photos: attachments.length ? attachments.join("\n") : undefined,
       };
+      // Multi-team: tell the backend which team this submission is for
+      // so it upserts the per-team Daily Execution row, not the lead
+      // team's. plan.my_team is set by get_rollout_plan_details.
+      if (plan?.my_team) {
+        payload.team = plan.my_team;
+      }
       if (execStatus === "Completed") {
         if (!isNotRequired(plan?.qc_required)) payload.qc_status = qcStatus;
         if (!isNotRequired(plan?.ciag_required)) payload.ciag_status = ciagStatus;
@@ -917,6 +924,16 @@ export default function ExecutionForm() {
                     <span>CIAG Not Required</span>
                   </div>
                 )}
+                {Number(plan.teams_total || 0) > 1 && (
+                  <div className="exec-plan-chip" title="This plan is split across multiple teams" style={{ background: "#ede9fe", color: "#6d28d9", fontWeight: 700 }}>
+                    <span>{plan.teams_total} teams</span>
+                  </div>
+                )}
+                {Number(plan.my_assigned_qty || 0) > 0 && Number(plan.teams_total || 0) > 1 && (
+                  <div className="exec-plan-chip" title="Your team's assigned share" style={{ background: "#eef2ff", color: "#3730a3" }}>
+                    <span>Your share: {plan.my_assigned_qty}</span>
+                  </div>
+                )}
               </div>
               {plan.item_description && (
                 <div style={{ fontSize: "0.84rem", color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.4 }}>
@@ -937,6 +954,11 @@ export default function ExecutionForm() {
                   </span>
                 )}
               </div>
+              {/* PlanTeamsBreakdown self-renders nothing when the plan
+                  has no team rows, so always include it — that way
+                  multi-team plans display the per-team table without
+                  depending on teams_total being correctly reported. */}
+              <PlanTeamsBreakdown rolloutPlan={plan.name} />
             </div>
           )}
 

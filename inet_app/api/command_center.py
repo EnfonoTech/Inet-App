@@ -2028,16 +2028,6 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         if imn:
             line["dispatched_im_full_name"] = im_fn_map.get(imn)
 
-    # Customer Activity Type — keyed by (customer, item_code) in Customer
-    # Item Master. Other listing endpoints (list_po_dispatches, monitor,
-    # field dashboard) all enrich this; this one was missing it, which is
-    # why the Activity Type column on PO Dispatch rendered empty.
-    cim_map = _batch_customer_activity_types(lines)
-    for line in lines:
-        line["customer_activity_type"] = cim_map.get(
-            (line.get("customer") or "", line.get("item_code") or "")
-        )
-
     return lines
 
 
@@ -2393,59 +2383,33 @@ def _next_visit_number_for_dispatch(po_dispatch_name):
 
 
 def _batch_customer_activity_types(rows, customer_key="customer", item_key="item_code"):
-    """Return {(customer, item_code): activity_type} for every unique
-    (customer, item_code) pair in ``rows``.
-
-    Source of truth is the ``Item.activity_type`` Custom Field — activity
-    type doesn't vary per customer, so we key strictly by item_code now.
-    The output is still a (customer, item_code) → activity_type dict so
-    existing callers don't break. Falls back to the legacy
-    ``Customer Item Master.customer_activity_type`` mapping when the
-    Custom Field hasn't been added yet.
-    """
+    """Return {(customer, item_code): customer_activity_type} from Customer
+    Item Master for every unique (customer, item) pair in `rows`. Picks the
+    active-flag row first when multiple exist for a pair."""
     pairs = {(r.get(customer_key) or "", r.get(item_key) or "") for r in rows or []}
-    pairs = {p for p in pairs if p[1]}  # item_code is the only required key
+    pairs = {p for p in pairs if p[0] and p[1]}
     if not pairs:
         return {}
+    customers = list({p[0] for p in pairs})
     items = list({p[1] for p in pairs})
-    item_to_activity = {}
-    if frappe.db.has_column("Item", "activity_type"):
-        i_ph = ",".join(["%s"] * len(items))
-        try:
-            for r in frappe.db.sql(
-                f"SELECT name, activity_type FROM `tabItem` "
-                f"WHERE name IN ({i_ph}) AND IFNULL(activity_type, '') != ''",
-                tuple(items), as_dict=True,
-            ) or []:
-                item_to_activity[r.name] = r.activity_type
-        except Exception:
-            pass
-    # Legacy fallback: any item still missing an activity_type falls back
-    # to the Customer Item Master mapping (per customer + item).
-    missing = [it for it in items if it not in item_to_activity]
-    cim_lookup = {}
-    if missing:
-        customers = list({p[0] for p in pairs if p[0]})
-        if customers:
-            c_ph = ",".join(["%s"] * len(customers))
-            i_ph = ",".join(["%s"] * len(missing))
-            try:
-                for r in frappe.db.sql(
-                    f"SELECT customer, item_code, customer_activity_type "
-                    f"FROM `tabCustomer Item Master` "
-                    f"WHERE customer IN ({c_ph}) AND item_code IN ({i_ph}) "
-                    f"ORDER BY IFNULL(active_flag, 0) DESC",
-                    tuple(customers) + tuple(missing), as_dict=True,
-                ) or []:
-                    if r.customer_activity_type:
-                        cim_lookup.setdefault((r.customer, r.item_code), r.customer_activity_type)
-            except Exception:
-                pass
+    c_ph = ",".join(["%s"] * len(customers))
+    i_ph = ",".join(["%s"] * len(items))
+    try:
+        cim_rows = frappe.db.sql(
+            f"SELECT customer, item_code, customer_activity_type, IFNULL(active_flag, 0) AS active "
+            f"FROM `tabCustomer Item Master` "
+            f"WHERE customer IN ({c_ph}) AND item_code IN ({i_ph}) "
+            f"ORDER BY IFNULL(active_flag, 0) DESC",
+            tuple(customers) + tuple(items),
+            as_dict=True,
+        )
+    except Exception:
+        return {}
     out = {}
-    for cust, item in pairs:
-        v = item_to_activity.get(item) or cim_lookup.get((cust, item))
-        if v:
-            out[(cust, item)] = v
+    for r in cim_rows:
+        k = (r.customer, r.item_code)
+        if k not in out and r.customer_activity_type:
+            out[k] = r.customer_activity_type
     return out
 
 
@@ -2997,6 +2961,75 @@ def convert_dispatch_mode(payload):
     return {"converted": count}
 
 
+def _sync_plan_teams(rollout_plan, teams_payload, primary_team, total_qty, target_amount):
+    """Replace the Rollout Plan Team child rows for the given plan.
+
+    ``teams_payload`` is a list like ``[{"team": "...", "assigned_qty": 0.5}]``.
+    When empty, defaults to a single row using ``primary_team`` and the full
+    ``total_qty`` so old callers stay back-compatible.
+
+    Validates each team exists, sums to <= total_qty (with 1-unit slack),
+    and computes derived ``assigned_amount`` + ``assigned_pct`` columns
+    server-side. Idempotent — wipes and re-inserts the child rows.
+    """
+    if not frappe.db.exists("DocType", "Rollout Plan Team"):
+        return
+    rows = []
+    if teams_payload:
+        seen = set()
+        for entry in teams_payload:
+            if not isinstance(entry, dict):
+                continue
+            tid = (entry.get("team") or "").strip()
+            if not tid or tid in seen:
+                continue
+            if not frappe.db.exists("INET Team", tid):
+                frappe.throw(frappe._("Invalid team: {0}").format(tid))
+            qty = flt(entry.get("assigned_qty") or 0)
+            if qty < 0:
+                qty = 0
+            seen.add(tid)
+            rows.append({"team": tid, "assigned_qty": qty})
+    else:
+        rows.append({"team": primary_team, "assigned_qty": flt(total_qty or 0)})
+
+    qty_sum = sum(r["assigned_qty"] for r in rows)
+    if total_qty and qty_sum > flt(total_qty) + 1.0:
+        frappe.throw(frappe._(
+            "Total assigned qty ({0}) exceeds POID qty ({1}). "
+            "Re-balance the team split."
+        ).format(qty_sum, total_qty))
+
+    # Auto-distribute remainder across rows the IM left at 0.
+    zero_rows = [r for r in rows if r["assigned_qty"] == 0]
+    remainder = max(0, flt(total_qty or 0) - qty_sum)
+    if zero_rows and remainder > 0:
+        share = remainder / len(zero_rows)
+        for r in zero_rows:
+            r["assigned_qty"] = share
+        qty_sum = sum(r["assigned_qty"] for r in rows)
+
+    out = []
+    for r in rows:
+        share = (r["assigned_qty"] / total_qty) if total_qty else 0
+        out.append({
+            "team": r["team"],
+            "assigned_qty": r["assigned_qty"],
+            "assigned_pct": round(share * 100, 2),
+            "assigned_amount": flt(target_amount or 0) * share,
+        })
+
+    frappe.db.sql(
+        "DELETE FROM `tabRollout Plan Team` WHERE parent = %s",
+        (rollout_plan,),
+    )
+    plan_doc = frappe.get_doc("Rollout Plan", rollout_plan)
+    plan_doc.set("teams", [])
+    for entry in out:
+        plan_doc.append("teams", entry)
+    plan_doc.save(ignore_permissions=True)
+
+
 @frappe.whitelist()
 def create_rollout_plans(payload):
     """
@@ -3007,6 +3040,7 @@ def create_rollout_plans(payload):
         "plan_date": "2026-04-04",
         "plan_end_date": "2026-04-05",  # optional; defaults to plan_date
         "team": "TEAM-001",  # required INET Team name (IM chooses at planning; stored on Rollout Plan only)
+        "teams": [{"team":"…","assigned_qty":0.5}, ...],  # multi-team split
         "access_time": "",  # optional
         "access_period": "Day" | "Night" | "",  # optional
         "visit_type": "Execution",
@@ -3043,6 +3077,16 @@ def create_rollout_plans(payload):
         return s not in ("0", "false", "no", "off", "")
     qc_required = 1 if _truthy(payload.get("qc_required")) else 0
     ciag_required = 1 if _truthy(payload.get("ciag_required")) else 0
+
+    # Multi-team support — IM may split the POID line qty across 2+ teams.
+    teams_payload = payload.get("teams") or []
+    if isinstance(teams_payload, str):
+        try:
+            teams_payload = frappe.parse_json(teams_payload) or []
+        except Exception:
+            teams_payload = []
+    if not isinstance(teams_payload, list):
+        teams_payload = []
 
     pd = getdate(plan_date)
     ped = getdate(plan_end_date)
@@ -3087,7 +3131,7 @@ def create_rollout_plans(payload):
         dispatch = frappe.db.get_value(
             "PO Dispatch",
             dispatch_name,
-            ["name", "line_amount", "im", "region_type", "center_area"],
+            ["name", "line_amount", "qty", "im", "region_type", "center_area"],
             as_dict=True,
         )
         if not dispatch:
@@ -3152,6 +3196,14 @@ def create_rollout_plans(payload):
             frappe.db.set_value(
                 "Rollout Plan", latest.name, updates, update_modified=True
             )
+            try:
+                _sync_plan_teams(
+                    latest.name, teams_payload, target_team,
+                    flt(dispatch.qty or 0),
+                    flt(dispatch.line_amount or 0) * visit_multiplier,
+                )
+            except Exception:
+                frappe.log_error(frappe.get_traceback(), "create_rollout_plans: _sync_plan_teams (reuse) failed")
             disp_updates = {"dispatch_status": "Planned"}
             disp_updates.update(remark_updates)
             frappe.db.set_value(
@@ -3210,6 +3262,15 @@ def create_rollout_plans(payload):
                 "Rollout Plan", doc.name, "ciag_required", ciag_required, update_modified=False,
             )
 
+        try:
+            _sync_plan_teams(
+                doc.name, teams_payload, target_team,
+                flt(dispatch.qty or 0),
+                flt(doc.target_amount or 0),
+            )
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "create_rollout_plans: _sync_plan_teams (new) failed")
+
         disp_updates = {"dispatch_status": "Planned"}
         disp_updates.update(remark_updates)
         frappe.db.set_value(
@@ -3260,49 +3321,104 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
     """
     if not rollout_plan or not exec_doc:
         return
-    st = exec_doc.execution_status or ""
-    tls = getattr(exec_doc, "tl_status", None) or ""
+    # Multi-team aggregation — pull every DE for this plan so any-team
+    # completion flips the plan to Completed (per design) and amounts
+    # are summed across teams.
+    de_rows = frappe.db.sql(
+        """
+        SELECT name, team, execution_status, tl_status,
+               IFNULL(qc_status,'') AS qc_status,
+               IFNULL(ciag_status,'') AS ciag_status,
+               IFNULL(achieved_qty, 0) AS achieved_qty,
+               IFNULL(achieved_amount, 0) AS achieved_amount
+        FROM `tabDaily Execution`
+        WHERE rollout_plan = %s
+        """,
+        (rollout_plan,), as_dict=True,
+    ) or []
+    if not de_rows:
+        de_rows = [{
+            "name": getattr(exec_doc, "name", None),
+            "team": getattr(exec_doc, "team", None),
+            "execution_status": getattr(exec_doc, "execution_status", "") or "",
+            "tl_status": getattr(exec_doc, "tl_status", "") or "",
+            "qc_status": getattr(exec_doc, "qc_status", "") or "",
+            "ciag_status": getattr(exec_doc, "ciag_status", "") or "",
+            "achieved_qty": flt(getattr(exec_doc, "achieved_qty", 0) or 0),
+            "achieved_amount": flt(getattr(exec_doc, "achieved_amount", 0) or 0),
+        }]
 
     _TERMINAL = {"Completed", "Cancelled", "Postponed"}
-    # Terminal from either side wins. Otherwise fall back to whichever
-    # side has a value (IM's execution_status preferred when both are
-    # non-terminal, since that's the IM's read of in-progress reality).
-    if st in _TERMINAL:
-        effective = st
-    elif tls in _TERMINAL:
-        effective = tls
+    any_tl_completed = any(r["tl_status"] == "Completed" for r in de_rows)
+    any_im_completed = any(r["execution_status"] == "Completed" for r in de_rows)
+    any_cancelled = any(
+        r["tl_status"] == "Cancelled" or r["execution_status"] == "Cancelled"
+        for r in de_rows
+    )
+    any_postponed = any(
+        r["tl_status"] == "Postponed" or r["execution_status"] == "Postponed"
+        for r in de_rows
+    )
+    any_in_progress_like = any(
+        r["execution_status"] in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE
+        or r["tl_status"] in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE
+        for r in de_rows
+    )
+
+    if any_tl_completed or any_im_completed:
+        effective = "Completed"
+    elif any_cancelled:
+        effective = "Cancelled"
+    elif any_postponed:
+        effective = "Postponed"
+    elif any_in_progress_like:
+        effective = "In Progress"
     else:
-        effective = st or tls
+        effective = ""
+
+    # Mirror per-team status + achieved_qty into Rollout Plan Team rows
+    # so the IM dashboard sees the live breakdown.
+    if frappe.db.exists("DocType", "Rollout Plan Team"):
+        for r in de_rows:
+            if not r.get("team"):
+                continue
+            try:
+                child_name = frappe.db.get_value(
+                    "Rollout Plan Team",
+                    {"parent": rollout_plan, "team": r["team"]},
+                    "name",
+                )
+                if child_name:
+                    frappe.db.set_value("Rollout Plan Team", child_name, {
+                        "tl_status": r.get("tl_status") or None,
+                        "achieved_qty": flt(r.get("achieved_qty") or 0),
+                        "execution_name": r.get("name"),
+                    }, update_modified=False)
+            except Exception:
+                pass
 
     updates = {}
     if effective in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE:
         cur = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
         if cur == "Planned":
             updates["plan_status"] = "In Execution"
-
     elif effective == "Completed":
-        qc = str(getattr(exec_doc, "qc_status", None) or "")
-        ach_amt = flt(getattr(exec_doc, "achieved_amount", None) or 0)
-        tgt = flt(frappe.db.get_value("Rollout Plan", rollout_plan, "target_amount") or 0)
-        if qc == "Fail":
-            # QC failure returns work to planning; do not close the original plan as Completed.
+        # OR-aggregation for QC: any Fail = plan Fail (safety-first).
+        qcs = [r["qc_status"] for r in de_rows]
+        if "Fail" in qcs:
             updates["plan_status"] = "Planning with Issue"
         else:
-            # Completed execution should reflect as Completed in planning monitor.
-            # QC/CIAG is a follow-up review step and should not revert plan to In Execution.
             updates["plan_status"] = "Completed"
+        ach_amt = sum(flt(r.get("achieved_amount") or 0) for r in de_rows)
+        tgt = flt(frappe.db.get_value("Rollout Plan", rollout_plan, "target_amount") or 0)
         if ach_amt > 0:
             updates["achieved_amount"] = ach_amt
         if tgt > 0 and ach_amt >= 0:
             updates["completion_pct"] = min(100.0, (ach_amt / tgt) * 100.0)
-
     elif effective == "Cancelled":
         updates["plan_status"] = "Cancelled"
-
     elif effective == "Postponed":
         updates["plan_status"] = "Planned"
-
-    # Hold: keep current plan status (still on site / in progress)
 
     if updates:
         frappe.db.set_value("Rollout Plan", rollout_plan, updates)
@@ -3478,9 +3594,9 @@ def get_field_execution_for_rollout(rollout_plan):
             limit_page_length=1,
         )
         out = rows[0] if rows else None
-    # Always tack on the plan-level _required flags via raw SQL (bypasses
-    # Document meta cache). The QcEditModal needs them to decide whether
-    # to render the editable selects vs. the "not required" note.
+    # Always tack on the plan-level _required flags via raw SQL so the
+    # QcEditModal can authoritatively decide whether to render the
+    # editable selects vs. the "not required" note.
     flag_cols = []
     if frappe.db.has_column("Rollout Plan", "qc_required"):
         flag_cols.append("qc_required")
@@ -3489,8 +3605,7 @@ def get_field_execution_for_rollout(rollout_plan):
     if flag_cols:
         flag_row = frappe.db.sql(
             f"SELECT {', '.join(flag_cols)} FROM `tabRollout Plan` WHERE name = %s",
-            (rollout_plan,),
-            as_dict=True,
+            (rollout_plan,), as_dict=True,
         )
         if flag_row:
             if out is None:
@@ -3574,24 +3689,75 @@ def get_rollout_plan_details(rollout_plan):
             (pd.get("customer") or "", pd.get("item_code") or "")
         )
 
-    # Pull the latest Daily Execution for this plan so the form can show
-    # the IM's confirmed ``execution_status`` and the field team's own
-    # ``tl_status`` without a second round-trip.
+    # Pull every Daily Execution for this plan. Multi-team plans have
+    # one DE per team. Pick the one matching the calling user's team
+    # for the form-level fields; the IM/PM views see the full breakdown.
     de_rows = frappe.db.sql(
-        "SELECT name, execution_status, tl_status, qc_status, ciag_status, "
+        "SELECT name, team, execution_status, tl_status, qc_status, ciag_status, "
         "       achieved_qty, achieved_amount "
         "FROM `tabDaily Execution` WHERE rollout_plan = %s "
-        "ORDER BY modified DESC LIMIT 1",
+        "ORDER BY modified DESC",
         (rollout_plan,),
         as_dict=True,
-    )
-    if de_rows:
-        de = de_rows[0]
-        plan["execution_status"] = de.get("execution_status")
-        plan["tl_status"] = de.get("tl_status")
-        plan["qc_status"] = de.get("qc_status")
-        plan["ciag_status"] = de.get("ciag_status")
-        plan["execution_name"] = de.get("name")
+    ) or []
+
+    teams_breakdown = []
+    if frappe.db.exists("DocType", "Rollout Plan Team"):
+        teams_breakdown = frappe.db.sql(
+            "SELECT team, team_name, field_user, assigned_qty, assigned_pct, "
+            "       assigned_amount, tl_status, achieved_qty, execution_name "
+            "FROM `tabRollout Plan Team` WHERE parent = %s ORDER BY idx",
+            (rollout_plan,), as_dict=True,
+        ) or []
+        # Add per-team QC/CIAG status from each team's Daily Execution
+        # row. Daily Execution may or may not have a per-row TL remark
+        # column on every install — defensively check has_column so
+        # older sites don't 500 on the SELECT.
+        if teams_breakdown:
+            de_remark_col = (
+                "team_lead_remark"
+                if frappe.db.has_column("Daily Execution", "team_lead_remark")
+                else ("remarks" if frappe.db.has_column("Daily Execution", "remarks") else None)
+            )
+            select_cols = "team, qc_status, ciag_status"
+            if de_remark_col:
+                select_cols += f", IFNULL(`{de_remark_col}`,'') AS team_lead_remark"
+            de_extra = frappe.db.sql(
+                f"SELECT {select_cols} FROM `tabDaily Execution` WHERE rollout_plan = %s",
+                (rollout_plan,), as_dict=True,
+            ) or []
+            extra_map = {r["team"]: r for r in de_extra}
+            for tb in teams_breakdown:
+                ex = extra_map.get(tb.get("team")) or {}
+                tb["team_lead_remark"] = ex.get("team_lead_remark") or ""
+                tb["qc_status"] = ex.get("qc_status")
+                tb["ciag_status"] = ex.get("ciag_status")
+    plan["teams"] = teams_breakdown
+
+    caller_team = _session_inet_field_team_id()
+    caller_team_row = None
+    caller_de = None
+    if caller_team:
+        for tb in teams_breakdown:
+            if tb.get("team") == caller_team:
+                caller_team_row = tb
+                break
+        for de in de_rows:
+            if de.get("team") == caller_team:
+                caller_de = de
+                break
+    if caller_de is None and de_rows:
+        caller_de = de_rows[0]
+    plan["my_team"] = caller_team
+    plan["my_assigned_qty"] = (caller_team_row or {}).get("assigned_qty")
+    plan["my_assigned_amount"] = (caller_team_row or {}).get("assigned_amount")
+
+    if caller_de:
+        plan["execution_status"] = caller_de.get("execution_status")
+        plan["tl_status"] = caller_de.get("tl_status")
+        plan["qc_status"] = caller_de.get("qc_status")
+        plan["ciag_status"] = caller_de.get("ciag_status")
+        plan["execution_name"] = caller_de.get("name")
     else:
         plan["execution_status"] = None
         plan["tl_status"] = None
@@ -3599,47 +3765,10 @@ def get_rollout_plan_details(rollout_plan):
         plan["ciag_status"] = None
         plan["execution_name"] = None
 
+    plan["teams_total"] = len(teams_breakdown) if teams_breakdown else (1 if plan.get("team") else 0)
+    plan["teams_completed"] = sum(1 for r in de_rows if r.get("tl_status") == "Completed")
+
     return plan
-
-
-def _select_options(doctype, fieldname):
-    """Return the list of allowed Select options for a (doctype, field).
-    Empty list if the field can't be resolved — caller should fall back
-    to no-op rather than risk a validation throw."""
-    try:
-        meta = frappe.get_meta(doctype)
-        df = meta.get_field(fieldname)
-        if not df or df.fieldtype != "Select":
-            return []
-        return [s.strip() for s in (df.options or "").split("\n") if s.strip()]
-    except Exception:
-        return []
-
-
-def _apply_na_stamp_from_plan(doc, rollout_plan):
-    """Set qc_status / ciag_status = 'Not Applicable' on ``doc`` when the
-    Rollout Plan has the corresponding _required flag = 0 — but only when
-    the Daily Execution doctype actually allows that option.
-
-    Safe to call before save. If the option isn't migrated yet, the UI
-    still renders "Not Applicable" from the qc_required flag itself, so
-    skipping here doesn't break anything."""
-    if not rollout_plan:
-        return
-    cols = []
-    if frappe.db.has_column("Rollout Plan", "qc_required"):
-        cols.append("qc_required")
-    if frappe.db.has_column("Rollout Plan", "ciag_required"):
-        cols.append("ciag_required")
-    if not cols:
-        return
-    rp_flags = frappe.db.get_value("Rollout Plan", rollout_plan, cols, as_dict=True) or {}
-    qc_opts = _select_options("Daily Execution", "qc_status")
-    ciag_opts = _select_options("Daily Execution", "ciag_status")
-    if rp_flags.get("qc_required") == 0 and hasattr(doc, "qc_status") and "Not Applicable" in qc_opts:
-        doc.qc_status = "Not Applicable"
-    if rp_flags.get("ciag_required") == 0 and hasattr(doc, "ciag_status") and "Not Applicable" in ciag_opts:
-        doc.ciag_status = "Not Applicable"
 
 
 @frappe.whitelist()
@@ -3688,9 +3817,32 @@ def update_execution(payload):
         if not rollout_plan:
             frappe.throw("rollout_plan is required when creating a new Daily Execution.")
 
+        # Multi-team upsert: key Daily Execution by (plan, team) so each
+        # team's TL gets their own row. With single-team plans this
+        # collapses to the legacy "one DE per plan" behaviour.
+        target_team = (payload.get("team") or "").strip() or None
+        if not target_team:
+            target_team = _session_inet_field_team_id()
+        if not target_team:
+            target_team = frappe.db.get_value("Rollout Plan", rollout_plan, "team")
+        # Validate team membership when the plan has a team child table.
+        if frappe.db.exists("DocType", "Rollout Plan Team"):
+            plan_team_ids = [
+                r[0] for r in frappe.db.sql(
+                    "SELECT team FROM `tabRollout Plan Team` WHERE parent = %s",
+                    (rollout_plan,),
+                )
+            ]
+            if plan_team_ids and target_team not in plan_team_ids:
+                lead = frappe.db.get_value("Rollout Plan", rollout_plan, "team")
+                if target_team != lead:
+                    frappe.throw(
+                        "This team is not assigned to the plan. Ask the IM to add your team."
+                    )
+
         existing_exec = frappe.db.get_value(
             "Daily Execution",
-            {"rollout_plan": rollout_plan},
+            {"rollout_plan": rollout_plan, "team": target_team},
             "name",
             order_by="modified desc",
         )
@@ -3704,7 +3856,7 @@ def update_execution(payload):
             doc = frappe.new_doc("Daily Execution")
             doc.rollout_plan = rollout_plan
             doc.system_id = rp.get("po_dispatch") if rp else None
-            doc.team = rp.get("team") if rp else None
+            doc.team = target_team or (rp.get("team") if rp else None)
             pd_name = rp.get("po_dispatch") if rp else None
             im_v = None
             if pd_name:
@@ -3715,11 +3867,19 @@ def update_execution(payload):
             # When plan was created with QC/CIAG not required, stamp the
             # status to "Not Applicable" up front so list views show the
             # right state instead of the default "Pending"/"Open".
-            # Defensive: only apply when "Not Applicable" exists as a
-            # valid Select option (i.e. doctype meta has been migrated).
-            # Otherwise the UI still renders "Not Applicable" from the
-            # qc_required flag — no DB stamp needed.
-            _apply_na_stamp_from_plan(doc, rollout_plan)
+            rp_flag_cols = []
+            if frappe.db.has_column("Rollout Plan", "qc_required"):
+                rp_flag_cols.append("qc_required")
+            if frappe.db.has_column("Rollout Plan", "ciag_required"):
+                rp_flag_cols.append("ciag_required")
+            if rp_flag_cols:
+                rp_flags = frappe.db.get_value(
+                    "Rollout Plan", rollout_plan, rp_flag_cols, as_dict=True
+                ) or {}
+                if rp_flags.get("qc_required") == 0 and hasattr(doc, "qc_status"):
+                    doc.qc_status = "Not Applicable"
+                if rp_flags.get("ciag_required") == 0 and hasattr(doc, "ciag_status"):
+                    doc.ciag_status = "Not Applicable"
 
             if hasattr(doc, "region_type"):
                 doc.region_type = (rp.get("region_type") if rp else None) or None
@@ -3778,8 +3938,9 @@ def update_execution(payload):
     # at planning time — when off, we silently drop incoming values and
     # don't gate on tl_status.
     # Always reconcile QC/CIAG status with the plan-level _required flags.
-    # Drop incoming qc_status / ciag_status when the corresponding plan
-    # flag is 0 — the field shouldn't even be on the form in that case.
+    # Even if the payload doesn't include these fields, an existing doc
+    # whose plan flag is 0 should carry "Not Applicable" so list views
+    # don't show stale "Pending"/"Open" defaults.
     plan_flags = {}
     if doc.rollout_plan and (
         frappe.db.has_column("Rollout Plan", "qc_required")
@@ -3793,26 +3954,14 @@ def update_execution(payload):
         plan_flags = frappe.db.get_value(
             "Rollout Plan", doc.rollout_plan, _cols, as_dict=True
         ) or {}
-    if plan_flags.get("qc_required") == 0:
+    # Stamp "Not Applicable" whenever the flag is off — the user shouldn't
+    # have to manually pick it.
+    if plan_flags.get("qc_required") == 0 and hasattr(doc, "qc_status"):
+        doc.qc_status = "Not Applicable"
         payload.pop("qc_status", None)
-    if plan_flags.get("ciag_required") == 0:
+    if plan_flags.get("ciag_required") == 0 and hasattr(doc, "ciag_status"):
+        doc.ciag_status = "Not Applicable"
         payload.pop("ciag_status", None)
-    # Best-effort stamp — only writes when the doctype meta has the
-    # 'Not Applicable' option, so older sites without migrate keep
-    # working (UI handles the display from the qc_required flag).
-    _apply_na_stamp_from_plan(doc, doc.rollout_plan)
-
-    # Auto-confirm: if both QC and CIAG are flagged not-required and the
-    # field user just marked tl_status = Completed, flip the IM's
-    # execution_status to Completed too. There's nothing left for the
-    # IM to verify, so the plan can close without a manual confirm step.
-    if (
-        plan_flags.get("qc_required") == 0
-        and plan_flags.get("ciag_required") == 0
-        and getattr(doc, "tl_status", None) == "Completed"
-        and doc.execution_status != "Completed"
-    ):
-        doc.execution_status = "Completed"
     if "qc_status" in payload or "ciag_status" in payload:
         _exec_done = (doc.execution_status == "Completed")
         _tl_done = (getattr(doc, "tl_status", None) == "Completed")
@@ -3821,6 +3970,28 @@ def update_execution(payload):
                 "QC and CIAG can only be updated once Execution is marked Completed "
                 "(by the field team via TL Status, or confirmed by the IM)."
             )
+
+    # Multi-team default: when the TL marks Completed and didn't enter
+    # an achieved_qty (or left it 0), pre-fill from the team's
+    # assigned_qty in Rollout Plan Team. TLs can still override on submit.
+    if (
+        getattr(doc, "tl_status", None) == "Completed"
+        and not flt(getattr(doc, "achieved_qty", 0) or 0)
+        and "achieved_qty" not in payload
+        and doc.team
+        and doc.rollout_plan
+        and frappe.db.exists("DocType", "Rollout Plan Team")
+    ):
+        try:
+            assigned = frappe.db.get_value(
+                "Rollout Plan Team",
+                {"parent": doc.rollout_plan, "team": doc.team},
+                "assigned_qty",
+            )
+            if assigned and flt(assigned) > 0:
+                doc.achieved_qty = flt(assigned)
+        except Exception:
+            pass
 
     # Keep achieved amount server-driven from achieved qty * billing rate.
     if hasattr(doc, "achieved_qty") and hasattr(doc, "achieved_amount"):
@@ -3843,17 +4014,80 @@ def update_execution(payload):
 
     # Propagate the field team's "Team Lead Remark" up to PO Dispatch so
     # IM and PM views (which read pd.team_lead_remark via RemarksCell)
-    # see what the field user wrote. Without this, the remark stayed
-    # only on Daily Execution and the IM/PM remarks column appeared
-    # empty even after the TL submitted.
+    # see what the field user wrote. Also save the TL remark on the
+    # Daily Execution row itself so per-team displays (PlanTeamsBreakdown,
+    # IMExecution "Execution Remarks" column) show each team's remark.
+    #
+    # Multi-team plans: aggregate every team's remark into one block,
+    # prefixed with the team name and de-duplicated. Each team's lines
+    # appear once, even if the same TL submits multiple updates.
     tl_remark = payload.get("team_lead_remark")
+    # Pick the right Daily Execution column for the per-team remark.
+    de_remark_col = (
+        "team_lead_remark"
+        if frappe.db.has_column("Daily Execution", "team_lead_remark")
+        else ("remarks" if frappe.db.has_column("Daily Execution", "remarks") else None)
+    )
+    # Save THIS submission's TL remark on the DE row so each team's row
+    # carries their own remark. We write directly via set_value so the
+    # column exists check is honoured even when the Document class
+    # hasn't reloaded.
+    if tl_remark is not None and de_remark_col and doc.name:
+        try:
+            frappe.db.set_value(
+                "Daily Execution", doc.name, de_remark_col,
+                str(tl_remark)[:8000], update_modified=False,
+            )
+        except Exception:
+            frappe.log_error(
+                frappe.get_traceback(),
+                "update_execution: failed to save TL remark on DE",
+            )
     if tl_remark is not None and doc.rollout_plan:
         try:
             pd_name = frappe.db.get_value("Rollout Plan", doc.rollout_plan, "po_dispatch")
             if pd_name and frappe.db.has_column("PO Dispatch", "team_lead_remark"):
+                # Build the combined block from every DE's tl_remark for
+                # the plan (this includes the row we just saved).
+                if de_remark_col:
+                    select_remark_col = f"IFNULL(de.`{de_remark_col}`, '') AS remark"
+                else:
+                    select_remark_col = "'' AS remark"
+                team_remarks = frappe.db.sql(
+                    f"""
+                    SELECT de.team, IFNULL(it.team_name, de.team) AS team_name,
+                           {select_remark_col}
+                    FROM `tabDaily Execution` de
+                    LEFT JOIN `tabINET Team` it ON it.name = de.team
+                    WHERE de.rollout_plan = %s
+                    """,
+                    (doc.rollout_plan,), as_dict=True,
+                ) or []
+                blocks = []
+                seen_lines = set()
+                for r in team_remarks:
+                    text = (r.get("remark") or "").strip()
+                    if not text:
+                        continue
+                    label = r.get("team_name") or r.get("team") or "—"
+                    # Dedupe per-line so the same remark from one team
+                    # doesn't duplicate when the TL re-submits.
+                    lines = []
+                    for line in text.splitlines():
+                        ln = line.strip()
+                        if not ln:
+                            continue
+                        key = (label, ln.lower())
+                        if key in seen_lines:
+                            continue
+                        seen_lines.add(key)
+                        lines.append(ln)
+                    if lines:
+                        blocks.append(f"[{label}] " + " | ".join(lines))
+                combined = "\n".join(blocks) if blocks else str(tl_remark)
                 frappe.db.set_value(
                     "PO Dispatch", pd_name,
-                    "team_lead_remark", str(tl_remark)[:8000],
+                    "team_lead_remark", combined[:8000],
                     update_modified=True,
                 )
         except Exception:
@@ -3922,14 +4156,43 @@ def generate_work_done(execution_name):
             "Rollout Plan", exec_doc.rollout_plan, cols, as_dict=True
         ) or {}
     qc_required = rp_flags.get("qc_required", 1) != 0
-    qc = str(getattr(exec_doc, "qc_status", None) or "")
-    if qc_required and qc not in ("Pass", "Not Applicable"):
+    # Aggregate QC across team Daily Executions — multi-team plans need
+    # the OR rule: any Pass = plan Pass; any Fail = plan Fail.
+    plan_qcs = []
+    if exec_doc.rollout_plan:
+        try:
+            plan_qcs = [
+                (r[0] or "") for r in frappe.db.sql(
+                    "SELECT qc_status FROM `tabDaily Execution` WHERE rollout_plan = %s",
+                    (exec_doc.rollout_plan,),
+                )
+            ]
+        except Exception:
+            pass
+    qc_pass_set = {"Pass", "Not Applicable"}
+    plan_has_pass = any(q in qc_pass_set for q in plan_qcs)
+    if qc_required and not plan_has_pass:
         frappe.throw("QC must be Pass before creating Work Done.")
 
-    # Check if Work Done already exists
-    existing = frappe.db.get_value("Work Done", {"execution": execution_name}, "name")
-    if existing:
-        frappe.throw(f"Work Done already exists for execution {execution_name}: {existing}")
+    # Idempotent: when WD already exists for any DE of this plan, return
+    # the existing record. With multi-team plans we have multiple DEs but
+    # only one Work Done — so accidentally clicking on the second team's
+    # row should be a no-op, not an error.
+    if exec_doc.rollout_plan:
+        existing_wd = frappe.db.sql(
+            """
+            SELECT wd.name FROM `tabWork Done` wd
+            JOIN `tabDaily Execution` de ON de.name = wd.execution
+            WHERE de.rollout_plan = %s LIMIT 1
+            """,
+            (exec_doc.rollout_plan,), as_dict=True,
+        )
+        if existing_wd:
+            return {"name": existing_wd[0].name, "already_exists": True}
+    else:
+        existing = frappe.db.get_value("Work Done", {"execution": execution_name}, "name")
+        if existing:
+            return {"name": existing, "already_exists": True}
 
     # Trace back chain: execution → rollout_plan → po_dispatch
     rp_name = exec_doc.rollout_plan
@@ -3975,25 +4238,45 @@ def generate_work_done(execution_name):
     if cim:
         billing_rate = flt(cim.hard_rate_sar if is_hard else cim.standard_rate_sar)
 
-    executed_qty = flt(exec_doc.achieved_qty or 0)
+    # Aggregate executed_qty across team Daily Executions — multi-team
+    # plans bill on the combined work, not just the trigger DE.
+    plan_de_rows = frappe.db.sql(
+        "SELECT name, team, IFNULL(achieved_qty, 0) AS achieved_qty "
+        "FROM `tabDaily Execution` WHERE rollout_plan = %s",
+        (rp_name,), as_dict=True,
+    ) or []
+    if plan_de_rows:
+        executed_qty = flt(sum(flt(r["achieved_qty"] or 0) for r in plan_de_rows))
+    else:
+        executed_qty = flt(exec_doc.achieved_qty or 0)
     revenue = billing_rate * executed_qty
 
-    # Team cost from INET Team
+    # Team cost: sum across every participating team. The lead team's
+    # team_type / subcontractor still drives subcontract-cost / margin
+    # lookups (legacy behaviour).
     team_cost = 0.0
     team_type = None
     subcontractor = None
+    participant_team_ids = list({
+        r["team"] for r in plan_de_rows if r.get("team")
+    }) or ([team_id] if team_id else [])
     if team_id:
-        team_info = frappe.db.get_value(
+        team_info_lead = frappe.db.get_value(
             "INET Team",
             team_id,
             ["daily_cost", "team_type", "subcontractor", "daily_cost_applies"],
             as_dict=True,
         )
-        if team_info:
-            team_type = team_info.team_type
-            subcontractor = team_info.subcontractor
-            if team_info.daily_cost_applies:
-                team_cost = flt(team_info.daily_cost)
+        if team_info_lead:
+            team_type = team_info_lead.team_type
+            subcontractor = team_info_lead.subcontractor
+    for tid in participant_team_ids:
+        ti = frappe.db.get_value(
+            "INET Team", tid,
+            ["daily_cost", "daily_cost_applies"], as_dict=True,
+        )
+        if ti and ti.daily_cost_applies:
+            team_cost += flt(ti.daily_cost)
 
     # Subcontract cost (only for SUB teams)
     subcontract_cost = 0.0
@@ -4293,35 +4576,6 @@ def list_execution_monitor_rows(filters=None, limit=500):
         limit_page_length=len(plan_names) + 1,
     )
     plans.sort(key=lambda x: order_index.get(x.name, 10**9))
-
-    # Backstop: frappe.get_all validates fields against in-memory doctype
-    # meta — if the Document class wasn't reloaded after migrate added
-    # qc_required / ciag_required, those keys get silently dropped from
-    # the result and the FE then renders the cells as still required.
-    # Re-fetch the plan-level flags via raw SQL (which bypasses meta) and
-    # merge them in.
-    flag_cols = []
-    if frappe.db.has_column("Rollout Plan", "qc_required"):
-        flag_cols.append("qc_required")
-    if frappe.db.has_column("Rollout Plan", "ciag_required"):
-        flag_cols.append("ciag_required")
-    if frappe.db.has_column("Rollout Plan", "access_time"):
-        flag_cols.append("access_time")
-    if frappe.db.has_column("Rollout Plan", "access_period"):
-        flag_cols.append("access_period")
-    if flag_cols:
-        ph = ", ".join(["%s"] * len(plan_names))
-        flag_sql = (
-            f"SELECT name, {', '.join(flag_cols)} "
-            f"FROM `tabRollout Plan` WHERE name IN ({ph})"
-        )
-        flag_rows = frappe.db.sql(flag_sql, tuple(plan_names), as_dict=True) or []
-        flag_map = {r["name"]: r for r in flag_rows}
-        for p in plans:
-            extra = flag_map.get(p.name)
-            if extra:
-                for col in flag_cols:
-                    p[col] = extra.get(col)
     dispatch_names = [p.po_dispatch for p in plans if p.po_dispatch]
 
     if lim:
@@ -4720,6 +4974,7 @@ def list_work_done_rows(filters=None, limit=500):
                 **r,
                 "billing_status": billing_override,
                 "pic_status": pic_status_val,
+                "rollout_plan": ex.rollout_plan if ex else None,
                 "po_dispatch": rp.po_dispatch if rp else None,
                 # Business POID from dispatch (fall back to dispatch name on legacy docs).
                 "poid": ((pd.get("poid") if pd else None) or (pd.name if pd else None) or (rp.po_dispatch if rp else None)),
@@ -5289,29 +5544,12 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Legacy key: same as total open line amount (SAR)
     total_open_po = total_open_po_line_value
 
-    # Field-team-only baseline. Backend Team rows live outside the
-    # rollout/Daily-Execution chain so they would always count as
-    # "idle" — that wrecked the operational KPI. Filter to teams whose
-    # team_category is Field Team (or NULL on legacy rows that were
-    # created before the column existed; Frappe defaults that to Field
-    # Team).
-    has_team_category = frappe.db.has_column("INET Team", "team_category")
-    if has_team_category:
-        field_team_filter = (
-            "AND IFNULL(it.team_category, 'Field Team') != 'Backend Team'"
-        )
-    else:
-        field_team_filter = ""
-
-    # Teams with at least one execution today (field-team only)
+    # Teams with at least one execution today
     active_team_rows = frappe.db.sql(
-        f"""
-        SELECT DISTINCT de.team AS team
-        FROM `tabDaily Execution` de
-        JOIN `tabINET Team` it ON it.name = de.team
-        WHERE de.execution_date = %s
-        AND de.execution_status NOT IN ('Cancelled')
-        {field_team_filter}
+        """
+        SELECT DISTINCT team FROM `tabDaily Execution`
+        WHERE execution_date = %s
+        AND execution_status NOT IN ('Cancelled')
         """,
         (today_str,),
         as_dict=True,
@@ -5319,10 +5557,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     active_teams_count = len(active_team_rows)
     active_team_ids = {r.team for r in active_team_rows}
 
-    field_team_filters = {"status": "Active"}
-    if has_team_category:
-        field_team_filters["team_category"] = ["!=", "Backend Team"]
-    total_teams = frappe.db.count("INET Team", field_team_filters)
+    total_teams = frappe.db.count("INET Team", {"status": "Active"})
     idle_teams_count = max(0, total_teams - active_teams_count)
 
     planned_activities = frappe.db.count("Rollout Plan", {"plan_status": "Planned"})
@@ -5347,13 +5582,10 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         as_dict=True,
     )[0].cnt or 0
 
-    # ---- INET KPIs (field teams only — Backend Team category excluded) ----
-    inet_team_filters = {"team_type": "INET", "status": "Active"}
-    if has_team_category:
-        inet_team_filters["team_category"] = ["!=", "Backend Team"]
+    # ---- INET KPIs ---------------------------------------------------------
     inet_teams = frappe.get_all(
         "INET Team",
-        filters=inet_team_filters,
+        filters={"team_type": "INET", "status": "Active"},
         fields=["name", "team_id", "daily_cost", "im"],
     )
     active_inet_teams = len(inet_teams)
@@ -5372,14 +5604,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )
 
     inet_achieved_rows = frappe.db.sql(
-        f"""
+        """
         SELECT COALESCE(SUM(wd.revenue_sar), 0) AS total
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
         JOIN `tabINET Team` it ON it.name = exe.team
         WHERE it.team_type = 'INET'
         AND exe.execution_date BETWEEN %s AND %s
-        {field_team_filter}
         """,
         (first_day, last_day),
         as_dict=True,
@@ -5387,13 +5618,10 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_achieved = flt(inet_achieved_rows[0].total if inet_achieved_rows else 0)
     inet_gap_today = inet_target_today - inet_achieved
 
-    # ---- Subcontractor KPIs (field teams only — Backend Team excluded) -----
-    sub_team_filters = {"team_type": "SUB", "status": "Active"}
-    if has_team_category:
-        sub_team_filters["team_category"] = ["!=", "Backend Team"]
+    # ---- Subcontractor KPIs ------------------------------------------------
     sub_teams = frappe.get_all(
         "INET Team",
-        filters=sub_team_filters,
+        filters={"team_type": "SUB", "status": "Active"},
         fields=["name", "team_id"],
     )
     active_sub_teams = len(sub_teams)
@@ -5415,7 +5643,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         sub_target = flt(sub_tgt_rows[0].total if sub_tgt_rows else 0)
 
     sub_revenue_rows = frappe.db.sql(
-        f"""
+        """
         SELECT COALESCE(SUM(wd.revenue_sar), 0) AS rev,
                COALESCE(SUM(wd.total_cost_sar), 0) AS cost,
                COALESCE(AVG(wd.inet_margin_pct), 0) AS avg_margin
@@ -5424,7 +5652,6 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         JOIN `tabINET Team` it ON it.name = exe.team
         WHERE it.team_type = 'SUB'
         AND exe.execution_date BETWEEN %s AND %s
-        {field_team_filter}
         """,
         (first_day, last_day),
         as_dict=True,
@@ -5435,42 +5662,6 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_margin_sub = sub_revenue * (avg_margin_pct / 100.0)
     sub_gap = sub_target - sub_revenue
 
-    # ---- Backend Teams KPIs ------------------------------------------------
-    # Backend teams sit outside the rollout/Daily-Execution chain, so the
-    # tracked numbers come from PO Dispatch (the IM Backend assignment
-    # workflow) instead of revenue/cost rows.
-    backend_active_teams = 0
-    backend_monthly_cost = 0.0
-    if has_team_category:
-        backend_team_rows = frappe.get_all(
-            "INET Team",
-            filters={"team_category": "Backend Team", "status": "Active"},
-            fields=["name", "daily_cost"],
-        )
-        backend_active_teams = len(backend_team_rows)
-        backend_monthly_cost = sum(flt(t.daily_cost) * 26 for t in backend_team_rows)
-    backend_assigned_pending = 0
-    backend_completed_mtd = 0
-    if frappe.db.has_column("PO Dispatch", "subcon_status"):
-        # Currently-pending assignments (regardless of date)
-        _row = frappe.db.sql(
-            "SELECT COUNT(*) AS cnt FROM `tabPO Dispatch` WHERE IFNULL(subcon_status,'') = 'Pending'",
-            as_dict=True,
-        )
-        backend_assigned_pending = cint(_row[0].cnt if _row else 0)
-        # Completed this month (uses subcon_completed_on)
-        if frappe.db.has_column("PO Dispatch", "subcon_completed_on"):
-            _row = frappe.db.sql(
-                """
-                SELECT COUNT(*) AS cnt FROM `tabPO Dispatch`
-                WHERE IFNULL(subcon_status,'') = 'Work Done'
-                AND subcon_completed_on BETWEEN %s AND %s
-                """,
-                (first_day, last_day),
-                as_dict=True,
-            )
-            backend_completed_mtd = cint(_row[0].cnt if _row else 0)
-
     # ---- Company-level KPIs ------------------------------------------------
     company_target = inet_monthly_target + sub_target
     total_achieved = inet_achieved + sub_revenue
@@ -5479,16 +5670,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     profit_loss = total_achieved - total_cost
     coverage_pct = (total_achieved / company_target * 100.0) if company_target else 0.0
 
-    # ---- Top 5 teams by revenue this month (field teams only) --------------
+    # ---- Top 5 teams by revenue this month ---------------------------------
     top_teams = frappe.db.sql(
-        f"""
+        """
         SELECT exe.team AS team, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
-        JOIN `tabINET Team` it ON it.name = exe.team
         WHERE exe.execution_date BETWEEN %s AND %s
         AND exe.team IS NOT NULL AND exe.team != ''
-        {field_team_filter}
         GROUP BY exe.team
         ORDER BY revenue DESC
         LIMIT 5
@@ -5537,26 +5726,20 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         row["teams"] = cint(row.get("team_count") or 0)
         row["team_cost"] = flt(row.get("cost") or 0)
 
-    # ---- Team status summary (field teams only) ----------------------------
+    # ---- Team status summary -----------------------------------------------
     in_progress_count = frappe.db.sql(
-        f"""
-        SELECT COUNT(DISTINCT de.team) AS cnt
-        FROM `tabDaily Execution` de
-        JOIN `tabINET Team` it ON it.name = de.team
-        WHERE de.execution_date = %s AND de.execution_status = 'In Progress'
-        {field_team_filter}
+        """
+        SELECT COUNT(DISTINCT team) AS cnt FROM `tabDaily Execution`
+        WHERE execution_date = %s AND execution_status = 'In Progress'
         """,
         (today_str,),
         as_dict=True,
     )[0].cnt or 0
 
     planned_today = frappe.db.sql(
-        f"""
-        SELECT COUNT(DISTINCT rp.team) AS cnt
-        FROM `tabRollout Plan` rp
-        JOIN `tabINET Team` it ON it.name = rp.team
-        WHERE rp.plan_date = %s AND rp.plan_status = 'Planned'
-        {field_team_filter}
+        """
+        SELECT COUNT(DISTINCT team) AS cnt FROM `tabRollout Plan`
+        WHERE plan_date = %s AND plan_status = 'Planned'
         """,
         (today_str,),
         as_dict=True,
@@ -5659,12 +5842,6 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "sub_expense": sub_expense,
             "inet_margin_sub": inet_margin_sub,
             "sub_gap": sub_gap,
-        },
-        "backend": {
-            "active_teams": backend_active_teams,
-            "monthly_cost": backend_monthly_cost,
-            "assigned_pending": backend_assigned_pending,
-            "completed_mtd": backend_completed_mtd,
         },
         "company": {
             "company_target": company_target,
@@ -5930,12 +6107,19 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     ciag_col_hide = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
     qc_req_col2 = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
     ciag_req_col2 = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
+    # Multi-team: Work Done lives at PLAN level (one WD per plan, even
+    # with multiple team DEs). Hide every team's DE row once a WD exists
+    # for ANY DE of that plan — not just the trigger DE.
     portal_clause += (
         " AND NOT ("
         " de.execution_status = 'Completed'"
         f" AND ({qc_req_col2} = 0 OR IFNULL(de.qc_status,'') IN ('Pass', 'Not Applicable'))"
         f" AND ({ciag_req_col2} = 0 OR IFNULL({ciag_col_hide},'') IN ('Approved', 'Not Applicable'))"
-        " AND EXISTS (SELECT 1 FROM `tabWork Done` wd0 WHERE wd0.execution = de.name)"
+        " AND EXISTS ("
+        "   SELECT 1 FROM `tabWork Done` wd0"
+        "   INNER JOIN `tabDaily Execution` de_wd0 ON de_wd0.name = wd0.execution"
+        "   WHERE de_wd0.rollout_plan = de.rollout_plan"
+        " )"
         ")"
     )
 
@@ -6008,7 +6192,12 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
                pd.customer AS customer,
                {_remark_select()},
-               (SELECT wd.name FROM `tabWork Done` wd WHERE wd.execution = de.name LIMIT 1) AS work_done,
+               (
+                 SELECT wd.name FROM `tabWork Done` wd
+                 INNER JOIN `tabDaily Execution` de_wd ON de_wd.name = wd.execution
+                 WHERE de_wd.rollout_plan = de.rollout_plan
+                 LIMIT 1
+               ) AS work_done,
                it.team_name AS team_name,
                {im_full_sql_ex}
                {im_ex_extra_sql}
@@ -6877,28 +7066,36 @@ def get_field_team_dashboard(team_id=None):
         extra_cols += ", rp.qc_required"
     if has_ciag_req:
         extra_cols += ", rp.ciag_required"
+    # Multi-team: also match plans where this team is in the
+    # Rollout Plan Team child table (not just the lead team field).
+    has_rpt = frappe.db.exists("DocType", "Rollout Plan Team")
+    team_match_clause = (
+        "(rp.team = %s OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt "
+        "WHERE rpt.parent = rp.name AND rpt.team = %s))"
+        if has_rpt else "rp.team = %s"
+    )
+    team_params = (team_id, team_id) if has_rpt else (team_id,)
     plans = frappe.db.sql(
         f"""
         SELECT rp.name, rp.po_dispatch, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount,
                rp.achieved_amount, rp.completion_pct, rp.plan_status{extra_cols}
         FROM `tabRollout Plan` rp
-        WHERE rp.team = %s
+        WHERE {team_match_clause}
         AND rp.plan_date = %s
-        -- "Planning with Issue" is the IM's re-plan placeholder. The
-        -- actual replan is created from Issues & Risks (which calls
-        -- create_rollout_plans with details). Until that step lands,
-        -- the field user shouldn't see the placeholder in their
-        -- Today's Work — it has no team/date/access info yet.
-        AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution')
+        -- Hard excludes (plan-wide terminal states the team can't act on).
+        AND rp.plan_status NOT IN ('Cancelled', 'Planning with Issue')
+        -- Per-team actionability: hide when THIS team's own DE is done.
         AND NOT EXISTS (
           SELECT 1 FROM `tabDaily Execution` de
           WHERE de.rollout_plan = rp.name
-            AND (de.tl_status = 'Completed' OR de.execution_status = 'Completed')
+            AND de.team = %s
+            AND (de.tl_status IN ('Completed', 'Cancelled')
+                 OR de.execution_status IN ('Completed', 'Cancelled'))
         )
         ORDER BY rp.name
         """,
-        (team_id, today_str),
+        (*team_params, today_str, team_id),
         as_dict=True,
     )
 
@@ -6928,12 +7125,26 @@ def get_field_team_dashboard(team_id=None):
         )
         dispatch_map = {d.name: d for d in dispatch_rows}
 
-    # Latest Daily Execution per plan: powers the IM-confirmation badge and
-    # the field team's own tl_status indicator on the card. One pass.
+    # Multi-team: prefer THIS team's own DE row over the latest plan-
+    # wide one — the card should reflect this team's status, not a
+    # teammate's.
     exec_map = {}
     if plan_names:
         ex_placeholders = ", ".join(["%s"] * len(plan_names))
-        exec_rows = frappe.db.sql(
+        own_rows = frappe.db.sql(
+            f"""
+            SELECT rollout_plan, execution_status, tl_status,
+                   qc_status, ciag_status, achieved_qty, achieved_amount
+            FROM `tabDaily Execution`
+            WHERE rollout_plan IN ({ex_placeholders})
+              AND team = %s
+            """,
+            tuple(plan_names) + (team_id,),
+            as_dict=True,
+        )
+        for r in own_rows:
+            exec_map[r["rollout_plan"]] = r
+        latest_rows = frappe.db.sql(
             f"""
             SELECT de.rollout_plan, de.execution_status, de.tl_status,
                    de.qc_status, de.ciag_status, de.achieved_qty, de.achieved_amount
@@ -6948,7 +7159,25 @@ def get_field_team_dashboard(team_id=None):
             tuple(plan_names),
             as_dict=True,
         )
-        exec_map = {r["rollout_plan"]: r for r in exec_rows}
+        for r in latest_rows:
+            exec_map.setdefault(r["rollout_plan"], r)
+
+    # Per-team assigned qty for the current team_id (multi-team plans).
+    my_assigned_map = {}
+    teams_total_map = {}
+    if plan_names and frappe.db.exists("DocType", "Rollout Plan Team"):
+        ph2 = ", ".join(["%s"] * len(plan_names))
+        try:
+            for r in frappe.db.sql(
+                f"SELECT parent, team, assigned_qty FROM `tabRollout Plan Team` "
+                f"WHERE parent IN ({ph2})",
+                tuple(plan_names), as_dict=True,
+            ) or []:
+                teams_total_map[r["parent"]] = teams_total_map.get(r["parent"], 0) + 1
+                if r["team"] == team_id:
+                    my_assigned_map[r["parent"]] = flt(r["assigned_qty"] or 0)
+        except Exception:
+            pass
 
     # Customer Activity Type lookup, keyed by (customer, item_code).
     cim_map = _batch_customer_activity_types(
@@ -6995,6 +7224,9 @@ def get_field_team_dashboard(team_id=None):
                 "access_period": plan.get("access_period") if has_access_period else None,
                 "qc_required": plan.get("qc_required", 1) if has_qc_req else 1,
                 "ciag_required": plan.get("ciag_required", 1) if has_ciag_req else 1,
+                "my_team": team_id,
+                "my_assigned_qty": my_assigned_map.get(plan.name),
+                "teams_total": teams_total_map.get(plan.name) or (1 if plan.get("name") else 0),
             }
         )
 
@@ -7041,25 +7273,31 @@ def list_field_team_actionable_plans(team_id=None):
         extra_cols += ", rp.qc_required"
     if has_ciag_req:
         extra_cols += ", rp.ciag_required"
+    has_rpt = frappe.db.exists("DocType", "Rollout Plan Team")
+    team_match_clause = (
+        "(rp.team = %s OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt "
+        "WHERE rpt.parent = rp.name AND rpt.team = %s))"
+        if has_rpt else "rp.team = %s"
+    )
+    team_params = (team_id, team_id) if has_rpt else (team_id,)
     plans = frappe.db.sql(
         f"""
         SELECT rp.name, rp.po_dispatch, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount,
                rp.achieved_amount, rp.completion_pct, rp.plan_status{extra_cols}
         FROM `tabRollout Plan` rp
-        WHERE rp.team = %s
-          -- See note in get_field_team_dashboard: hide "Planning with
-          -- Issue" placeholders from the field user's Execute picker
-          -- until the IM finalises a replan via Issues & Risks.
-          AND rp.plan_status IN ('Planned', 'Ready for Execution', 'In Execution')
+        WHERE {team_match_clause}
+          AND rp.plan_status NOT IN ('Cancelled', 'Planning with Issue')
           AND NOT EXISTS (
             SELECT 1 FROM `tabDaily Execution` de
             WHERE de.rollout_plan = rp.name
-              AND (de.tl_status = 'Completed' OR de.execution_status = 'Completed')
+              AND de.team = %s
+              AND (de.tl_status IN ('Completed', 'Cancelled')
+                   OR de.execution_status IN ('Completed', 'Cancelled'))
           )
         ORDER BY rp.plan_date DESC, rp.modified DESC
         """,
-        (team_id,),
+        (*team_params, team_id),
         as_dict=True,
     )
 
@@ -7121,9 +7359,10 @@ def list_field_team_actionable_plans(team_id=None):
 
 @frappe.whitelist()
 def list_field_remark_templates():
-    """Templates the field team can pick from on Execute.
+    """Active templates the field team can pick from on Execute.
 
-    Returned alphabetically by remark_text.
+    Sorted by category then text so related items group together
+    (Power-Up Done / Power-Up Pending / etc.).
     """
     if not frappe.db.table_exists("Field Remark Template"):
         return []
@@ -7139,10 +7378,8 @@ def list_field_remark_templates():
 @frappe.whitelist()
 def create_field_remark_template(remark_text, category=None):
     """Create a new template from the field-execute picker.
-
-    The optional ``category`` arg is accepted for API back-compatibility
-    but ignored — the field was removed from the doctype.
-    """
+    The optional ``category`` arg is accepted for API back-compat but
+    ignored (field was removed from the doctype)."""
     txt = (remark_text or "").strip()
     if not txt:
         frappe.throw("Remark text is required.")
@@ -7160,10 +7397,7 @@ def create_field_remark_template(remark_text, category=None):
     })
     doc.insert(ignore_permissions=True)
     frappe.db.commit()
-    return {
-        "name": doc.name,
-        "remark_text": doc.remark_text,
-    }
+    return {"name": doc.name, "remark_text": doc.remark_text}
 
 
 @frappe.whitelist()
