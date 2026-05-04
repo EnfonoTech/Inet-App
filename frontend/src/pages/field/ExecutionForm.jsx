@@ -11,6 +11,7 @@ import {
 import { defaultAchievedQtyFromPlan } from "../../utils/planDefaultQty";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
+import IMNoteCallout from "../../components/IMNoteCallout";
 
 // Treat 0/false/"0"/"false" as the not-required signal. null/undefined
 // (legacy plans without the flag) defaults to required.
@@ -940,6 +941,9 @@ export default function ExecutionForm() {
                   {plan.item_description}
                 </div>
               )}
+              {/* IM's "Note for field team" — set on PO Dispatch
+                  (manager_remark). Highlighted so the TL doesn't miss it. */}
+              <IMNoteCallout note={plan.manager_remark} style={{ marginTop: 10 }} />
               {/* IM-confirmed status — read-only badge so the field user
                   knows whether the IM has signed off or not. */}
               <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem" }}>

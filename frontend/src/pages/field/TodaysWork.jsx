@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { isNotRequired } from "../../utils/qcCiagFlags";
+import IMNoteCallout from "../../components/IMNoteCallout";
 
 function greeting() {
   const h = new Date().getHours();
@@ -225,6 +226,8 @@ function WorkCard({ plan, onClick }) {
             )}
           </div>
         )}
+        {/* IM's "Note for field team" — compact one-liner on the card. */}
+        <IMNoteCallout note={plan.manager_remark} compact />
       </div>
 
       <div className="work-card-footer">

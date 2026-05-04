@@ -2098,28 +2098,47 @@ def create_im_dummy_po_dispatch(payload=None):
         except Exception:
             frappe.throw("Invalid target_month (expected YYYY-MM or YYYY-MM-DD)")
 
-    site_code = None
-    for _attempt in range(40):
-        candidate = f"DUMMY-{frappe.generate_hash(length=14)}"
-        if not frappe.db.exists("DUID Master", candidate):
-            site_code = candidate
-            break
-    if not site_code:
-        frappe.throw("Could not allocate a placeholder DUID — retry.")
+    # Optional manager_remark — shown to field users on the plan card /
+    # execution form (PO Dispatch.manager_remark already flows through).
+    manager_remark = (payload.get("manager_remark") or payload.get("note") or "").strip()
 
-    site_name = "Pending — map to PO line"
-    ok_duid, err_duid = ensure_duid_master(site_code, site_name=site_name, center_area=None)
-    if not ok_duid:
-        frappe.throw(err_duid or f"Could not create DUID Master for {site_code}")
+    # Optional DUID — IM may pick a real DUID Master row up-front; otherwise
+    # we allocate a DUMMY-* placeholder that the map step replaces later.
+    requested_site_code = (payload.get("site_code") or "").strip()
+    site_code = None
+    site_name = None
+    center_area = None
+    if requested_site_code:
+        if not frappe.db.exists("DUID Master", requested_site_code):
+            frappe.throw(f"DUID Master {requested_site_code} not found")
+        site_code = requested_site_code
+        d = frappe.db.get_value(
+            "DUID Master", requested_site_code,
+            ["site_name", "center_area"], as_dict=True,
+        ) or {}
+        site_name = d.get("site_name") or requested_site_code
+        center_area = d.get("center_area")
+    else:
+        for _attempt in range(40):
+            candidate = f"DUMMY-{frappe.generate_hash(length=14)}"
+            if not frappe.db.exists("DUID Master", candidate):
+                site_code = candidate
+                break
+        if not site_code:
+            frappe.throw("Could not allocate a placeholder DUID — retry.")
+        site_name = "Pending — map to PO line"
+        ok_duid, err_duid = ensure_duid_master(site_code, site_name=site_name, center_area=None)
+        if not ok_duid:
+            frappe.throw(err_duid or f"Could not create DUID Master for {site_code}")
 
     customer = frappe.db.get_value("Project Control Center", project_code, "customer")
 
-    item_code = "PENDING"
+    # item_code is a Link to Item — leaving it blank avoids tripping the
+    # LinkValidationError. The map-to-intake-line step fills the real item.
     item_description = "Fill by mapping to PO Intake line"
     qty = flt(1)
     rate = flt(0)
     line_amount = flt(0)
-    center_area = None
 
     # Placeholder PO until map: DUMMY-yymmdd-XXXXXX (6 hex) → short POID e.g. DUMMY-260416-A3B4C5-1
     dt = now_datetime()
@@ -2138,7 +2157,8 @@ def create_im_dummy_po_dispatch(payload=None):
     doc.im = _im_resolved
     doc.po_no = po_no
     doc.po_line_no = 1
-    doc.item_code = item_code
+    # item_code intentionally left blank for dummies (Link validation
+    # would reject any placeholder string). Filled in during map step.
     if item_description:
         doc.item_description = item_description
     doc.qty = qty
@@ -2151,6 +2171,8 @@ def create_im_dummy_po_dispatch(payload=None):
     doc.planning_mode = "Plan"
     doc.dispatch_status = "Dispatched"
     doc.dispatch_mode = "Manual"
+    if manager_remark and frappe.db.has_column("PO Dispatch", "manager_remark"):
+        doc.manager_remark = manager_remark[:8000]
     if target_month and frappe.db.has_column("PO Dispatch", "target_month"):
         doc.target_month = target_month
     if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
@@ -3712,17 +3734,19 @@ def get_rollout_plan_details(rollout_plan):
 
     pd_name = plan.get("po_dispatch")
     if pd_name:
-        pd = frappe.db.get_value(
-            "PO Dispatch",
-            pd_name,
-            [
-                "poid", "po_no", "po_line_no",
-                "item_code", "item_description", "qty", "rate", "line_amount",
-                "project_code", "customer", "site_code", "site_name",
-                "center_area", "region_type",
-            ],
-            as_dict=True,
-        ) or {}
+        pd_cols = [
+            "poid", "po_no", "po_line_no",
+            "item_code", "item_description", "qty", "rate", "line_amount",
+            "project_code", "customer", "site_code", "site_name",
+            "center_area", "region_type",
+        ]
+        # Pull through the IM-authored note (and the PM/TL ones too) so the
+        # field user can see "Note for field team" entered when the dummy PO
+        # was created. has_column guards keep this safe on older sites.
+        for rk in ("general_remark", "manager_remark", "team_lead_remark"):
+            if frappe.db.has_column("PO Dispatch", rk):
+                pd_cols.append(rk)
+        pd = frappe.db.get_value("PO Dispatch", pd_name, pd_cols, as_dict=True) or {}
         plan["poid"] = pd.get("poid")
         plan["po_no"] = pd.get("po_no")
         plan["po_line_no"] = pd.get("po_line_no")
@@ -3733,6 +3757,9 @@ def get_rollout_plan_details(rollout_plan):
         plan["line_amount"] = pd.get("line_amount")
         plan["project_code"] = pd.get("project_code")
         plan["customer"] = pd.get("customer")
+        plan["manager_remark"] = pd.get("manager_remark")
+        plan["general_remark"] = pd.get("general_remark")
+        plan["team_lead_remark"] = pd.get("team_lead_remark")
         plan["site_code"] = pd.get("site_code")
         plan["site_name"] = pd.get("site_name")
         plan["center_area"] = pd.get("center_area")
@@ -7225,10 +7252,15 @@ def get_field_team_dashboard(team_id=None):
 
     if dispatch_names:
         placeholders = ", ".join(["%s"] * len(dispatch_names))
+        # Include manager_remark so the field card can show the IM Note.
+        extra_remark_cols = ""
+        for rk in ("general_remark", "manager_remark", "team_lead_remark"):
+            if frappe.db.has_column("PO Dispatch", rk):
+                extra_remark_cols += f", {rk}"
         dispatch_rows = frappe.db.sql(
             f"""
             SELECT name, poid, item_code, item_description, qty, project_code,
-                   customer, site_name, site_code, center_area, region_type
+                   customer, site_name, site_code, center_area, region_type{extra_remark_cols}
             FROM `tabPO Dispatch`
             WHERE name IN ({placeholders})
             """,
@@ -7339,6 +7371,9 @@ def get_field_team_dashboard(team_id=None):
                 "my_team": team_id,
                 "my_assigned_qty": my_assigned_map.get(plan.name),
                 "teams_total": teams_total_map.get(plan.name) or (1 if plan.get("name") else 0),
+                "manager_remark": dispatch_info.get("manager_remark"),
+                "general_remark": dispatch_info.get("general_remark"),
+                "team_lead_remark": dispatch_info.get("team_lead_remark"),
             }
         )
 
@@ -7420,10 +7455,16 @@ def list_field_team_actionable_plans(team_id=None):
     dispatch_map = {}
     if dispatch_names:
         placeholders = ", ".join(["%s"] * len(dispatch_names))
+        # Include manager_remark (and siblings) so the field user's plan
+        # card / picker can surface the IM's "Note for field team".
+        extra_remark_cols = ""
+        for rk in ("general_remark", "manager_remark", "team_lead_remark"):
+            if frappe.db.has_column("PO Dispatch", rk):
+                extra_remark_cols += f", {rk}"
         dispatch_rows = frappe.db.sql(
             f"""
             SELECT name, poid, item_code, item_description, qty, project_code,
-                   customer, site_name, site_code, center_area, region_type
+                   customer, site_name, site_code, center_area, region_type{extra_remark_cols}
             FROM `tabPO Dispatch`
             WHERE name IN ({placeholders})
             """,
@@ -7461,6 +7502,9 @@ def list_field_team_actionable_plans(team_id=None):
             "access_period": p.get("access_period") if has_access_period else None,
             "qc_required": p.get("qc_required", 1) if has_qc_req else 1,
             "ciag_required": p.get("ciag_required", 1) if has_ciag_req else 1,
+            "manager_remark": d.get("manager_remark"),
+            "general_remark": d.get("general_remark"),
+            "team_lead_remark": d.get("team_lead_remark"),
         })
     return out
 

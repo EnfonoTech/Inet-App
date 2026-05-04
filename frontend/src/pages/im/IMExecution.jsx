@@ -15,6 +15,7 @@ import RemarksPanel from "../../components/RemarksPanel";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import IMNoteCallout from "../../components/IMNoteCallout";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
@@ -849,6 +850,7 @@ export default function IMExecution() {
                   detailRow.execution_status ? { label: "Status", value: detailRow.execution_status, tone: /complete/i.test(detailRow.execution_status) ? "green" : /cancel/i.test(detailRow.execution_status) ? "rose" : "slate" } : null,
                 ].filter(Boolean)}
               />
+              <IMNoteCallout note={detailRow.manager_remark} />
               <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
               <DispatchVisitHistory
                 poDispatch={detailRow.system_id || detailRow.po_dispatch}

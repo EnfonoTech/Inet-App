@@ -13,6 +13,7 @@ import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import RemarksCell from "../../components/RemarksCell";
+import IMNoteCallout from "../../components/IMNoteCallout";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const money = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
@@ -337,6 +338,7 @@ export default function IMWorkDone() {
               <div><strong>Lead Team:</strong> {detailRow.team_name || detailRow.team || "—"}</div>
               <div><strong>Revenue:</strong> {fmt.format(detailRow.revenue_sar || 0)}</div>
             </div>
+            <IMNoteCallout note={detailRow.manager_remark} />
             <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
             <DispatchVisitHistory
               poDispatch={detailRow.po_dispatch}

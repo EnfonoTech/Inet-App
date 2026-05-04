@@ -14,6 +14,7 @@ import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import DateRangePicker from "../../components/DateRangePicker";
 import RemarksCell from "../../components/RemarksCell";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import IMNoteCallout from "../../components/IMNoteCallout";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -389,6 +390,7 @@ export default function IMPlanning() {
                   detailRow.plan_status ? { label: "Status", value: detailRow.plan_status, tone: /complete/i.test(detailRow.plan_status) ? "green" : /cancel/i.test(detailRow.plan_status) ? "rose" : /issue/i.test(detailRow.plan_status) ? "amber" : "slate" } : null,
                 ].filter(Boolean)}
               />
+              <IMNoteCallout note={detailRow.manager_remark} />
               <PlanTeamsBreakdown rolloutPlan={detailRow.name} />
               <DispatchVisitHistory
                 poDispatch={detailRow.po_dispatch}

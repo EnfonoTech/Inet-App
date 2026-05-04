@@ -206,7 +206,8 @@ export default function IMDispatch() {
   const [dummyBusy, setDummyBusy] = useState(false);
   const [dummyErr, setDummyErr] = useState(null);
   const [projectsForDummy, setProjectsForDummy] = useState([]);
-  const [dummyForm, setDummyForm] = useState({ project_code: "", target_month: "" });
+  const [duidsForDummy, setDuidsForDummy] = useState([]);
+  const [dummyForm, setDummyForm] = useState({ project_code: "", target_month: "", site_code: "", manager_remark: "" });
   const [mapForRow, setMapForRow] = useState(null);
   const [mapLines, setMapLines] = useState([]);
   const [mapLineId, setMapLineId] = useState("");
@@ -331,7 +332,13 @@ export default function IMDispatch() {
 
   async function openDummyPoModal() {
     setDummyErr(null);
-    setDummyForm({ project_code: Array.isArray(projectFilter) ? (projectFilter[0] || "") : (projectFilter || ""), target_month: todayMonth() });
+    setDummyForm({
+      project_code: Array.isArray(projectFilter) ? (projectFilter[0] || "") : (projectFilter || ""),
+      target_month: todayMonth(),
+      site_code: "",
+      manager_remark: "",
+    });
+    setDuidsForDummy([]);
     setShowDummyModal(true);
     if (!imName) {
       setProjectsForDummy([]);
@@ -354,6 +361,30 @@ export default function IMDispatch() {
     }
   }
 
+  // Lazy-load DUID Master rows for the dummy modal whenever the project
+  // changes. We don't bind by project (DUID Master may be project-agnostic),
+  // so this is a flat picker — just helpful when the IM already knows the
+  // real DUID up front.
+  useEffect(() => {
+    if (!showDummyModal) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const fields = JSON.stringify(["name", "site_name", "center_area"]);
+        const res = await fetch(
+          `/api/resource/DUID Master?fields=${encodeURIComponent(fields)}` +
+          `&limit_page_length=500&order_by=modified+desc`,
+          { credentials: "include" },
+        );
+        const json = await res.json();
+        if (!cancelled) setDuidsForDummy(Array.isArray(json?.data) ? json.data : []);
+      } catch {
+        if (!cancelled) setDuidsForDummy([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showDummyModal]);
+
   async function submitDummyPo() {
     if (!dummyForm.project_code) {
       setDummyErr("Select a project.");
@@ -365,6 +396,8 @@ export default function IMDispatch() {
       await pmApi.createIMDummyPODispatch({
         project_code: dummyForm.project_code,
         target_month: dummyForm.target_month || undefined,
+        site_code: dummyForm.site_code || undefined,
+        manager_remark: dummyForm.manager_remark || undefined,
       });
       setShowDummyModal(false);
       setSuccessMsg("Dummy PO created.");
@@ -983,7 +1016,7 @@ export default function IMDispatch() {
         open={showDummyModal}
         onClose={() => !dummyBusy && setShowDummyModal(false)}
         title="Dummy PO"
-        width={420}
+        width={620}
       >
         {dummyErr && <div className="notice error" style={{ marginBottom: 12 }}>{dummyErr}</div>}
         <div style={{ marginBottom: 16 }}>
@@ -1001,7 +1034,7 @@ export default function IMDispatch() {
             ))}
           </select>
         </div>
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 16 }}>
           <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Target month</label>
           <select
             value={dummyForm.target_month || ""}
@@ -1012,6 +1045,45 @@ export default function IMDispatch() {
               <option key={m.id} value={m.id}>{m.label}</option>
             ))}
           </select>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>
+            DUID
+          </label>
+          <SearchableSelect
+            value={dummyForm.site_code || ""}
+            onChange={(v) => setDummyForm((f) => ({ ...f, site_code: v || "" }))}
+            options={duidsForDummy.map((d) => ({
+              id: d.name,
+              label: d.site_name && d.site_name !== d.name ? `${d.name} — ${d.site_name}` : d.name,
+            }))}
+            placeholder="Auto placeholder (DUMMY-…)"
+            allLabel="Auto placeholder (DUMMY-…)"
+            style={{ display: "block", width: "100%" }}
+            minWidth={0}
+            triggerStyle={{
+              width: "100%", padding: "10px 28px 10px 12px",
+              borderRadius: 8, fontSize: "0.88rem",
+            }}
+            panelStyle={{
+              width: "100%", minWidth: 0, maxWidth: "none", right: 0,
+            }}
+          />
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>
+            Note for field team
+          </label>
+          <textarea
+            value={dummyForm.manager_remark || ""}
+            onChange={(e) => setDummyForm((f) => ({ ...f, manager_remark: e.target.value }))}
+            rows={3}
+            style={{
+              width: "100%", padding: 10, borderRadius: 8,
+              border: "1px solid #e2e8f0", boxSizing: "border-box",
+              fontFamily: "inherit", fontSize: "0.84rem", resize: "vertical",
+            }}
+          />
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button type="button" className="btn-secondary" disabled={dummyBusy} onClick={() => setShowDummyModal(false)}>Cancel</button>

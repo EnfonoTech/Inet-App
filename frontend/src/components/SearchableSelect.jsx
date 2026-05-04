@@ -18,6 +18,8 @@ export default function SearchableSelect({
   placeholder = "All",
   allLabel,
   style,
+  triggerStyle,
+  panelStyle,
   minWidth,
   disabled = false,
   multi = false,
@@ -186,6 +188,7 @@ export default function SearchableSelect({
           overflow: "hidden",
           textOverflow: "ellipsis",
           fontWeight: hasSelection ? 600 : 500,
+          ...triggerStyle,
         }}
       >
         {hasSelection ? currentLabel : placeholder}
@@ -230,6 +233,7 @@ export default function SearchableSelect({
           minWidth: Math.max(minWidth || 220, 220),
           maxWidth: 360,
           overflow: "hidden",
+          ...panelStyle,
         }}>
           <div style={{ padding: 8, borderBottom: "1px solid #f1f5f9" }}>
             <input

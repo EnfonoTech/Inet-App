@@ -7,6 +7,7 @@ import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constant
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import IMNoteCallout from "../../components/IMNoteCallout";
 import RemarksPanel from "../../components/RemarksPanel";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
@@ -599,6 +600,7 @@ export default function ExecutionMonitor() {
                 "gps_location",
               ]}
             />
+            <IMNoteCallout note={detailRow.manager_remark} />
             <PlanTeamsBreakdown rolloutPlan={detailRow.name} />
             <DispatchVisitHistory
               poDispatch={detailRow.po_dispatch}
