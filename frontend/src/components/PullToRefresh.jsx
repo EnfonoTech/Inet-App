@@ -22,11 +22,35 @@ export default function PullToRefresh() {
     const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
     if (!isTouch) return;
 
+    // The page scrolls inside .content-outlet (because .content has
+    // overflow: hidden). window.scrollY is always 0, so checking the
+    // window would trigger refresh from any scroll position. We need
+    // to find the actual scrollable ancestor under the touch point and
+    // verify it's at the top.
+    const findScrollContainer = (target) => {
+      let el = target;
+      while (el && el !== document.body) {
+        const cs = window.getComputedStyle(el);
+        const oy = cs.overflowY;
+        if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight) {
+          return el;
+        }
+        el = el.parentElement;
+      }
+      return null; // window-level scroll
+    };
+    const isAtTop = (target) => {
+      const sc = findScrollContainer(target);
+      if (sc) return sc.scrollTop <= 0;
+      return (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+    };
+
     const onTouchStart = (e) => {
       if (refreshing) return;
-      if (window.scrollY > 0) return; // only when page is at the very top
       const t = e.touches[0];
       if (!t) return;
+      // Only start tracking when the touched scroll container is at the top.
+      if (!isAtTop(e.target)) return;
       startYRef.current = t.clientY;
       trackingRef.current = true;
     };
@@ -40,7 +64,9 @@ export default function PullToRefresh() {
         if (pull !== 0) setPull(0);
         return;
       }
-      if (window.scrollY > 0) {
+      // If the user managed to scroll the inner container off the top
+      // mid-gesture, abort — they're scrolling content, not pulling.
+      if (!isAtTop(e.target)) {
         trackingRef.current = false;
         setPull(0);
         return;
