@@ -26,7 +26,6 @@
   {
    "fieldname": "team_id",
    "fieldtype": "Data",
-   "in_list_view": 1,
    "label": "Team ID",
    "reqd": 1,
    "unique": 1
@@ -134,7 +133,7 @@
   }
  ],
  "links": [],
- "modified": "2026-04-12 14:04:22.408900",
+ "modified": "2026-05-04 12:19:30.253847",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "INET Team",
