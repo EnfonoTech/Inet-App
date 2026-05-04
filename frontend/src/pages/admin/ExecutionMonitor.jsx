@@ -9,6 +9,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import RemarksPanel from "../../components/RemarksPanel";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
+import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { isNotRequired } from "../../utils/qcCiagFlags";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -597,6 +598,11 @@ export default function ExecutionMonitor() {
               ]}
             />
             <PlanTeamsBreakdown rolloutPlan={detailRow.name} />
+            <DispatchVisitHistory
+              poDispatch={detailRow.po_dispatch}
+              rolloutPlan={detailRow.name}
+              currentPlanName={detailRow.name}
+            />
             {parseAttachments(detailRow.photos).length > 0 && (
               <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>

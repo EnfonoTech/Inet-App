@@ -10,6 +10,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
+import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import RemarksPanel from "../../components/RemarksPanel";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -845,6 +846,11 @@ export default function IMExecution() {
                 ].filter(Boolean)}
               />
               <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
+              <DispatchVisitHistory
+                poDispatch={detailRow.system_id || detailRow.po_dispatch}
+                rolloutPlan={detailRow.rollout_plan}
+                currentPlanName={detailRow.rollout_plan}
+              />
               {parseAttachments(detailRow.photos).length > 0 && (
                 <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>

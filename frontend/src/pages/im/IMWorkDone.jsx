@@ -9,6 +9,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
+import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import RemarksCell from "../../components/RemarksCell";
 
@@ -335,6 +336,11 @@ export default function IMWorkDone() {
               <div><strong>Revenue:</strong> {fmt.format(detailRow.revenue_sar || 0)}</div>
             </div>
             <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
+            <DispatchVisitHistory
+              poDispatch={detailRow.po_dispatch}
+              rolloutPlan={detailRow.rollout_plan}
+              currentPlanName={detailRow.rollout_plan}
+            />
           </div>
         </div>
       )}

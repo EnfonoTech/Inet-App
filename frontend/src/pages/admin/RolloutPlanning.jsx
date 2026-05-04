@@ -118,6 +118,11 @@ export default function RolloutPlanning() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  // Workflow #2: "Unplanned" shows POIDs that haven't been planned yet
+  // (dispatch_status = Dispatched). "All Visits" lifts that filter so
+  // the IM can pick a POID that already has a plan and create the next
+  // sequential visit (visit_number auto-increments).
+  const [planScope, setPlanScope] = useState("unplanned"); // "unplanned" | "all"
 
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -166,14 +171,17 @@ export default function RolloutPlanning() {
       if (duidFilter.length) portal.site_code = duidFilter;
       if (fromDate) portal.from_date = fromDate;
       if (toDate) portal.to_date = toDate;
-      const list = await pmApi.listPODispatches({ dispatch_status: "Dispatched" }, rowLimit, portal);
+      // "all" scope drops the dispatch_status filter so the IM can pick
+      // a POID with an existing plan and create the next visit.
+      const filters = planScope === "all" ? {} : { dispatch_status: "Dispatched" };
+      const list = await pmApi.listPODispatches(filters, rowLimit, portal);
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       setError(err.message || "Failed to load dispatches");
     } finally {
       setLoading(false);
     }
-  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate]);
+  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, planScope]);
 
   useEffect(() => { loadMeta(); }, [loadMeta]);
   useEffect(() => { loadData(); }, [loadData]);
@@ -331,6 +339,34 @@ export default function RolloutPlanning() {
         </div>
       </div>
 
+      {/* ── Scope toggle ─────────────────────────────────────
+          "Unplanned" = dispatch_status=Dispatched (default).
+          "All visits" lifts that filter so the IM can pick a POID
+          that already has a plan and create the next sequential
+          visit. Backend duplicate-guard still blocks an exact
+          (POID, plan_date, team) collision unless force_duplicate. */}
+      <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, marginBottom: 12 }}>
+        {[
+          { id: "unplanned", label: "Unplanned" },
+          { id: "all",       label: "All POIDs (re-plan)" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => { setSelected(new Set()); setPlanScope(tab.id); }}
+            style={{
+              padding: "6px 14px", fontSize: "0.78rem", fontWeight: 600,
+              border: "none", borderRadius: 6, cursor: "pointer",
+              background: planScope === tab.id ? "#fff" : "transparent",
+              color: planScope === tab.id ? "#0f172a" : "#64748b",
+              boxShadow: planScope === tab.id ? "0 1px 3px rgba(15,23,42,0.08)" : "none",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {/* ── Toolbar ─────────────────────────────────────────── */}
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -452,7 +488,24 @@ export default function RolloutPlanning() {
                         onChange={() => toggleRow(row.name)}
                       />
                     </td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.name}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>
+                      <span>{row.poid || row.name}</span>
+                      {(row.dispatch_status || "").toLowerCase() === "planned" && (
+                        <span
+                          title="A rollout plan already exists for this POID. Selecting will create a new visit (visit_number auto-increments)."
+                          style={{
+                            display: "inline-block", marginLeft: 6,
+                            padding: "1px 7px", borderRadius: 999,
+                            fontSize: "0.62rem", fontWeight: 700,
+                            background: "#eff6ff", color: "#1d4ed8",
+                            border: "1px solid #bfdbfe",
+                            verticalAlign: "middle",
+                          }}
+                        >
+                          PLANNED
+                        </span>
+                      )}
+                    </td>
                     <td>{row.item_code}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>

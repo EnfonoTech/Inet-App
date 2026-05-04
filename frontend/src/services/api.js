@@ -321,6 +321,11 @@ export const pmApi = {
     call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),
   getRolloutPlanDetails: (rollout_plan) =>
     call("inet_app.api.command_center.get_rollout_plan_details", { rollout_plan }),
+  listDispatchVisits: (po_dispatch, rollout_plan) =>
+    call("inet_app.api.command_center.list_dispatch_visits", {
+      po_dispatch: po_dispatch || "",
+      rollout_plan: rollout_plan || "",
+    }),
   listFieldTeamActionablePlans: (team_id) =>
     call("inet_app.api.command_center.list_field_team_actionable_plans", { team_id }),
   listFieldRemarkTemplates: () =>

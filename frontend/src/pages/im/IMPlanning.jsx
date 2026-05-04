@@ -10,6 +10,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
+import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import DateRangePicker from "../../components/DateRangePicker";
 import RemarksCell from "../../components/RemarksCell";
 
@@ -387,6 +388,11 @@ export default function IMPlanning() {
                 ].filter(Boolean)}
               />
               <PlanTeamsBreakdown rolloutPlan={detailRow.name} />
+              <DispatchVisitHistory
+                poDispatch={detailRow.po_dispatch}
+                rolloutPlan={detailRow.name}
+                currentPlanName={detailRow.name}
+              />
             </div>
           </div>
         </div>

@@ -176,6 +176,10 @@ export default function IMDispatch() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  // Workflow #2: "Unplanned" hides POIDs that already have a plan (default).
+  // "All POIDs (re-plan)" shows them so the IM can pick one and create the
+  // next sequential visit (visit_number auto-increments).
+  const [planScope, setPlanScope] = useState("unplanned"); // "unplanned" | "all"
   const searchDebounced = useDebounced(search, 300);
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -398,14 +402,21 @@ export default function IMDispatch() {
     }
   }
 
-  const planable = (r) => (r.dispatch_status || "") === "Dispatched";
+  // In "all" scope, planned rows are also planable (re-plan creates next visit).
+  const planable = (r) => {
+    const s = (r.dispatch_status || "");
+    if (s === "Dispatched") return true;
+    if (planScope === "all" && s === "Planned") return true;
+    return false;
+  };
 
-  // Hide rows that are already planned — except unmapped Dummy POs, which
-  // the IM still needs to see here so they can map them to a real PO line.
+  // Hide rows that are already planned — except unmapped Dummy POs (still
+  // need mapping) and when the user explicitly opted into "all" scope.
   const isUnmappedDummy = (r) =>
     Number(r.is_dummy_po) === 1
     && (!r.po_no || String(r.po_no).startsWith("DUMMY-"));
   const visibleRows = rows.filter((r) => {
+    if (planScope === "all") return true;
     const planned = (r.dispatch_status || "").toLowerCase() === "planned";
     return !planned || isUnmappedDummy(r);
   });
@@ -586,6 +597,35 @@ export default function IMDispatch() {
           </div>
         </div>
       )}
+
+      {/* ── Scope toggle ─────────────────────────────────────
+          "Unplanned" = hides Planned rows (default). "All POIDs (re-plan)"
+          shows them so the IM can pick a POID with an existing plan and
+          create the next sequential visit. Backend duplicate-guard still
+          blocks an exact (POID, plan_date, team) collision. */}
+      <div style={{ margin: "0 16px 6px" }}>
+        <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8 }}>
+          {[
+            { id: "unplanned", label: "Unplanned" },
+            { id: "all",       label: "All POIDs (re-plan)" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => { setSelected(new Set()); setPlanScope(tab.id); }}
+              style={{
+                padding: "6px 14px", fontSize: "0.78rem", fontWeight: 600,
+                border: "none", borderRadius: 6, cursor: "pointer",
+                background: planScope === tab.id ? "#fff" : "transparent",
+                color: planScope === tab.id ? "#0f172a" : "#64748b",
+                boxShadow: planScope === tab.id ? "0 1px 3px rgba(15,23,42,0.08)" : "none",
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -1080,7 +1120,24 @@ export default function IMDispatch() {
                           title={canPlan ? "" : "Only Dispatched lines can be planned"}
                         />
                       </td>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.name}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>
+                        <span>{row.poid || row.name}</span>
+                        {(row.dispatch_status || "").toLowerCase() === "planned" && (
+                          <span
+                            title="A rollout plan already exists. Selecting will create a new visit (visit_number auto-increments)."
+                            style={{
+                              display: "inline-block", marginLeft: 6,
+                              padding: "1px 7px", borderRadius: 999,
+                              fontSize: "0.62rem", fontWeight: 700,
+                              background: "#eff6ff", color: "#1d4ed8",
+                              border: "1px solid #bfdbfe",
+                              verticalAlign: "middle",
+                            }}
+                          >
+                            PLANNED
+                          </span>
+                        )}
+                      </td>
                       <td><DispatchModeBadge mode={row.dispatch_mode || "Manual"} /></td>
                       <td style={{ fontSize: "0.72rem", maxWidth: 160 }}>
                         {!!Number(row.is_dummy_po) ? (
@@ -1168,13 +1225,15 @@ export default function IMDispatch() {
                 <tr>
                   <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     <strong>{visibleRows.length} row{visibleRows.length !== 1 ? "s" : ""}</strong>
-                    {visibleRows.length !== rows.length && (
+                    {planScope !== "all" && visibleRows.length !== rows.length && (
                       <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#94a3b8" }}>
                         ({rows.length - visibleRows.length} planned hidden)
                       </span>
                     )}
                     <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
-                      Select rows with status <strong>Dispatched</strong> to create rollout plans.
+                      {planScope === "all"
+                        ? <>Re-plan mode: select any row (PLANNED rows create the next visit).</>
+                        : <>Select rows with status <strong>Dispatched</strong> to create rollout plans.</>}
                     </span>
                   </td>
                 </tr>

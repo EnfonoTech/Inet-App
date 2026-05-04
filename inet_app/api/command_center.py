@@ -3131,13 +3131,70 @@ def create_rollout_plans(payload):
         dispatch = frappe.db.get_value(
             "PO Dispatch",
             dispatch_name,
-            ["name", "line_amount", "qty", "im", "region_type", "center_area"],
+            ["name", "poid", "line_amount", "qty", "im", "region_type", "center_area"],
             as_dict=True,
         )
         if not dispatch:
             continue
 
         target_team = team_override
+
+        # Workflow #2 — duplicate guard. Block the silent creation of an
+        # exact duplicate (same POID + plan_date + team + access window
+        # in a non-terminal status) so accidental double-clicks don't
+        # create phantom visits. The match is by *business POID* (joining
+        # PO Dispatch) so re-imports or dummy mappings that produce sibling
+        # SYS-IDs for the same POID are also caught. A re-plan with a
+        # *different* access period/time is allowed through (different
+        # physical visit). Caller can pass `force_duplicate=true` to override.
+        # NB: `_truthy` defaults missing keys to True (for qc/ciag) — for an
+        # opt-in override flag we need a strict false-on-missing check.
+        _fd = payload.get("force_duplicate")
+        force_dup = (
+            _fd is True
+            or (isinstance(_fd, (int, float)) and _fd != 0)
+            or (isinstance(_fd, str) and _fd.strip().lower() in ("1", "true", "yes", "on"))
+        )
+        if not force_dup:
+            has_ap = frappe.db.has_column("Rollout Plan", "access_period")
+            has_at = frappe.db.has_column("Rollout Plan", "access_time")
+            where_extra = ""
+            poid_value = (dispatch.get("poid") or dispatch_name or "").strip()
+            params = [dispatch_name, poid_value, plan_date, target_team]
+            if has_ap:
+                where_extra += " AND IFNULL(rp.access_period, '') = %s"
+                params.append(access_period or "")
+            if has_at:
+                where_extra += " AND IFNULL(rp.access_time, '') = %s"
+                params.append(access_time or "")
+            dup_existing = frappe.db.sql(
+                f"""
+                SELECT rp.name, rp.visit_number, rp.plan_status,
+                       rp.po_dispatch,
+                       IFNULL(rp.access_period, '') AS access_period,
+                       IFNULL(rp.access_time, '') AS access_time
+                FROM `tabRollout Plan` rp
+                LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+                WHERE (rp.po_dispatch = %s OR IFNULL(pd.poid, '') = %s)
+                  AND rp.plan_date = %s
+                  AND rp.team = %s
+                  {where_extra}
+                  AND rp.plan_status NOT IN ('Cancelled', 'Completed', 'Postponed')
+                LIMIT 1
+                """,
+                tuple(params), as_dict=True,
+            )
+            if dup_existing:
+                d = dup_existing[0]
+                window = " ".join(
+                    [s for s in [d.access_period, d.access_time] if s]
+                ) or "—"
+                frappe.throw(frappe._(
+                    "Plan already exists for {0} on {1}, {2} ({3}). "
+                    "Change date/team/access to create another."
+                ).format(
+                    poid_value or dispatch_name, plan_date, target_team, window,
+                ))
 
         # Reuse-instead-of-recreate: when this dispatch's latest plan was
         # created from an issue (Planning-with-Issue placeholder, or a
@@ -3769,6 +3826,61 @@ def get_rollout_plan_details(rollout_plan):
     plan["teams_completed"] = sum(1 for r in de_rows if r.get("tl_status") == "Completed")
 
     return plan
+
+
+@frappe.whitelist()
+def list_dispatch_visits(po_dispatch=None, rollout_plan=None):
+    """Workflow #2 — return all visits (rollout plans) for a single POID.
+
+    Either ``po_dispatch`` (PO Dispatch name) or ``rollout_plan`` (any
+    plan for the POID) can be passed; the function resolves the POID
+    from the plan when only the latter is given.
+
+    Returned shape per row::
+
+        {
+            "name", "visit_number", "visit_type", "plan_status",
+            "plan_date", "team", "team_name",
+            "target_amount", "achieved_amount", "completion_pct",
+            "issue_category", "execution_count", "work_done",
+            "is_current",  # True for the highest visit_number row
+        }
+    """
+    pd_name = (po_dispatch or "").strip()
+    if not pd_name and rollout_plan:
+        pd_name = frappe.db.get_value(
+            "Rollout Plan", (rollout_plan or "").strip(), "po_dispatch",
+        )
+    if not pd_name:
+        return []
+
+    plans = frappe.db.sql(
+        """
+        SELECT rp.name, IFNULL(rp.visit_number, 1) AS visit_number,
+               IFNULL(rp.visit_type, '') AS visit_type,
+               rp.plan_status, rp.plan_date, rp.team,
+               IFNULL(it.team_name, rp.team) AS team_name,
+               IFNULL(rp.target_amount, 0) AS target_amount,
+               IFNULL(rp.achieved_amount, 0) AS achieved_amount,
+               IFNULL(rp.completion_pct, 0) AS completion_pct,
+               IFNULL(rp.issue_category, '') AS issue_category,
+               (SELECT COUNT(*) FROM `tabDaily Execution` de
+                WHERE de.rollout_plan = rp.name) AS execution_count,
+               (SELECT wd.name FROM `tabWork Done` wd
+                INNER JOIN `tabDaily Execution` de_wd ON de_wd.name = wd.execution
+                WHERE de_wd.rollout_plan = rp.name LIMIT 1) AS work_done
+        FROM `tabRollout Plan` rp
+        LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        WHERE rp.po_dispatch = %s
+        ORDER BY IFNULL(rp.visit_number, 0) DESC, rp.modified DESC
+        """,
+        (pd_name,), as_dict=True,
+    ) or []
+    if plans:
+        max_visit = max(p["visit_number"] for p in plans)
+        for p in plans:
+            p["is_current"] = (p["visit_number"] == max_visit)
+    return plans
 
 
 @frappe.whitelist()

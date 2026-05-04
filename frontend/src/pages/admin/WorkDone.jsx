@@ -7,6 +7,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
+import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 
@@ -475,6 +476,11 @@ export default function WorkDone() {
               ]}
             />
             <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
+            <DispatchVisitHistory
+              poDispatch={detailRow.po_dispatch}
+              rolloutPlan={detailRow.rollout_plan}
+              currentPlanName={detailRow.rollout_plan}
+            />
           </div>
         </div>
       )}
