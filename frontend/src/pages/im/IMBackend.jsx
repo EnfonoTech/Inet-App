@@ -5,6 +5,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
@@ -197,6 +198,7 @@ export default function IMBackend() {
           <h1 className="page-title">Backend</h1>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename="im-backend" rows={rows} />
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>

@@ -8,6 +8,7 @@ import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
@@ -167,6 +168,7 @@ export default function IMWorkDone() {
           <div className="page-subtitle">Completed work rows for your IM scope.</div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename="im-work-done" rows={filteredRows} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </div>

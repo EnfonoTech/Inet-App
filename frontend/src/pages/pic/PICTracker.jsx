@@ -6,6 +6,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -292,8 +293,9 @@ export default function PICTracker() {
           </div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename="pic-invoice-tracker" rows={rows} />
           <button type="button" className="btn-secondary" onClick={() => downloadPicTrackerCsv(rows)} disabled={!rows.length}>
-            Download CSV
+            CSV
           </button>
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}

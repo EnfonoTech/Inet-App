@@ -5,6 +5,7 @@ import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableR
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -72,6 +73,9 @@ export default function Timesheets() {
           <div className="page-subtitle">
             Field time on rollouts · {searchDebounced.trim() ? `${total} matching · ` : ""}{logs.length} loaded · {fmt.format(totalHours)} h
           </div>
+        </div>
+        <div className="page-actions">
+          <ExportExcelButton filename="timesheets" rows={logs} />
         </div>
       </div>
 

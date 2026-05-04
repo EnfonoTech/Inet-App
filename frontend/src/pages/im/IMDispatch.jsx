@@ -9,6 +9,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
@@ -554,6 +555,7 @@ export default function IMDispatch() {
           >
             Dummy PO
           </button>
+          <ExportExcelButton filename="im-dispatch" rows={visibleRows} />
           <button className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading..." : "Refresh"}
           </button>

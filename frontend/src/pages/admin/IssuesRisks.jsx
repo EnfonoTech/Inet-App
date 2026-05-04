@@ -8,6 +8,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 import useFilterOptions from "../../hooks/useFilterOptions";
 
 function todayDate() {
@@ -228,6 +229,7 @@ export default function IssuesRisks() {
           <div className="page-subtitle">Replanned rollout plans with issue categories.</div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename="issues-and-risks" rows={filteredRows} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </div>

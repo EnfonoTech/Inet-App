@@ -8,6 +8,7 @@ import { pmApi } from "../../services/api";
 import RemarksCell from "../../components/RemarksCell";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import SearchableSelect from "../../components/SearchableSelect";
+import ExportExcelButton from "../../components/ExportExcelButton";
 import DateRangePicker from "../../components/DateRangePicker";
 import useFilterOptions from "../../hooks/useFilterOptions";
 
@@ -221,6 +222,7 @@ export default function IMIssuesRisks() {
           <div className="page-subtitle">Your replanned rollout plans with issue categories.</div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename="im-issues-and-risks" rows={filteredRows} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </div>

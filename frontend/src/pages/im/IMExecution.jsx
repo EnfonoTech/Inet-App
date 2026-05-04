@@ -14,6 +14,7 @@ import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import RemarksPanel from "../../components/RemarksPanel";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
@@ -392,6 +393,9 @@ export default function IMExecution() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Rollout Work Done</h1>
+        </div>
+        <div className="page-actions">
+          <ExportExcelButton filename="im-execution" rows={executions} />
         </div>
       </div>
 

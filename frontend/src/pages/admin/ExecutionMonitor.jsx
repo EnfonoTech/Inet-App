@@ -13,6 +13,7 @@ import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { isNotRequired } from "../../utils/qcCiagFlags";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -264,6 +265,7 @@ export default function ExecutionMonitor() {
           </div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename="execution-monitor" rows={rows} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>

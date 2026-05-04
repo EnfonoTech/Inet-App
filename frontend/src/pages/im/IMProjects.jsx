@@ -6,6 +6,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import RecordDetailView from "../../components/RecordDetailView";
 import { pmApi } from "../../services/api";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -126,6 +127,7 @@ export default function IMProjects() {
           <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
             {projects.length} project{projects.length !== 1 ? "s" : ""}
           </span>
+          <ExportExcelButton filename="im-projects" rows={projects} />
         </div>
       </div>
 

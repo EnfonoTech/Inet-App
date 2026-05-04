@@ -4,6 +4,8 @@ import DateRangePicker from "../../components/DateRangePicker";
 import SearchableSelect from "../../components/SearchableSelect";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import { pmApi } from "../../services/api";
+import { exportToExcel } from "../../utils/exportExcel";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtMoney = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -156,8 +158,31 @@ export default function PICReports() {
           <div className="page-subtitle">Canned reports for the invoicing pipeline. Pick a report on the left.</div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton
+            filename={`pic-${kind}`}
+            getRows={() => {
+              const cols = data?.columns || [];
+              const exportRows = [...(data?.rows || [])];
+              if (totals && cols.length) {
+                const totalRow = { [cols[0].key]: "TOTAL" };
+                Object.entries(totals).forEach(([k, v]) => { totalRow[k] = v; });
+                exportRows.push(totalRow);
+              }
+              return exportRows;
+            }}
+            disabled={!data?.rows?.length}
+            columns={(data?.columns || []).map((c) => ({
+              key: c.key,
+              label: c.label,
+              value: (r) => {
+                let v = r?.[c.key];
+                if (v && /_date$|_month$/.test(c.key)) v = String(v).slice(0, 10);
+                return v;
+              },
+            }))}
+          />
           <button type="button" className="btn-secondary" onClick={downloadCsv} disabled={!data?.rows?.length}>
-            Download CSV
+            CSV
           </button>
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}

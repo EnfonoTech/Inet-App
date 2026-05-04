@@ -3,6 +3,7 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
 import RecordDetailView from "../../components/RecordDetailView";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -194,6 +195,7 @@ export default function IMTeams() {
             <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>Total Daily Cost</div>
             <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#1e293b" }}>SAR {fmt.format(totalCost)}</div>
           </div>
+          <ExportExcelButton filename="im-teams" rows={filtered} />
         </div>
       </div>
 

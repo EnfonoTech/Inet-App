@@ -13,6 +13,7 @@ import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import DateRangePicker from "../../components/DateRangePicker";
 import RemarksCell from "../../components/RemarksCell";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -176,6 +177,7 @@ export default function IMPlanning() {
           <h1 className="page-title">Rollout Execution</h1>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename="im-planning" rows={plans} />
           <button type="button" className="btn-secondary" onClick={() => loadPlans()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>

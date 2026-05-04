@@ -5,6 +5,7 @@ import { pmApi } from "../../services/api";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import SearchableSelect from "../../components/SearchableSelect";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -254,6 +255,7 @@ export default function Projects() {
           <div className="page-subtitle">Manage all INET telecom projects</div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename="projects" rows={projects} />
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New Project</button>
         </div>
       </div>

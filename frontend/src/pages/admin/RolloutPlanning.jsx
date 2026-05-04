@@ -8,6 +8,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -329,6 +330,25 @@ export default function RolloutPlanning() {
           </div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton
+            filename="rollout-planning"
+            rows={rows}
+            columns={[
+              { key: "poid",        label: "POID" },
+              { key: "item_code",   label: "Item" },
+              { key: "item_description", label: "Description" },
+              { key: "customer_activity_type", label: "Activity Type" },
+              { key: "project_code", label: "Project" },
+              { key: "site_code",   label: "DUID" },
+              { key: "center_area", label: "Center Area" },
+              { key: "region_type", label: "Region" },
+              { key: "im_full_name", label: "IM" },
+              { key: "qty",         label: "Qty" },
+              { key: "line_amount", label: "Line Amount" },
+              { key: "target_month", label: "Target Month" },
+              { key: "dispatch_status", label: "Status" },
+            ]}
+          />
           <button
             className="btn-secondary"
             onClick={() => { void loadMeta(); void loadData(); }}

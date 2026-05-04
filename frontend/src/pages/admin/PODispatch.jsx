@@ -8,6 +8,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -460,6 +461,7 @@ export default function PODispatch() {
           <div className="page-subtitle">Dispatch PO lines to an Implementation Manager; field team is chosen at rollout planning.</div>
         </div>
         <div className="page-actions">
+          <ExportExcelButton filename={`po-dispatch-${activeTab}`} rows={rows} />
           <button className="btn-secondary" onClick={() => loadData(activeTab)} disabled={loading}>
             {loading ? "Loading..." : "Refresh"}
           </button>

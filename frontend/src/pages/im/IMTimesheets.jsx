@@ -6,6 +6,7 @@ import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableR
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import RecordDetailView from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
+import ExportExcelButton from "../../components/ExportExcelButton";
 import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
@@ -104,6 +105,9 @@ export default function IMTimesheets() {
           <div className="page-subtitle">
             Execution time for your teams · {searchDebounced.trim() ? `${total} matching · ` : ""}{logs.length} loaded · {fmt.format(totalHours)} h
           </div>
+        </div>
+        <div className="page-actions">
+          <ExportExcelButton filename="im-timesheets" rows={logs} />
         </div>
       </div>
 
