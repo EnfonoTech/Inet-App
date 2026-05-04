@@ -566,66 +566,78 @@ export default function IMDispatch() {
         </div>
       )}
 
+      {/* KPI row + scope toggle share the same line to save vertical
+          space. Toggle uses a stronger active state so it reads as a
+          clickable tab control, not a label. */}
       {!loading && hasAnyDispatches && (
-        <div style={{ display: "flex", gap: 6, margin: "0 16px 4px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, margin: "0 16px 6px", flexWrap: "wrap", alignItems: "center" }}>
           <div style={{
-            display: "flex", alignItems: "center", gap: 10,
-            minWidth: 160, padding: "6px 12px", borderRadius: 8,
-            background: "linear-gradient(135deg,#f59e0b 0%,#d97706 100%)",
-            color: "#fff", boxShadow: "0 2px 8px rgba(245,158,11,0.25)",
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "3px 10px", borderRadius: 999,
+            background: "#fff7ed", color: "#c2410c",
+            border: "1px solid #fed7aa", fontSize: "0.74rem", fontWeight: 700,
           }}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.9, flex: 1 }}>Ready to plan</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{dispatchedCount}</div>
+            <span style={{ opacity: 0.85 }}>Ready</span>
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{dispatchedCount}</span>
           </div>
           <div style={{
-            display: "flex", alignItems: "center", gap: 10,
-            minWidth: 160, padding: "6px 12px", borderRadius: 8,
-            background: "linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)",
-            color: "#fff", boxShadow: "0 2px 8px rgba(99,102,241,0.2)",
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "3px 10px", borderRadius: 999,
+            background: "#eef2ff", color: "#4338ca",
+            border: "1px solid #c7d2fe", fontSize: "0.74rem", fontWeight: 700,
           }}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.85, flex: 1 }}>Auto Dispatched</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{autoCount}</div>
+            <span style={{ opacity: 0.85 }}>Auto</span>
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{autoCount}</span>
           </div>
           <div style={{
-            display: "flex", alignItems: "center", gap: 10,
-            minWidth: 160, padding: "6px 12px", borderRadius: 8,
-            background: "linear-gradient(135deg,#0ea5e9 0%,#06b6d4 100%)",
-            color: "#fff", boxShadow: "0 2px 8px rgba(14,165,233,0.2)",
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "3px 10px", borderRadius: 999,
+            background: "#ecfeff", color: "#0e7490",
+            border: "1px solid #a5f3fc", fontSize: "0.74rem", fontWeight: 700,
           }}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 600, opacity: 0.85, flex: 1 }}>Manual Dispatch</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{manualCount}</div>
+            <span style={{ opacity: 0.85 }}>Manual</span>
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{manualCount}</span>
+          </div>
+
+          <div style={{ flex: 1 }} />
+
+          {/* Scope toggle — visible "tabs" with a clearly active blue pill
+              and a subtle hover hint on the inactive button. */}
+          <div role="tablist" aria-label="Plan scope" style={{
+            display: "inline-flex", padding: 3,
+            background: "#f1f5f9", borderRadius: 8,
+            border: "1px solid #e2e8f0",
+          }}>
+            {[
+              { id: "unplanned", label: "Unplanned" },
+              { id: "all",       label: "All POIDs (re-plan)" },
+            ].map((tab) => {
+              const active = planScope === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => { setSelected(new Set()); setPlanScope(tab.id); }}
+                  onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "#e2e8f0"; }}
+                  onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                  style={{
+                    padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700,
+                    border: "none", borderRadius: 6, cursor: "pointer",
+                    background: active ? "#1d4ed8" : "transparent",
+                    color: active ? "#fff" : "#475569",
+                    boxShadow: active ? "0 1px 3px rgba(29,78,216,0.3)" : "none",
+                    transition: "background 120ms",
+                  }}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
-
-      {/* ── Scope toggle ─────────────────────────────────────
-          "Unplanned" = hides Planned rows (default). "All POIDs (re-plan)"
-          shows them so the IM can pick a POID with an existing plan and
-          create the next sequential visit. Backend duplicate-guard still
-          blocks an exact (POID, plan_date, team) collision. */}
-      <div style={{ margin: "0 16px 6px" }}>
-        <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8 }}>
-          {[
-            { id: "unplanned", label: "Unplanned" },
-            { id: "all",       label: "All POIDs (re-plan)" },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => { setSelected(new Set()); setPlanScope(tab.id); }}
-              style={{
-                padding: "6px 14px", fontSize: "0.78rem", fontWeight: 600,
-                border: "none", borderRadius: 6, cursor: "pointer",
-                background: planScope === tab.id ? "#fff" : "transparent",
-                color: planScope === tab.id ? "#0f172a" : "#64748b",
-                boxShadow: planScope === tab.id ? "0 1px 3px rgba(15,23,42,0.08)" : "none",
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
 
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>

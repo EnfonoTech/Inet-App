@@ -339,37 +339,44 @@ export default function RolloutPlanning() {
         </div>
       </div>
 
-      {/* ── Scope toggle ─────────────────────────────────────
-          "Unplanned" = dispatch_status=Dispatched (default).
-          "All visits" lifts that filter so the IM can pick a POID
-          that already has a plan and create the next sequential
-          visit. Backend duplicate-guard still blocks an exact
-          (POID, plan_date, team) collision unless force_duplicate. */}
-      <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, marginBottom: 12 }}>
-        {[
-          { id: "unplanned", label: "Unplanned" },
-          { id: "all",       label: "All POIDs (re-plan)" },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => { setSelected(new Set()); setPlanScope(tab.id); }}
-            style={{
-              padding: "6px 14px", fontSize: "0.78rem", fontWeight: 600,
-              border: "none", borderRadius: 6, cursor: "pointer",
-              background: planScope === tab.id ? "#fff" : "transparent",
-              color: planScope === tab.id ? "#0f172a" : "#64748b",
-              boxShadow: planScope === tab.id ? "0 1px 3px rgba(15,23,42,0.08)" : "none",
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Toolbar ─────────────────────────────────────────── */}
+      {/* ── Toolbar (scope toggle inlined to save a row) ──────── */}
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {/* Scope toggle — clearly clickable: solid blue for active,
+              hover background for inactive. */}
+          <div role="tablist" aria-label="Plan scope" style={{
+            display: "inline-flex", padding: 3,
+            background: "#f1f5f9", borderRadius: 8,
+            border: "1px solid #e2e8f0",
+          }}>
+            {[
+              { id: "unplanned", label: "Unplanned" },
+              { id: "all",       label: "All POIDs (re-plan)" },
+            ].map((tab) => {
+              const active = planScope === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => { setSelected(new Set()); setPlanScope(tab.id); }}
+                  onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "#e2e8f0"; }}
+                  onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                  style={{
+                    padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700,
+                    border: "none", borderRadius: 6, cursor: "pointer",
+                    background: active ? "#1d4ed8" : "transparent",
+                    color: active ? "#fff" : "#475569",
+                    boxShadow: active ? "0 1px 3px rgba(29,78,216,0.3)" : "none",
+                    transition: "background 120ms",
+                  }}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
           <input
             type="search"
             placeholder="Search POID, Item, Project, IM, DUID, Center area, Region…"
