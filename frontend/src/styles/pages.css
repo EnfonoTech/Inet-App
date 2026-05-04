@@ -99,54 +99,58 @@
    long lists so vertical scroll stays inside .data-table-scroll. */
 /* On pages whose main content is a data table, suppress the outer scroll so
  * the inner .data-table-scroll owns the vertical scroll and the table grows
- * to the full viewport height. */
-.content-outlet:has(.page-content > .data-table-wrapper) {
-  overflow-y: hidden;
-}
+ * to the full viewport height. Desktop only — on mobile/PWA the data table
+ * is hidden behind .field-desktop-only and the outer scroll must own the
+ * card list, otherwise field users can't reach rows below the fold. */
+@media (min-width: 901px) {
+  .content-outlet:has(.page-content > .data-table-wrapper) {
+    overflow-y: hidden;
+  }
 
-/* On those same pages, unstick the header + filter toolbar. Sticky was useful
- * only when the outer container scrolled; now that the inner scroll takes
- * over, sticky only creates z-index layering bugs where the filter toolbar
- * floats over the Manage Table buttons and the table thead. */
-.content-outlet:has(.page-content > .data-table-wrapper) .page-header,
-.content-outlet:has(.page-content > .data-table-wrapper) .toolbar {
-  position: relative;
-  top: auto;
-  z-index: auto;
-}
+  /* On those same pages, unstick the header + filter toolbar. Sticky was useful
+   * only when the outer container scrolled; now that the inner scroll takes
+   * over, sticky only creates z-index layering bugs where the filter toolbar
+   * floats over the Manage Table buttons and the table thead. */
+  .content-outlet:has(.page-content > .data-table-wrapper) .page-header,
+  .content-outlet:has(.page-content > .data-table-wrapper) .toolbar {
+    position: relative;
+    top: auto;
+    z-index: auto;
+  }
 
-.content-outlet > *:has(.page-content > .data-table-wrapper) {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+  .content-outlet > *:has(.page-content > .data-table-wrapper) {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 
-.content-outlet > *:has(.page-content > .data-table-wrapper) > *:not(.page-content) {
-  flex-shrink: 0;
-}
+  .content-outlet > *:has(.page-content > .data-table-wrapper) > *:not(.page-content) {
+    flex-shrink: 0;
+  }
 
-.content-outlet > *:has(.page-content > .data-table-wrapper) > .page-content {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+  .content-outlet > *:has(.page-content > .data-table-wrapper) > .page-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 
-.content-outlet > *:has(.page-content > .data-table-wrapper) > .page-content > *:not(.data-table-wrapper) {
-  flex-shrink: 0;
-}
+  .content-outlet > *:has(.page-content > .data-table-wrapper) > .page-content > *:not(.data-table-wrapper) {
+    flex-shrink: 0;
+  }
 
-.content-outlet > *:has(.page-content > .data-table-wrapper) > .page-content > .data-table-wrapper {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: none;
-  overflow-x: auto;
-  overflow-y: hidden;
-  display: flex;
-  flex-direction: column;
+  .content-outlet > *:has(.page-content > .data-table-wrapper) > .page-content > .data-table-wrapper {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+  }
 }
 
 /* Inside a parent card that already has border/radius (e.g. field timesheet log card) */
