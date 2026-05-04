@@ -47,11 +47,11 @@ function profitColor(v) {
   return v < 0 ? "text-red" : v > 0 ? "text-green" : "";
 }
 
-/* ── Shimmer Loading State ─────────────────────────────────── */
+/* ── Loading Screen ────────────────────────────────────────── */
 
 function ShimmerRow() {
   return (
-    <div className="kpi-row" style={{ marginBottom: 8 }}>
+    <div className="kpi-row" style={{ marginBottom: 10 }}>
       {Array.from({ length: 6 }).map((_, i) => (
         <div key={i} className="shimmer-block" style={{ height: 80, borderRadius: 8 }} />
       ))}
@@ -61,8 +61,30 @@ function ShimmerRow() {
 
 function LoadingState() {
   return (
-    <div className="dashboard">
-      <div className="dash-header shimmer" style={{ height: 80 }} />
+    <div className="dashboard dashboard-loading">
+      {/* Centered hero — visible above-the-fold so the user knows the
+          dashboard is fetching. Sits over the skeleton grid below. */}
+      <div className="dashboard-loading-hero">
+        <div className="dashboard-loading-spinner" aria-hidden="true">
+          <svg viewBox="0 0 50 50" width="48" height="48">
+            <circle cx="25" cy="25" r="20" fill="none" strokeWidth="4"
+                    stroke="rgba(59,130,246,0.15)" />
+            <circle cx="25" cy="25" r="20" fill="none" strokeWidth="4"
+                    stroke="#2563eb" strokeLinecap="round"
+                    strokeDasharray="90 60" pathLength="125.6" />
+          </svg>
+        </div>
+        <div>
+          <div className="dashboard-loading-title">Loading Command Dashboard…</div>
+          <div className="dashboard-loading-subtitle">
+            Aggregating projects, KPIs, and team performance
+          </div>
+        </div>
+      </div>
+
+      {/* Skeleton rows give the page its real shape so the layout
+          doesn't jump when data arrives. */}
+      <div className="dash-header shimmer" style={{ height: 80, borderRadius: 10, marginBottom: 12 }} />
       <ShimmerRow />
       <ShimmerRow />
       <ShimmerRow />

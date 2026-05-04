@@ -27,7 +27,7 @@ export default function ExportExcelButton({
     if (!data || !data.length) return;
     exportToExcel({ filename, columns, rows: data });
   };
-  const tooltip = title || (empty ? "No rows to export" : "Download as Excel (.xls)");
+  const tooltip = title || (empty ? "No rows to export" : "Download as Excel (.xlsx)");
   return (
     <button
       type="button"

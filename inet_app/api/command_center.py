@@ -7846,7 +7846,19 @@ def _frappe_dt_to_epoch_ms(value):
 
 
 def _session_inet_field_team_id():
-    """INET Team.team_id for the logged-in field user, if any."""
+    """INET Team.team_id for the logged-in field user, if any.
+
+    Strict match on `field_user` (set automatically from the team-lead
+    Employee's user_id). If no team explicitly names this user, return
+    None — do NOT fuzzy-match by first name in team_name. The earlier
+    fallback was a security/correctness bug: an IM user whose first
+    name happened to appear in some team's name would inherit all that
+    team's plans even though they were never a member.
+
+    Defensive secondary lookup: also accept users linked through the
+    `team_members` child table (via Employee.user_id), so a team lead
+    set there but not yet propagated to `field_user` still resolves.
+    """
     user = frappe.session.user
     if not user or user == "Guest":
         return None
@@ -7858,16 +7870,30 @@ def _session_inet_field_team_id():
     )
     if ft and ft[0].team_id:
         return ft[0].team_id
-    first = (frappe.db.get_value("User", user, "full_name") or "").split()[0]
-    if first:
-        ft2 = frappe.get_all(
-            "INET Team",
-            filters={"team_name": ["like", f"%{first}%"], "status": "Active"},
-            fields=["team_id"],
-            limit=1,
+
+    # Secondary: match through team_members → Employee.user_id (team
+    # lead). Skip silently if Employee table or the join chain isn't
+    # available on this site.
+    try:
+        rows = frappe.db.sql(
+            """
+            SELECT it.team_id
+            FROM `tabINET Team Member` itm
+            JOIN `tabINET Team` it ON it.name = itm.parent
+            JOIN `tabEmployee` emp ON emp.name = itm.employee
+            WHERE emp.user_id = %s
+              AND IFNULL(it.status, 'Active') = 'Active'
+              AND IFNULL(itm.is_team_lead, 0) = 1
+            ORDER BY it.modified DESC
+            LIMIT 1
+            """,
+            (user,), as_dict=True,
         )
-        if ft2 and ft2[0].team_id:
-            return ft2[0].team_id
+        if rows and rows[0].get("team_id"):
+            return rows[0]["team_id"]
+    except Exception:
+        pass
+
     return None
 
 

@@ -579,6 +579,54 @@
   animation: shimmer-move 1.8s ease-in-out infinite;
 }
 
+/* ── Loading hero (centered spinner + status text) ──────────── */
+.dashboard.dashboard-loading {
+  position: relative;
+}
+
+.dashboard-loading-hero {
+  position: sticky;
+  top: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 22px;
+  margin: 0 0 16px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(239,246,255,0.92));
+  border: 1px solid var(--blue-border, #bfdbfe);
+  border-radius: 14px;
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.dashboard-loading-spinner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: dashboard-spinner-rotate 1.1s linear infinite;
+}
+
+@keyframes dashboard-spinner-rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.dashboard-loading-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #1e3a8a;
+  letter-spacing: -0.01em;
+}
+
+.dashboard-loading-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
 /* ── Auto-refresh indicator ─────────────────────────────────── */
 .dashboard .refresh-indicator {
   display: inline-flex;
