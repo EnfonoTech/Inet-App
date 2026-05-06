@@ -9,6 +9,11 @@ def after_migrate():
         frappe.reload_doc("inet_app", "doctype", "rollout_plan_team")
     except Exception:
         pass
+    # Team Allocation Request — IM-to-IM transfer with PM approval.
+    try:
+        frappe.reload_doc("inet_app", "doctype", "team_allocation_request")
+    except Exception:
+        pass
     _ensure_inet_roles()
     _ensure_item_activity_type_field()
     _hide_unused_activity_type_fields()

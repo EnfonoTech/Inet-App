@@ -21,6 +21,7 @@ import Projects from "./pages/admin/Projects";
 import ProjectDetail from "./pages/admin/ProjectDetail";
 import AdminTimesheets from "./pages/admin/Timesheets";
 import PODump from "./pages/admin/PODump";
+import TeamAllocationApprovals from "./pages/admin/TeamAllocationApprovals";
 
 /* -- IM pages --------------------------------------------------- */
 import IMDashboard from "./pages/im/IMDashboard";
@@ -106,6 +107,7 @@ function AppContent() {
             <Route path="/issues-risks" element={<IssuesRisks />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/timesheets" element={<AdminTimesheets />} />
+            <Route path="/approvals" element={<TeamAllocationApprovals />} />
             <Route path="/masters" element={<Masters />} />
             <Route path="/overview" element={<OperationsOverview />} />
           </>

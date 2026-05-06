@@ -91,6 +91,14 @@ const icons = {
       <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
     </svg>
   ),
+  // Shield-with-check — distinct from `checkCircle` (used by Work Done)
+  // so "Approvals" reads visually different in the sidebar.
+  shieldCheck: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  ),
 };
 
 /* ── Navigation definitions per role ────────────────────────── */
@@ -106,6 +114,7 @@ const adminNav = [
   { to: "/issues-risks", label: "Issues & Risks", icon: "clipboard" },
   { to: "/reports",    label: "Reports",     icon: "barChart" },
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
+  { to: "/approvals", label: "Approvals", icon: "shieldCheck" },
   { to: "/overview",   label: "Search / Overview", icon: "search" },
   { to: "/masters",    label: "Masters",     icon: "settings" },
 ];
@@ -174,6 +183,44 @@ export default function AppShell() {
       }
     })();
     return () => { cancelled = true; };
+  }, [role]);
+
+  /* Approval-queue dot for the sidebar:
+     - PM / Admin: count of requests in `Pending PM Approval`
+     - IM:        count of incoming requests in `Pending Source IM`
+     Polls every 60 s for arrivals from elsewhere, AND listens for
+     `inet:approvals-changed` so the dot updates instantly after the
+     current user accepts / rejects / approves a request locally. */
+  const [approvalDotCount, setApprovalDotCount] = useState(0);
+  useEffect(() => {
+    if (role !== "admin" && role !== "im") return;
+    let cancelled = false;
+    let timer = null;
+    const poll = async () => {
+      try {
+        if (role === "admin") {
+          const list = await pmApi.listTeamAllocationRequests("pending_pm");
+          if (!cancelled) setApprovalDotCount(Array.isArray(list) ? list.length : 0);
+        } else {
+          const list = await pmApi.listTeamAllocationRequests("incoming");
+          const pending = (Array.isArray(list) ? list : []).filter(
+            (r) => r.request_status === "Pending Source IM",
+          );
+          if (!cancelled) setApprovalDotCount(pending.length);
+        }
+      } catch {
+        if (!cancelled) setApprovalDotCount(0);
+      }
+    };
+    poll();
+    timer = setInterval(poll, 60_000);
+    const onChanged = () => poll();
+    window.addEventListener("inet:approvals-changed", onChanged);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+      window.removeEventListener("inet:approvals-changed", onChanged);
+    };
   }, [role]);
 
   /* Pick nav items based on role */
@@ -275,18 +322,68 @@ export default function AppShell() {
         {/* Navigation */}
         <nav className="sidebar-nav">
           <span className="nav-section-label">Menu</span>
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
-              to={item.to}
-              data-tooltip={item.label}
-              onClick={() => setMobileNavOpen(false)}
-            >
-              <span className="nav-icon">{icons[item.icon]}</span>
-              <span className="nav-text">{item.label}</span>
-            </NavLink>
-          ))}
+          {navItems.map((item) => {
+            // Approvals dot — admin queue lives at /approvals; IM
+            // incoming queue lives at /im-teams (the page hosts both
+            // the All Teams picker and the Incoming requests tab).
+            const showDot = approvalDotCount > 0 && (
+              (role === "admin" && item.to === "/approvals")
+              || (role === "im" && item.to === "/im-teams")
+            );
+            return (
+              <NavLink
+                key={item.to}
+                className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+                to={item.to}
+                data-tooltip={item.label}
+                onClick={() => setMobileNavOpen(false)}
+              >
+                <span className="nav-icon" style={{ position: "relative" }}>
+                  {icons[item.icon]}
+                  {showDot && (
+                    <span
+                      aria-label={`${approvalDotCount} pending`}
+                      title={`${approvalDotCount} pending`}
+                      style={{
+                        position: "absolute",
+                        top: -4, right: -6,
+                        minWidth: 14, height: 14, padding: "0 4px",
+                        borderRadius: 999,
+                        background: "#ef4444",
+                        color: "#fff",
+                        fontSize: "0.6rem",
+                        fontWeight: 800,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        boxShadow: "0 0 0 2px var(--bg-sidebar, #0f172a)",
+                        lineHeight: 1,
+                      }}
+                    >
+                      {approvalDotCount > 9 ? "9+" : approvalDotCount}
+                    </span>
+                  )}
+                </span>
+                <span className="nav-text">{item.label}</span>
+                {showDot && !collapsed && (
+                  <span style={{
+                    marginLeft: "auto",
+                    minWidth: 18, height: 18, padding: "0 6px",
+                    borderRadius: 999,
+                    background: "#ef4444",
+                    color: "#fff",
+                    fontSize: "0.62rem",
+                    fontWeight: 800,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}>
+                    {approvalDotCount > 99 ? "99+" : approvalDotCount}
+                  </span>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
 
         {/* Bottom actions */}

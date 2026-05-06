@@ -37,6 +37,10 @@ const EMPTY_MEMBER = { employee: "", employee_name: "", designation: "", is_team
 export default function IMTeams() {
   const { imName, user } = useAuth();
   const [teams, setTeams] = useState([]);
+  const [allTeams, setAllTeams] = useState([]);
+  const [imLabels, setImLabels] = useState({}); // im name → display label
+  const [requests, setRequests] = useState([]); // all visible Team Allocation Requests
+  const [tab, setTab] = useState("my"); // "my" | "all" | "outgoing" | "incoming"
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -53,26 +57,45 @@ export default function IMTeams() {
   const [editBusy, setEditBusy] = useState(false);
   const [editErr, setEditErr] = useState(null);
 
+  // Team Allocation Request flows.
+  const [requestTarget, setRequestTarget] = useState(null);   // team row being requested
+  const [requestReason, setRequestReason] = useState("");
+  const [respondTarget, setRespondTarget] = useState(null);   // request row being responded to
+  const [respondRemark, setRespondRemark] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionErr, setActionErr] = useState(null);
+  const [actionMsg, setActionMsg] = useState(null);
+
   // Picker option caches
   const [employees, setEmployees] = useState([]);
 
-  async function loadTeams() {
+  async function loadAll() {
+    setLoading(true);
     try {
-      const imCandidates = [imName, user?.full_name].filter(Boolean);
-      const filters =
-        imCandidates.length > 1
-          ? { im: ["in", imCandidates] }
-          : { im: imCandidates[0] || "__none__" };
-      const rows = await pmApi.listINETTeams(filters);
-      setTeams(rows || []);
-    } catch {
-      setTeams([]);
+      const myFilters = (() => {
+        const imCandidates = [imName, user?.full_name].filter(Boolean);
+        if (imCandidates.length > 1) return { im: ["in", imCandidates] };
+        return { im: imCandidates[0] || "__none__" };
+      })();
+      const [my, all, ims, reqs] = await Promise.all([
+        pmApi.listINETTeams(myFilters).catch(() => []),
+        pmApi.listINETTeams({}).catch(() => []),
+        pmApi.genericList("IM Master", ["name", "full_name"], 500).catch(() => []),
+        pmApi.listTeamAllocationRequests("all").catch(() => []),
+      ]);
+      setTeams(my || []);
+      setAllTeams(all || []);
+      const labelMap = {};
+      for (const m of ims || []) labelMap[m.name] = m.full_name || m.name;
+      setImLabels(labelMap);
+      setRequests(reqs || []);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => {
-    if (imName || user?.full_name) loadTeams();
+    if (imName || user?.full_name) loadAll();
     else setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imName, user?.full_name]);
@@ -154,7 +177,8 @@ export default function IMTeams() {
         }));
       await pmApi.updateIMTeam(editRow.name, { ...editForm, team_members: cleanMembers });
       setEditRow(null);
-      await loadTeams();
+      await loadAll();
+      window.dispatchEvent(new Event("inet:approvals-changed"));
     } catch (err) {
       setEditErr(err?.message || "Failed to update team");
     } finally {
@@ -162,9 +186,100 @@ export default function IMTeams() {
     }
   }
 
+  // ─── Team Allocation Request handlers ────────────────────────
+  function openRequestModal(t) {
+    setActionErr(null);
+    setRequestReason("");
+    setRequestTarget(t);
+  }
+  async function submitRequest() {
+    if (!requestTarget) return;
+    setActionBusy(true);
+    setActionErr(null);
+    try {
+      await pmApi.requestTeamAllocation(requestTarget.name, requestReason);
+      setActionMsg(`Request raised for ${requestTarget.team_name || requestTarget.name}. Awaiting source IM.`);
+      setRequestTarget(null);
+      await loadAll();
+      window.dispatchEvent(new Event("inet:approvals-changed"));
+    } catch (err) {
+      setActionErr(err?.message || "Could not raise request");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function openRespondModal(r) {
+    setActionErr(null);
+    setRespondRemark("");
+    setRespondTarget(r);
+  }
+  async function submitRespond(action) {
+    if (!respondTarget) return;
+    setActionBusy(true);
+    setActionErr(null);
+    try {
+      await pmApi.respondTeamAllocation(respondTarget.name, action, respondRemark);
+      setActionMsg(`Request ${action === "accept" ? "accepted — awaiting PM" : "rejected"}.`);
+      setRespondTarget(null);
+      await loadAll();
+      window.dispatchEvent(new Event("inet:approvals-changed"));
+    } catch (err) {
+      setActionErr(err?.message || "Action failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function doCancel(req) {
+    if (!confirm(`Cancel allocation request for ${req.team_name || req.team}?`)) return;
+    setActionBusy(true);
+    setActionErr(null);
+    try {
+      await pmApi.cancelTeamAllocation(req.name);
+      setActionMsg("Request cancelled.");
+      await loadAll();
+      window.dispatchEvent(new Event("inet:approvals-changed"));
+    } catch (err) {
+      setActionErr(err?.message || "Cancel failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function statusTone(status) {
+    const s = (status || "").toLowerCase();
+    if (s.includes("approved")) return { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" };
+    if (s.includes("reject") || s.includes("cancel")) return { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" };
+    if (s.includes("pm")) return { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" };
+    return { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" };
+  }
+
+  // Outgoing / incoming counts for tab pill badges.
+  const myImName = imName || "";
+  const outgoing = requests.filter((r) => r.to_im === myImName);
+  const incoming = requests.filter((r) => r.from_im === myImName);
+  const outgoingPendingCount = outgoing.filter((r) =>
+    r.request_status === "Pending Source IM" || r.request_status === "Pending PM Approval",
+  ).length;
+  const incomingPendingCount = incoming.filter((r) => r.request_status === "Pending Source IM").length;
+
+  // Map of team → most-recent open request, so the "All Teams" tab can
+  // disable the Request button and show the in-flight status instead.
+  const openRequestByTeam = {};
+  for (const r of requests) {
+    if (r.request_status === "Pending Source IM" || r.request_status === "Pending PM Approval") {
+      const prior = openRequestByTeam[r.team];
+      if (!prior || (r.modified || "") > (prior.modified || "")) {
+        openRequestByTeam[r.team] = r;
+      }
+    }
+  }
+
   const teamTypes = [...new Set(teams.map((t) => t.team_type).filter(Boolean))].sort();
 
-  const filtered = teams.filter((t) => {
+  const sourceList = tab === "all" ? allTeams : teams;
+  const filtered = sourceList.filter((t) => {
     if (typeFilter && t.team_type !== typeFilter) return false;
     if (statusFilter && t.status !== statusFilter) return false;
     if (search) {
@@ -174,7 +289,8 @@ export default function IMTeams() {
         (t.team_name || "").toLowerCase().includes(q) ||
         (t.team_type || "").toLowerCase().includes(q) ||
         (t.area || "").toLowerCase().includes(q) ||
-        (t.isdp_account || "").toLowerCase().includes(q)
+        (t.isdp_account || "").toLowerCase().includes(q) ||
+        (imLabels[t.im] || t.im || "").toLowerCase().includes(q)
       );
     }
     return true;
@@ -199,88 +315,326 @@ export default function IMTeams() {
         </div>
       </div>
 
-      <div className="toolbar">
-        <input
-          type="search"
-          placeholder="Search team name, type, area…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 220 }}
-        />
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Types</option>
-          {teamTypes.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
-        </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
-          <option value="">All Status</option>
-          <option value="Active">Active</option>
-          <option value="Inactive">Inactive</option>
-        </select>
-        {hasFilters && (
-          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setTypeFilter(""); setStatusFilter(""); }}>Clear</button>
-        )}
+      {/* Tab bar — switches the list source between My Teams / All Teams
+          (cross-IM, with Request action) and Outgoing / Incoming queues
+          for in-flight allocation requests. */}
+      <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 8px", width: "fit-content" }}>
+        {[
+          { id: "my", label: "My Teams" },
+          { id: "all", label: "All Teams" },
+          { id: "outgoing", label: "Outgoing", count: outgoingPendingCount },
+          { id: "incoming", label: "Incoming", count: incomingPendingCount },
+        ].map((tt) => {
+          const active = tab === tt.id;
+          return (
+            <button
+              key={tt.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(tt.id)}
+              style={{
+                padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700,
+                border: "none", borderRadius: 6, cursor: "pointer",
+                background: active ? "#1d4ed8" : "transparent",
+                color: active ? "#fff" : "#475569",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}
+            >
+              {tt.label}
+              {!!tt.count && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  minWidth: 18, height: 18, padding: "0 6px",
+                  borderRadius: 999, fontSize: "0.66rem", fontWeight: 800,
+                  background: active ? "#fff" : "#f59e0b",
+                  color: active ? "#1d4ed8" : "#fff",
+                }}>
+                  {tt.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
+
+      {actionMsg && (
+        <div className="notice success" style={{ margin: "0 16px 8px" }}>
+          <span>✓</span> {actionMsg}
+          <button type="button" className="btn-secondary" style={{ marginLeft: 12, fontSize: "0.7rem", padding: "2px 8px" }} onClick={() => setActionMsg(null)}>Dismiss</button>
+        </div>
+      )}
+      {actionErr && (
+        <div className="notice error" style={{ margin: "0 16px 8px" }}>
+          <span>!</span> {actionErr}
+          <button type="button" className="btn-secondary" style={{ marginLeft: 12, fontSize: "0.7rem", padding: "2px 8px" }} onClick={() => setActionErr(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {(tab === "my" || tab === "all") && (
+        <div className="toolbar">
+          <input
+            type="search"
+            placeholder="Search team name, type, area, owner IM…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 220 }}
+          />
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+            <option value="">All Types</option>
+            {teamTypes.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}>
+            <option value="">All Status</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+          {hasFilters && (
+            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setTypeFilter(""); setStatusFilter(""); }}>Clear</button>
+          )}
+        </div>
+      )}
 
       <div className="page-content">
         <DataTableWrapper>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : filtered.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">👥</div>
-              <h3>{hasFilters ? "No results match your filters" : "No teams assigned"}</h3>
-              {hasFilters && <p>Try adjusting your search or filter criteria.</p>}
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Team</th>
-                  <th>Type</th>
-                  <th>Area</th>
-                  <th>ISDP Account</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: "right" }}>Daily Cost</th>
-                  <th style={{ minWidth: 140 }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((t) => (
-                  <tr key={t.name}>
-                    <td style={{ fontWeight: 600 }}>{t.team_name || "—"}</td>
-                    <td>{t.team_type}</td>
-                    <td>{t.area || "—"}</td>
-                    <td style={{ fontSize: "0.82rem" }}>{t.isdp_account || "—"}</td>
-                    <td>
-                      <span className={`status-badge ${t.status === "Active" ? "completed" : "cancelled"}`}>
-                        <span className="status-dot" />
-                        {t.status}
-                      </span>
+          ) : (tab === "my" || tab === "all") ? (
+            filtered.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">👥</div>
+                <h3>{hasFilters ? "No results match your filters" : tab === "all" ? "No teams" : "No teams assigned"}</h3>
+                {hasFilters && <p>Try adjusting your search or filter criteria.</p>}
+              </div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Team</th>
+                    <th>Type</th>
+                    {tab === "all" && <th>Owner IM</th>}
+                    <th>Area</th>
+                    <th>ISDP Account</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: "right" }}>Daily Cost</th>
+                    <th style={{ minWidth: 160 }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((t) => {
+                    const mine = t.im === myImName;
+                    const openReq = openRequestByTeam[t.name];
+                    return (
+                      <tr key={t.name}>
+                        <td style={{ fontWeight: 600 }}>{t.team_name || "—"}</td>
+                        <td>{t.team_type}</td>
+                        {tab === "all" && (
+                          <td style={{ fontSize: "0.82rem" }}>
+                            {mine
+                              ? <span style={{ color: "#1d4ed8", fontWeight: 700 }}>You</span>
+                              : (imLabels[t.im] || t.im || "—")}
+                          </td>
+                        )}
+                        <td>{t.area || "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{t.isdp_account || "—"}</td>
+                        <td>
+                          <span className={`status-badge ${t.status === "Active" ? "completed" : "cancelled"}`}>
+                            <span className="status-dot" />
+                            {t.status}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{fmt.format(t.daily_cost || 0)}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "nowrap", alignItems: "center" }}>
+                            <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px", whiteSpace: "nowrap" }} onClick={() => setDetailRow(t)}>View</button>
+                            {mine
+                              ? (
+                                <button type="button" className="btn-primary" style={{ fontSize: "0.72rem", padding: "4px 8px", whiteSpace: "nowrap" }} onClick={() => openEdit(t)}>Edit</button>
+                              )
+                              : openReq
+                                ? (
+                                  <span title={`Request ${openReq.name} — ${openReq.request_status}`} style={{
+                                    fontSize: "0.68rem", fontWeight: 700, padding: "3px 8px",
+                                    borderRadius: 999,
+                                    ...(() => { const t2 = statusTone(openReq.request_status); return { background: t2.bg, color: t2.fg, border: `1px solid ${t2.bd}` }; })(),
+                                  }}>
+                                    {openReq.request_status === "Pending Source IM" ? "Pending IM" : "Pending PM"}
+                                  </span>
+                                )
+                                : (
+                                  <button
+                                    type="button"
+                                    className="btn-primary"
+                                    style={{ fontSize: "0.72rem", padding: "4px 8px", whiteSpace: "nowrap" }}
+                                    onClick={() => openRequestModal(t)}
+                                    disabled={!t.im}
+                                    title={!t.im ? "Team has no current IM — cannot request" : "Request transfer"}
+                                  >
+                                    Request
+                                  </button>
+                                )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={tab === "all" ? 7 : 6} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                      {filtered.length}{hasFilters && ` of ${sourceList.length}`} teams
                     </td>
-                    <td style={{ textAlign: "right", fontWeight: 600 }}>{fmt.format(t.daily_cost || 0)}</td>
-                    <td>
-                      <div style={{ display: "flex", gap: 6, flexWrap: "nowrap" }}>
-                        <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px", whiteSpace: "nowrap" }} onClick={() => setDetailRow(t)}>View</button>
-                        <button type="button" className="btn-primary" style={{ fontSize: "0.72rem", padding: "4px 8px", whiteSpace: "nowrap" }} onClick={() => openEdit(t)}>Edit</button>
-                      </div>
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                      SAR {fmt.format(totalCost)}
                     </td>
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={6} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                    {filtered.length}{hasFilters && ` of ${teams.length}`} teams
-                  </td>
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    SAR {fmt.format(totalCost)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+                </tfoot>
+              </table>
+            )
+          ) : (
+            // Outgoing / Incoming request queues.
+            (() => {
+              const list = tab === "outgoing" ? outgoing : incoming;
+              if (list.length === 0) {
+                return (
+                  <div className="empty-state">
+                    <div className="empty-icon">📨</div>
+                    <h3>{tab === "outgoing" ? "No requests raised" : "No incoming requests"}</h3>
+                    <p>{tab === "outgoing"
+                      ? "Switch to All Teams and click Request on a team owned by another IM."
+                      : "When another IM requests one of your teams, it'll show up here for you to accept or reject."}</p>
+                  </div>
+                );
+              }
+              return (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Team</th>
+                      <th>{tab === "outgoing" ? "Source IM" : "Requester IM"}</th>
+                      <th>Status</th>
+                      <th>Reason</th>
+                      <th>Requested</th>
+                      <th style={{ minWidth: 180 }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {list.map((r) => {
+                      const tone = statusTone(r.request_status);
+                      const otherIm = tab === "outgoing" ? r.from_im : r.to_im;
+                      return (
+                        <tr key={r.name}>
+                          <td style={{ fontWeight: 600 }}>{r.team_name || r.team || "—"}</td>
+                          <td style={{ fontSize: "0.82rem" }}>{(tab === "outgoing" ? r.from_im_name : r.to_im_name) || otherIm || "—"}</td>
+                          <td>
+                            <span style={{
+                              display: "inline-block", padding: "3px 10px", borderRadius: 999,
+                              fontSize: "0.7rem", fontWeight: 700,
+                              background: tone.bg, color: tone.fg, border: `1px solid ${tone.bd}`,
+                            }}>
+                              {r.request_status}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: "0.82rem", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.reason || ""}>
+                            {r.reason || "—"}
+                          </td>
+                          <td style={{ fontSize: "0.78rem", color: "#64748b" }}>
+                            {r.creation ? new Date(r.creation).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                          </td>
+                          <td>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "nowrap" }}>
+                              {tab === "incoming" && r.request_status === "Pending Source IM" && (
+                                <button type="button" className="btn-primary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} disabled={actionBusy} onClick={() => openRespondModal(r)}>
+                                  Respond
+                                </button>
+                              )}
+                              {tab === "outgoing" && r.request_status === "Pending Source IM" && (
+                                <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px", color: "#b91c1c" }} disabled={actionBusy} onClick={() => doCancel(r)}>
+                                  Cancel
+                                </button>
+                              )}
+                              {(r.source_im_remark || r.pm_remark) && (
+                                <span title={`Source IM: ${r.source_im_remark || "—"}\nPM: ${r.pm_remark || "—"}`} style={{ fontSize: "0.7rem", color: "#94a3b8", cursor: "help" }}>
+                                  ℹ remarks
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              );
+            })()
           )}
         </DataTableWrapper>
       </div>
+
+      {/* ── Request Transfer modal ──────────────────────────── */}
+      {requestTarget && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => !actionBusy && setRequestTarget(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(480px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Request team transfer</h3>
+            <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 14 }}>
+              Request to transfer <strong>{requestTarget.team_name || requestTarget.name}</strong>
+              {" "}from{" "}
+              <strong>{imLabels[requestTarget.im] || requestTarget.im || "—"}</strong>{" "}to{" "}
+              <strong>you</strong>.
+            </div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Reason (optional)</label>
+            <textarea
+              value={requestReason}
+              onChange={(e) => setRequestReason(e.target.value)}
+              rows={3}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontSize: "0.84rem", fontFamily: "inherit", resize: "vertical" }}
+            />
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
+              <button type="button" className="btn-secondary" disabled={actionBusy} onClick={() => setRequestTarget(null)}>Cancel</button>
+              <button type="button" className="btn-primary" disabled={actionBusy} onClick={submitRequest}>
+                {actionBusy ? "Submitting…" : "Submit request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Source-IM Respond modal ─────────────────────────── */}
+      {respondTarget && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => !actionBusy && setRespondTarget(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(480px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Respond to allocation request</h3>
+            <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 14 }}>
+              <strong>{respondTarget.to_im_name || respondTarget.to_im}</strong> is requesting{" "}
+              <strong>{respondTarget.team_name || respondTarget.team}</strong> from you.
+              {respondTarget.reason && (
+                <div style={{ marginTop: 8, padding: "8px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.82rem", color: "#334155", whiteSpace: "pre-wrap" }}>
+                  <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", marginBottom: 2 }}>REASON</div>
+                  {respondTarget.reason}
+                </div>
+              )}
+            </div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Remark (optional)</label>
+            <textarea
+              value={respondRemark}
+              onChange={(e) => setRespondRemark(e.target.value)}
+              rows={3}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontSize: "0.84rem", fontFamily: "inherit", resize: "vertical" }}
+            />
+            <div style={{ display: "flex", gap: 10, justifyContent: "space-between", marginTop: 14 }}>
+              <button type="button" className="btn-secondary" disabled={actionBusy} onClick={() => setRespondTarget(null)}>Close</button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button type="button" className="btn-secondary" style={{ color: "#b91c1c" }} disabled={actionBusy} onClick={() => submitRespond("reject")}>
+                  {actionBusy ? "…" : "Reject"}
+                </button>
+                <button type="button" className="btn-primary" disabled={actionBusy} onClick={() => submitRespond("accept")}>
+                  {actionBusy ? "…" : "Accept (forward to PM)"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => !editBusy && setEditRow(null)}>

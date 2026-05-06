@@ -10140,3 +10140,324 @@ def get_po_archive_import_status(log_name):
     ) or {}
     row["log_name"] = log_name
     return row
+
+
+# ---------------------------------------------------------------------------
+# Team Allocation Request — IM-to-IM transfer with PM approval
+#
+# Lifecycle:
+#   Pending Source IM → (source IM accept) → Pending PM Approval
+#                     → (source IM reject) → Rejected by Source IM (terminal)
+#   Pending Source IM → (requester cancel)  → Cancelled (terminal)
+#   Pending PM Approval → (PM approve) → Approved (terminal, atomic flip)
+#   Pending PM Approval → (PM reject)  → Rejected by PM (terminal)
+#
+# The atomic flip is a single SQL UPDATE on `INET Team.im` plus the status
+# bump in the same transaction so a race (two concurrent approvals on
+# different requests for the same team) can't leak a half-applied state.
+# ---------------------------------------------------------------------------
+
+
+def _is_pm_role():
+    """PM-level approver: Administrator / System Manager / INET Admin.
+    INET IM alone is not enough — IMs cannot approve their own transfers."""
+    roles = set(frappe.get_roles(frappe.session.user))
+    return bool(roles & {"Administrator", "System Manager", "INET Admin"})
+
+
+def _resolve_caller_im_or_throw():
+    """Return the IM Master *document name* for the calling user. Throws
+    if the user has no INET IM role or no IM Master row links to them.
+
+    NB: must use ``im_resolved`` (the doctype name), not ``im_identifiers[0]``
+    — identifiers is a Python set of usable Link values (name / full_name /
+    email) and its order is non-deterministic, so picking [0] occasionally
+    yields the IM's full name and breaks downstream Link validation on
+    Team Allocation Request.{from_im,to_im}.
+    """
+    im_resolved, im_ids, _meta = resolve_im_for_session()
+    if not im_resolved or not frappe.db.exists("IM Master", im_resolved):
+        # Fallback: scan identifiers for one that does match a real IM Master
+        # document name. Defensive — covers edge sites where im_resolved
+        # came back empty but identifiers still has the doc name in it.
+        for cand in im_ids or []:
+            if cand and frappe.db.exists("IM Master", cand):
+                return cand
+        frappe.throw(
+            "No IM Master is linked to your user — cannot act on team requests.",
+            frappe.ValidationError,
+        )
+    return im_resolved
+
+
+def _team_allocation_serialize(name, *, as_doc=None):
+    """Return a JSON-friendly snapshot of a Team Allocation Request — used
+    by the FE list / detail views and by the action endpoints' return."""
+    d = as_doc or frappe.db.get_value(
+        "Team Allocation Request", name,
+        [
+            "name", "team", "from_im", "to_im", "requested_by",
+            "request_status", "reason", "source_im_remark", "pm_remark",
+            "responded_by", "responded_at", "approved_by", "approved_at",
+            "creation", "modified",
+        ],
+        as_dict=True,
+    )
+    if not d:
+        return None
+    # Enrich with team_name / IM names so the FE doesn't need extra lookups.
+    if d.get("team"):
+        d["team_name"] = frappe.db.get_value("INET Team", d["team"], "team_name") or d["team"]
+    for key in ("from_im", "to_im"):
+        v = d.get(key)
+        if v:
+            d[f"{key}_name"] = frappe.db.get_value("IM Master", v, "full_name") or v
+    return d
+
+
+@frappe.whitelist()
+def request_team_allocation(team, reason=None):
+    """An IM (caller) requests transfer of `team` from its current IM to
+    themselves. Captures `team.im` as `from_im` snapshot. Rejects when:
+    - caller is already the team's IM (nothing to request)
+    - team has no current IM (no source to ask)
+    - a Pending request already exists for this team
+    """
+    team = (team or "").strip()
+    if not team:
+        frappe.throw("team is required")
+    if not frappe.db.exists("INET Team", team):
+        frappe.throw(f"INET Team {team} not found")
+    caller_im = _resolve_caller_im_or_throw()
+    current_im = frappe.db.get_value("INET Team", team, "im")
+    if not current_im:
+        frappe.throw("Team has no current IM — assign one in INET Team before requesting transfer.")
+    if current_im == caller_im:
+        frappe.throw("You already own this team. Nothing to request.")
+    # Block when a non-terminal request already exists for this team.
+    existing = frappe.db.sql(
+        "SELECT name FROM `tabTeam Allocation Request` "
+        "WHERE team = %s AND request_status IN ('Pending Source IM', 'Pending PM Approval') "
+        "LIMIT 1",
+        (team,),
+    )
+    if existing:
+        frappe.throw(
+            f"A pending allocation request already exists for {team} "
+            f"({existing[0][0]}). Wait for that one to resolve before opening another."
+        )
+    doc = frappe.new_doc("Team Allocation Request")
+    doc.team = team
+    doc.from_im = current_im
+    doc.to_im = caller_im
+    doc.requested_by = frappe.session.user
+    doc.request_status = "Pending Source IM"
+    if reason:
+        doc.reason = str(reason)[:2000]
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return _team_allocation_serialize(doc.name)
+
+
+def _assert_request_caller_role(req, role):
+    """Verify the calling user has the right to take `role`'s action on
+    this request. `role` is one of: 'requester', 'source_im', 'pm'."""
+    user = frappe.session.user
+    if role == "requester":
+        if req.requested_by != user:
+            frappe.throw("Only the original requester can cancel.", frappe.PermissionError)
+        return
+    if role == "source_im":
+        # User must be the IM Master.user for from_im.
+        from_user = frappe.db.get_value("IM Master", req.from_im, "user")
+        if from_user != user and not _is_pm_role():
+            frappe.throw(
+                "Only the source IM (or a PM) can respond to this request.",
+                frappe.PermissionError,
+            )
+        return
+    if role == "pm":
+        if not _is_pm_role():
+            frappe.throw("Only a PM / Admin can approve transfers.", frappe.PermissionError)
+        return
+    frappe.throw(f"Unknown role check: {role}", frappe.ValidationError)
+
+
+@frappe.whitelist()
+def respond_team_allocation(request, action, remark=None):
+    """Source IM accepts/rejects a pending request.
+    `action` ∈ {"accept", "reject"}. On accept: status → Pending PM Approval.
+    On reject: terminal Rejected by Source IM. Atomic — done in one update."""
+    request = (request or "").strip()
+    action = (action or "").strip().lower()
+    if action not in ("accept", "reject"):
+        frappe.throw("action must be 'accept' or 'reject'")
+    req = frappe.get_doc("Team Allocation Request", request)
+    if req.request_status != "Pending Source IM":
+        frappe.throw(
+            f"Request is not awaiting the source IM (current status: {req.request_status})."
+        )
+    _assert_request_caller_role(req, "source_im")
+    new_status = "Pending PM Approval" if action == "accept" else "Rejected by Source IM"
+    updates = {
+        "request_status": new_status,
+        "responded_by": frappe.session.user,
+        "responded_at": now_datetime(),
+    }
+    if remark:
+        updates["source_im_remark"] = str(remark)[:2000]
+    frappe.db.set_value("Team Allocation Request", request, updates, update_modified=True)
+    frappe.db.commit()
+    return _team_allocation_serialize(request)
+
+
+@frappe.whitelist()
+def pm_decide_team_allocation(request, action, remark=None):
+    """PM approves or rejects a request that has cleared source IM.
+    `action` ∈ {"approve", "reject"}. On approve: atomically flip
+    INET Team.im → to_im in the same transaction as the status bump."""
+    request = (request or "").strip()
+    action = (action or "").strip().lower()
+    if action not in ("approve", "reject"):
+        frappe.throw("action must be 'approve' or 'reject'")
+    req = frappe.get_doc("Team Allocation Request", request)
+    if req.request_status != "Pending PM Approval":
+        frappe.throw(
+            f"Request is not awaiting PM approval (current status: {req.request_status})."
+        )
+    _assert_request_caller_role(req, "pm")
+
+    if action == "reject":
+        frappe.db.set_value(
+            "Team Allocation Request", request,
+            {
+                "request_status": "Rejected by PM",
+                "approved_by": frappe.session.user,
+                "approved_at": now_datetime(),
+                "pm_remark": str(remark or "")[:2000] or None,
+            },
+            update_modified=True,
+        )
+        frappe.db.commit()
+        return _team_allocation_serialize(request)
+
+    # Approve — atomic transfer. Re-read the team's current IM and only
+    # apply the flip if it still matches `from_im`. If someone else has
+    # already moved the team out from under us (e.g. an Admin edit),
+    # surface a clean error instead of silently losing the to_im change.
+    current_im = frappe.db.get_value("INET Team", req.team, "im")
+    if current_im != req.from_im:
+        frappe.throw(
+            f"Team {req.team} is no longer owned by {req.from_im} (current: {current_im}). "
+            "Reject this request and create a fresh one."
+        )
+    # Both writes share the running transaction; commit() flushes both.
+    frappe.db.set_value(
+        "INET Team", req.team, "im", req.to_im, update_modified=True,
+    )
+    frappe.db.set_value(
+        "Team Allocation Request", request,
+        {
+            "request_status": "Approved",
+            "approved_by": frappe.session.user,
+            "approved_at": now_datetime(),
+            "pm_remark": str(remark or "")[:2000] or None,
+        },
+        update_modified=True,
+    )
+    frappe.db.commit()
+    return _team_allocation_serialize(request)
+
+
+@frappe.whitelist()
+def cancel_team_allocation(request):
+    """Requester withdraws a request that's still awaiting the source IM.
+    Once the source IM has accepted, ownership of the decision moves to
+    the PM and the requester can no longer cancel."""
+    request = (request or "").strip()
+    req = frappe.get_doc("Team Allocation Request", request)
+    if req.request_status != "Pending Source IM":
+        frappe.throw(
+            "Cannot cancel — request has already moved past the source IM step."
+        )
+    _assert_request_caller_role(req, "requester")
+    frappe.db.set_value(
+        "Team Allocation Request", request,
+        {"request_status": "Cancelled"},
+        update_modified=True,
+    )
+    frappe.db.commit()
+    return _team_allocation_serialize(request)
+
+
+@frappe.whitelist()
+def list_team_allocation_requests(scope="all", status=None, limit=200):
+    """Return team allocation requests visible to the caller.
+
+    `scope` ∈ {"all", "outgoing", "incoming", "pending_pm"}.
+      - "outgoing"   — requests where caller IM is `to_im` (their requests)
+      - "incoming"   — requests where caller IM is `from_im` (decisions
+                       awaiting them)
+      - "pending_pm" — PM/Admin approval queue (status = Pending PM Approval)
+      - "all"        — all rows the caller has read access to
+    Optional `status` further filters.
+    """
+    scope = (scope or "all").strip().lower()
+    wheres = []
+    params = []
+    if scope in ("outgoing", "incoming"):
+        try:
+            caller_im = _resolve_caller_im_or_throw()
+        except Exception:
+            return []
+        col = "to_im" if scope == "outgoing" else "from_im"
+        wheres.append(f"{col} = %s")
+        params.append(caller_im)
+    elif scope == "pending_pm":
+        wheres.append("request_status = %s")
+        params.append("Pending PM Approval")
+    if status:
+        wheres.append("request_status = %s")
+        params.append(status)
+    where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+    try:
+        limit = max(1, min(int(limit or 200), 500))
+    except Exception:
+        limit = 200
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, team, from_im, to_im, requested_by, request_status,
+               reason, source_im_remark, pm_remark,
+               responded_by, responded_at, approved_by, approved_at,
+               creation, modified
+        FROM `tabTeam Allocation Request`
+        {where_sql}
+        ORDER BY modified DESC
+        LIMIT {limit}
+        """,
+        tuple(params), as_dict=True,
+    )
+    if not rows:
+        return []
+    # Batch-resolve names so the FE can render labels without per-row calls.
+    team_ids = list({r["team"] for r in rows if r.get("team")})
+    im_ids = list({i for r in rows for i in (r.get("from_im"), r.get("to_im")) if i})
+    team_labels = {}
+    if team_ids:
+        for t in frappe.db.sql(
+            "SELECT name, team_name FROM `tabINET Team` WHERE name IN %(ids)s",
+            {"ids": tuple(team_ids)}, as_dict=True,
+        ):
+            team_labels[t["name"]] = t["team_name"] or t["name"]
+    im_labels = {}
+    if im_ids:
+        for m in frappe.db.sql(
+            "SELECT name, full_name FROM `tabIM Master` WHERE name IN %(ids)s",
+            {"ids": tuple(im_ids)}, as_dict=True,
+        ):
+            im_labels[m["name"]] = m["full_name"] or m["name"]
+    for r in rows:
+        r["team_name"] = team_labels.get(r.get("team"), r.get("team"))
+        r["from_im_name"] = im_labels.get(r.get("from_im"), r.get("from_im"))
+        r["to_im_name"] = im_labels.get(r.get("to_im"), r.get("to_im"))
+    return rows

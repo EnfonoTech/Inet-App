@@ -1,0 +1,164 @@
+{
+ "actions": [],
+ "autoname": "format:TAR-{YYYY}-{#####}",
+ "creation": "2026-05-04 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "team",
+  "from_im",
+  "to_im",
+  "requested_by",
+  "request_status",
+  "column_break_p1",
+  "responded_by",
+  "responded_at",
+  "approved_by",
+  "approved_at",
+  "section_remarks",
+  "reason",
+  "source_im_remark",
+  "pm_remark"
+ ],
+ "fields": [
+  {
+   "fieldname": "team",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Team",
+   "options": "INET Team",
+   "reqd": 1
+  },
+  {
+   "fieldname": "from_im",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Source IM",
+   "options": "IM Master",
+   "read_only": 1
+  },
+  {
+   "fieldname": "to_im",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Target IM",
+   "options": "IM Master",
+   "read_only": 1
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "Pending Source IM",
+   "fieldname": "request_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending Source IM\nPending PM Approval\nApproved\nRejected by Source IM\nRejected by PM\nCancelled",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_p1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "responded_by",
+   "fieldtype": "Link",
+   "label": "Source IM User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "responded_at",
+   "fieldtype": "Datetime",
+   "label": "Source IM Decision At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "PM Decision By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_at",
+   "fieldtype": "Datetime",
+   "label": "PM Decision At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_remarks",
+   "fieldtype": "Section Break",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason (Requester)"
+  },
+  {
+   "fieldname": "source_im_remark",
+   "fieldtype": "Small Text",
+   "label": "Source IM Remark"
+  },
+  {
+   "fieldname": "pm_remark",
+   "fieldtype": "Small Text",
+   "label": "PM Remark"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-05-04 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Team Allocation Request",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

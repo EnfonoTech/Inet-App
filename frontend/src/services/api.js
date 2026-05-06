@@ -420,8 +420,14 @@ export const pmApi = {
     callCached("inet_app.api.command_center.get_doctype_fields", { doctype }, 300_000),
 
   // ── List APIs (Command Center doctypes) ────────────────────
-  listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["name", "team_id", "team_name", "im", "team_type", "team_category", "department", "status", "daily_cost", "isdp_account", "subcontractor", "field_user", "daily_cost_applies", "note"], limit_page_length: 100 }),
+  listINETTeams:     (filters) => call("frappe.client.get_list", { doctype: "INET Team", filters: filters || {}, fields: ["name", "team_id", "team_name", "im", "team_type", "team_category", "department", "status", "daily_cost", "isdp_account", "subcontractor", "field_user", "daily_cost_applies", "note"], limit_page_length: 500 }),
   getIMTeamDetail:   (name) => call("inet_app.api.command_center.get_im_team_detail", { name }),
+  // Team Allocation Request — IM-to-IM transfer with PM approval.
+  requestTeamAllocation: (team, reason)        => call("inet_app.api.command_center.request_team_allocation", { team, reason: reason || "" }),
+  respondTeamAllocation: (request, action, remark) => call("inet_app.api.command_center.respond_team_allocation", { request, action, remark: remark || "" }),
+  pmDecideTeamAllocation: (request, action, remark) => call("inet_app.api.command_center.pm_decide_team_allocation", { request, action, remark: remark || "" }),
+  cancelTeamAllocation:  (request)            => call("inet_app.api.command_center.cancel_team_allocation", { request }),
+  listTeamAllocationRequests: (scope, status) => call("inet_app.api.command_center.list_team_allocation_requests", { scope: scope || "all", status: status || "" }),
   updateIMTeam:      (name, payload) => call("inet_app.api.command_center.update_im_team", { name, payload: JSON.stringify(payload || {}) }),
   listEmployeesForPicker: (search) => call("inet_app.api.command_center.list_employees_for_picker", { search: search || "", limit: 100 }),
   listFrappeUsers:   (search) => call("frappe.client.get_list", { doctype: "User", filters: search ? [["full_name", "like", `%${search}%`]] : [["enabled", "=", 1]], fields: ["name", "full_name", "email"], limit_page_length: 50, order_by: "full_name asc" }),
