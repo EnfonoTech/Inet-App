@@ -852,11 +852,18 @@ export default function IMDispatch() {
                     ))}
                   </select>
                   <input
-                    type="number"
-                    min="0"
-                    step="0.0001"
-                    value={row.assigned_qty || ""}
-                    onChange={(e) => setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: e.target.value } : x))}
+                    // type=text + inputMode=decimal — type=number breaks
+                    // mid-decimal entry in Chrome (it reports "" while the
+                    // user is typing "0.", which clears the controlled input).
+                    type="text"
+                    inputMode="decimal"
+                    pattern="[0-9]*\.?[0-9]*"
+                    value={row.assigned_qty ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
+                      setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: v } : x));
+                    }}
                     placeholder="Qty"
                     style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
                   />

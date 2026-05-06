@@ -740,11 +740,23 @@ export default function RolloutPlanning() {
                             ))}
                         </select>
                         <input
-                          type="number"
-                          min="0"
-                          step="0.0001"
-                          value={row.assigned_qty || ""}
-                          onChange={(e) => setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: e.target.value } : x))}
+                          // Chrome's <input type="number"> wipes the value to ""
+                          // mid-decimal-entry (e.g. typing "0." returns "" via
+                          // e.target.value), which breaks the controlled input.
+                          // type=text + inputMode=decimal keeps the numeric
+                          // keyboard on mobile and lets every intermediate
+                          // string flow through naturally.
+                          type="text"
+                          inputMode="decimal"
+                          pattern="[0-9]*\.?[0-9]*"
+                          value={row.assigned_qty ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            // Allow only digits + a single dot; preserves
+                            // partial entries like "0." or "1.5".
+                            if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
+                            setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: v } : x));
+                          }}
                           placeholder="Qty"
                           style={{ ...fieldStyle, flex: 1, padding: "6px 10px" }}
                         />
