@@ -207,6 +207,7 @@ export default function IMDispatch() {
   const [dummyErr, setDummyErr] = useState(null);
   const [projectsForDummy, setProjectsForDummy] = useState([]);
   const [duidsForDummy, setDuidsForDummy] = useState([]);
+  const [duidSearch, setDuidSearch] = useState("");
   const [dummyForm, setDummyForm] = useState({ project_code: "", target_month: "", site_code: "", manager_remark: "" });
   const [mapForRow, setMapForRow] = useState(null);
   const [mapLines, setMapLines] = useState([]);
@@ -339,6 +340,7 @@ export default function IMDispatch() {
       manager_remark: "",
     });
     setDuidsForDummy([]);
+    setDuidSearch("");
     setShowDummyModal(true);
     if (!imName) {
       setProjectsForDummy([]);
@@ -361,21 +363,21 @@ export default function IMDispatch() {
     }
   }
 
-  // Lazy-load DUID Master rows for the dummy modal whenever the project
-  // changes. We don't bind by project (DUID Master may be project-agnostic),
-  // so this is a flat picker — just helpful when the IM already knows the
-  // real DUID up front.
+  // Server-side DUID search for the dummy modal. When the user types
+  // we search across ALL DUID Master rows, not just the first 500.
   useEffect(() => {
     if (!showDummyModal) return undefined;
     let cancelled = false;
+    const q = (duidSearch || "").trim();
     (async () => {
       try {
         const fields = JSON.stringify(["name", "site_name", "center_area"]);
-        const res = await fetch(
-          `/api/resource/DUID Master?fields=${encodeURIComponent(fields)}` +
-          `&limit_page_length=500&order_by=modified+desc`,
-          { credentials: "include" },
-        );
+        let url = `/api/resource/DUID Master?fields=${encodeURIComponent(fields)}` +
+          `&limit_page_length=200&order_by=modified+desc`;
+        if (q) {
+          url += `&filters=${encodeURIComponent(JSON.stringify([["name", "like", `%${q}%`]]))}`;
+        }
+        const res = await fetch(url, { credentials: "include" });
         const json = await res.json();
         if (!cancelled) setDuidsForDummy(Array.isArray(json?.data) ? json.data : []);
       } catch {
@@ -383,7 +385,7 @@ export default function IMDispatch() {
       }
     })();
     return () => { cancelled = true; };
-  }, [showDummyModal]);
+  }, [showDummyModal, duidSearch]);
 
   async function submitDummyPo() {
     if (!dummyForm.project_code) {
@@ -1060,6 +1062,7 @@ export default function IMDispatch() {
           <SearchableSelect
             value={dummyForm.site_code || ""}
             onChange={(v) => setDummyForm((f) => ({ ...f, site_code: v || "" }))}
+            onSearch={setDuidSearch}
             options={duidsForDummy.map((d) => ({
               id: d.name,
               label: d.site_name && d.site_name !== d.name ? `${d.name} — ${d.site_name}` : d.name,

@@ -23,6 +23,7 @@ export default function SearchableSelect({
   minWidth,
   disabled = false,
   multi = false,
+  onSearch,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -51,6 +52,13 @@ export default function SearchableSelect({
       .map((t) => t.trim().toLowerCase())
       .filter(Boolean);
   }, [query]);
+
+  // Debounced server-side search callback
+  useEffect(() => {
+    if (typeof onSearch !== "function") return;
+    const timer = setTimeout(() => onSearch(query), 250);
+    return () => clearTimeout(timer);
+  }, [query, onSearch]);
 
   const filtered = useMemo(() => {
     if (tokens.length === 0) return normalized;
