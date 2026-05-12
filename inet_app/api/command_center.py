@@ -5686,9 +5686,11 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Teams with at least one execution today
     active_team_rows = frappe.db.sql(
         """
-        SELECT DISTINCT team FROM `tabDaily Execution`
-        WHERE execution_date = %s
-        AND execution_status NOT IN ('Cancelled')
+        SELECT DISTINCT de.team FROM `tabDaily Execution` de
+        LEFT JOIN `tabINET Team` it ON it.name = de.team
+        WHERE de.execution_date = %s
+        AND de.execution_status NOT IN ('Cancelled')
+        AND IFNULL(it.team_category, '') != 'Backend Team'
         """,
         (today_str,),
         as_dict=True,
@@ -5696,7 +5698,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     active_teams_count = len(active_team_rows)
     active_team_ids = {r.team for r in active_team_rows}
 
-    total_teams = frappe.db.count("INET Team", {"status": "Active"})
+    total_teams = frappe.db.sql(
+        "SELECT COUNT(*) FROM `tabINET Team` WHERE IFNULL(status, 'Active') = 'Active' AND IFNULL(team_category, '') != 'Backend Team'"
+    )[0][0]
     idle_teams_count = max(0, total_teams - active_teams_count)
 
     planned_activities = frappe.db.count("Rollout Plan", {"plan_status": "Planned"})
@@ -5722,10 +5726,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )[0].cnt or 0
 
     # ---- INET KPIs ---------------------------------------------------------
-    inet_teams = frappe.get_all(
-        "INET Team",
-        filters={"team_type": "INET", "status": "Active"},
-        fields=["name", "team_id", "daily_cost", "im"],
+    inet_teams = frappe.db.sql(
+        """
+        SELECT name, team_id, daily_cost, im
+        FROM `tabINET Team`
+        WHERE status = 'Active'
+        AND team_type = 'INET'
+        AND IFNULL(team_category, '') != 'Backend Team'
+        """, as_dict=True
     )
     active_inet_teams = len(inet_teams)
 
@@ -5758,10 +5766,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_gap_today = inet_target_today - inet_achieved
 
     # ---- Subcontractor KPIs ------------------------------------------------
-    sub_teams = frappe.get_all(
-        "INET Team",
-        filters={"team_type": "SUB", "status": "Active"},
-        fields=["name", "team_id"],
+    sub_teams = frappe.db.sql(
+        """
+        SELECT name, team_id
+        FROM `tabINET Team`
+        WHERE status = 'Active'
+        AND team_type = 'SUB'
+        AND IFNULL(team_category, '') != 'Backend Team'
+        """, as_dict=True
     )
     active_sub_teams = len(sub_teams)
     # Real MTD target: sum of rollout plan target_amount for active SUB teams this month
