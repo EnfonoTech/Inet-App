@@ -5813,6 +5813,20 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_margin_sub = sub_revenue * (avg_margin_pct / 100.0)
     sub_gap = sub_target - sub_revenue
 
+    # ---- Backend Teams KPIs ------------------------------------------------
+    backend_active_teams = frappe.db.sql(
+        "SELECT COUNT(*) AS cnt FROM `tabINET Team` WHERE IFNULL(status, 'Active') = 'Active' AND IFNULL(team_category, '') = 'Backend Team'"
+    )[0][0] or 0
+
+    backend_assigned_pending = frappe.db.sql(
+        "SELECT COUNT(*) AS cnt FROM `tabPO Dispatch` WHERE subcon_status = 'Pending' AND dispatch_status = 'Backend Assigned'"
+    )[0][0] or 0
+
+    backend_completed_mtd = frappe.db.sql(
+        "SELECT COUNT(*) AS cnt FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status = 'Completed' AND subcon_completed_on BETWEEN %s AND %s",
+        (first_day, last_day)
+    )[0][0] or 0
+
     # ---- Company-level KPIs ------------------------------------------------
     company_target = inet_monthly_target + sub_target
     total_achieved = inet_achieved + sub_revenue
@@ -5993,6 +6007,11 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "sub_expense": sub_expense,
             "inet_margin_sub": inet_margin_sub,
             "sub_gap": sub_gap,
+        },
+        "backend": {
+            "active_teams": backend_active_teams,
+            "assigned_pending": backend_assigned_pending,
+            "completed_mtd": backend_completed_mtd,
         },
         "company": {
             "company_target": company_target,
@@ -8925,7 +8944,7 @@ def _assign_backend_one(role, im_identifiers, name, team, remark):
         "subcon_team": team["name"],
         "subcon_status": "Pending",
         "subcon_completed_on": None,
-        "dispatch_status": "Sub-Contracted",
+        "dispatch_status": "Backend Assigned",
     }
     if remark is not None and str(remark or "").strip():
         updates["subcon_remark"] = str(remark or "")[:8000]
@@ -8936,7 +8955,7 @@ def _assign_backend_one(role, im_identifiers, name, team, remark):
         "subcon_team": team["name"],
         "subcon_team_name": team.get("team_name") or team.get("team_id"),
         "subcon_status": "Pending",
-        "dispatch_status": "Sub-Contracted",
+        "dispatch_status": "Backend Assigned",
     }
 
 
@@ -8951,7 +8970,7 @@ def assign_backend(po_dispatch=None, po_dispatches=None, subcon_team=None, remar
         subcon_team           = <team>
         subcon_status         = 'Pending'
         subcon_completed_on   = NULL
-        dispatch_status       = 'Sub-Contracted'
+        dispatch_status       = 'Backend Assigned'
         subcon_remark         = <remark> (optional)
 
     NOTE: subcon dispatches are intentionally kept OUT of the rollout chain — no
@@ -9059,7 +9078,7 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
     updates = {
         "subcon_status": "Work Done",
         "subcon_completed_on": completed,
-        # Keep dispatch_status='Sub-Contracted' through the Work Done step. The
+        # Keep dispatch_status='Backend Assigned' through the Work Done step. The
         # subcon flow lives outside the rollout chain — same way regular rows
         # keep dispatch_status='Planned' even after Daily Execution completes.
         # Completion is conveyed by subcon_status='Work Done' and the execution
@@ -9079,7 +9098,7 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
         "poid": pd.get("poid") or name,
         "subcon_status": "Work Done",
         "subcon_completed_on": str(completed),
-        "dispatch_status": "Sub-Contracted",
+        "dispatch_status": "Backend Assigned",
     }
 
 

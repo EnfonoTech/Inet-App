@@ -78,7 +78,7 @@ export default function IMPOIntake() {
     (async () => {
       try {
         const TERMINAL_STATUSES = [
-          "Sub-Contracted", "Closed", "Cancelled", "Cancelled (in System)", "Completed",
+          "Backend Assigned", "Closed", "Cancelled", "Cancelled (in System)", "Completed",
         ];
         const filters = [
           ["im", "=", imName],
