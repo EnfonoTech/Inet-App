@@ -54,12 +54,25 @@ LEFT JOIN (
     GROUP BY rp.po_dispatch
 ) plan ON plan.po_dispatch = pd.name
 LEFT JOIN (
-    SELECT rp.po_dispatch AS po_dispatch,
-           MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
-    FROM `tabRollout Plan` rp
-    INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
-    INNER JOIN `tabWork Done` wd ON wd.execution = de.name
-    GROUP BY rp.po_dispatch
+    SELECT pd_name AS po_dispatch,
+           MAX(hit) AS confirmed
+    FROM (
+        -- Path A: Work Done linked through Daily Execution → Rollout Plan
+        SELECT rp.po_dispatch AS pd_name,
+               MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS hit
+        FROM `tabRollout Plan` rp
+        INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
+        INNER JOIN `tabWork Done` wd ON wd.execution = de.name
+        GROUP BY rp.po_dispatch
+        UNION ALL
+        -- Path B: Work Done directly linked via system_id
+        SELECT wd2.system_id AS pd_name,
+               MAX(IF(wd2.submission_status = 'Confirmation Done', 1, 0)) AS hit
+        FROM `tabWork Done` wd2
+        WHERE wd2.system_id IS NOT NULL AND wd2.system_id != ''
+        GROUP BY wd2.system_id
+    ) combined
+    GROUP BY pd_name
 ) wd_sub ON wd_sub.po_dispatch = pd.name
 LEFT JOIN `tabSubcontractor Master` sm ON sm.name = plan.subcontractor
 """
@@ -77,12 +90,25 @@ FROM `tabPO Dispatch` pd
 LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
 LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
 LEFT JOIN (
-    SELECT rp.po_dispatch AS po_dispatch,
-           MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
-    FROM `tabRollout Plan` rp
-    INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
-    INNER JOIN `tabWork Done` wd ON wd.execution = de.name
-    GROUP BY rp.po_dispatch
+    SELECT pd_name AS po_dispatch,
+           MAX(hit) AS confirmed
+    FROM (
+        -- Path A: Work Done linked through Daily Execution → Rollout Plan
+        SELECT rp.po_dispatch AS pd_name,
+               MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS hit
+        FROM `tabRollout Plan` rp
+        INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
+        INNER JOIN `tabWork Done` wd ON wd.execution = de.name
+        GROUP BY rp.po_dispatch
+        UNION ALL
+        -- Path B: Work Done directly linked via system_id
+        SELECT wd2.system_id AS pd_name,
+               MAX(IF(wd2.submission_status = 'Confirmation Done', 1, 0)) AS hit
+        FROM `tabWork Done` wd2
+        WHERE wd2.system_id IS NOT NULL AND wd2.system_id != ''
+        GROUP BY wd2.system_id
+    ) combined
+    GROUP BY pd_name
 ) wd_sub ON wd_sub.po_dispatch = pd.name
 """
 
