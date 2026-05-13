@@ -428,6 +428,11 @@ export const pmApi = {
   pmDecideTeamAllocation: (request, action, remark) => call("inet_app.api.command_center.pm_decide_team_allocation", { request, action, remark: remark || "" }),
   cancelTeamAllocation:  (request)            => call("inet_app.api.command_center.cancel_team_allocation", { request }),
   listTeamAllocationRequests: (scope, status) => call("inet_app.api.command_center.list_team_allocation_requests", { scope: scope || "all", status: status || "" }),
+  // Plan Cancel Request — IM requests PM approval to cancel a Rollout Plan.
+  requestCancelPlan:  (rolloutPlan, reason) => call("inet_app.api.command_center.request_cancel_plan", { rollout_plan: rolloutPlan, reason: reason || "" }),
+  pmDecideCancelPlan: (rolloutPlan, action, remark) => call("inet_app.api.command_center.pm_decide_cancel_plan", { rollout_plan: rolloutPlan, action, remark: remark || "" }),
+  listPendingCancelRequests: (status) => call("inet_app.api.command_center.list_pending_cancel_requests", { status: status || "" }),
+  listAllCancelRequests: () => call("inet_app.api.command_center.list_pending_cancel_requests", {}),
   updateIMTeam:      (name, payload) => call("inet_app.api.command_center.update_im_team", { name, payload: JSON.stringify(payload || {}) }),
   listEmployeesForPicker: (search) => call("inet_app.api.command_center.list_employees_for_picker", { search: search || "", limit: 100 }),
   listFrappeUsers:   (search) => call("frappe.client.get_list", { doctype: "User", filters: search ? [["full_name", "like", `%${search}%`]] : [["enabled", "=", 1]], fields: ["name", "full_name", "email"], limit_page_length: 50, order_by: "full_name asc" }),

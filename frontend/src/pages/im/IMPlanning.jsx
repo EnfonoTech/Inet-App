@@ -70,6 +70,10 @@ export default function IMPlanning() {
   const searchDebounced = useDebounced(search, 300);
   const [detailRow, setDetailRow] = useState(null);
   const [executionModalOpen, setExecutionModalOpen] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
 
   useResetOnRowLimitChange(() => {
@@ -169,6 +173,32 @@ export default function IMPlanning() {
     if (eligiblePlans.length === 0) return "None of the selected plans are in an executable status";
     if (skippedCount > 0) return `${eligiblePlans.length} of ${selected.size} plans are eligible — others will be skipped`;
     return undefined;
+  }
+
+  function canCancelPlan(p) {
+    return ["Planned", "In Execution", "Planning with Issue"].includes(p.plan_status || "")
+      && (!p.cancel_request_status || p.cancel_request_status === "None" || p.cancel_request_status === "Rejected");
+  }
+
+  function openCancelModal(p) {
+    setCancelError(null);
+    setCancelReason("");
+    setCancelTarget(p);
+  }
+
+  async function submitCancelPlan() {
+    if (!cancelTarget) return;
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await pmApi.requestCancelPlan(cancelTarget.name, cancelReason || undefined);
+      setCancelTarget(null);
+      loadPlans();
+    } catch (e) {
+      setCancelError(e?.message || "Failed to request cancellation");
+    } finally {
+      setCancelBusy(false);
+    }
   }
 
   return (
@@ -274,6 +304,7 @@ export default function IMPlanning() {
                   <th title="Remark set by PM">General</th>
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
+                  <th>Cancel</th>
                   <th>View</th>
                 </tr>
               </thead>
@@ -317,6 +348,27 @@ export default function IMPlanning() {
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.general_remark} tone="general" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.general_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.manager_remark} tone="manager" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.manager_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.team_lead_remark} tone="team_lead" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.team_lead_remark = v; }} /></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {canCancelPlan(p) ? (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: "0.72rem", padding: "4px 10px", color: "#b91c1c" }}
+                          onClick={() => openCancelModal(p)}
+                        >Cancel</button>
+                      ) : (p.cancel_request_status && p.cancel_request_status !== "None") ? (
+                        <span style={{
+                          display: "inline-block", padding: "3px 8px", borderRadius: 999,
+                          fontSize: "0.66rem", fontWeight: 700,
+                          background: p.cancel_request_status === "Approved" ? "#ecfdf5" : p.cancel_request_status === "Rejected" ? "#fef2f2" : "#eff6ff",
+                          color: p.cancel_request_status === "Approved" ? "#047857" : p.cancel_request_status === "Rejected" ? "#b91c1c" : "#1d4ed8",
+                          border: `1px solid ${p.cancel_request_status === "Approved" ? "#a7f3d0" : p.cancel_request_status === "Rejected" ? "#fecaca" : "#bfdbfe"}`,
+                          whiteSpace: "nowrap",
+                        }}>{p.cancel_request_status}</span>
+                      ) : (
+                        <span style={{ color: "#cbd5e1", fontSize: "0.72rem" }}>—</span>
+                      )}
+                    </td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
@@ -366,6 +418,52 @@ export default function IMPlanning() {
           await loadPlans();
         }}
       />
+
+      {cancelTarget && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !cancelBusy && setCancelTarget(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(440px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 14px", fontSize: "1.05rem" }}>Cancel Rollout Plan</h3>
+            {cancelError && (
+              <div className="notice error" style={{ marginBottom: 12 }}>
+                {cancelError}
+              </div>
+            )}
+            <p style={{ fontSize: "0.84rem", color: "#475569", margin: "0 0 12px" }}>
+              <strong>{cancelTarget.poid || cancelTarget.po_dispatch || cancelTarget.name}</strong>
+              {" — "}{cancelTarget.plan_status || "—"}
+              <br />
+              <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>This will be sent to a PM for approval. If approved, the dispatch reverts to Dispatched.</span>
+            </p>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>
+              Reason
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={3}
+              placeholder="e.g. site not ready, duplicate plan, wrong team…"
+              style={{
+                width: "100%", padding: 10, borderRadius: 8,
+                border: "1px solid #e2e8f0", fontSize: "0.84rem",
+                boxSizing: "border-box", resize: "vertical",
+                fontFamily: "inherit",
+              }}
+            />
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+              <button type="button" className="btn-secondary" disabled={cancelBusy} onClick={() => setCancelTarget(null)}>Back</button>
+              <button type="button" className="btn-primary" disabled={cancelBusy} onClick={submitCancelPlan} style={{ background: "#b91c1c" }}>
+                {cancelBusy ? "Submitting…" : "Request cancellation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {detailRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setDetailRow(null)}>

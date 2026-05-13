@@ -2391,7 +2391,7 @@ def _next_visit_number_for_dispatch(po_dispatch_name):
     try:
         row = frappe.db.sql(
             "SELECT COALESCE(MAX(visit_number), 0) AS max_v, COUNT(*) AS cnt "
-            "FROM `tabRollout Plan` WHERE po_dispatch = %s",
+            "FROM `tabRollout Plan` WHERE po_dispatch = %s AND plan_status != 'Cancelled'",
             (po_dispatch_name,),
             as_dict=True,
         )
@@ -6201,6 +6201,8 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                rp.team, rp.plan_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount, rp.achieved_amount,
                rp.completion_pct, rp.plan_status,
+               rp.cancel_request_status, rp.cancel_reason,
+               rp.cancel_requested_at, rp.cancel_responded_at, rp.cancel_pm_remark,
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                pd.customer AS customer, pd.item_description,
@@ -10491,4 +10493,214 @@ def list_team_allocation_requests(scope="all", status=None, limit=200):
         r["team_name"] = team_labels.get(r.get("team"), r.get("team"))
         r["from_im_name"] = im_labels.get(r.get("from_im"), r.get("from_im"))
         r["to_im_name"] = im_labels.get(r.get("to_im"), r.get("to_im"))
+    return rows
+
+
+# Rollout Plan Cancel Request — IM requests PM approval to cancel a plan
+# ---------------------------------------------------------------------------
+# Lifecycle:
+#   None → (IM requests) → Pending PM Approval
+#   Pending PM Approval → (PM approve) → Approved (plan_status=Cancelled, dispatch_status=Pending)
+#   Pending PM Approval → (PM reject)  → Rejected (no changes to plan/dispatch)
+# ---------------------------------------------------------------------------
+
+_CANCELLABLE_PLAN_STATUSES = frozenset({"Planned", "In Execution", "Planning with Issue"})
+
+
+def _serialize_plan_for_cancel(plan_name):
+    """Return a JSON-friendly snapshot of a Rollout Plan for the cancel flow."""
+    d = frappe.db.get_value(
+        "Rollout Plan", plan_name,
+        [
+            "name", "po_dispatch", "plan_status", "plan_date", "team",
+            "visit_type", "visit_number", "im", "target_amount",
+            "cancel_request_status", "cancel_reason",
+            "cancel_requested_by", "cancel_requested_at",
+            "cancel_responded_by", "cancel_responded_at", "cancel_pm_remark",
+            "modified",
+        ],
+        as_dict=True,
+    )
+    if not d:
+        return None
+    # Enrich with display names
+    if d.get("team"):
+        d["team_name"] = frappe.db.get_value("INET Team", d["team"], "team_name") or d["team"]
+    if d.get("im"):
+        d["im_name"] = frappe.db.get_value("IM Master", d["im"], "full_name") or d["im"]
+    return d
+
+
+@frappe.whitelist()
+def request_cancel_plan(rollout_plan, reason=None):
+    """IM requests cancellation of a Rollout Plan. Requires PM approval.
+
+    Allowed only when plan_status is one of: Planned, In Execution, Planning with Issue.
+    Blocks if a cancel request is already pending.
+    """
+    caller = _resolve_caller_im_or_throw()
+    if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
+        frappe.throw("Rollout Plan not found.")
+    plan = frappe.db.get_value(
+        "Rollout Plan", rollout_plan,
+        ["name", "plan_status", "cancel_request_status", "im", "po_dispatch"],
+        as_dict=True,
+    )
+    if not plan:
+        frappe.throw("Rollout Plan not found.")
+
+    if plan.plan_status not in _CANCELLABLE_PLAN_STATUSES:
+        frappe.throw(
+            f"Cannot cancel a plan in '{plan.plan_status}' status. "
+            f"Only {', '.join(sorted(_CANCELLABLE_PLAN_STATUSES))} plans can be cancelled."
+        )
+
+    if plan.cancel_request_status and plan.cancel_request_status != "None" and plan.cancel_request_status != "Rejected":
+        frappe.throw(f"A cancel request is already {plan.cancel_request_status} for this plan.")
+
+    # Block if any Daily Execution is actively in progress
+    active_de = frappe.db.sql(
+        "SELECT COUNT(*) AS cnt FROM `tabDaily Execution` WHERE rollout_plan = %s AND execution_status = 'In Progress'",
+        rollout_plan,
+    )[0][0] or 0
+
+    if active_de > 0:
+        frappe.throw(
+            f"Cannot cancel: {active_de} Daily Execution row(s) are still 'In Progress'. "
+            "Complete or individually cancel them first."
+        )
+
+    now = now_datetime()
+    frappe.db.set_value("Rollout Plan", rollout_plan, {
+        "cancel_request_status": "Pending PM Approval",
+        "cancel_reason": (reason or "").strip()[:8000] if reason else None,
+        "cancel_requested_by": frappe.session.user,
+        "cancel_requested_at": now,
+        "cancel_responded_by": None,
+        "cancel_responded_at": None,
+        "cancel_pm_remark": None,
+    }, update_modified=True)
+
+    return _serialize_plan_for_cancel(rollout_plan)
+
+
+@frappe.whitelist()
+def pm_decide_cancel_plan(rollout_plan, action, remark=None):
+    """PM approves or rejects a cancel plan request.
+
+    On approve: Rollout Plan → Cancelled, linked PO Dispatch → Pending.
+    On reject: cancel_request_status → Rejected, plan stays as-is.
+    """
+    if not _is_pm_role():
+        frappe.throw("Only a PM / Admin can decide cancel plan requests.", frappe.PermissionError)
+
+    if action not in ("approve", "reject"):
+        frappe.throw("action must be 'approve' or 'reject'")
+
+    if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
+        frappe.throw("Rollout Plan not found.")
+
+    plan = frappe.db.get_value(
+        "Rollout Plan", rollout_plan,
+        ["name", "plan_status", "cancel_request_status", "po_dispatch"],
+        as_dict=True,
+    )
+    if not plan:
+        frappe.throw("Rollout Plan not found.")
+
+    if plan.cancel_request_status != "Pending PM Approval":
+        frappe.throw(
+            f"Cancel request is '{plan.cancel_request_status}', not 'Pending PM Approval'."
+        )
+
+    now = now_datetime()
+
+    if action == "reject":
+        frappe.db.set_value("Rollout Plan", rollout_plan, {
+            "cancel_request_status": "Rejected",
+            "cancel_responded_by": frappe.session.user,
+            "cancel_responded_at": now,
+            "cancel_pm_remark": (remark or "").strip()[:8000] if remark else None,
+        }, update_modified=True)
+        return _serialize_plan_for_cancel(rollout_plan)
+
+    # Approve — atomic: cancel plan + revert PO Dispatch
+    po_dispatch_name = plan.po_dispatch
+    frappe.db.set_value("Rollout Plan", rollout_plan, {
+        "plan_status": "Cancelled",
+        "cancel_request_status": "Approved",
+        "cancel_responded_by": frappe.session.user,
+        "cancel_responded_at": now,
+        "cancel_pm_remark": (remark or "").strip()[:8000] if remark else None,
+    }, update_modified=True)
+
+    if po_dispatch_name and frappe.db.exists("PO Dispatch", po_dispatch_name):
+        cur_status = frappe.db.get_value("PO Dispatch", po_dispatch_name, "dispatch_status")
+        if cur_status == "Planned":
+            frappe.db.set_value("PO Dispatch", po_dispatch_name, "dispatch_status", "Dispatched")
+
+    frappe.db.commit()
+
+    return _serialize_plan_for_cancel(rollout_plan)
+
+
+@frappe.whitelist()
+def list_pending_cancel_requests(status=None):
+    """Return Rollout Plans with cancel requests.
+
+    status=None → all non-None cancel requests (for PM history)
+    status="Pending PM Approval" → only pending (for PM badge / pending tab)
+    """
+    if not _is_pm_role():
+        frappe.throw("Only a PM / Admin can view cancel plan requests.", frappe.PermissionError)
+
+    filters = [("cancel_request_status", "!=", "None")]
+    if status:
+        filters.append(("cancel_request_status", "=", status))
+
+    rows = frappe.db.get_all(
+        "Rollout Plan",
+        filters=filters,
+        fields=[
+            "name", "po_dispatch", "plan_status", "plan_date", "team",
+            "visit_type", "visit_number", "im", "target_amount",
+            "cancel_request_status", "cancel_reason",
+            "cancel_requested_by", "cancel_requested_at",
+            "cancel_responded_by", "cancel_responded_at", "cancel_pm_remark",
+            "modified",
+        ],
+        order_by="modified desc",
+        limit=200,
+    )
+
+    # Enrich with display names and PO Dispatch poid
+    po_dispatch_ids = list({r.get("po_dispatch") for r in rows if r.get("po_dispatch")})
+    team_ids = list({r.get("team") for r in rows if r.get("team")})
+    im_ids = list({r.get("im") for r in rows if r.get("im")})
+    poid_map = {}
+    team_labels = {}
+    im_labels = {}
+    if po_dispatch_ids:
+        for pd in frappe.db.sql(
+            "SELECT name, COALESCE(NULLIF(poid, ''), name) AS poid FROM `tabPO Dispatch` WHERE name IN %(ids)s",
+            {"ids": tuple(po_dispatch_ids)}, as_dict=True,
+        ):
+            poid_map[pd["name"]] = pd["poid"]
+    if team_ids:
+        for t in frappe.db.sql(
+            "SELECT name, team_name FROM `tabINET Team` WHERE name IN %(ids)s",
+            {"ids": tuple(team_ids)}, as_dict=True,
+        ):
+            team_labels[t["name"]] = t["team_name"] or t["name"]
+    if im_ids:
+        for m in frappe.db.sql(
+            "SELECT name, full_name FROM `tabIM Master` WHERE name IN %(ids)s",
+            {"ids": tuple(im_ids)}, as_dict=True,
+        ):
+            im_labels[m["name"]] = m["full_name"] or m["name"]
+    for r in rows:
+        r["team_name"] = team_labels.get(r.get("team"), r.get("team"))
+        r["im_name"] = im_labels.get(r.get("im"), r.get("im"))
+        r["poid"] = poid_map.get(r.get("po_dispatch"), r.get("po_dispatch"))
+
     return rows

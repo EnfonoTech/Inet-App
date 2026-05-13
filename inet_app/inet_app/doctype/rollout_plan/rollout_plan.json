@@ -26,7 +26,16 @@
   "teams",
   "section_break_ceaq",
   "issue_category",
-  "issue_remarks"
+  "issue_remarks",
+  "section_break_cncl",
+  "cancel_request_status",
+  "cancel_reason",
+  "column_break_cncl",
+  "cancel_requested_by",
+  "cancel_requested_at",
+  "cancel_responded_by",
+  "cancel_responded_at",
+  "cancel_pm_remark"
  ],
  "fields": [
   {
@@ -162,6 +171,63 @@
   {
    "fieldname": "section_break_ceaq",
    "fieldtype": "Section Break"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.cancel_request_status && doc.cancel_request_status !== 'None'",
+   "fieldname": "section_break_cncl",
+   "fieldtype": "Section Break",
+   "label": "Cancel Request"
+  },
+  {
+   "default": "None",
+   "fieldname": "cancel_request_status",
+   "fieldtype": "Select",
+   "label": "Cancel Request Status",
+   "options": "None\nPending PM Approval\nApproved\nRejected",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_reason",
+   "fieldtype": "Small Text",
+   "label": "Cancel Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_cncl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cancel_requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_requested_at",
+   "fieldtype": "Datetime",
+   "label": "Requested At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_responded_by",
+   "fieldtype": "Link",
+   "label": "Responded By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_responded_at",
+   "fieldtype": "Datetime",
+   "label": "Responded At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_pm_remark",
+   "fieldtype": "Small Text",
+   "label": "PM Remark",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

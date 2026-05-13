@@ -30,10 +30,16 @@ export default function TeamAllocationApprovals() {
     setLoading(true);
     setErr(null);
     try {
-      // Fetch full history; we filter client-side per tab so the count
-      // pill on "Pending" is accurate without an extra round-trip.
-      const list = await pmApi.listTeamAllocationRequests("all");
-      setRows(Array.isArray(list) ? list : []);
+      const [teamList, cancelList] = await Promise.all([
+        pmApi.listTeamAllocationRequests("all"),
+        pmApi.listAllCancelRequests(),
+      ]);
+      const all = [
+        ...(Array.isArray(teamList) ? teamList : []).map((r) => ({ ...r, _type: "team" })),
+        ...(Array.isArray(cancelList) ? cancelList : []).map((r) => ({ ...r, _type: "cancel" })),
+      ];
+      all.sort((a, b) => new Date(b.cancel_requested_at || b.creation || 0) - new Date(a.cancel_requested_at || a.creation || 0));
+      setRows(all);
     } catch (e) {
       setErr(e?.message || "Failed to load requests");
     } finally {
@@ -55,8 +61,13 @@ export default function TeamAllocationApprovals() {
     setBusy(true);
     setErr(null);
     try {
-      await pmApi.pmDecideTeamAllocation(decideTarget.name, decideAction, decideRemark);
-      setMsg(`Request ${decideAction === "approve" ? "approved — team transferred" : "rejected"}.`);
+      if (decideTarget._type === "cancel") {
+        await pmApi.pmDecideCancelPlan(decideTarget.name, decideAction, decideRemark);
+        setMsg(`Plan cancellation ${decideAction === "approve" ? "approved" : "rejected"}.`);
+      } else {
+        await pmApi.pmDecideTeamAllocation(decideTarget.name, decideAction, decideRemark);
+        setMsg(`Request ${decideAction === "approve" ? "approved — team transferred" : "rejected"}.`);
+      }
       setDecideTarget(null);
       await load();
       window.dispatchEvent(new Event("inet:approvals-changed"));
@@ -67,8 +78,12 @@ export default function TeamAllocationApprovals() {
     }
   }
 
-  const pending = rows.filter((r) => r.request_status === "Pending PM Approval");
-  const history = rows.filter((r) => r.request_status !== "Pending PM Approval");
+  function getStatus(row) {
+    return row._type === "cancel" ? row.cancel_request_status : row.request_status;
+  }
+
+  const pending = rows.filter((r) => getStatus(r) === "Pending PM Approval");
+  const history = rows.filter((r) => getStatus(r) !== "Pending PM Approval");
   const visible = tab === "pending" ? pending : history;
 
   return (
@@ -146,88 +161,87 @@ export default function TeamAllocationApprovals() {
               <div className="empty-icon">📨</div>
               <h3>{tab === "pending" ? "No requests awaiting your approval" : "No history yet"}</h3>
               <p>{tab === "pending"
-                ? "When a source IM accepts a transfer request, it lands here for PM sign-off."
-                : "Approved, rejected and cancelled requests show up here for audit."}</p>
+                ? "When a request needs PM sign-off, it lands here."
+                : "Approved and rejected requests show up here for audit."}</p>
             </div>
           ) : (
             <table className="data-table">
               <thead>
                 <tr>
-                  <th style={{ whiteSpace: "nowrap" }}>Type</th>
-                  <th style={{ whiteSpace: "nowrap" }}>Request</th>
-                  <th style={{ whiteSpace: "nowrap" }}>Subject</th>
-                  <th style={{ whiteSpace: "nowrap" }}>From</th>
-                  <th style={{ whiteSpace: "nowrap" }}>To</th>
-                  <th style={{ whiteSpace: "nowrap" }}>Status</th>
+                  <th>Type</th>
+                  <th>Request</th>
+                  <th>Subject</th>
+                  <th>Details</th>
+                  <th>Status</th>
                   <th style={{ minWidth: 220 }}>Reason</th>
-                  <th style={{ minWidth: 220 }}>Source IM Remark</th>
                   <th style={{ minWidth: 220 }}>PM Remark</th>
-                  <th style={{ whiteSpace: "nowrap" }}>Raised</th>
-                  <th style={{ whiteSpace: "nowrap", minWidth: 180 }}>Actions</th>
+                  <th>Raised</th>
+                  <th style={{ minWidth: 180 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((r) => {
-                  const tone = statusTone(r.request_status);
-                  const noteCellStyle = {
-                    fontSize: "0.78rem", color: "#475569",
-                    maxWidth: 280, whiteSpace: "nowrap",
-                    overflow: "hidden", textOverflow: "ellipsis",
-                  };
+                  const isCancel = r._type === "cancel";
+                  const statusField = isCancel ? r.cancel_request_status : r.request_status;
+                  const tone = statusTone(statusField);
+                  const noteCellStyle = { fontSize: "0.78rem", color: "#475569", maxWidth: 280, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+                  const isPending = statusField === "Pending PM Approval";
                   return (
-                    <tr key={r.name}>
+                    <tr key={`${r._type}-${r.name}`}>
                       <td>
                         <span style={{
                           display: "inline-block", padding: "2px 8px", borderRadius: 999,
-                          background: "#eef2ff", color: "#3730a3",
-                          border: "1px solid #c7d2fe", fontSize: "0.66rem", fontWeight: 700,
-                          whiteSpace: "nowrap",
-                        }}>Team Transfer</span>
+                          background: isCancel ? "#ecfdf5" : "#eef2ff",
+                          color: isCancel ? "#047857" : "#3730a3",
+                          border: `1px solid ${isCancel ? "#a7f3d0" : "#c7d2fe"}`,
+                          fontSize: "0.66rem", fontWeight: 700, whiteSpace: "nowrap",
+                        }}>{isCancel ? "Plan Cancel" : "Team Transfer"}</span>
                       </td>
                       <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.76rem", whiteSpace: "nowrap" }}>{r.name}</td>
                       <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.team_name || r.team || "—"}</td>
-                      <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{r.from_im_name || r.from_im || "—"}</td>
-                      <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{r.to_im_name || r.to_im || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {isCancel ? (
+                          <>Plan: {r.plan_status || "—"} · {r.plan_date || "—"} · IM: {r.im_name || r.im || "—"} · PO: {r.poid || r.po_dispatch || "—"}</>
+                        ) : (
+                          <>{r.from_im_name || r.from_im || "—"} → {r.to_im_name || r.to_im || "—"}</>
+                        )}
+                      </td>
                       <td>
                         <span style={{
                           display: "inline-block", padding: "3px 10px", borderRadius: 999,
-                          fontSize: "0.7rem", fontWeight: 700,
+                          fontSize: "0.7rem", fontWeight: 700, whiteSpace: "nowrap",
                           background: tone.bg, color: tone.fg, border: `1px solid ${tone.bd}`,
-                          whiteSpace: "nowrap",
-                        }}>
-                          {r.request_status}
-                        </span>
+                        }}>{statusField}</span>
                       </td>
-                      <td style={noteCellStyle} title={r.reason || ""}>
-                        {r.reason || <span style={{ color: "#cbd5e1" }}>—</span>}
+                      <td style={noteCellStyle} title={r.cancel_reason || r.reason || ""}>
+                        {r.cancel_reason || r.reason || <span style={{ color: "#cbd5e1" }}>—</span>}
                       </td>
-                      <td style={{ ...noteCellStyle, color: r.source_im_remark ? "#92400e" : "#cbd5e1" }} title={r.source_im_remark || ""}>
-                        {r.source_im_remark || "—"}
-                      </td>
-                      <td style={{ ...noteCellStyle, color: r.pm_remark ? "#1d4ed8" : "#cbd5e1" }} title={r.pm_remark || ""}>
-                        {r.pm_remark || "—"}
+                      <td style={{ ...noteCellStyle, color: r.cancel_pm_remark || r.pm_remark ? "#1d4ed8" : "#cbd5e1" }} title={r.cancel_pm_remark || r.pm_remark || ""}>
+                        {r.cancel_pm_remark || r.pm_remark || "—"}
                       </td>
                       <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
-                        {r.creation ? new Date(r.creation).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        {r.cancel_requested_at || r.creation
+                          ? new Date(r.cancel_requested_at || r.creation).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                          : "—"}
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>
+                      <td>
                         <div style={{ display: "flex", gap: 6, flexWrap: "nowrap" }}>
-                          {r.request_status === "Pending PM Approval" ? (
+                          {isPending ? (
                             <>
                               <button type="button" className="btn-primary"
                                 style={{ fontSize: "0.72rem", padding: "4px 10px", background: "#059669" }}
-                                disabled={busy} onClick={() => openDecide(r, "approve")}>
-                                Approve
-                              </button>
+                                disabled={busy} onClick={() => openDecide(r, "approve")}>Approve</button>
                               <button type="button" className="btn-secondary"
                                 style={{ fontSize: "0.72rem", padding: "4px 10px", color: "#b91c1c" }}
-                                disabled={busy} onClick={() => openDecide(r, "reject")}>
-                                Reject
-                              </button>
+                                disabled={busy} onClick={() => openDecide(r, "reject")}>Reject</button>
                             </>
                           ) : (
                             <span style={{ fontSize: "0.74rem", color: "#94a3b8" }}>
-                              {r.approved_at ? `decided ${new Date(r.approved_at).toLocaleDateString("en", { month: "short", day: "numeric" })}` : "—"}
+                              {r.cancel_responded_at
+                                ? `decided ${new Date(r.cancel_responded_at).toLocaleDateString("en", { month: "short", day: "numeric" })}`
+                                : r.approved_at
+                                  ? `decided ${new Date(r.approved_at).toLocaleDateString("en", { month: "short", day: "numeric" })}`
+                                  : "—"}
                             </span>
                           )}
                         </div>
@@ -246,20 +260,37 @@ export default function TeamAllocationApprovals() {
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => !busy && setDecideTarget(null)}>
           <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 12px", fontSize: "1.05rem" }}>
-              {decideAction === "approve" ? "Approve" : "Reject"} team transfer
+              {decideAction === "approve" ? "Approve" : "Reject"} {decideTarget._type === "cancel" ? "plan cancellation" : "team transfer"}
             </h3>
             <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 12 }}>
-              <strong>{decideTarget.from_im_name || decideTarget.from_im}</strong> → <strong>{decideTarget.to_im_name || decideTarget.to_im}</strong>
-              <br />
-              Team: <strong>{decideTarget.team_name || decideTarget.team}</strong>
+              {decideTarget._type === "cancel" ? (
+                <>
+                  <strong>{decideTarget.poid || decideTarget.po_dispatch || decideTarget.name}</strong>
+                  {" — "}{decideTarget.plan_status || "—"}
+                  <br />
+                  Team: <strong>{decideTarget.team_name || decideTarget.team || "—"}</strong>
+                  {decideTarget.im_name && <> · IM: <strong>{decideTarget.im_name}</strong></>}
+                  {decideAction === "approve" && (
+                    <div style={{ marginTop: 8, padding: "6px 10px", background: "#fef2f2", borderRadius: 6, fontSize: "0.78rem", color: "#b91c1c" }}>
+                      This will cancel the plan and return the PO Dispatch to <strong>Dispatched</strong>.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <strong>{decideTarget.from_im_name || decideTarget.from_im}</strong> → <strong>{decideTarget.to_im_name || decideTarget.to_im}</strong>
+                  <br />
+                  Team: <strong>{decideTarget.team_name || decideTarget.team}</strong>
+                </>
+              )}
             </div>
-            {decideTarget.reason && (
+            {(decideTarget.cancel_reason || decideTarget.reason) && (
               <div style={{ marginBottom: 10, padding: "8px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.82rem", color: "#334155", whiteSpace: "pre-wrap" }}>
-                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", marginBottom: 2 }}>REQUESTER REASON</div>
-                {decideTarget.reason}
+                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", marginBottom: 2 }}>REASON</div>
+                {decideTarget.cancel_reason || decideTarget.reason}
               </div>
             )}
-            {decideTarget.source_im_remark && (
+            {decideTarget._type !== "cancel" && decideTarget.source_im_remark && (
               <div style={{ marginBottom: 10, padding: "8px 10px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.82rem", color: "#92400e", whiteSpace: "pre-wrap" }}>
                 <div style={{ fontSize: "0.66rem", fontWeight: 700, marginBottom: 2 }}>SOURCE IM REMARK</div>
                 {decideTarget.source_im_remark}
@@ -281,7 +312,7 @@ export default function TeamAllocationApprovals() {
                 onClick={submitDecide}
                 style={decideAction === "approve" ? { background: "#059669" } : { background: "#b91c1c" }}
               >
-                {busy ? "…" : (decideAction === "approve" ? "Approve transfer" : "Reject")}
+                {busy ? "…" : (decideAction === "approve" ? (decideTarget._type === "cancel" ? "Approve cancellation" : "Approve transfer") : "Reject")}
               </button>
             </div>
           </div>
