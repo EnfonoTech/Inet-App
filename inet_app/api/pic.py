@@ -902,6 +902,14 @@ def list_invoice_tracker_rows(filters=None, limit=500):
             wheres.append(clause)
             params.extend(cparams)
 
+    # Hide lines where MS1 is done AND (MS2 done or MS2 has no amount) —
+    # nothing left for PIC to invoice on this PO line.
+    wheres.append(
+        "NOT (pd.pic_status IN ('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
+        " AND (pd.pic_status_ms2 IN ('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
+        "      OR IFNULL(pd.ms2_amount, 0) = 0))"
+    )
+
     # Check if Sales Invoice Item has the poid column (accounting dimension)
     si_join = ""
     si_cols = "NULL AS linked_invoice, NULL AS linked_invoice_status"
