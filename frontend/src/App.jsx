@@ -36,6 +36,7 @@ import IMPOIntake from "./pages/im/IMPOIntake";
 import IMBackend from "./pages/im/IMBackend";
 import PICDashboard from "./pages/pic/PICDashboard";
 import PICTracker from "./pages/pic/PICTracker";
+import InvoiceTracker from "./pages/pic/InvoiceTracker";
 import PICReports from "./pages/pic/PICReports";
 import IMWorkDone from "./pages/im/IMWorkDone";
 import IMIssuesRisks from "./pages/im/IMIssuesRisks";
@@ -150,6 +151,7 @@ function AppContent() {
           <>
             <Route path="/pic-dashboard" element={<PICDashboard />} />
             <Route path="/pic-tracker" element={<PICTracker />} />
+            <Route path="/pic-invoice-tracker" element={<InvoiceTracker />} />
             <Route path="/pic-reports" element={<PICReports />} />
           </>
         )}
@@ -158,6 +160,7 @@ function AppContent() {
           <>
             <Route path="/pic-dashboard" element={<PICDashboard />} />
             <Route path="/pic-tracker" element={<PICTracker />} />
+            <Route path="/pic-invoice-tracker" element={<InvoiceTracker />} />
             <Route path="/pic-reports" element={<PICReports />} />
           </>
         )}

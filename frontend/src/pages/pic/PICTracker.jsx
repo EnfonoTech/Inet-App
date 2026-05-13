@@ -19,8 +19,6 @@ const PIC_STATUSES = [
   "I-BUY Rejected",
   "ISDP Rejected",
   "Ready for Invoice",
-  "Commercial Invoice Submitted",
-  "Commercial Invoice Closed",
   "PO Need to Cancel",
   "PO Line Canceled",
 ];

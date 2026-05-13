@@ -127,10 +127,53 @@ def _ensure_inet_roles():
             doc = frappe.get_doc({
                 "doctype": "Role",
                 "role_name": role_name,
-                "desk_access": 0,
+                "desk_access": 1 if role_name == "INET PIC" else 0,
             })
             doc.insert(ignore_permissions=True)
         except Exception:
             # Best-effort: don't fail migrate if a role can't be created.
             pass
     frappe.db.commit()
+
+    # Grant desk access to existing PIC role
+    frappe.db.set_value("Role", "INET PIC", "desk_access", 1)
+
+    # Grant INET PIC role access to Sales Invoice doctype for invoicing
+    _ensure_pic_permissions()
+
+
+def _ensure_pic_permissions():
+    """Grant INET PIC role the permissions needed for invoice creation."""
+    role = "INET PIC"
+    if not frappe.db.exists("Role", role):
+        return
+
+    # Doctypes PIC needs access to
+    doctypes = [
+        ("Sales Invoice", ("read", "write", "create")),
+        ("Sales Invoice Item", ("read", "write", "create")),
+        ("Sales Taxes and Charges", ("read",)),
+        ("Sales Taxes and Charges Template", ("read",)),
+        ("Customer", ("read",)),
+        ("Item", ("read",)),
+    ]
+
+    for dt_name, perms in doctypes:
+        if not frappe.db.exists("DocType", dt_name):
+            continue
+        for perm_level in perms:
+            if frappe.db.exists("Custom DocPerm", {"parent": dt_name, "role": role}):
+                frappe.db.set_value("Custom DocPerm", {"parent": dt_name, "role": role}, perm_level, 1)
+            else:
+                try:
+                    dp = frappe.get_doc({
+                        "doctype": "Custom DocPerm",
+                        "parent": dt_name,
+                        "role": role,
+                        perm_level: 1,
+                    })
+                    dp.insert(ignore_permissions=True)
+                except Exception:
+                    pass
+    frappe.db.commit()
+

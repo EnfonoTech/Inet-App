@@ -132,6 +132,9 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         ph = ", ".join(["%s"] * len(pic_vals))
         where.append(f"({_PIC_INITIAL_RULE_SQL.strip()}) IN ({ph})")
         params.extend(pic_vals)
+    else:
+        # Default: hide "Work Not Done" — PIC only sees lines ready for processing.
+        where.append(f"({_PIC_INITIAL_RULE_SQL.strip()}) != 'Work Not Done'")
 
     pic_ms2_vals = _ensure_list(pf.get("pic_status_ms2"))
     if pic_ms2_vals:
@@ -846,3 +849,352 @@ def get_pic_capability():
         "is_pic": bool(roles & {"INET PIC"}),
         "is_admin": bool(roles & {"Administrator", "System Manager", "INET Admin"}),
     }
+
+
+# ── Invoice Tracker ───────────────────────────────────────────────────
+INVOICE_TRACKER_STATUSES = (
+    "Ready for Invoice",
+    "Commercial Invoice Submitted",
+    "Commercial Invoice Closed",
+)
+
+
+@frappe.whitelist()
+def list_invoice_tracker_rows(filters=None, limit=500):
+    """Rows for the Invoice Tracker page — only lines in invoicing-stage statuses."""
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters)
+    filters = filters or {}
+    lim = _portal_row_limit(limit, 500)
+
+    status_vals = _ensure_list(filters.get("pic_status"))
+    if not status_vals:
+        status_vals = list(INVOICE_TRACKER_STATUSES)
+
+    wheres = ["pd.pic_status IN ({})".format(", ".join(["%s"] * len(status_vals)))]
+    params = list(status_vals)
+
+    # Optional filters
+    for col, key in (
+        ("IFNULL(pd.project_code,'')", "project_code"),
+        ("IFNULL(pd.site_code,'')", "site_code"),
+    ):
+        clause, p = _sql_in_or_eq(col, filters.get(key))
+        if clause:
+            wheres.append(clause)
+            params.extend(p)
+
+    if filters.get("search") or filters.get("q"):
+        concat_expr = (
+            "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''),"
+            " IFNULL(pd.item_code,''), IFNULL(pd.project_code,''),"
+            " IFNULL(pd.site_code,''), IFNULL(pd.customer,''),"
+            " IFNULL(pd.pic_status,''), IFNULL(pd.isdp_ibuy_owner,''))"
+        )
+        clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "")
+        if clause:
+            wheres.append(clause)
+            params.extend(cparams)
+
+    # Check if Sales Invoice Item has the poid column (accounting dimension)
+    si_join = ""
+    si_cols = "NULL AS linked_invoice, NULL AS linked_invoice_status"
+    if frappe.db.has_column("Sales Invoice Item", "poid"):
+        si_join = (
+            "LEFT JOIN `tabSales Invoice Item` sii ON sii.poid = pd.name "
+            "LEFT JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus < 2"
+        )
+        si_cols = (
+            "si.name AS linked_invoice, "
+            "CASE WHEN si.docstatus = 1 THEN 'Submitted' "
+            "WHEN si.docstatus = 0 THEN 'Draft' ELSE NULL END AS linked_invoice_status"
+        )
+
+    where_str = " AND ".join(wheres)
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.name, pd.poid, pd.po_no, pd.project_code, pd.customer,
+               pd.item_code, pd.item_description, pd.site_code, pd.site_name,
+               pd.qty, pd.rate, pd.line_amount, pd.dispatch_status,
+               pd.pic_status, pd.pic_status_ms2,
+               pd.ms1_amount, pd.ms1_invoiced, pd.ms1_unbilled,
+               pd.ms2_amount, pd.ms2_invoiced, pd.ms2_unbilled,
+               pd.ms1_applied_date, pd.ms1_invoice_month, pd.ms1_ibuy_inv_date,
+               pd.ms2_applied_date, pd.ms2_invoice_month, pd.ms2_ibuy_inv_date,
+               pd.sqc_status, pd.pat_status, pd.isdp_ibuy_owner,
+               pd.payment_terms, pd.tax_rate,
+               pd.ms1_payment_received_date, pd.ms2_payment_received_date,
+               pd.subcon_pct_ms1, pd.inet_pct_ms1,
+               pd.subcon_pct_ms2, pd.inet_pct_ms2,
+               pd.modified,
+               {si_cols}
+        FROM `tabPO Dispatch` pd
+        {si_join}
+        WHERE {where_str}
+        GROUP BY pd.name
+        ORDER BY pd.modified DESC
+        {_sql_limit_suffix(lim)}
+        """,
+        tuple(params),
+        as_dict=True,
+    )
+    return rows or []
+
+
+@frappe.whitelist()
+@frappe.whitelist()
+def create_sales_invoice_from_pic(po_dispatch=None, milestone="MS1"):
+    """Create an ERPNext Sales Invoice (draft) from one or many PO Dispatches.
+
+    ``po_dispatch`` can be a single name or a JSON list of names.  Each becomes
+    one item row in the same Sales Invoice.
+
+    Does NOT change PIC status — status changes to 'Commercial Invoice Submitted'
+    only when the Sales Invoice is submitted.
+    """
+    # Accept single string or JSON list
+    if isinstance(po_dispatch, str) and po_dispatch.strip().startswith("["):
+        po_dispatch = frappe.parse_json(po_dispatch)
+    if isinstance(po_dispatch, list):
+        dispatch_list = po_dispatch
+    else:
+        dispatch_list = [po_dispatch]
+
+    dispatch_list = [d for d in dispatch_list if d]
+    if not dispatch_list:
+        frappe.throw("po_dispatch is required")
+
+    milestone = (milestone or "").strip().upper()
+    if milestone and milestone not in ("MS1", "MS2"):
+        frappe.throw("milestone must be MS1 or MS2")
+
+    # Validate all dispatches exist, then auto-detect milestone from the first
+    # Ready row if not explicitly provided.  All rows must be Ready for the same
+    # milestone.
+    pds_raw = []
+    first_customer = None
+    for dname in dispatch_list:
+        if not frappe.db.exists("PO Dispatch", dname):
+            frappe.throw(f"PO Dispatch {dname} not found.")
+        pd = frappe.db.get_value("PO Dispatch", dname, "*", as_dict=True)
+        if not pd:
+            frappe.throw(f"PO Dispatch {dname} not found.")
+        pds_raw.append(pd)
+
+    # Auto-detect milestone from the first row that has something Ready
+    if not milestone:
+        for pd in pds_raw:
+            ms1_s = (pd.get("pic_status") or "").strip()
+            ms2_s = (pd.get("pic_status_ms2") or "").strip()
+            if ms1_s == "Ready for Invoice" and flt(pd.get("ms1_amount") or 0) > 0:
+                milestone = "MS1"
+                break
+            if ms2_s == "Ready for Invoice" and flt(pd.get("ms2_amount") or 0) > 0:
+                milestone = "MS2"
+                break
+        if not milestone:
+            frappe.throw("None of the selected lines are in 'Ready for Invoice' status.")
+
+    amount_field = "ms1_amount" if milestone == "MS1" else "ms2_amount"
+    status_field = "pic_status" if milestone == "MS1" else "pic_status_ms2"
+
+    # Validate each row against the chosen milestone
+    pds = []
+    for pd in pds_raw:
+        dname = pd["name"]
+        current_status = (pd.get(status_field) or "").strip()
+        if current_status in ("Commercial Invoice Submitted", "Commercial Invoice Closed"):
+            frappe.throw(
+                f"{dname}: {milestone} already invoiced (status '{current_status}')."
+            )
+        if current_status != "Ready for Invoice" and flt(pd.get(amount_field) or 0) <= 0:
+            frappe.throw(f"{dname}: {milestone} not ready and amount is zero — skip this line.")
+        if current_status != "Ready for Invoice":
+            # Skip rows that aren't Ready for this milestone (e.g., MS1 Ready but we detected MS2)
+            continue
+
+        amount = flt(pd.get(amount_field) or 0)
+        if amount <= 0:
+            frappe.throw(f"{dname}: {amount_field} is zero.")
+
+        customer = pd.get("customer")
+        if not customer or not frappe.db.exists("Customer", customer):
+            frappe.throw(f"{dname}: Customer '{customer}' not found.")
+
+        if first_customer is None:
+            first_customer = customer
+        elif customer != first_customer:
+            frappe.throw(
+                f"All lines must have the same customer. "
+                f"'{dname}' has '{customer}', expected '{first_customer}'."
+            )
+
+        pds.append(pd)
+
+    if not pds:
+        frappe.throw("No valid lines to invoice after filtering.")
+
+    if not frappe.db.exists("DocType", "Sales Invoice"):
+        frappe.throw("Sales Invoice doctype not found — ERPNext may not be installed.")
+
+    tax_template = frappe.db.get_single_value("INET Settings", "sales_tax_template")
+
+    total_amount = 0
+    try:
+        si = frappe.new_doc("Sales Invoice")
+        si.customer = first_customer
+        si.company = frappe.defaults.get_user_default("Company") or frappe.defaults.get_global_default("company")
+        si.due_date = frappe.utils.add_days(frappe.utils.nowdate(), 30)
+        if tax_template:
+            si.taxes_and_charges = tax_template
+        for pd in pds:
+            dname = pd["name"]
+            amount = flt(pd.get(amount_field) or 0)
+            item_code = pd.get("item_code") or "Service"
+            if not frappe.db.exists("Item", item_code):
+                item_code = "Service"
+            si.append("items", {
+                "item_code": item_code,
+                "qty": flt(pd.get("qty") or 1),
+                "rate": flt(pd.get("rate") or amount),
+                "amount": amount,
+                "poid": dname,
+            })
+            total_amount += amount
+        si.save(ignore_permissions=True)
+        inv_name = si.name
+    except Exception as e:
+        frappe.log_error(f"Sales Invoice creation failed: {e}")
+        frappe.throw(f"Failed to create Sales Invoice: {str(e)}")
+
+    return {
+        "sales_invoice": inv_name,
+        "line_count": len(pds),
+        "milestone": milestone,
+        "amount": total_amount,
+        "invoice_url": f"/app/sales-invoice/{inv_name}",
+    }
+
+
+    """Create an ERPNext Sales Invoice (draft) from a PO Dispatch.
+
+    Does NOT change PIC status — status changes to 'Commercial Invoice Submitted'
+    only when the Sales Invoice is submitted.
+    """
+    if not frappe.db.exists("PO Dispatch", po_dispatch):
+        frappe.throw("PO Dispatch not found.")
+
+    pd = frappe.db.get_value("PO Dispatch", po_dispatch, "*", as_dict=True)
+    if not pd:
+        frappe.throw("PO Dispatch not found.")
+
+    milestone = (milestone or "MS1").strip().upper()
+    if milestone not in ("MS1", "MS2"):
+        frappe.throw("milestone must be MS1 or MS2")
+
+    amount_field = "ms1_amount" if milestone == "MS1" else "ms2_amount"
+    status_field = "pic_status" if milestone == "MS1" else "pic_status_ms2"
+
+    # Prevent duplicate — block if this milestone already invoiced
+    current_status = (pd.get(status_field) or "").strip()
+    if current_status in ("Commercial Invoice Submitted", "Commercial Invoice Closed"):
+        frappe.throw(
+            f"{milestone} already invoiced — PIC status is '{current_status}'."
+        )
+
+    amount = flt(pd.get(amount_field) or 0)
+    if amount <= 0:
+        frappe.throw(f"{amount_field} is zero — nothing to invoice.")
+
+    # Check if ERPNext Sales Invoice doctype exists
+    if not frappe.db.exists("DocType", "Sales Invoice"):
+        frappe.throw("Sales Invoice doctype not found — ERPNext may not be installed.")
+
+    customer = pd.get("customer")
+    if not customer or not frappe.db.exists("Customer", customer):
+        frappe.throw(f"Customer '{customer}' not found.")
+
+    item_code = pd.get("item_code") or "Service"
+    if not frappe.db.exists("Item", item_code):
+        item_code = "Service"
+
+    # Get tax template from INET Settings
+    tax_template = frappe.db.get_single_value("INET Settings", "sales_tax_template")
+
+    try:
+        si = frappe.new_doc("Sales Invoice")
+        si.customer = customer
+        si.company = frappe.defaults.get_user_default("Company") or frappe.defaults.get_global_default("company")
+        si.due_date = frappe.utils.add_days(frappe.utils.nowdate(), 30)
+        if tax_template:
+            si.taxes_and_charges = tax_template
+        item_row = {
+            "item_code": item_code,
+            "qty": flt(pd.get("qty") or 1),
+            "rate": flt(pd.get("rate") or amount),
+            "amount": amount,
+        }
+        # Accounting dimension links to PO Dispatch doctype — use doc.name,
+        # not the business poid (which won't pass Link validation).
+        if frappe.db.has_column("Sales Invoice Item", "poid"):
+            item_row["poid"] = po_dispatch
+        si.append("items", item_row)
+        si.save(ignore_permissions=True)
+        inv_name = si.name
+    except Exception as e:
+        frappe.log_error(f"Sales Invoice creation failed: {e}")
+        frappe.throw(f"Failed to create Sales Invoice: {str(e)}")
+
+    # Do NOT set Commercial Invoice Submitted — only on actual submit.
+    # The PO Dispatch still shows Ready for Invoice until submit.
+
+    return {
+        "sales_invoice": inv_name,
+        "po_dispatch": po_dispatch,
+        "milestone": milestone,
+        "amount": amount,
+        "invoice_url": f"/app/sales-invoice/{inv_name}",
+    }
+
+
+def on_sales_invoice_submit(doc, method):
+    """When a Sales Invoice is submitted, update PIC status to 'Commercial Invoice Submitted'.
+
+    Reads the `poid` accounting-dimension field from each item row to find the
+    PO Dispatch and updates the appropriate MS1/MS2 status.  Non-matching POIDs
+    are silently skipped — the invoice may contain non-INET lines.
+    """
+    for item in doc.items:
+        pd_name = (item.get("poid") or "").strip()
+        if not pd_name or not frappe.db.exists("PO Dispatch", pd_name):
+            continue
+
+        if not pd_name:
+            continue
+
+        try:
+            pd = frappe.db.get_value("PO Dispatch", pd_name, [
+                "pic_status", "pic_status_ms2", "ms1_amount", "ms2_amount",
+            ], as_dict=True)
+        except Exception:
+            continue
+        if not pd:
+            continue
+
+        item_amount = flt(item.amount or 0)
+
+        # Update MS1 if it's in Ready for Invoice
+        ms1_amt = flt(pd.ms1_amount or 0)
+        if ms1_amt > 0 and (pd.pic_status or "").strip() in ("Ready for Invoice", ""):
+            frappe.db.set_value("PO Dispatch", pd_name, {
+                "pic_status": "Commercial Invoice Submitted",
+                "ms1_invoiced": item_amount,
+            }, update_modified=True)
+
+        # Update MS2 if it's in Ready for Invoice
+        ms2_amt = flt(pd.ms2_amount or 0)
+        if ms2_amt > 0 and (pd.pic_status_ms2 or "").strip() in ("Ready for Invoice", ""):
+            frappe.db.set_value("PO Dispatch", pd_name, {
+                "pic_status_ms2": "Commercial Invoice Submitted",
+                "ms2_invoiced": item_amount,
+            }, update_modified=True)

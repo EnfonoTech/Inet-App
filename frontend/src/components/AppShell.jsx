@@ -99,6 +99,12 @@ const icons = {
       <path d="M9 12l2 2 4-4" />
     </svg>
   ),
+  dollar: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="1" x2="12" y2="23" />
+      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+    </svg>
+  ),
 };
 
 /* ── Navigation definitions per role ────────────────────────── */
@@ -135,7 +141,8 @@ const imNav = [
 
 const picNav = [
   { to: "/pic-dashboard", label: "PIC Dashboard",   icon: "dashboard" },
-  { to: "/pic-tracker",   label: "Invoice Tracker", icon: "barChart" },
+  { to: "/pic-tracker",   label: "PIC Tracker",     icon: "barChart" },
+  { to: "/pic-invoice-tracker", label: "Invoice Tracker", icon: "dollar" },
   { to: "/pic-reports",   label: "Reports",         icon: "clipboard" },
 ];
 

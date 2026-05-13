@@ -481,6 +481,16 @@ export const pmApi = {
     owner: params?.owner || "",
   }),
 
+  // Invoice Tracker — PIC creates Sales Invoices from Ready for Invoice lines
+  listInvoiceTrackerRows: (filters, limit) => call("inet_app.api.pic.list_invoice_tracker_rows", {
+    filters: filters || {},
+    limit: limit || 500,
+  }),
+  createSalesInvoiceFromPic: (poDispatch, milestone) => call("inet_app.api.pic.create_sales_invoice_from_pic", {
+    po_dispatch: poDispatch,
+    milestone: milestone || "MS1",
+  }),
+
   // Backend-team assignment flow — IM-driven, lives outside the rollout chain
   getMyBackendCapability: (im) => call("inet_app.api.command_center.get_my_backend_capability", im ? { im } : {}),
   listBackendTeamsForPicker: (search) => call("inet_app.api.command_center.list_backend_teams_for_picker", { search: search || "", limit: 200 }),

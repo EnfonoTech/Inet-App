@@ -2,9 +2,9 @@
  "actions": [],
  "autoname": "format:SYS-{YYYY}-{#####}",
  "creation": "2026-04-04 00:00:00",
+ "default_view": "List",
  "doctype": "DocType",
  "engine": "InnoDB",
- "title_field": "poid",
  "field_order": [
   "poid",
   "system_id",
@@ -375,46 +375,46 @@
    "read_only": 1
   },
   {
-   "description": "Parsed from Payment Terms (AC1 …% / AC2 …%). Default 100 if no AC markers found. Editable.",
+   "default": "100",
+   "description": "Parsed from Payment Terms (AC1 \u2026% / AC2 \u2026%). Default 100 if no AC markers found. Editable.",
    "fieldname": "ms1_pct",
    "fieldtype": "Percent",
-   "label": "MS1 %",
-   "default": "100"
+   "label": "MS1 %"
   },
   {
-   "description": "Parsed from Payment Terms (AC2 …%). Default 0.",
+   "default": "0",
+   "description": "Parsed from Payment Terms (AC2 \u2026%). Default 0.",
    "fieldname": "ms2_pct",
    "fieldtype": "Percent",
-   "label": "MS2 %",
-   "default": "0"
+   "label": "MS2 %"
   },
   {
-   "description": "Read-only — line_amount × ms1_pct / 100. Updated by validate.",
+   "description": "Read-only \u2014 line_amount \u00d7 ms1_pct / 100. Updated by validate.",
    "fieldname": "ms1_amount",
    "fieldtype": "Currency",
    "label": "MS1 Amount (1st Payment PO Amount)",
    "read_only": 1
   },
   {
-   "description": "Read-only — line_amount × ms2_pct / 100.",
+   "description": "Read-only \u2014 line_amount \u00d7 ms2_pct / 100.",
    "fieldname": "ms2_amount",
    "fieldtype": "Currency",
    "label": "MS2 Amount (2nd Payment PO Amount)",
    "read_only": 1
   },
   {
+   "default": "100",
    "description": "Defaults to 100; PIC nudges down as milestones close.",
    "fieldname": "remaining_milestone_pct",
    "fieldtype": "Percent",
-   "label": "Remaining Milestone %",
-   "default": "100"
+   "label": "Remaining Milestone %"
   },
   {
    "fieldname": "column_break_pic1",
    "fieldtype": "Column Break"
   },
   {
-   "description": "PIC Remarks (MS1) — drives the dashboard buckets.",
+   "description": "PIC Remarks (MS1) \u2014 drives the dashboard buckets.",
    "fieldname": "pic_status",
    "fieldtype": "Select",
    "in_standard_filter": 1,
@@ -437,13 +437,13 @@
    "label": "Applied Date (MS1)"
   },
   {
+   "default": "0",
    "fieldname": "ms1_invoiced",
    "fieldtype": "Currency",
-   "label": "MS1 Invoiced",
-   "default": "0"
+   "label": "MS1 Invoiced"
   },
   {
-   "description": "Read-only — ms1_amount − ms1_invoiced.",
+   "description": "Read-only \u2014 ms1_amount \u2212 ms1_invoiced.",
    "fieldname": "ms1_unbilled",
    "fieldtype": "Currency",
    "label": "MS1 Unbilled",
@@ -503,13 +503,13 @@
    "label": "Applied Date (MS2)"
   },
   {
+   "default": "0",
    "fieldname": "ms2_invoiced",
    "fieldtype": "Currency",
-   "label": "MS2 Invoiced",
-   "default": "0"
+   "label": "MS2 Invoiced"
   },
   {
-   "description": "Read-only — ms2_amount − ms2_invoiced.",
+   "description": "Read-only \u2014 ms2_amount \u2212 ms2_invoiced.",
    "fieldname": "ms2_unbilled",
    "fieldtype": "Currency",
    "label": "MS2 Unbilled",
@@ -543,7 +543,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-08 12:09:33.778075",
+ "modified": "2026-05-13 14:03:37.320840",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "PO Dispatch",
@@ -591,8 +591,11 @@
   }
  ],
  "row_format": "Dynamic",
+ "search_fields": "poid",
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
+ "title_field": "poid",
  "track_changes": 1
 }
