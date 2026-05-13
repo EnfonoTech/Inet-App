@@ -9,8 +9,7 @@
 /* ── Dashboard Container ────────────────────────────────────── */
 .dashboard {
   padding: 24px 28px 40px;
-  max-width: 1600px;
-  margin: 0 auto;
+  width: 100%;
   background: var(--bg);
   color: var(--text);
 }
