@@ -552,8 +552,8 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
   const ms2Pct = Number(row.ms2_pct || 0);
   const ms1Amt = Number(row.ms1_amount || 0);
   const ms2Amt = Number(row.ms2_amount || 0);
-  const ms1Inv = Number(fields.ms1_invoiced ?? row.ms1_invoiced ?? 0);
-  const ms2Inv = Number(fields.ms2_invoiced ?? row.ms2_invoiced ?? 0);
+  const ms1Inv = Number(row.ms1_invoiced ?? 0);
+  const ms2Inv = Number(row.ms2_invoiced ?? 0);
   const ms1Unb = Math.max(ms1Amt - ms1Inv, 0);
   const ms2Unb = Math.max(ms2Amt - ms2Inv, 0);
   const totalAmt = ms1Amt + ms2Amt;
@@ -622,7 +622,6 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
               ownerKey="isdp_ibuy_owner"
               detailKey="pic_detail_remark"
               appliedKey="ms1_applied_date"
-              invoicedKey="ms1_invoiced"
               invoiceMonthKey="ms1_invoice_month"
               ibuyDateKey="ms1_ibuy_inv_date"
               receivedKey="ms1_payment_received_date"
@@ -643,7 +642,6 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
               ownerKey="isdp_owner_ms2"
               detailKey="pic_detail_remark_ms2"
               appliedKey="ms2_applied_date"
-              invoicedKey="ms2_invoiced"
               invoiceMonthKey="ms2_invoice_month"
               ibuyDateKey="ms2_ibuy_inv_date"
               receivedKey="ms2_payment_received_date"
@@ -671,8 +669,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
                     placeholder="e.g. Accepted" style={fieldInputStyle} />
                 </Field>
                 <Field label="Remaining Milestone %">
-                  <input type="number" step="1" min="0" max="100" value={fields.remaining_milestone_pct || 0}
-                    onChange={(e) => set("remaining_milestone_pct", parseFloat(e.target.value) || 0)} disabled={busy} style={fieldInputStyle} />
+                  <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a", fontVariantNumeric: "tabular-nums", padding: "6px 12px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>{Number(row.remaining_milestone_pct || 0).toFixed(0)}%</div>
                 </Field>
               </div>
               {row.im_rejection_remark && (
@@ -763,7 +760,7 @@ const fieldTextareaStyle = { ...fieldInputStyle, resize: "vertical", minHeight: 
 
 function MilestonePanel({
   tone, title, pctLabel, amount, invoiced, unbilled,
-  statusKey, ownerKey, detailKey, appliedKey, invoicedKey,
+  statusKey, ownerKey, detailKey, appliedKey,
   invoiceMonthKey, ibuyDateKey, receivedKey,
   fields, set, busy,
 }) {
@@ -806,8 +803,7 @@ function MilestonePanel({
           <input type="date" value={fields[appliedKey] || ""} onChange={(e) => set(appliedKey, e.target.value)} disabled={busy} style={fieldInputStyle} />
         </Field>
         <Field label="Invoiced Amount (SAR)">
-          <input type="number" step="0.01" value={fields[invoicedKey] || 0}
-            onChange={(e) => set(invoicedKey, parseFloat(e.target.value) || 0)} disabled={busy} style={fieldInputStyle} />
+          <div style={{ fontSize: "0.95rem", fontWeight: 700, color: invoiced > 0 ? "#047857" : "#94a3b8", fontVariantNumeric: "tabular-nums", padding: "6px 12px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>{fmt.format(invoiced)}</div>
         </Field>
         <Field label="Invoicing Month">
           <input type="month" value={(fields[invoiceMonthKey] || "").slice(0, 7)}
