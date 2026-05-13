@@ -451,6 +451,7 @@ export default function IMDispatch() {
   const isUnmappedDummy = (r) =>
     Number(r.is_dummy_po) === 1
     && (!r.po_no || String(r.po_no).startsWith("DUMMY-"));
+  const openDummyCount = rows.filter((r) => Number(r.is_dummy_po) === 1).length;
   const visibleRows = rows.filter((r) => {
     if (planScope === "all") return true;
     const planned = (r.dispatch_status || "").toLowerCase() === "planned";
@@ -634,6 +635,15 @@ export default function IMDispatch() {
           }}>
             <span style={{ opacity: 0.85 }}>Manual</span>
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{manualCount}</span>
+          </div>
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "3px 10px", borderRadius: 999,
+            background: "#eef2ff", color: "#4338ca",
+            border: "1px solid #c7d2fe", fontSize: "0.74rem", fontWeight: 700,
+          }}>
+            <span style={{ opacity: 0.85 }}>Dummy</span>
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{openDummyCount}</span>
           </div>
 
           <div style={{ flex: 1 }} />
@@ -1106,7 +1116,7 @@ export default function IMDispatch() {
       <Modal
         open={!!mapForRow}
         onClose={() => !mapBusy && setMapForRow(null)}
-        title={`Map dummy PO — ${mapForRow?.name || ""}`}
+        title={`Map dummy PO — ${mapForRow?.poid || mapForRow?.name || ""}`}
         width={560}
       >
         {mapErr && <div className="notice error" style={{ marginBottom: 12 }}>{mapErr}</div>}
@@ -1123,8 +1133,8 @@ export default function IMDispatch() {
               <option value="">{mapLines.length ? "Select line" : "No open lines for this project"}</option>
               {mapLines.map((l) => (
                 <option key={l.name} value={l.name}>
-                  {(l.po_no || l.po_intake || "").slice(0, 40)} · L{l.po_line_no} · {l.item_code || "—"} · {l.po_line_status || ""}
-                  {l.existing_dispatch ? ` · existing ${l.existing_dispatch}` : ""}
+                  {l.poid || l.po_no || l.name} · L{l.po_line_no} · {l.item_code || "—"} · {l.po_line_status || ""}
+                  {l.existing_dispatch ? ` · dispatched (${l.existing_dispatch_status || "?"})` : " · not yet dispatched"}
                 </option>
               ))}
             </select>

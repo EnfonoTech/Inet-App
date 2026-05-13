@@ -194,6 +194,7 @@ export default function IMPlanning() {
       await pmApi.requestCancelPlan(cancelTarget.name, cancelReason || undefined);
       setCancelTarget(null);
       loadPlans();
+      window.dispatchEvent(new Event("inet:approvals-changed"));
     } catch (e) {
       setCancelError(e?.message || "Failed to request cancellation");
     } finally {

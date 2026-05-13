@@ -372,13 +372,19 @@ export default function IMDashboard() {
               <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#b45309", fontSize: "0.85rem", fontWeight: 600 }}>
                 <span style={{ width: 10, height: 10, borderRadius: 999, background: "#f59e0b" }} /> Pending Approvals
               </span>
-              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(action.qc_fail_needs_action || 0)}</span>
+              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(action.pending_approvals || 0)}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#7c3aed", fontSize: "0.85rem", fontWeight: 600 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 999, background: "#8b5cf6" }} /> Open Dummy POs
+              </span>
+              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(action.open_dummy_pos || 0)}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#047857", fontSize: "0.85rem", fontWeight: 600 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 999, background: "#10b981" }} /> Material Shortage
+                <span style={{ width: 10, height: 10, borderRadius: 999, background: "#10b981" }} /> QC Fail Needs Action
               </span>
-              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(material_shortage)}</span>
+              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(action.qc_fail_needs_action || 0)}</span>
             </div>
           </div>
         </Section>

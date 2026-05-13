@@ -2274,7 +2274,8 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
     elif dummy_preset == "mapped_dummy":
         wheres.append(
             "((IFNULL(was_dummy_po, 0) = 1 AND IFNULL(is_dummy_po, 0) = 0) OR "
-            "(IFNULL(original_dummy_poid, '') != '' AND TRIM(original_dummy_poid) != IFNULL(TRIM(name), '')))"
+            "(IFNULL(original_dummy_poid, '') != '' AND IFNULL(is_dummy_po, 0) = 0"
+            " AND TRIM(original_dummy_poid) != IFNULL(TRIM(name), '')))"
         )
 
     # has_target_month: "yes" (target_month set), "no" (null/empty), "any" / "" (no filter)
@@ -2538,7 +2539,7 @@ def list_po_intake_lines_for_im_map(project_code=None):
     try:
         lines = frappe.get_all(
             "PO Intake Line",
-            filters={"project_code": project_code, "po_line_status": ["!=", "Completed"]},
+            filters={"project_code": project_code, "po_line_status": ("in", ["New", "Dispatched"])},
             fields=line_fields,
             order_by="modified desc",
             limit_page_length=400,
@@ -6081,7 +6082,7 @@ def resolve_im_for_session(im=None):
 def im_action_counts(im_identifiers):
     """Counts for IM dashboard action strip (PM→IM→execution workflow)."""
     if not im_identifiers:
-        return {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0}
+        return {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0, "pending_approvals": 0, "open_dummy_pos": 0}
     ph = ", ".join(["%s"] * len(im_identifiers))
     params = tuple(im_identifiers)
     pending = frappe.db.sql(
@@ -6112,10 +6113,42 @@ def im_action_counts(im_identifiers):
         params,
         as_dict=True,
     )[0].c
+    # All pending approvals relevant to this IM:
+    # - Team Allocation Requests awaiting this IM's response (Pending Source IM)
+    # - Plan Cancel Requests for this IM's plans awaiting PM approval
+    pending_team = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS c FROM `tabTeam Allocation Request`
+        WHERE from_im IN ({ph}) AND request_status = 'Pending Source IM'
+        """,
+        params,
+        as_dict=True,
+    )[0].c
+    pending_cancel = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS c FROM `tabRollout Plan` rp
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE pd.im IN ({ph}) AND rp.cancel_request_status = 'Pending PM Approval'
+        """,
+        params,
+        as_dict=True,
+    )[0].c
+    pending_approvals = cint(pending_team) + cint(pending_cancel)
+    # Open dummy POs for this IM
+    open_dummies = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS c FROM `tabPO Dispatch`
+        WHERE im IN ({ph}) AND IFNULL(is_dummy_po, 0) = 1
+        """,
+        params,
+        as_dict=True,
+    )[0].c
     return {
         "pending_plan_dispatches": cint(pending),
         "qc_fail_needs_action": cint(qc_open),
         "planned_ready_execution": cint(planned_exec),
+        "pending_approvals": cint(pending_approvals),
+        "open_dummy_pos": cint(open_dummies),
     }
 
 
@@ -6615,7 +6648,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
             "teams": [],
             "projects": [],
             "kpi": {},
-            "action_items": {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0},
+            "action_items": {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0, "pending_approvals": 0, "open_dummy_pos": 0},
             "debug": {"error": "Could not resolve IM from session or parameter"},
             "etag": current_etag,
             "last_updated": _iso_now(),
@@ -10654,9 +10687,10 @@ def list_pending_cancel_requests(status=None):
     if not _is_pm_role():
         frappe.throw("Only a PM / Admin can view cancel plan requests.", frappe.PermissionError)
 
-    filters = [("cancel_request_status", "!=", "None")]
     if status:
-        filters.append(("cancel_request_status", "=", status))
+        filters = {"cancel_request_status": status}
+    else:
+        filters = {"cancel_request_status": ("!=", "None")}
 
     rows = frappe.db.get_all(
         "Rollout Plan",
