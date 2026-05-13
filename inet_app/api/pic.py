@@ -289,6 +289,12 @@ def update_pic_row(po_dispatch, fields):
     if not touched:
         frappe.throw("No writable PIC fields in payload")
 
+    # When PIC marks a line as Commercial Invoice Closed, close the PO Dispatch too.
+    if fields.get("pic_status") == "Commercial Invoice Closed" or fields.get("pic_status_ms2") == "Commercial Invoice Closed":
+        if doc.dispatch_status != "Closed":
+            doc.dispatch_status = "Closed"
+            touched.append("dispatch_status")
+
     doc.flags.ignore_permissions = True
     doc.save()
     frappe.db.commit()
