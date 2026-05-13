@@ -941,6 +941,10 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                pd.pic_status, pd.pic_status_ms2,
                pd.ms1_amount, pd.ms1_invoiced, pd.ms1_unbilled,
                pd.ms2_amount, pd.ms2_invoiced, pd.ms2_unbilled,
+               ROUND(GREATEST(
+                 ((pd.ms1_amount + pd.ms2_amount)
+                  - (IFNULL(pd.ms1_invoiced, 0) + IFNULL(pd.ms2_invoiced, 0)))
+                 / NULLIF(pd.ms1_amount + pd.ms2_amount, 0) * 100, 0), 1) AS remaining_milestone_pct,
                pd.ms1_applied_date, pd.ms1_invoice_month, pd.ms1_ibuy_inv_date,
                pd.ms2_applied_date, pd.ms2_invoice_month, pd.ms2_ibuy_inv_date,
                pd.sqc_status, pd.pat_status, pd.isdp_ibuy_owner,

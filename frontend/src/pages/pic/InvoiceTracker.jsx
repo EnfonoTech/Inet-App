@@ -254,6 +254,7 @@ export default function InvoiceTracker() {
                   <th>DUID</th>
                   <th style={{ textAlign: "right" }}>MS1 Amount</th>
                   <th style={{ textAlign: "right" }}>MS2 Amount</th>
+                  <th style={{ textAlign: "right" }}>Remaining %</th>
                   <th>PIC Status (MS1)</th>
                   <th>PIC Status (MS2)</th>
                   <th>Linked Invoice</th>
@@ -280,6 +281,9 @@ export default function InvoiceTracker() {
                       <td>{r.site_code || "—"}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: (r.remaining_milestone_pct || 0) > 0 ? "#b45309" : "#047857" }}>
+                        {Number(r.remaining_milestone_pct || 0).toFixed(0)}%
+                      </td>
                       <td>
                         <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, background: ms1Tone.bg, color: ms1Tone.fg, whiteSpace: "nowrap" }}>
                           {r.pic_status || "—"}
