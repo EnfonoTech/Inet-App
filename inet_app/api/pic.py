@@ -299,8 +299,14 @@ def update_pic_row(po_dispatch, fields):
     if not touched:
         frappe.throw("No writable PIC fields in payload")
 
-    # When PIC marks a line as Commercial Invoice Closed, close the PO Dispatch too.
-    if fields.get("pic_status") == "Commercial Invoice Closed" or fields.get("pic_status_ms2") == "Commercial Invoice Closed":
+    # Auto-close PO Dispatch when both milestones are fully invoiced, or
+    # MS1 is Closed and there's no MS2 amount to invoice.
+    ms1_closed = (fields.get("pic_status") == "Commercial Invoice Closed"
+                  or doc.pic_status == "Commercial Invoice Closed")
+    ms2_closed = (fields.get("pic_status_ms2") == "Commercial Invoice Closed"
+                  or doc.pic_status_ms2 == "Commercial Invoice Closed")
+    ms2_zero = flt(doc.ms2_amount) == 0
+    if ms1_closed and (ms2_closed or ms2_zero):
         if doc.dispatch_status != "Closed":
             doc.dispatch_status = "Closed"
             touched.append("dispatch_status")
