@@ -139,7 +139,7 @@ export default function ExecutionMonitor() {
   const intervalRef = useRef(null);
 
   const [search, setSearch] = useState("");
-  const [planStatusFilter, setPlanStatusFilter] = useState([]);
+  const [planStatusFilter, setPlanStatusFilter] = useState(["Planned", "In Execution", "Completed", "Planning with Issue"]);
   const [executionStatusFilter, setExecutionStatusFilter] = useState([]);
   const [visitFilter, setVisitFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);

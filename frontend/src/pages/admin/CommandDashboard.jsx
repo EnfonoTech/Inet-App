@@ -248,8 +248,8 @@ export default function CommandDashboard() {
         <KPICard label="Open PO lines" value={operational.total_open_po_lines ?? 0} />
         <KPICard label="Open PO line value (SAR)" value={operational.total_open_po_line_value ?? operational.total_open_po ?? 0} />
         <KPICard label="Idle Teams" value={operational.idle_teams} colorClass="text-amber" />
-        <KPICard label="Planned Activities" value={operational.planned_activities} />
-        <KPICard label="Closed Activities" value={operational.closed_activities} colorClass="text-green" />
+        <KPICard label="Planned Activities" value={`SAR ${fmt.format(operational.planned_amount ?? 0)}`} sub={`${operational.planned_activities ?? 0} plans`} />
+        <KPICard label="Closed Activities" value={`SAR ${fmt.format(operational.closed_amount ?? 0)}`} sub={`${operational.closed_activities ?? 0} plans`} colorClass="text-green" />
         <KPICard label="ReVisits" value={operational.revisits} colorClass="text-amber" />
       </div>
 

@@ -5704,17 +5704,60 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )[0][0]
     idle_teams_count = max(0, total_teams - active_teams_count)
 
-    planned_activities = frappe.db.count("Rollout Plan", {"plan_status": "Planned"})
+    planned_activities = frappe.db.sql(
+        """
+        SELECT COUNT(*) AS cnt FROM `tabRollout Plan` rp
+        WHERE rp.plan_status = 'Planned'
+        AND NOT EXISTS (
+          SELECT 1 FROM `tabRollout Plan` rp_later
+          WHERE rp_later.po_dispatch = rp.po_dispatch
+          AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)
+        )
+        """,
+        as_dict=True,
+    )[0].cnt or 0
+    planned_amount = frappe.db.sql(
+        """
+        SELECT COALESCE(SUM(rp.target_amount), 0) AS amt FROM `tabRollout Plan` rp
+        WHERE rp.plan_status = 'Planned'
+        AND NOT EXISTS (
+          SELECT 1 FROM `tabRollout Plan` rp_later
+          WHERE rp_later.po_dispatch = rp.po_dispatch
+          AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)
+        )
+        """,
+        as_dict=True,
+    )[0].amt or 0
 
     closed_activities = frappe.db.sql(
         """
-        SELECT COUNT(*) AS cnt FROM `tabDaily Execution`
-        WHERE execution_status = 'Completed'
-        AND execution_date BETWEEN %s AND %s
+        SELECT COUNT(*) AS cnt
+        FROM `tabWork Done` wd
+        INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
+        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE pd.dispatch_status != 'Backend Assigned'
+        AND wd.creation BETWEEN %s AND %s
         """,
         (first_day, last_day),
         as_dict=True,
     )[0].cnt or 0
+    closed_amount = frappe.db.sql(
+        """
+        SELECT COALESCE(SUM(d.amt), 0) AS total
+        FROM (
+          SELECT DISTINCT de.rollout_plan, rp.target_amount AS amt
+          FROM `tabWork Done` wd
+          INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
+          INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+          INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+          WHERE pd.dispatch_status != 'Backend Assigned'
+          AND wd.creation BETWEEN %s AND %s
+        ) d
+        """,
+        (first_day, last_day),
+        as_dict=True,
+    )[0].total or 0
 
     revisits = frappe.db.sql(
         """
@@ -5990,7 +6033,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "active_teams": active_teams_count,
             "idle_teams": idle_teams_count,
             "planned_activities": planned_activities,
+            "planned_amount": planned_amount,
             "closed_activities": closed_activities,
+            "closed_amount": closed_amount,
             "revisits": revisits,
         },
         "inet": {
