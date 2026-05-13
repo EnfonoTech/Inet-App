@@ -54,25 +54,12 @@ LEFT JOIN (
     GROUP BY rp.po_dispatch
 ) plan ON plan.po_dispatch = pd.name
 LEFT JOIN (
-    SELECT pd_name AS po_dispatch,
-           MAX(hit) AS confirmed
-    FROM (
-        -- Path A: Work Done linked through Daily Execution → Rollout Plan
-        SELECT rp.po_dispatch AS pd_name,
-               MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS hit
-        FROM `tabRollout Plan` rp
-        INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
-        INNER JOIN `tabWork Done` wd ON wd.execution = de.name
-        GROUP BY rp.po_dispatch
-        UNION ALL
-        -- Path B: Work Done directly linked via system_id
-        SELECT wd2.system_id AS pd_name,
-               MAX(IF(wd2.submission_status = 'Confirmation Done', 1, 0)) AS hit
-        FROM `tabWork Done` wd2
-        WHERE wd2.system_id IS NOT NULL AND wd2.system_id != ''
-        GROUP BY wd2.system_id
-    ) combined
-    GROUP BY pd_name
+    SELECT rp.po_dispatch AS po_dispatch,
+           MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
+    FROM `tabRollout Plan` rp
+    INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
+    INNER JOIN `tabWork Done` wd ON wd.execution = de.name
+    GROUP BY rp.po_dispatch
 ) wd_sub ON wd_sub.po_dispatch = pd.name
 LEFT JOIN `tabSubcontractor Master` sm ON sm.name = plan.subcontractor
 """
@@ -90,25 +77,12 @@ FROM `tabPO Dispatch` pd
 LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
 LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
 LEFT JOIN (
-    SELECT pd_name AS po_dispatch,
-           MAX(hit) AS confirmed
-    FROM (
-        -- Path A: Work Done linked through Daily Execution → Rollout Plan
-        SELECT rp.po_dispatch AS pd_name,
-               MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS hit
-        FROM `tabRollout Plan` rp
-        INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
-        INNER JOIN `tabWork Done` wd ON wd.execution = de.name
-        GROUP BY rp.po_dispatch
-        UNION ALL
-        -- Path B: Work Done directly linked via system_id
-        SELECT wd2.system_id AS pd_name,
-               MAX(IF(wd2.submission_status = 'Confirmation Done', 1, 0)) AS hit
-        FROM `tabWork Done` wd2
-        WHERE wd2.system_id IS NOT NULL AND wd2.system_id != ''
-        GROUP BY wd2.system_id
-    ) combined
-    GROUP BY pd_name
+    SELECT rp.po_dispatch AS po_dispatch,
+           MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
+    FROM `tabRollout Plan` rp
+    INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
+    INNER JOIN `tabWork Done` wd ON wd.execution = de.name
+    GROUP BY rp.po_dispatch
 ) wd_sub ON wd_sub.po_dispatch = pd.name
 """
 
@@ -185,14 +159,6 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         # invoicing pipeline is the focus.
         where.append("IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled', 'Closed')")
 
-    # Hide lines where MS1 is done AND (MS2 done or MS2 has no amount) —
-    # nothing left for PIC to process on this PO line.
-    where.append(
-        "NOT (pd.pic_status IN ('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
-        " AND (pd.pic_status_ms2 IN ('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
-        "      OR IFNULL(pd.ms2_amount, 0) = 0))"
-    )
-
     search = pf.get("search") or pf.get("q") or ""
     if search:
         clause, like_params = _sql_search_clause(
@@ -266,10 +232,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       pd.ms1_invoice_month, pd.ms2_invoice_month,
       pd.ms1_ibuy_inv_date, pd.ms2_ibuy_inv_date,
       pd.ms1_payment_received_date, pd.ms2_payment_received_date,
-      ROUND(GREATEST(
-        ((pd.ms1_amount + pd.ms2_amount)
-         - (IFNULL(pd.ms1_invoiced, 0) + IFNULL(pd.ms2_invoiced, 0)))
-        / NULLIF(pd.ms1_amount + pd.ms2_amount, 0) * 100, 0), 1) AS remaining_milestone_pct,
+      pd.remaining_milestone_pct,
       {team_cols},
       pd.modified
     {from_clause}
@@ -285,13 +248,14 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
 _PIC_WRITABLE = (
     # MS1
     "pic_status", "isdp_ibuy_owner", "pic_detail_remark", "ms1_applied_date",
-    "subcon_pct_ms1", "inet_pct_ms1",
+    "ms1_invoiced", "subcon_pct_ms1", "inet_pct_ms1",
     "ms1_invoice_month", "ms1_ibuy_inv_date", "ms1_payment_received_date",
     # MS2
     "pic_status_ms2", "isdp_owner_ms2", "pic_detail_remark_ms2", "ms2_applied_date",
-    "subcon_pct_ms2", "inet_pct_ms2",
+    "ms2_invoiced", "subcon_pct_ms2", "inet_pct_ms2",
     "ms2_invoice_month", "ms2_ibuy_inv_date", "ms2_payment_received_date",
-    # Common — ms1_invoiced, ms2_invoiced, remaining_milestone_pct are auto-computed
+    # Common
+    "remaining_milestone_pct",
     "ms1_pct", "ms2_pct",  # PIC may override the parsed split
     # Acceptance gates — PIC can correct typos coming from the master tracker
     "sqc_status", "pat_status", "im_rejection_remark",
@@ -324,18 +288,6 @@ def update_pic_row(po_dispatch, fields):
         touched.append(k)
     if not touched:
         frappe.throw("No writable PIC fields in payload")
-
-    # Auto-close PO Dispatch when both milestones are fully invoiced, or
-    # MS1 is Closed and there's no MS2 amount to invoice.
-    ms1_closed = (fields.get("pic_status") == "Commercial Invoice Closed"
-                  or doc.pic_status == "Commercial Invoice Closed")
-    ms2_closed = (fields.get("pic_status_ms2") == "Commercial Invoice Closed"
-                  or doc.pic_status_ms2 == "Commercial Invoice Closed")
-    ms2_zero = flt(doc.ms2_amount) == 0
-    if ms1_closed and (ms2_closed or ms2_zero):
-        if doc.dispatch_status != "Closed":
-            doc.dispatch_status = "Closed"
-            touched.append("dispatch_status")
 
     doc.flags.ignore_permissions = True
     doc.save()
@@ -967,10 +919,6 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                pd.pic_status, pd.pic_status_ms2,
                pd.ms1_amount, pd.ms1_invoiced, pd.ms1_unbilled,
                pd.ms2_amount, pd.ms2_invoiced, pd.ms2_unbilled,
-               ROUND(GREATEST(
-                 ((pd.ms1_amount + pd.ms2_amount)
-                  - (IFNULL(pd.ms1_invoiced, 0) + IFNULL(pd.ms2_invoiced, 0)))
-                 / NULLIF(pd.ms1_amount + pd.ms2_amount, 0) * 100, 0), 1) AS remaining_milestone_pct,
                pd.ms1_applied_date, pd.ms1_invoice_month, pd.ms1_ibuy_inv_date,
                pd.ms2_applied_date, pd.ms2_invoice_month, pd.ms2_ibuy_inv_date,
                pd.sqc_status, pd.pat_status, pd.isdp_ibuy_owner,
@@ -1128,6 +1076,87 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone="MS1"):
     }
 
 
+    """Create an ERPNext Sales Invoice (draft) from a PO Dispatch.
+
+    Does NOT change PIC status — status changes to 'Commercial Invoice Submitted'
+    only when the Sales Invoice is submitted.
+    """
+    if not frappe.db.exists("PO Dispatch", po_dispatch):
+        frappe.throw("PO Dispatch not found.")
+
+    pd = frappe.db.get_value("PO Dispatch", po_dispatch, "*", as_dict=True)
+    if not pd:
+        frappe.throw("PO Dispatch not found.")
+
+    milestone = (milestone or "MS1").strip().upper()
+    if milestone not in ("MS1", "MS2"):
+        frappe.throw("milestone must be MS1 or MS2")
+
+    amount_field = "ms1_amount" if milestone == "MS1" else "ms2_amount"
+    status_field = "pic_status" if milestone == "MS1" else "pic_status_ms2"
+
+    # Prevent duplicate — block if this milestone already invoiced
+    current_status = (pd.get(status_field) or "").strip()
+    if current_status in ("Commercial Invoice Submitted", "Commercial Invoice Closed"):
+        frappe.throw(
+            f"{milestone} already invoiced — PIC status is '{current_status}'."
+        )
+
+    amount = flt(pd.get(amount_field) or 0)
+    if amount <= 0:
+        frappe.throw(f"{amount_field} is zero — nothing to invoice.")
+
+    # Check if ERPNext Sales Invoice doctype exists
+    if not frappe.db.exists("DocType", "Sales Invoice"):
+        frappe.throw("Sales Invoice doctype not found — ERPNext may not be installed.")
+
+    customer = pd.get("customer")
+    if not customer or not frappe.db.exists("Customer", customer):
+        frappe.throw(f"Customer '{customer}' not found.")
+
+    item_code = pd.get("item_code") or "Service"
+    if not frappe.db.exists("Item", item_code):
+        item_code = "Service"
+
+    # Get tax template from INET Settings
+    tax_template = frappe.db.get_single_value("INET Settings", "sales_tax_template")
+
+    try:
+        si = frappe.new_doc("Sales Invoice")
+        si.customer = customer
+        si.company = frappe.defaults.get_user_default("Company") or frappe.defaults.get_global_default("company")
+        si.due_date = frappe.utils.add_days(frappe.utils.nowdate(), 30)
+        if tax_template:
+            si.taxes_and_charges = tax_template
+        item_row = {
+            "item_code": item_code,
+            "qty": flt(pd.get("qty") or 1),
+            "rate": flt(pd.get("rate") or amount),
+            "amount": amount,
+        }
+        # Accounting dimension links to PO Dispatch doctype — use doc.name,
+        # not the business poid (which won't pass Link validation).
+        if frappe.db.has_column("Sales Invoice Item", "poid"):
+            item_row["poid"] = po_dispatch
+        si.append("items", item_row)
+        si.save(ignore_permissions=True)
+        inv_name = si.name
+    except Exception as e:
+        frappe.log_error(f"Sales Invoice creation failed: {e}")
+        frappe.throw(f"Failed to create Sales Invoice: {str(e)}")
+
+    # Do NOT set Commercial Invoice Submitted — only on actual submit.
+    # The PO Dispatch still shows Ready for Invoice until submit.
+
+    return {
+        "sales_invoice": inv_name,
+        "po_dispatch": po_dispatch,
+        "milestone": milestone,
+        "amount": amount,
+        "invoice_url": f"/app/sales-invoice/{inv_name}",
+    }
+
+
 def on_sales_invoice_submit(doc, method):
     """When a Sales Invoice is submitted, update PIC status to 'Commercial Invoice Submitted'.
 
@@ -1153,50 +1182,19 @@ def on_sales_invoice_submit(doc, method):
             continue
 
         item_amount = flt(item.amount or 0)
+
+        # Update MS1 if it's in Ready for Invoice
         ms1_amt = flt(pd.ms1_amount or 0)
+        if ms1_amt > 0 and (pd.pic_status or "").strip() in ("Ready for Invoice", ""):
+            frappe.db.set_value("PO Dispatch", pd_name, {
+                "pic_status": "Commercial Invoice Submitted",
+                "ms1_invoiced": item_amount,
+            }, update_modified=True)
+
+        # Update MS2 if it's in Ready for Invoice
         ms2_amt = flt(pd.ms2_amount or 0)
-
-        # Determine which milestone this invoice covers by comparing the
-        # item amount to the milestone amounts.
-        ms1_match = abs(item_amount - ms1_amt) < 0.01
-        ms2_match = abs(item_amount - ms2_amt) < 0.01
-        total_match = abs(item_amount - (ms1_amt + ms2_amt)) < 0.01
-
-        if ms1_match and not ms2_match:
-            # MS1-only invoice
-            if (pd.pic_status or "").strip() in ("Ready for Invoice", ""):
-                frappe.db.set_value("PO Dispatch", pd_name, {
-                    "pic_status": "Commercial Invoice Submitted",
-                    "ms1_invoiced": item_amount,
-                }, update_modified=True)
-        elif ms2_match and not ms1_match:
-            # MS2-only invoice
-            if (pd.pic_status_ms2 or "").strip() in ("Ready for Invoice", ""):
-                frappe.db.set_value("PO Dispatch", pd_name, {
-                    "pic_status_ms2": "Commercial Invoice Submitted",
-                    "ms2_invoiced": item_amount,
-                }, update_modified=True)
-        elif total_match:
-            # Combined invoice — update whichever milestones are Ready
-            if (pd.pic_status or "").strip() in ("Ready for Invoice", ""):
-                frappe.db.set_value("PO Dispatch", pd_name, {
-                    "pic_status": "Commercial Invoice Submitted",
-                    "ms1_invoiced": ms1_amt,
-                }, update_modified=True)
-            if (pd.pic_status_ms2 or "").strip() in ("Ready for Invoice", ""):
-                frappe.db.set_value("PO Dispatch", pd_name, {
-                    "pic_status_ms2": "Commercial Invoice Submitted",
-                    "ms2_invoiced": ms2_amt,
-                }, update_modified=True)
-        else:
-            # Amount doesn't match cleanly — prefer MS1 if its status is Ready
-            if ms1_amt > 0 and (pd.pic_status or "").strip() in ("Ready for Invoice", ""):
-                frappe.db.set_value("PO Dispatch", pd_name, {
-                    "pic_status": "Commercial Invoice Submitted",
-                    "ms1_invoiced": item_amount,
-                }, update_modified=True)
-            elif ms2_amt > 0 and (pd.pic_status_ms2 or "").strip() in ("Ready for Invoice", ""):
-                frappe.db.set_value("PO Dispatch", pd_name, {
-                    "pic_status_ms2": "Commercial Invoice Submitted",
-                    "ms2_invoiced": item_amount,
-                }, update_modified=True)
+        if ms2_amt > 0 and (pd.pic_status_ms2 or "").strip() in ("Ready for Invoice", ""):
+            frappe.db.set_value("PO Dispatch", pd_name, {
+                "pic_status_ms2": "Commercial Invoice Submitted",
+                "ms2_invoiced": item_amount,
+            }, update_modified=True)

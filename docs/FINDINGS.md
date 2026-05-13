@@ -163,5 +163,4 @@ Every entry has:
 - Cursor pagination for PO Dump and PIC Tracker (currently offset-based).
 - Replace per-page sort dropdowns with the global DataTablePro sort menu
   everywhere (Execution Monitor still has a per-page one).
-- Service worker version pinning so PWA users don't load mismatched
-  bundle + cached prefs.
+- Code-split the portal frontend bundle (currently 1.3 MB — Vite warns chunk > 500 kB). Use React.lazy + Suspense for page-level components to reduce initial download size.
