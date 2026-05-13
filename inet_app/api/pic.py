@@ -159,6 +159,14 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         # invoicing pipeline is the focus.
         where.append("IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled', 'Closed')")
 
+    # Hide lines where MS1 is done AND (MS2 done or MS2 has no amount) —
+    # nothing left for PIC to process on this PO line.
+    where.append(
+        "NOT (pd.pic_status IN ('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
+        " AND (pd.pic_status_ms2 IN ('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
+        "      OR IFNULL(pd.ms2_amount, 0) = 0))"
+    )
+
     search = pf.get("search") or pf.get("q") or ""
     if search:
         clause, like_params = _sql_search_clause(
@@ -900,14 +908,6 @@ def list_invoice_tracker_rows(filters=None, limit=500):
         if clause:
             wheres.append(clause)
             params.extend(cparams)
-
-    # Hide lines where MS1 is done AND (MS2 done or MS2 has no amount) —
-    # nothing left for PIC to invoice on this PO line.
-    wheres.append(
-        "NOT (pd.pic_status IN ('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
-        " AND (pd.pic_status_ms2 IN ('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
-        "      OR IFNULL(pd.ms2_amount, 0) = 0))"
-    )
 
     # Check if Sales Invoice Item has the poid column (accounting dimension)
     si_join = ""
