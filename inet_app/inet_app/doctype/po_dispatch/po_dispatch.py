@@ -89,7 +89,7 @@ class PODispatch(Document):
             self.ms2_pct = ms2_pct
 
     def _compute_ms_amounts(self):
-        """Derive ms1/ms2 amount + unbilled. Read-only fields on the form."""
+        """Derive ms1/ms2 amount + unbilled + remaining milestone pct."""
         line = flt(getattr(self, "line_amount", 0))
         m1_pct = flt(getattr(self, "ms1_pct", 0))
         m2_pct = flt(getattr(self, "ms2_pct", 0))
@@ -97,10 +97,9 @@ class PODispatch(Document):
         m2_amt = round(line * m2_pct / 100.0, 4) if line else 0.0
         self.ms1_amount = m1_amt
         self.ms2_amount = m2_amt
-        self.ms1_unbilled = round(m1_amt - flt(getattr(self, "ms1_invoiced", 0)), 4)
-        self.ms2_unbilled = round(m2_amt - flt(getattr(self, "ms2_invoiced", 0)), 4)
-
-        # Remaining milestone % — auto-calculated from invoiced vs total.
-        total_ms = m1_amt + m2_amt
-        total_inv = flt(getattr(self, "ms1_invoiced", 0)) + flt(getattr(self, "ms2_invoiced", 0))
-        self.remaining_milestone_pct = round((total_ms - total_inv) / total_ms * 100, 2) if total_ms else 0
+        m1_inv = flt(getattr(self, "ms1_invoiced", 0))
+        m2_inv = flt(getattr(self, "ms2_invoiced", 0))
+        self.ms1_unbilled = round(m1_amt - m1_inv, 4)
+        self.ms2_unbilled = round(m2_amt - m2_inv, 4)
+        remaining = (m1_amt - m1_inv) + (m2_amt - m2_inv)
+        self.remaining_milestone_pct = round(remaining / line * 100.0, 2) if line else 0.0

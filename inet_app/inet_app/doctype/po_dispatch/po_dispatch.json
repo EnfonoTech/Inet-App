@@ -404,10 +404,11 @@
   },
   {
    "default": "100",
-   "description": "Defaults to 100; PIC nudges down as milestones close.",
+   "description": "Auto-calculated from unbilled amounts / line amount.",
    "fieldname": "remaining_milestone_pct",
    "fieldtype": "Percent",
-   "label": "Remaining Milestone %"
+   "label": "Remaining Milestone %",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_pic1",
@@ -438,9 +439,11 @@
   },
   {
    "default": "0",
+   "description": "Read-only — set automatically on Sales Invoice submit.",
    "fieldname": "ms1_invoiced",
    "fieldtype": "Currency",
-   "label": "MS1 Invoiced"
+   "label": "MS1 Invoiced",
+   "read_only": 1
   },
   {
    "description": "Read-only \u2014 ms1_amount \u2212 ms1_invoiced.",
@@ -504,9 +507,11 @@
   },
   {
    "default": "0",
+   "description": "Read-only — set automatically on Sales Invoice submit.",
    "fieldname": "ms2_invoiced",
    "fieldtype": "Currency",
-   "label": "MS2 Invoiced"
+   "label": "MS2 Invoiced",
+   "read_only": 1
   },
   {
    "description": "Read-only \u2014 ms2_amount \u2212 ms2_invoiced.",
