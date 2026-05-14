@@ -118,6 +118,7 @@ const adminNav = [
   { to: "/execution",  label: "Execution",   icon: "eye" },
   { to: "/work-done",  label: "Work Done",   icon: "checkCircle" },
   { to: "/issues-risks", label: "Issues & Risks", icon: "clipboard" },
+  { to: "/backend",    label: "Backend",       icon: "briefcase" },
   { to: "/reports",    label: "Reports",     icon: "barChart" },
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/approvals", label: "Approvals", icon: "shieldCheck" },

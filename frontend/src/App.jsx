@@ -106,6 +106,7 @@ function AppContent() {
             <Route path="/execution" element={<ExecutionMonitor />} />
             <Route path="/work-done" element={<WorkDone />} />
             <Route path="/issues-risks" element={<IssuesRisks />} />
+            <Route path="/backend" element={<IMBackend />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/timesheets" element={<AdminTimesheets />} />
             <Route path="/approvals" element={<TeamAllocationApprovals />} />
