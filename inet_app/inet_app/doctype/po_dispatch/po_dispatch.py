@@ -99,3 +99,8 @@ class PODispatch(Document):
         self.ms2_amount = m2_amt
         self.ms1_unbilled = round(m1_amt - flt(getattr(self, "ms1_invoiced", 0)), 4)
         self.ms2_unbilled = round(m2_amt - flt(getattr(self, "ms2_invoiced", 0)), 4)
+
+        # Remaining milestone % — auto-calculated from invoiced vs total.
+        total_ms = m1_amt + m2_amt
+        total_inv = flt(getattr(self, "ms1_invoiced", 0)) + flt(getattr(self, "ms2_invoiced", 0))
+        self.remaining_milestone_pct = round((total_ms - total_inv) / total_ms * 100, 2) if total_ms else 0

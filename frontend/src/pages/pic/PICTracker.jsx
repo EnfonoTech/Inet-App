@@ -671,8 +671,8 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
                     placeholder="e.g. Accepted" style={fieldInputStyle} />
                 </Field>
                 <Field label="Remaining Milestone %">
-                  <input type="number" step="1" min="0" max="100" value={fields.remaining_milestone_pct || 0}
-                    onChange={(e) => set("remaining_milestone_pct", parseFloat(e.target.value) || 0)} disabled={busy} style={fieldInputStyle} />
+                  <input type="number" step="1" min="0" max="100" value={fields.remaining_milestone_pct || 0} readOnly
+                    style={{ ...fieldInputStyle, background: "#f1f5f9", color: "#64748b", cursor: "not-allowed" }} />
                 </Field>
               </div>
               {row.im_rejection_remark && (
@@ -806,8 +806,8 @@ function MilestonePanel({
           <input type="date" value={fields[appliedKey] || ""} onChange={(e) => set(appliedKey, e.target.value)} disabled={busy} style={fieldInputStyle} />
         </Field>
         <Field label="Invoiced Amount (SAR)">
-          <input type="number" step="0.01" value={fields[invoicedKey] || 0}
-            onChange={(e) => set(invoicedKey, parseFloat(e.target.value) || 0)} disabled={busy} style={fieldInputStyle} />
+          <input type="number" step="0.01" value={fields[invoicedKey] || 0} readOnly
+            style={{ ...fieldInputStyle, background: "#f1f5f9", color: "#64748b", cursor: "not-allowed" }} />
         </Field>
         <Field label="Invoicing Month">
           <input type="month" value={(fields[invoiceMonthKey] || "").slice(0, 7)}

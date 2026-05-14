@@ -136,6 +136,14 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         # Default: hide "Work Not Done" — PIC only sees lines ready for processing.
         where.append(f"({_PIC_INITIAL_RULE_SQL.strip()}) != 'Work Not Done'")
 
+    # Hide lines that are fully closed — MS1 closed/submitted and MS2 either
+    # matches the same status or has zero amount (no MS2 to close).
+    where.append(
+        "NOT ("
+        "  (pd.pic_status IN ('Commercial Invoice Closed','Commercial Invoice Submitted') "
+        "   AND (pd.pic_status_ms2 = pd.pic_status OR COALESCE(pd.ms2_amount, 0) = 0))"
+        ")"
+
     pic_ms2_vals = _ensure_list(pf.get("pic_status_ms2"))
     if pic_ms2_vals:
         ph = ", ".join(["%s"] * len(pic_ms2_vals))
@@ -248,14 +256,14 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
 _PIC_WRITABLE = (
     # MS1
     "pic_status", "isdp_ibuy_owner", "pic_detail_remark", "ms1_applied_date",
-    "ms1_invoiced", "subcon_pct_ms1", "inet_pct_ms1",
+    "subcon_pct_ms1", "inet_pct_ms1",
     "ms1_invoice_month", "ms1_ibuy_inv_date", "ms1_payment_received_date",
     # MS2
     "pic_status_ms2", "isdp_owner_ms2", "pic_detail_remark_ms2", "ms2_applied_date",
-    "ms2_invoiced", "subcon_pct_ms2", "inet_pct_ms2",
+    "subcon_pct_ms2", "inet_pct_ms2",
     "ms2_invoice_month", "ms2_ibuy_inv_date", "ms2_payment_received_date",
-    # Common
-    "remaining_milestone_pct",
+    # Common — remaining_milestone_pct, ms1_invoiced, ms2_invoiced are
+    # auto-calculated by validate; not manually editable.
     "ms1_pct", "ms2_pct",  # PIC may override the parsed split
     # Acceptance gates — PIC can correct typos coming from the master tracker
     "sqc_status", "pat_status", "im_rejection_remark",
@@ -926,6 +934,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                pd.ms1_payment_received_date, pd.ms2_payment_received_date,
                pd.subcon_pct_ms1, pd.inet_pct_ms1,
                pd.subcon_pct_ms2, pd.inet_pct_ms2,
+               pd.remaining_milestone_pct,
                pd.modified,
                {si_cols}
         FROM `tabPO Dispatch` pd

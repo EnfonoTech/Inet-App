@@ -256,6 +256,7 @@ export default function InvoiceTracker() {
                   <th style={{ textAlign: "right" }}>MS2 Amount</th>
                   <th>PIC Status (MS1)</th>
                   <th>PIC Status (MS2)</th>
+                  <th style={{ textAlign: "right" }}>Remaining %</th>
                   <th>Linked Invoice</th>
                 </tr>
               </thead>
@@ -289,6 +290,9 @@ export default function InvoiceTracker() {
                         <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, background: ms2Tone.bg, color: ms2Tone.fg, whiteSpace: "nowrap" }}>
                           {r.pic_status_ms2 || "—"}
                         </span>
+                      </td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
+                        {r.remaining_milestone_pct != null ? `${Number(r.remaining_milestone_pct).toFixed(0)}%` : "—"}
                       </td>
                       <td>
                         {r.linked_invoice ? (
