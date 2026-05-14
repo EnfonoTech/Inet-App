@@ -951,7 +951,7 @@ def backfill_po_dispatch_id_to_poid(limit=500):
 
 
 @frappe.whitelist()
-def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000):
+def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000, search=None):
     """
     Export PO Intake lines whose parent PO was created in the date range (upload date).
     Returns uploaded PO lines in source column order for audit/export.
@@ -1065,9 +1065,27 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
     line_filters = {"parent": ["in", parent_names]}
     if line_status_filter:
         line_filters["po_line_status"] = ["in", list({s for s in line_status_filter})]
+    or_filters = None
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        or_filters = [
+            ["source_id", "like", like],
+            ["poid", "like", like],
+            ["item_code", "like", like],
+            ["item_description", "like", like],
+            ["site_code", "like", like],
+            ["site_name", "like", like],
+            ["project_code", "like", like],
+            ["project_name", "like", like],
+            ["sub_contract_no", "like", like],
+            ["payment_terms", "like", like],
+            ["center_area", "like", like],
+            ["shipment_number", "like", like],
+        ]
     lines = frappe.get_all(
         "PO Intake Line",
         filters=line_filters,
+        or_filters=or_filters,
         fields=fields,
         order_by="parent desc, idx asc",
         limit_page_length=lim,
@@ -2291,6 +2309,7 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             c
             for c in (
                 "name",
+                "poid",
                 "po_no",
                 "item_code",
                 "project_code",
@@ -4663,6 +4682,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
             "IFNULL(rp.visit_type,'')",
             "IFNULL(rp.plan_status,'')",
             "IFNULL(rp.po_dispatch,'')",
+            "IFNULL(pd.poid,'')",
             "IFNULL(pd.po_no,'')",
             "IFNULL(pd.item_code,'')",
             "IFNULL(pd.item_description,'')",
@@ -4962,6 +4982,7 @@ def list_work_done_rows(filters=None, limit=500):
             "IFNULL(wd.system_id,'')",
             "IFNULL(wd.item_code,'')",
             "CAST(wd.executed_qty AS CHAR)",
+            "IFNULL(pd.poid,'')",
             "IFNULL(pd.po_no,'')",
             "IFNULL(pd.project_code,'')",
             "IFNULL(pd.site_code,'')",
@@ -5494,6 +5515,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         concat_parts = [
             "IFNULL(rp.name,'')",
             "IFNULL(rp.po_dispatch,'')",
+            "IFNULL(pd.poid,'')",
             "IFNULL(rp.issue_category,'')",
             "IFNULL(rp.team,'')",
             "IFNULL(it.team_name,'')",
@@ -6250,6 +6272,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         concat_parts = [
             "IFNULL(rp.name,'')",
             "IFNULL(rp.po_dispatch,'')",
+            "IFNULL(pd.poid,'')",
             "CAST(rp.plan_date AS CHAR)",
             "IFNULL(rp.visit_type,'')",
             "IFNULL(rp.team,'')",
@@ -6395,6 +6418,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             "IFNULL(it.team_name,'')",
             "IFNULL(de.execution_status,'')",
             "IFNULL(de.qc_status,'')",
+            "IFNULL(pd.poid,'')",
             "IFNULL(pd.po_no,'')",
             "IFNULL(pd.project_code,'')",
             "IFNULL(pd.site_code,'')",

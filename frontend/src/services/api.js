@@ -334,13 +334,14 @@ export const pmApi = {
     call("inet_app.api.command_center.create_field_remark_template", { remark_text, category: category || "" }),
   bumpFieldRemarkTemplateUsage: (remark_texts) =>
     call("inet_app.api.command_center.bump_field_remark_template_usage", { remark_texts: JSON.stringify(remark_texts || []) }),
-  exportPODump: (from_date, to_date, statuses, limit) => {
+  exportPODump: (from_date, to_date, statuses, limit, search) => {
     const args = {
       from_date: from_date || "",
       to_date: to_date || "",
       statuses: JSON.stringify(Array.isArray(statuses) ? statuses : (statuses ? [statuses] : ["OPEN"])),
     };
     if (Number(limit) > 0) args.limit = Number(limit);
+    if (search && search.trim()) args.search = search.trim();
     return call("inet_app.api.command_center.export_po_dump", args);
   },
 

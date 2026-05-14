@@ -4,6 +4,7 @@ import { pmApi } from "../../services/api";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
 import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useDebounced } from "../../hooks/useDebounced";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
 const fmtNum = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
@@ -44,6 +45,7 @@ export default function PODump() {
   const [meta, setMeta] = useState(cached.current?.meta || null);
   const [detailRow, setDetailRow] = useState(null);
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
 
   useResetOnRowLimitChange(() => {
     setRows([]);
@@ -54,22 +56,6 @@ export default function PODump() {
   const [showCancelled, setShowCancelled] = useState(cached.current?.showCancelled ?? false);
   const [showOpen, setShowOpen] = useState(cached.current?.showOpen ?? true);
 
-  const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => {
-      const hay = [
-        r.id, r.po_no, r.poid, r.po_line_no, r.shipment_no,
-        r.site_code, r.site_name, r.item_code, r.item_description,
-        r.project_code, r.project_name, r.po_status, r.po_line_status, r.center_area,
-        r.sub_contract_no, r.currency, r.payment_terms,
-      ]
-        .map((v) => (v == null ? "" : String(v)))
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [rows, search]);
 
 
   const activeStatuses = useMemo(() => {
@@ -90,7 +76,7 @@ export default function PODump() {
     setLoading(true);
     setError(null);
     try {
-      const res = await pmApi.exportPODump(fromDate, toDate, statuses, rowLimit);
+      const res = await pmApi.exportPODump(fromDate, toDate, statuses, rowLimit, searchDebounced);
       const nextRows = Array.isArray(res?.rows) ? res.rows : [];
       setMeta(res);
       setRows(nextRows);
@@ -116,10 +102,10 @@ export default function PODump() {
     const t = setTimeout(() => { load(); }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fromDate, toDate, rowLimit, showOpen, showClosed, showCancelled]);
+  }, [fromDate, toDate, rowLimit, showOpen, showClosed, showCancelled, searchDebounced]);
 
   function downloadCsv() {
-    const exportRows = filteredRows.length ? filteredRows : rows;
+    const exportRows = rows;
     if (!exportRows.length) return;
     const keys = Object.keys(exportRows[0]);
     const esc = (v) => {
@@ -260,7 +246,7 @@ export default function PODump() {
           Range {meta.from_date} → {meta.to_date} ·{" "}
           {activeStatuses.join(" + ")} ·{" "}
           {search
-            ? <><strong>{filteredRows.length}</strong> matching of {rows.length} row{rows.length !== 1 ? "s" : ""}</>
+            ? <><strong>{rows.length}</strong> matching of {rows.length} row{rows.length !== 1 ? "s" : ""}</>
             : <>{rows.length} row{rows.length !== 1 ? "s" : ""}</>}
         </div>
       )}
@@ -273,7 +259,7 @@ export default function PODump() {
               <h3>No rows</h3>
               <p>Pick a date range and at least one status above.</p>
             </div>
-          ) : filteredRows.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">🔍</div>
               <h3>No matches</h3>
@@ -300,7 +286,7 @@ export default function PODump() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r, i) => (
+                {rows.map((r, i) => (
                   <tr key={`${r.id || r.poid || r.po_no || "line"}-${i}`}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.id || "—"}</td>
                     <td>{r.po_line_status || r.po_status || "—"}</td>
@@ -329,7 +315,7 @@ export default function PODump() {
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={rows.length}
-          filteredCount={filteredRows.length}
+          filteredCount={rows.length}
           filterActive={!!search || activeStatuses.length < 3}
         />
       </div>
