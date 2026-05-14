@@ -168,9 +168,6 @@ role_home_page = {
 # Hook on document methods and events
 
 doc_events = {
-	"Purchase Order": {
-		"on_submit": "inet_app.api.project_management.on_purchase_order_submit"
-	},
 	"Sales Invoice": {
 		"on_submit": "inet_app.api.pic.on_sales_invoice_submit"
 	},
