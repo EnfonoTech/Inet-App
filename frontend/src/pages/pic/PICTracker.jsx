@@ -220,9 +220,6 @@ export default function PICTracker() {
       pic_detail_remark_ms2: row.pic_detail_remark_ms2 || "",
       ms1_applied_date: row.ms1_applied_date || "",
       ms2_applied_date: row.ms2_applied_date || "",
-      ms1_invoiced: row.ms1_invoiced || 0,
-      ms2_invoiced: row.ms2_invoiced || 0,
-      remaining_milestone_pct: row.remaining_milestone_pct || 0,
       sqc_status: row.sqc_status || "",
       pat_status: row.pat_status || "",
       ms1_invoice_month: row.ms1_invoice_month || "",
@@ -671,8 +668,9 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
                     placeholder="e.g. Accepted" style={fieldInputStyle} />
                 </Field>
                 <Field label="Remaining Milestone %">
-                  <input type="number" step="1" min="0" max="100" value={fields.remaining_milestone_pct || 0} readOnly
-                    style={{ ...fieldInputStyle, background: "#f1f5f9", color: "#64748b", cursor: "not-allowed" }} />
+                  <span style={{ fontSize: "0.88rem", fontWeight: 700, fontFamily: "JetBrains Mono, ui-monospace, monospace", color: "var(--text)" }}>
+                    {row.remaining_milestone_pct != null ? `${Number(row.remaining_milestone_pct).toFixed(0)}%` : "—"}
+                  </span>
                 </Field>
               </div>
               {row.im_rejection_remark && (
@@ -806,8 +804,9 @@ function MilestonePanel({
           <input type="date" value={fields[appliedKey] || ""} onChange={(e) => set(appliedKey, e.target.value)} disabled={busy} style={fieldInputStyle} />
         </Field>
         <Field label="Invoiced Amount (SAR)">
-          <input type="number" step="0.01" value={fields[invoicedKey] || 0} readOnly
-            style={{ ...fieldInputStyle, background: "#f1f5f9", color: "#64748b", cursor: "not-allowed" }} />
+          <span style={{ fontSize: "0.88rem", fontWeight: 700, fontFamily: "JetBrains Mono, ui-monospace, monospace", color: "var(--text)" }}>
+            SAR {fmt.format(row[invoicedKey] || 0)}
+          </span>
         </Field>
         <Field label="Invoicing Month">
           <input type="month" value={(fields[invoiceMonthKey] || "").slice(0, 7)}
