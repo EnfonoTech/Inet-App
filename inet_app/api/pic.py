@@ -142,7 +142,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         "NOT ("
         "  (pd.pic_status IN ('Commercial Invoice Closed','Commercial Invoice Submitted') "
         "   AND (pd.pic_status_ms2 = pd.pic_status OR COALESCE(pd.ms2_amount, 0) = 0))"
-        ")"
+        ")")
 
     pic_ms2_vals = _ensure_list(pf.get("pic_status_ms2"))
     if pic_ms2_vals:
