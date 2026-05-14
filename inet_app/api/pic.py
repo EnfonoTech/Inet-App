@@ -298,8 +298,13 @@ def update_pic_row(po_dispatch, fields):
     submitted = "Commercial Invoice Submitted"
     new_ms1 = (fields.get("pic_status") or "").strip()
     new_ms2 = (fields.get("pic_status_ms2") or "").strip()
+    # Only close dispatch when both milestones are resolved
     if new_ms1 == closed or new_ms2 == closed:
-        doc.dispatch_status = "Closed"
+        ms1_closed = new_ms1 == closed or (doc.pic_status or "").strip() == closed
+        ms2_closed = new_ms2 == closed or (doc.pic_status_ms2 or "").strip() == closed
+        ms2_zero = flt(doc.ms2_amount or 0) == 0
+        if ms1_closed and (ms2_closed or ms2_zero):
+            doc.dispatch_status = "Closed"
     billing = None
     if new_ms1 == submitted or new_ms2 == submitted:
         billing = "Invoiced"
@@ -309,6 +314,19 @@ def update_pic_row(po_dispatch, fields):
     doc.flags.ignore_permissions = True
     doc.save()
     frappe.db.commit()
+
+    # Close the PO Intake Line only when both milestones are done:
+    # MS1 closed AND (MS2 closed OR MS2 amount is zero / doesn't exist)
+    ms1_closed = (doc.pic_status or "").strip() == closed
+    ms2_closed = (doc.pic_status_ms2 or "").strip() == closed
+    ms2_zero = flt(doc.ms2_amount or 0) == 0
+    if ms1_closed and (ms2_closed or ms2_zero):
+        if doc.po_intake and doc.po_line_no:
+            il = frappe.db.exists("PO Intake Line",
+                {"parent": doc.po_intake, "po_line_no": doc.po_line_no})
+            if il and isinstance(il, str):
+                frappe.db.set_value("PO Intake Line", il, "po_line_status", "Closed")
+                frappe.db.commit()
 
     if billing:
         wd_names = frappe.db.get_all("Work Done", {"system_id": doc.name}, pluck="name")
@@ -419,6 +437,22 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
             if pic_status == "Commercial Invoice Closed":
                 payload["dispatch_status"] = "Closed"
             frappe.db.set_value("PO Dispatch", name, payload, update_modified=True)
+
+            # Also close the PO Intake Line when both MS1 and MS2 are done
+            if pic_status == "Commercial Invoice Closed":
+                pd = frappe.db.get_value("PO Dispatch", name,
+                    ["pic_status", "pic_status_ms2", "ms2_amount",
+                     "po_intake", "po_line_no"], as_dict=True)
+                if pd:
+                    ms1_cl = (pd.pic_status or "").strip() == "Commercial Invoice Closed"
+                    ms2_cl = (pd.pic_status_ms2 or "").strip() == "Commercial Invoice Closed"
+                    ms2_z = flt(pd.ms2_amount or 0) == 0
+                    if ms1_cl and (ms2_cl or ms2_z):
+                        if pd.po_intake and pd.po_line_no:
+                            il = frappe.db.exists("PO Intake Line",
+                                {"parent": pd.po_intake, "po_line_no": pd.po_line_no})
+                            if il and isinstance(il, str):
+                                frappe.db.set_value("PO Intake Line", il, "po_line_status", "Closed")
             updated.append({"po_dispatch": name, status_field: pic_status})
         except Exception as e:
             errors.append({"po_dispatch": name, "error": frappe.utils.cstr(e)[:500]})
