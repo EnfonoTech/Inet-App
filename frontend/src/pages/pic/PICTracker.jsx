@@ -805,7 +805,7 @@ function MilestonePanel({
         </Field>
         <Field label="Invoiced Amount (SAR)">
           <span style={{ fontSize: "0.88rem", fontWeight: 700, fontFamily: "JetBrains Mono, ui-monospace, monospace", color: "var(--text)" }}>
-            SAR {fmt.format(row[invoicedKey] || 0)}
+            SAR {fmt.format(invoiced || 0)}
           </span>
         </Field>
         <Field label="Invoicing Month">

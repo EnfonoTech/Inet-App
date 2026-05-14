@@ -115,11 +115,36 @@ export default function InvoiceTracker() {
     if (selectedRows.length === 0) return;
     setInvoiceBusy(true);
     try {
-      // Update MS1 pic_status for each selected row
+      let ms1Count = 0;
+      let ms2Count = 0;
       for (const r of selectedRows) {
-        await pmApi.updatePicRow(r.name, { pic_status: newStatus });
+        const ms1Ready = (r.pic_status || "").trim() === "Ready for Invoice";
+        const ms2Ready = (r.pic_status_ms2 || "").trim() === "Ready for Invoice";
+        const ms1Submitted = (r.pic_status || "").trim() === "Commercial Invoice Submitted";
+        const ms2Submitted = (r.pic_status_ms2 || "").trim() === "Commercial Invoice Submitted";
+
+        if (newStatus === "Commercial Invoice Submitted") {
+          if (ms1Ready) {
+            await pmApi.updatePicRow(r.name, { pic_status: newStatus });
+            ms1Count++;
+          } else if (ms2Ready) {
+            await pmApi.updatePicRow(r.name, { pic_status_ms2: newStatus });
+            ms2Count++;
+          }
+        } else if (newStatus === "Commercial Invoice Closed") {
+          if (ms1Submitted) {
+            await pmApi.updatePicRow(r.name, { pic_status: newStatus });
+            ms1Count++;
+          } else if (ms2Submitted) {
+            await pmApi.updatePicRow(r.name, { pic_status_ms2: newStatus });
+            ms2Count++;
+          }
+        }
       }
-      setMsg(`Marked ${selectedRows.length} row(s) as "${newStatus}"`);
+      const parts = [];
+      if (ms1Count) parts.push(`${ms1Count} MS1`);
+      if (ms2Count) parts.push(`${ms2Count} MS2`);
+      setMsg(`Marked ${parts.join(" + ")} as "${newStatus}"`);
       setSelected(new Set());
       await load();
     } catch (e) {
@@ -293,17 +318,27 @@ export default function InvoiceTracker() {
                         </span>
                       </td>
                       <td>
-                        {r.linked_invoice ? (
-                          <a href={`/app/sales-invoice/${r.linked_invoice}`} target="_blank" rel="noopener noreferrer"
-                            style={{ fontSize: "0.78rem", fontWeight: 600, color: "#1d4ed8" }}>
-                            {r.linked_invoice}
-                            <span style={{ fontSize: "0.66rem", color: r.linked_invoice_status === "Submitted" ? "#047857" : "#b45309", marginLeft: 6 }}>
-                              ({r.linked_invoice_status || "?"})
-                            </span>
-                          </a>
-                        ) : (
-                          <span style={{ color: "#cbd5e1", fontSize: "0.78rem" }}>—</span>
-                        )}
+                        {(() => {
+                          const csv = r.linked_invoices_csv;
+                          if (!csv) return <span style={{ color: "#cbd5e1", fontSize: "0.78rem" }}>—</span>;
+                          const entries = csv.split(", ").map((entry) => {
+                            const parts = entry.split("|");
+                            return { name: parts[0], status: parts[1] || "?" };
+                          });
+                          return (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                              {entries.map((inv) => (
+                                <a key={inv.name} href={`/app/sales-invoice/${inv.name}`} target="_blank" rel="noopener noreferrer"
+                                  style={{ fontSize: "0.78rem", fontWeight: 600, color: "#1d4ed8", whiteSpace: "nowrap" }}>
+                                  {inv.name}
+                                  <span style={{ fontSize: "0.66rem", color: inv.status === "Submitted" ? "#047857" : "#b45309", marginLeft: 6 }}>
+                                    ({inv.status})
+                                  </span>
+                                </a>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </td>
                     </tr>
                   );

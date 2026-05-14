@@ -113,7 +113,7 @@ export default function PODispatch() {
   // Dispatch modal state
   const [showDispatchModal, setShowDispatchModal] = useState(false);
   const [assignIm, setAssignIm] = useState("");
-  const [targetMonth, setTargetMonth] = useState(todayMonth());
+  const [targetMonth, setTargetMonth] = useState("");
   const [planningMode, setPlanningMode] = useState("Plan");
   const [dispatching, setDispatching] = useState(false);
 
@@ -215,14 +215,14 @@ export default function PODispatch() {
 
   // ── Dispatch ─────────────────────────────────────────────────────────────
   async function handleDispatch() {
-    if (!assignIm || !targetMonth || !planningMode) return;
+    if (!assignIm || !planningMode) return;
     setDispatching(true);
     try {
       const selectedLines = rows.filter(r => selected.has(r.name));
       const result = await pmApi.dispatchPOLines({
         lines: selectedLines,
         im: assignIm,
-        target_month: targetMonth,
+        target_month: targetMonth || undefined,
         planning_mode: planningMode,
       });
       const count = result?.created ?? selected.size;
@@ -312,13 +312,6 @@ export default function PODispatch() {
             </select>
           </div>
           <div>
-            <label style={labelStyle}>Target Month *</label>
-            <input
-              type="month" style={inputStyle}
-              value={targetMonth} onChange={e => setTargetMonth(e.target.value)}
-            />
-          </div>
-          <div>
             <label style={labelStyle}>Planning Mode *</label>
             <select style={inputStyle} value={planningMode} onChange={e => setPlanningMode(e.target.value)}>
               <option value="Plan">Plan</option>
@@ -340,7 +333,7 @@ export default function PODispatch() {
           <button
             className="btn-primary"
             onClick={handleDispatch}
-            disabled={dispatching || !assignIm || !targetMonth || !planningMode}
+            disabled={dispatching || !assignIm || !planningMode}
           >
             {dispatching ? "Dispatching..." : "Confirm Dispatch"}
           </button>

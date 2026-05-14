@@ -248,11 +248,9 @@ _PIC_STATUS_TO_BILLING = {
     "Commercial Invoice Closed":    "Closed",
     "PO Line Canceled":             "Closed",
     "Commercial Invoice Submitted": "Invoiced",
-    "Ready for Invoice":            "Invoiced",
-    "Under I-BUY":                  "Invoiced",
-    "Under ISDP":                   "Invoiced",
-    # Anything else (Work Not Done, Under Process to Apply, both Rejected
-    # variants, PO Need to Cancel) maps to Pending.
+    # Everything else (Ready for Invoice, Under I-BUY, Under ISDP, Work Not Done,
+    # Under Process to Apply, both Rejected variants, PO Need to Cancel) maps to
+    # "Pending" — billing only counts when the invoice is actually submitted.
 }
 
 
@@ -824,7 +822,9 @@ def _upsert_po_dispatch_for_line(
         "PO Dispatch", {"po_intake": po_intake_name, "po_line_no": po_line_no}, "name"
     )
     if existing_name:
-        frappe.db.set_value("PO Dispatch", existing_name, payload, update_modified=False)
+        # Strip empty/None values so DATE columns don't choke on ''.
+        clean = {k: v for k, v in payload.items() if v is not None and v != ""}
+        frappe.db.set_value("PO Dispatch", existing_name, clean, update_modified=False)
         system_id = frappe.db.get_value("PO Dispatch", existing_name, "system_id")
         if not system_id:
             frappe.db.set_value("PO Dispatch", existing_name, "system_id", existing_name, update_modified=False)
@@ -4467,6 +4467,18 @@ def generate_work_done(execution_name):
 
     wd.insert(ignore_permissions=True)
     frappe.db.commit()
+
+    # Mark PO Dispatch and PO Intake Line as Completed
+    if dispatch_name and frappe.db.exists("PO Dispatch", dispatch_name):
+        frappe.db.set_value("PO Dispatch", dispatch_name, "dispatch_status", "Completed")
+        intake_parent = frappe.db.get_value("PO Dispatch", dispatch_name, "po_intake")
+        line_no = frappe.db.get_value("PO Dispatch", dispatch_name, "po_line_no")
+        if intake_parent and line_no:
+            intake_line = frappe.db.exists("PO Intake Line",
+                {"parent": intake_parent, "po_line_no": line_no})
+            if intake_line and isinstance(intake_line, str):
+                frappe.db.set_value("PO Intake Line", intake_line, "po_line_status", "Completed")
+        frappe.db.commit()
 
     return {"name": wd.name}
 
