@@ -8,13 +8,13 @@ import { pmApi } from "../../services/api";
 import { isNotRequired } from "../../utils/qcCiagFlags";
 
 const TEAM_QC_OPTIONS = ["Pending", "Pass", "Fail"];
-const TEAM_CIAG_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
+const TEAM_CIAG_OPTIONS = ["Open", "Approved", "Not Applicable"];
 
 function statusBadgeClass(status) {
   const s = String(status || "").toLowerCase();
   if (s === "pass" || s === "approved") return "completed";
-  if (s === "fail" || s === "rejected") return "cancelled";
-  if (s === "pending" || s === "open" || s.includes("progress") || s === "submitted") return "in-progress";
+  if (s === "fail") return "cancelled";
+  if (s === "pending" || s === "open") return "in-progress";
   if (s === "not applicable" || s === "n/a") return "new";
   return "new";
 }

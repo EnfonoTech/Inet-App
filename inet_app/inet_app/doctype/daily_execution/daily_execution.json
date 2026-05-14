@@ -127,7 +127,7 @@
    "fieldname": "ciag_status",
    "fieldtype": "Select",
    "label": "CIAG Status",
-   "options": "Open\nIn Progress\nSubmitted\nApproved\nRejected\nN/A\nNot Applicable"
+   "options": "Open\nApproved\nNot Applicable"
   },
   {
    "default": "0",

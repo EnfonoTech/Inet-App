@@ -1017,7 +1017,7 @@ export default function ExecutionForm() {
                   <div className="exec-field">
                     <label>CIAG Status *</label>
                     <select value={ciagStatus} onChange={(e) => setCiagStatus(e.target.value)} required>
-                      {["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"].map((s) => (
+                      {["Open", "Approved", "Not Applicable"].map((s) => (
                         <option key={s} value={s}>{s}</option>
                       ))}
                     </select>

@@ -18,7 +18,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import IMNoteCallout from "../../components/IMNoteCallout";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-const CIAG_STATUS_OPTIONS = ["Open", "In Progress", "Submitted", "Approved", "Rejected", "N/A"];
+const CIAG_STATUS_OPTIONS = ["Open", "Approved", "Not Applicable"];
 
 // Backend Check fields can come back as 0/false/"0" depending on the
 // transport, so accept all of them as the not-required signal.
