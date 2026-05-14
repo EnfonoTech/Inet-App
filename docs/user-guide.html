@@ -763,7 +763,7 @@
 <div class="guide-header">
   <h1>INET Operations Command Center</h1>
   <p class="subtitle">User Guide &amp; System Documentation &mdash; mirror of <code>docs/USER_GUIDE.md</code> (prefer the Markdown file in the repo for the latest edits)</p>
-  <div class="header-badge">APRIL 2026 &middot; SYNC WITH REPO MD</div>
+  <div class="header-badge">MAY 2026 &middot; SYNC WITH REPO MD</div>
 </div>
 
 <div class="content-area">
@@ -783,7 +783,7 @@
   </div>
   <p style="margin-top:14px;">In <strong>Frappe Desk</strong>, workspace <strong>PMS</strong> lists DocType shortcuts plus <strong>INET PMS</strong> (opens <code>/pms/dashboard</code> in the browser).</p>
 
-  <h3>Three User Roles</h3>
+  <h3>Four User Roles</h3>
   <div class="role-grid">
     <div class="role-card role-admin">
       <div class="role-icon-wrap"><svg viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
@@ -795,13 +795,18 @@
       <h4>Implementation Manager</h4>
       <p>Personal dashboard filtered to own teams and projects.</p>
     </div>
+    <div class="role-card role-pic">
+      <div class="role-icon-wrap"><svg viewBox="0 0 24 24" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
+      <h4>PIC (Invoice Controller)</h4>
+      <p>Track milestones, manage invoicing, create Sales Invoices from the portal.</p>
+    </div>
     <div class="role-card role-field">
       <div class="role-icon-wrap"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg></div>
       <h4>Field Team</h4>
       <p>Today's assigned work. Submit execution updates with GPS.</p>
     </div>
   </div>
-  <div class="alert alert-info"><span class="alert-icon">&#8505;</span><span><strong>Roles:</strong> <strong>Admin</strong> if user is Administrator, System Manager, or INET Admin. <strong>IM</strong> if user has INET IM (IM resolved via IM Master user/full_name, then teams where INET Team.im matches). <strong>Field</strong> if user has INET Field Team (prefer INET Team.field_user = User). Others default to field layout &mdash; assign Frappe roles for production.</span></div>
+  <div class="alert alert-info"><span class="alert-icon">&#8505;</span><span><strong>Roles:</strong> <strong>Admin</strong> if user is Administrator, System Manager, or INET Admin. <strong>IM</strong> if user has INET IM. <strong>PIC</strong> if user has INET PIC (higher priority than Admin). <strong>Field</strong> if user has INET Field Team. Others default to field layout &mdash; assign Frappe roles for production.</span></div>
 </div>
 
 <!-- 2. DASHBOARD -->

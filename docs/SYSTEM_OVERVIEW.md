@@ -253,39 +253,47 @@ IM marks Work Done.submission_status = "Confirmation Done"
                               ↓
               PIC sees POID as "Under Process to Apply"
                               ↓
-              Under I-BUY / Under ISDP  → Rejected back to IM
+         Under I-BUY / Under ISDP → I-BUY Rejected / ISDP Rejected
                               ↓
                     Ready for Invoice
                               ↓
                 Commercial Invoice Submitted
                               ↓
                 Commercial Invoice Closed       (terminal)
+                              ↓
+         PO Need to Cancel → PO Line Canceled   (alternate terminal)
 ```
 
-11-value `pic_status` enum drives the dashboard buckets. The MS1/MS2 split
-(parsed from Payment Terms) decides how `line_amount` divides into 1st and
-2nd payment amounts. PIC has its own pages:
+MS1 and MS2 each have independent status. The MS1/MS2 split (parsed from
+Payment Terms) decides how `line_amount` divides into 1st and 2nd payment
+amounts. `remaining_milestone_pct` is auto-calculated as total unbilled /
+line amount — fully invoiced lines (0%) are hidden from PIC Tracker by
+default.
+
+PIC pages:
 
 - **PIC Dashboard** (`/pms/pic-dashboard`) — gradient hero with KPIs +
-  closed-vs-pipeline progress bar, flat acceptance pipeline table mirroring
-  the Cash Flow Summary spreadsheet, monthly invoicing roll-up,
-  INET-vs-Subcon split, pending I-BUY / ISDP owner tables. Auto-refreshes
-  every 5 minutes. Date range scopes only the time-series panels (monthly /
-  pending owners) — buckets and KPIs always show full pipeline.
+  closed-vs-pipeline progress bar, acceptance pipeline table, monthly
+  invoicing roll-up, INET-vs-Subcon split, pending I-BUY / ISDP owner
+  tables. Auto-refreshes every 5 minutes.
 - **PIC Tracker** (`/pms/pic-tracker`) — full POID list with multi-select,
-  bulk status change, per-row edit popover (gradient hero + 3 status-chip
-  tabs MS1/MS2/Acceptance + sticky save footer). Totals tfoot stays aligned
-  with columns through Manage Table reorder/hide.
-- **PIC Reports** (`/pms/pic-reports`) — five canned reports (pipeline /
-  monthly / aging / closed / rejected) with adaptive filters and CSV
-  download.
+  bulk status change, per-row edit popover (gradient hero + MS1/MS2 tabs +
+  sticky save footer). Invoiced Amount and Remaining Milestone % are
+  read-only (auto-calculated). Totals tfoot stays aligned through Manage
+  Table reorder/hide.
+- **Invoice Tracker** (`/pms/pic-invoice-tracker`) — lines in invoicing-stage
+  statuses. Create ERPNext Sales Invoices directly from the portal with
+  auto-detected MS1/MS2 per row. Mark Submitted/Closed buttons update
+  status per milestone. Linked Invoices column shows all invoices per POID.
+- **PIC Reports** (`/pms/pic-reports`) — canned reports (pipeline / monthly /
+  aging / closed / rejected) with adaptive filters and CSV download.
 
-The PIC's status is the source of truth for billing — `list_work_done_rows`
-rolls `pic_status` (11 values) up to the legacy 3-bucket `billing_status`
-(Pending / Invoiced / Closed) for PM and IM Work Done views, and the SQL
-filter uses the same `CASE` expression so picking "Closed" actually filters
-on PIC's "Commercial Invoice Closed". The raw PIC status appears as a
-tooltip on the billing pill.
+Billing coupling: `list_work_done_rows` derives `billing_status` from PIC
+status — "Commercial Invoice Submitted" → Invoiced, "Commercial Invoice
+Closed" → Closed, everything else → Pending. Work Done billing_status is
+synced automatically when PIC changes status or a Sales Invoice is
+submitted. The PM Command Dashboard includes PIC KPIs via the **Commercial**
+tab.
 
 ## API surface
 
@@ -295,7 +303,7 @@ the single `call()` wrapper in [services/api.js](../frontend/src/services/api.js
 | Module                          | Highlights |
 |---------------------------------|------------|
 | `inet_app.api.command_center`   | List endpoints (PO Intake Lines, PO Dispatches, Rollout Plans, Daily Execution, Work Done, Issues & Risks, Execution Monitor), upload + archive import, masters CRUD via `genericList`/`genericCount`, dashboard KPIs, table preferences. |
-| `inet_app.api.pic`              | `list_pic_rows`, `update_pic_row`, `bulk_update_pic_status`, `get_pic_dashboard`, `get_pic_report`, `get_pic_capability`. Initial-state rule via `_PIC_INITIAL_RULE_SQL`. |
+| `inet_app.api.pic`              | `list_pic_rows`, `update_pic_row`, `bulk_update_pic_status`, `get_pic_dashboard`, `get_pic_report`, `list_invoice_tracker_rows`, `create_sales_invoice_from_pic`, `on_sales_invoice_submit`. Initial-state rule via `_PIC_INITIAL_RULE_SQL`. |
 | `inet_app.api.project_management`| `get_logged_user` (session bootstrap with role resolution), a few PM helpers. |
 
 ## Frontend conventions

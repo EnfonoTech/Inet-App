@@ -47,8 +47,9 @@
   },
   {
    "fieldname": "contract_model",
-   "fieldtype": "Data",
-   "label": "Contract Model"
+   "fieldtype": "Link",
+   "label": "Contract Model",
+   "options": "Contract Model"
   },
   {
    "fieldname": "note",

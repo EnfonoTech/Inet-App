@@ -30,7 +30,7 @@ The portal calls `get_logged_user` after Frappe login. Role is **not** guessed f
 |-------------|----------------------|----------------|
 | **Admin** | `Administrator`, **or** `System Manager`, **or** `INET Admin` | Full sidebar: dashboard, projects, PO upload, PO dump, dispatch, planning, execution, work done, issues & risks, reports, time logs, overview, masters |
 | **IM** | User has **`INET IM`** | IM sidebar: My Dashboard, My Projects, My Teams, Dispatches, Sub-Contract, Planning, Execution, Work Done, Issues & Risks, Reports, Time logs |
-| **PIC** | User has **`INET PIC`** (Project Invoice Controller) | PIC sidebar: Dashboard, Tracker, Reports |
+| **PIC** | User has **`INET PIC`** (Project Invoice Controller) | PIC sidebar: Dashboard, PIC Tracker, Invoice Tracker, Reports |
 | **Field** | User has **`INET Field Team`** | Field sidebar: Today’s Work, Execute, QC / CIAG, History, Time log |
 
 **Role priority** (when a user has more than one): **PIC → IM → Field → Admin**. The portal picks the most specific layout. PIC therefore wins over Admin if both are present — assign roles deliberately.
@@ -178,17 +178,15 @@ Lists completed work with billing and financial columns. Filters may include tea
 
 **Rates:** Revenue uses **Customer Item Master** (e.g. standard vs hard region) per your item/site rules.
 
-**Billing status now follows PIC.** The **Billing Status** column on PM/IM Work Done is computed from PO Dispatch **`pic_status`** rolled up into three buckets:
+**Billing status follows PIC.** The **Billing Status** column on PM/IM Work Done is derived from PO Dispatch PIC status:
 
-| Billing Status | PIC `pic_status` source values |
-|----------------|---------------------------------|
-| **Pending** | *(blank)*, **Work Not Done**, **Under Process to Apply** |
-| **Submitted** | **Submitted to Operator (MS1)**, **Submitted to Operator (MS2)**, **Submitted to Operator (Acceptance)** |
-| **Invoiced** | **Approved (MS1/MS2/Acceptance)**, **Invoiced (MS1/MS2/Acceptance)** |
+| Billing Status | When it applies |
+|----------------|-----------------|
+| **Pending** | Default for new Work Done. Also set while PIC status is Work Not Done, Under Process to Apply, Under I-BUY, Under ISDP, I-BUY Rejected, ISDP Rejected, Ready for Invoice, or PO Need to Cancel |
+| **Invoiced** | PIC marks **Commercial Invoice Submitted** (MS1 or MS2) — also synced automatically when a Sales Invoice is submitted |
+| **Closed** | PIC marks **Commercial Invoice Closed** (MS1 or MS2) — requires both milestones resolved (MS1 closed AND (MS2 closed OR MS2 amount is zero)) |
 
-Hover the cell for a tooltip showing the raw `pic_status`. If PIC fields are missing (legacy column not yet migrated), the row falls back to **Pending** automatically — no error.
-
-**Sub-Contract rows** (where `dispatch_status = Sub-Contracted`) appear in Work Done as soon as the IM submits the subcon team’s output; their execution status is synthesised as **Completed** so they participate in financials and PIC roll-up.
+The billing_status on Work Done is updated automatically when PIC changes status or when a Sales Invoice is submitted. No manual editing required.
 
 ---
 
@@ -295,7 +293,7 @@ Completing an execution as **Completed** (per your validation rules) drives **Wo
 
 The **PIC** role owns the path from “Work Done” → invoice received from the customer. PIC tracks Milestone-1 (MS1), Milestone-2 (MS2), and Acceptance billing percentages, dates, statuses, and remarks for every PO line.
 
-**Role**: `INET PIC`. Assign in **User → Roles**. Once assigned, the user logs in to the same `/pms/` portal and sees the PIC sidebar (Dashboard / Tracker / Reports). PIC has a **higher routing priority than Admin** — to keep both views, use a separate user.
+**Role**: `INET PIC`. Assign in **User → Roles**. Once assigned, the user logs in to the same `/pms/` portal and sees the PIC sidebar (Dashboard / PIC Tracker / Invoice Tracker / Reports). PIC has a **higher routing priority than Admin** — to keep both views, use a separate user.
 
 **What PIC sees** (PO Dispatch fields, role-scoped):
 
@@ -305,7 +303,10 @@ The **PIC** role owns the path from “Work Done” → invoice received from th
 | MS1 / MS2 / Acceptance | Each milestone has: **% (auto from payment terms)**, **amount (auto = line × %)**, **planned date**, **submission date**, **approval/invoice date**, **status** (one of *Submitted to Operator*, *Approved*, *Invoiced*) |
 | Tax & domain | `tax_rate`, `project_domain` |
 | Role-scoped remarks | **General remark** (visible to all roles), **Manager remark** (PIC/Admin), **Team Lead remark** (IM/Admin) |
-| Computed `pic_status` | One of 11 values rolled up from the milestone statuses; drives the Work Done **Billing Status** column |
+| Manual `pic_status` (MS1) | Work Not Done, Under Process to Apply, Under I-BUY, Under ISDP, I-BUY Rejected, ISDP Rejected, Ready for Invoice, Commercial Invoice Submitted, Commercial Invoice Closed, PO Need to Cancel, PO Line Canceled |
+| Manual `pic_status_ms2` (MS2) | Same options as MS1 |
+| Computed `remaining_milestone_pct` | Auto-calculated from (MS1 unbilled + MS2 unbilled) / line amount. 0% = fully invoiced, hidden from PIC Tracker by default |
+| `billing_status` on Work Done | Derived from PIC status: "Commercial Invoice Submitted" → Invoiced, "Commercial Invoice Closed" → Closed, everything else → Pending |
 
 > **Initial-state rule:** If a line has no PIC progress yet, `pic_status` shows as **“Under Process to Apply”** when execution is **Completed** and **“Work Not Done”** otherwise. As soon as a milestone status is set, the rule yields to the actual progress.
 
@@ -335,7 +336,21 @@ The day-to-day list view. PIC works mostly here.
 
 > **Initial state:** If you change `pic_status` away from blank, the initial-state rule no longer applies — the value you set is what shows. Clear the field again to fall back to the rule.
 
-### 5.3 PIC Reports (`/pms/pic-reports`)
+### 5.3 Invoice Tracker (`/pms/pic-invoice-tracker`)
+
+Dedicated page for lines in invoicing-stage statuses: **Ready for Invoice**, **Commercial Invoice Submitted**, **Commercial Invoice Closed**. Only appears when PIC has advanced a line to Ready for Invoice.
+
+**Key features:**
+
+- **Create Sales Invoice** — select one or more lines and create a draft ERPNext Sales Invoice. Each selected line becomes an item row. The system auto-detects whether to invoice MS1 or MS2 based on which milestone is Ready. Qty is scaled proportionally (e.g. MS1 at 70% gets 70% of the PO qty).
+- **Mark Submitted / Mark Closed** — batch-update PIC status. Auto-detects MS1 vs MS2 per row.
+- **Linked Invoices** column shows all Sales Invoices for each PO Dispatch (supports both MS1 and MS2 invoices on the same line).
+- **Remaining %** column shows how much of the line amount is still unbilled. Calculated automatically.
+- **KPI pills** at top show MS1 Total, MS1 Invoiced, MS2 Total, MS2 Invoiced across the current view.
+
+> When a Sales Invoice is **submitted** in ERPNext, the linked PO Dispatch automatically advances to **Commercial Invoice Submitted** and Work Done billing_status becomes **Invoiced**.
+
+### 5.4 PIC Reports (`/pms/pic-reports`)
 
 Five canned reports behind a **horizontal pill bar** (no two-column layout); the active report fills a single full-width card.
 
@@ -349,7 +364,7 @@ Five canned reports behind a **horizontal pill bar** (no two-column layout); the
 
 Each report has its own filter strip (date range, IM, project, team, status), and **CSV export**.
 
-### 5.4 Pic ↔ Work Done coupling
+### 5.5 PIC ↔ Work Done coupling
 
 PIC edits drive the **Billing Status** column on PM and IM Work Done lists (see section 2.8). Mapping is one-way: PIC → Work Done. Field/IM users do **not** edit billing directly.
 
