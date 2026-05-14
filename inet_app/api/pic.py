@@ -159,6 +159,11 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         # invoicing pipeline is the focus.
         where.append("IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled', 'Closed')")
 
+    # Default: hide fully-invoiced lines (remaining 0%) so PIC only sees
+    # work that still needs attention.
+    if not pf.get("remaining_milestone_pct"):
+        where.append("(pd.ms1_unbilled + pd.ms2_unbilled) > 0")
+
     search = pf.get("search") or pf.get("q") or ""
     if search:
         clause, like_params = _sql_search_clause(
