@@ -22,6 +22,12 @@ import ProjectDetail from "./pages/admin/ProjectDetail";
 import AdminTimesheets from "./pages/admin/Timesheets";
 import PODump from "./pages/admin/PODump";
 import TeamAllocationApprovals from "./pages/admin/TeamAllocationApprovals";
+import CEODashboard from "./pages/admin/CEODashboard";
+import CommercialDashboard from "./pages/admin/CommercialDashboard";
+import PMDashboard from "./pages/admin/PMDashboard";
+import OpsDashboard from "./pages/admin/OpsDashboard";
+import FinancialDashboard from "./pages/admin/FinancialDashboard";
+import IMDashboardView from "./pages/admin/IMDashboardView";
 
 /* -- IM pages --------------------------------------------------- */
 import IMDashboard from "./pages/im/IMDashboard";
@@ -97,6 +103,12 @@ function AppContent() {
         {role === "admin" && (
           <>
             <Route path="/dashboard" element={<CommandDashboard />} />
+            <Route path="/ceo-dashboard" element={<CEODashboard />} />
+            <Route path="/commercial-dashboard" element={<CommercialDashboard />} />
+            <Route path="/pm-dashboard" element={<PMDashboard />} />
+            <Route path="/ops-dashboard" element={<OpsDashboard />} />
+            <Route path="/financial-dashboard" element={<FinancialDashboard />} />
+            <Route path="/im-dashboard-view" element={<IMDashboardView />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:projectCode" element={<ProjectDetail />} />
             <Route path="/po-upload" element={<POUpload />} />

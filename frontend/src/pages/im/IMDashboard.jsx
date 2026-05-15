@@ -157,8 +157,9 @@ function ProgressBar({ pct, color = "#10b981" }) {
   );
 }
 
-export default function IMDashboard() {
-  const { imName } = useAuth();
+export default function IMDashboard({ overrideIm }) {
+  const { imName: authIm } = useAuth();
+  const imName = overrideIm || authIm;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

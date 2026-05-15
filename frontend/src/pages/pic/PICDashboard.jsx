@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { pmApi } from "../../services/api";
 import DateRangePicker from "../../components/DateRangePicker";
+import DashboardSwitcher from "../../components/DashboardSwitcher";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtMoney = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -99,6 +100,7 @@ export default function PICDashboard() {
 
   return (
     <div>
+      <DashboardSwitcher />
       {/* Hero header — gradient with KPIs */}
       <div style={{
         margin: "0 16px 14px",

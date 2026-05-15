@@ -4,7 +4,7 @@ import KPICard from "../../components/KPICard";
 import MiniTable from "../../components/MiniTable";
 import { BarChart, DonutChart } from "../../components/Charts";
 import DateRangePicker, { DATE_PRESETS } from "../../components/DateRangePicker";
-import PICDashboard from "../pic/PICDashboard";
+import DashboardSwitcher from "../../components/DashboardSwitcher";
 
 /* ── Helpers ───────────────────────────────────────────────── */
 
@@ -108,7 +108,6 @@ export default function CommandDashboard() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
   const [range, setRange] = useState(defaultRange);
-  const [activeTab, setActiveTab] = useState("operations"); // "operations" | "commercial"
   const intervalRef = useRef(null);
 
   async function fetchData(r = range) {
@@ -229,6 +228,7 @@ export default function CommandDashboard() {
 
   return (
     <div className="dashboard">
+      <DashboardSwitcher />
       {/* ── Header ──────────────────────────────────────────── */}
       <div className="dash-header" style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 240 }}>
@@ -243,35 +243,6 @@ export default function CommandDashboard() {
           onChange={(r) => setRange({ from: r.from, to: r.to })}
         />
       </div>
-
-      {/* ── Tab bar ────────────────────────────────────────── */}
-      <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 12px", width: "fit-content" }}>
-        {[
-          { id: "operations", label: "Operations" },
-          { id: "commercial", label: "Commercial" },
-        ].map((t) => {
-          const active = activeTab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button" role="tab"
-              aria-selected={active}
-              onClick={() => setActiveTab(t.id)}
-              style={{
-                padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700,
-                border: "none", borderRadius: 6, cursor: "pointer",
-                background: active ? "#1d4ed8" : "transparent",
-                color: active ? "#fff" : "#475569",
-              }}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {activeTab === "operations" && (
-      <>
 
       {/* ── Row 1: Operational Overview ─────────────────────── */}
       <div className="section-label">Operational Overview</div>
@@ -392,11 +363,6 @@ export default function CommandDashboard() {
           </div>
         </div>
       </div>
-      </>
-      )}
-
-      {activeTab === "commercial" && <PICDashboard />}
-
     </div>
   );
 }

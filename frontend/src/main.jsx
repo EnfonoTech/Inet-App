@@ -5,6 +5,7 @@ import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import "./styles/theme.css";
 import "./styles/dashboard.css";
+import "./styles/new-dashboard.css";
 import "./styles/pages.css";
 
 // Guard: an older PWA service worker was scoped at "/" and could intercept
