@@ -1,0 +1,229 @@
+{
+ "actions": [],
+ "autoname": "format:MAT-REQ-{YYYY}-{#####}",
+ "creation": "2026-05-16 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "request_date",
+  "requested_by",
+  "im",
+  "poid",
+  "duid",
+  "request_status",
+  "col_break_1",
+  "team",
+  "team_warehouse",
+  "source_warehouse",
+  "remark",
+  "approval_section",
+  "approved_by",
+  "approved_on",
+  "rejection_reason",
+  "stock_section",
+  "stock_entry_transfer",
+  "stock_entry_issue",
+  "items_section",
+  "items"
+ ],
+ "fields": [
+  {
+   "default": "Today",
+   "fieldname": "request_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Request Date",
+   "reqd": 1
+  },
+  {
+   "default": "__user",
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "im",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "IM",
+   "options": "IM Master"
+  },
+  {
+   "fieldname": "poid",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "POID",
+   "options": "PO Dispatch"
+  },
+  {
+   "fetch_from": "poid.site_code",
+   "fieldname": "duid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "DUID",
+   "read_only": 1
+  },
+  {
+   "default": "Pending Approval",
+   "fieldname": "request_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending Approval\nApproved\nRejected\nIssued",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "team",
+   "fieldtype": "Link",
+   "label": "Team",
+   "options": "INET Team"
+  },
+  {
+   "fieldname": "team_warehouse",
+   "fieldtype": "Link",
+   "label": "Team Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "default": "Stores - INET",
+   "fieldname": "source_warehouse",
+   "fieldtype": "Link",
+   "label": "Source Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "remark",
+   "fieldtype": "Small Text",
+   "label": "Remark"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "approval_section",
+   "fieldtype": "Section Break",
+   "label": "Approval Info"
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved / Rejected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved / Rejected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rejection_reason",
+   "fieldtype": "Small Text",
+   "label": "Rejection Reason",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "stock_section",
+   "fieldtype": "Section Break",
+   "label": "Stock Entries"
+  },
+  {
+   "fieldname": "stock_entry_transfer",
+   "fieldtype": "Link",
+   "label": "Material Transfer",
+   "options": "Stock Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stock_entry_issue",
+   "fieldtype": "Link",
+   "label": "Material Issue",
+   "options": "Stock Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "items_section",
+   "fieldtype": "Section Break",
+   "label": "Items"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Items",
+   "options": "Material Request INET Item",
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-05-16 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Material Request INET",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "request_date",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "poid",
+ "track_changes": 1
+}

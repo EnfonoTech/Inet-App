@@ -541,4 +541,13 @@ export const pmApi = {
   getUserRoles:      (user)    => call("frappe.client.get_list", { doctype: "Has Role", filters: { parent: user, role: "System Manager" }, fields: ["role"], limit_page_length: 1 }),
   getTeamByIM:       (im)      => call("frappe.client.get_list", { doctype: "INET Team", filters: { im }, fields: ["team_id", "team_name", "im"], limit_page_length: 1 }),
   getTeamByMember:   (user)    => call("frappe.client.get_list", { doctype: "INET Team", filters: { status: "Active" }, fields: ["team_id", "team_name"], limit_page_length: 100 }),
+
+  // ── Material Request (INET) ────────────────────────────────
+  listMaterialRequests:    (args)   => call("inet_app.api.material_management.list_material_requests", args || {}),
+  getMaterialRequest:      (name)   => call("inet_app.api.material_management.get_material_request", { name }),
+  getPoidDetails:          (poid)   => call("inet_app.api.material_management.get_poid_details", { poid }),
+  createMaterialRequest:   (payload) => call("inet_app.api.material_management.create_material_request", { payload: JSON.stringify(payload) }),
+  approveMaterialRequest:  (name)   => call("inet_app.api.material_management.approve_material_request", { name }),
+  rejectMaterialRequest:   (name, reason) => call("inet_app.api.material_management.reject_material_request", { name, reason: reason || "" }),
+  issueMaterialsWorkDone:  (name)   => call("inet_app.api.material_management.issue_materials_for_work_done", { name }),
 };

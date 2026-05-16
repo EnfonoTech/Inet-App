@@ -46,6 +46,7 @@ import InvoiceTracker from "./pages/pic/InvoiceTracker";
 import PICReports from "./pages/pic/PICReports";
 import IMWorkDone from "./pages/im/IMWorkDone";
 import IMIssuesRisks from "./pages/im/IMIssuesRisks";
+import IMMaterialRequest from "./pages/im/IMMaterialRequest";
 import OperationsOverview from "./pages/OperationsOverview";
 
 /* -- Field pages ------------------------------------------------ */
@@ -124,6 +125,7 @@ function AppContent() {
             <Route path="/approvals" element={<TeamAllocationApprovals />} />
             <Route path="/masters" element={<Masters />} />
             <Route path="/overview" element={<OperationsOverview />} />
+            <Route path="/im-material-request" element={<IMMaterialRequest />} />
           </>
         )}
 
@@ -142,6 +144,7 @@ function AppContent() {
             <Route path="/im-execution" element={<IMExecution />} />
             <Route path="/im-work-done" element={<IMWorkDone />} />
             <Route path="/im-issues-risks" element={<IMIssuesRisks />} />
+            <Route path="/im-material-request" element={<IMMaterialRequest />} />
             <Route path="/im-reports" element={<IMReports />} />
             <Route path="/im-timesheets" element={<IMTimesheets />} />
           </>

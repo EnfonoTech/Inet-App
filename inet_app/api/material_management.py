@@ -3,7 +3,7 @@ import os
 import re
 
 import frappe
-from frappe.utils import flt, nowdate
+from frappe.utils import flt, now, nowdate
 
 
 # Regex: "JDL Outbound Plan of HUAWEI CWH For 10th_May_2026.xlsx"
@@ -331,3 +331,249 @@ def on_stock_entry_submit(doc, method=None):
             })
 
     frappe.db.commit()
+
+
+# ─── Phase 2: Material Request (INET) ────────────────────────────────────────
+
+@frappe.whitelist()
+def list_material_requests(im=None, status=None, limit=50):
+    """List Material Request INET records.
+
+    IM users see only their own requests. Stock Manager / Admin see all.
+    """
+    roles = set(frappe.get_roles(frappe.session.user))
+    is_admin = bool(roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin"})
+
+    filters = {}
+    if not is_admin:
+        im_name = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
+        if im_name:
+            filters["im"] = im_name
+        else:
+            return []
+
+    if im:
+        filters["im"] = im
+    if status:
+        filters["request_status"] = status
+
+    rows = frappe.db.get_all(
+        "Material Request INET",
+        filters=filters,
+        fields=[
+            "name", "request_date", "requested_by", "im", "poid", "duid",
+            "request_status", "team", "team_warehouse", "source_warehouse",
+            "approved_by", "approved_on", "stock_entry_transfer",
+            "stock_entry_issue", "remark", "rejection_reason",
+        ],
+        order_by="request_date desc, creation desc",
+        limit=int(limit),
+    )
+    return rows
+
+
+@frappe.whitelist()
+def get_material_request(name):
+    """Get a single Material Request INET with its items."""
+    roles = set(frappe.get_roles(frappe.session.user))
+    doc = frappe.get_doc("Material Request INET", name)
+
+    is_admin = bool(roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin"})
+    if not is_admin:
+        im_name = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
+        if doc.im != im_name:
+            frappe.throw("Not permitted.", frappe.PermissionError)
+
+    return {
+        "name": doc.name,
+        "request_date": str(doc.request_date or ""),
+        "requested_by": doc.requested_by,
+        "im": doc.im,
+        "poid": doc.poid,
+        "duid": doc.duid,
+        "request_status": doc.request_status,
+        "team": doc.team,
+        "team_warehouse": doc.team_warehouse,
+        "source_warehouse": doc.source_warehouse,
+        "remark": doc.remark,
+        "rejection_reason": doc.rejection_reason,
+        "approved_by": doc.approved_by,
+        "approved_on": str(doc.approved_on or ""),
+        "stock_entry_transfer": doc.stock_entry_transfer,
+        "stock_entry_issue": doc.stock_entry_issue,
+        "items": [
+            {
+                "item_code": i.item_code,
+                "item_name": i.item_name,
+                "qty": i.qty,
+                "uom": i.uom,
+                "valuation_rate": i.valuation_rate,
+            }
+            for i in doc.items
+        ],
+    }
+
+
+@frappe.whitelist()
+def get_poid_details(poid):
+    """Fetch PO Dispatch details for auto-fill in new request form."""
+    if not frappe.db.exists("PO Dispatch", poid):
+        frappe.throw(f"PO Dispatch {poid} not found.")
+    row = frappe.db.get_value(
+        "PO Dispatch", poid,
+        ["poid", "site_code", "im", "project_code"],
+        as_dict=True,
+    )
+    return row
+
+
+@frappe.whitelist()
+def create_material_request(payload):
+    """Create a new Material Request INET. Called by IM from the portal."""
+    import json
+    roles = set(frappe.get_roles(frappe.session.user))
+    if not roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin", "INET IM"}:
+        frappe.throw("Not permitted to create material requests.", frappe.PermissionError)
+
+    data = json.loads(payload) if isinstance(payload, str) else payload
+
+    items = data.get("items") or []
+    if not items:
+        frappe.throw("At least one item is required.")
+
+    if not data.get("team_warehouse"):
+        frappe.throw("Team Warehouse is required.")
+
+    im = data.get("im") or frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
+
+    doc = frappe.get_doc({
+        "doctype": "Material Request INET",
+        "request_date": data.get("request_date") or nowdate(),
+        "requested_by": frappe.session.user,
+        "im": im,
+        "poid": data.get("poid"),
+        "duid": data.get("duid") or "",
+        "team": data.get("team"),
+        "team_warehouse": data["team_warehouse"],
+        "source_warehouse": data.get("source_warehouse") or "Stores - INET",
+        "request_status": "Pending Approval",
+        "remark": data.get("remark") or "",
+        "items": [
+            {
+                "item_code": i["item_code"],
+                "qty": flt(i.get("qty", 0)),
+                "uom": i.get("uom") or "",
+                "valuation_rate": flt(i.get("valuation_rate", 0)),
+            }
+            for i in items
+        ],
+    })
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"name": doc.name, "status": doc.request_status}
+
+
+@frappe.whitelist()
+def approve_material_request(name):
+    """Stock Manager approves a Material Request → creates Material Transfer Stock Entry."""
+    frappe.only_for(["System Manager", "Stock Manager"])
+
+    doc = frappe.get_doc("Material Request INET", name)
+    if doc.request_status != "Pending Approval":
+        frappe.throw(f"Cannot approve a request in status '{doc.request_status}'.")
+
+    if not doc.items:
+        frappe.throw("No items on this request.")
+
+    se_items = []
+    for item in doc.items:
+        se_items.append({
+            "item_code": item.item_code,
+            "qty": item.qty,
+            "uom": item.uom or frappe.db.get_value("Item", item.item_code, "stock_uom"),
+            "s_warehouse": doc.source_warehouse,
+            "t_warehouse": doc.team_warehouse,
+            "duid": doc.duid or "",
+            "valuation_rate": item.valuation_rate or 0,
+        })
+
+    se = frappe.get_doc({
+        "doctype": "Stock Entry",
+        "stock_entry_type": "Material Transfer",
+        "purpose": "Material Transfer",
+        "from_warehouse": doc.source_warehouse,
+        "to_warehouse": doc.team_warehouse,
+        "poid": doc.poid or "",
+        "items": se_items,
+    })
+    se.insert(ignore_permissions=True)
+    se.submit()
+
+    frappe.db.set_value("Material Request INET", name, {
+        "request_status": "Approved",
+        "approved_by": frappe.session.user,
+        "approved_on": now(),
+        "stock_entry_transfer": se.name,
+    })
+    frappe.db.commit()
+    return {"name": name, "stock_entry": se.name, "status": "Approved"}
+
+
+@frappe.whitelist()
+def reject_material_request(name, reason=None):
+    """Stock Manager rejects a Material Request."""
+    frappe.only_for(["System Manager", "Stock Manager"])
+
+    doc = frappe.get_doc("Material Request INET", name)
+    if doc.request_status != "Pending Approval":
+        frappe.throw(f"Cannot reject a request in status '{doc.request_status}'.")
+
+    frappe.db.set_value("Material Request INET", name, {
+        "request_status": "Rejected",
+        "approved_by": frappe.session.user,
+        "approved_on": now(),
+        "rejection_reason": reason or "",
+    })
+    frappe.db.commit()
+    return {"name": name, "status": "Rejected"}
+
+
+@frappe.whitelist()
+def issue_materials_for_work_done(name):
+    """Create Material Issue Stock Entry when work is done for a request."""
+    frappe.only_for(["System Manager", "Stock Manager"])
+
+    doc = frappe.get_doc("Material Request INET", name)
+    if doc.request_status != "Approved":
+        frappe.throw(f"Cannot issue materials for a request in status '{doc.request_status}'.")
+    if not doc.stock_entry_transfer:
+        frappe.throw("No Material Transfer found. Approve the request first.")
+
+    se_items = []
+    for item in doc.items:
+        se_items.append({
+            "item_code": item.item_code,
+            "qty": item.qty,
+            "uom": item.uom or frappe.db.get_value("Item", item.item_code, "stock_uom"),
+            "s_warehouse": doc.team_warehouse,
+            "duid": doc.duid or "",
+            "valuation_rate": item.valuation_rate or 0,
+        })
+
+    se = frappe.get_doc({
+        "doctype": "Stock Entry",
+        "stock_entry_type": "Material Issue",
+        "purpose": "Material Issue",
+        "from_warehouse": doc.team_warehouse,
+        "poid": doc.poid or "",
+        "items": se_items,
+    })
+    se.insert(ignore_permissions=True)
+    se.submit()
+
+    frappe.db.set_value("Material Request INET", name, {
+        "request_status": "Issued",
+        "stock_entry_issue": se.name,
+    })
+    frappe.db.commit()
+    return {"name": name, "stock_entry": se.name, "status": "Issued"}

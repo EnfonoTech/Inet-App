@@ -123,6 +123,7 @@ const adminNav = [
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/approvals", label: "Approvals", icon: "shieldCheck" },
   { to: "/overview",   label: "Search / Overview", icon: "search" },
+  { to: "/im-material-request", label: "Material Requests", icon: "briefcase" },
   { to: "/masters",    label: "Masters",     icon: "settings" },
 ];
 
@@ -136,6 +137,7 @@ const imNav = [
   { to: "/im-execution", label: "Rollout Work Done", icon: "eye" },
   { to: "/im-work-done", label: "Work Done",    icon: "checkCircle" },
   { to: "/im-issues-risks", label: "Issues & Risks", icon: "clipboard" },
+  { to: "/im-material-request", label: "Material Request", icon: "briefcase" },
   { to: "/im-reports",   label: "Reports",      icon: "barChart" },
   { to: "/im-timesheets", label: "Time logs",   icon: "clock" },
 ];
