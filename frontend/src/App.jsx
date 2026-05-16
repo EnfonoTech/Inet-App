@@ -174,7 +174,7 @@ function AppContent() {
         {/* Admins also reach PIC pages so they can support / audit. */}
         {role === "admin" && (
           <>
-            <Route path="/pic-dashboard" element={<PICDashboard />} />
+            <Route path="/pic-dashboard" element={<PICDashboard showSwitcher />} />
             <Route path="/pic-tracker" element={<PICTracker />} />
             <Route path="/pic-invoice-tracker" element={<InvoiceTracker />} />
             <Route path="/pic-reports" element={<PICReports />} />

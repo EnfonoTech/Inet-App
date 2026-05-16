@@ -35,7 +35,7 @@ const BUCKET_TONE = {
   "Work Not Done":                { bg: "#f8fafc", border: "#cbd5e1", fg: "#475569", icon: "·" },
 };
 
-export default function PICDashboard() {
+export default function PICDashboard({ showSwitcher = false }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -100,7 +100,7 @@ export default function PICDashboard() {
 
   return (
     <div>
-      <DashboardSwitcher />
+      {showSwitcher && <DashboardSwitcher />}
       {/* Hero header — gradient with KPIs */}
       <div style={{
         margin: "0 16px 14px",
