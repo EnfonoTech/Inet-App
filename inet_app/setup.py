@@ -19,6 +19,10 @@ def after_migrate():
     _hide_unused_activity_type_fields()
     _drop_unused_customer_activity_type_doctype()
     _resync_pms_workspace()
+    _resync_warehouse_workspace()
+    _ensure_stock_manager_role()
+    _ensure_duid_inventory_dimension()
+    _ensure_outbound_custom_fields()
 
 
 def _resync_pms_workspace():
@@ -31,7 +35,7 @@ def _resync_pms_workspace():
     except Exception:
         return
     workspace_json = frappe.get_app_path(
-        "inet_app", "inet_app", "workspace", "pms", "pms.json",
+        "inet_app", "workspace", "pms", "pms.json",
     )
     try:
         frappe.db.sql("DELETE FROM `tabWorkspace Shortcut` WHERE parent = 'PMS'")
@@ -43,6 +47,45 @@ def _resync_pms_workspace():
         frappe.clear_cache()
     except Exception:
         pass
+
+
+def _resync_warehouse_workspace():
+    """Create Warehouse Management workspace programmatically."""
+    import json
+
+    workspace_name = "Warehouse Management"
+    content = [
+        {"id": "H1", "type": "header", "data": {"text": '<span class="h4">Inventory</span>', "col": 12}},
+        {"id": "S1", "type": "shortcut", "data": {"shortcut_name": "Huawei Outbound Plan", "col": 3}},
+        {"id": "S2", "type": "shortcut", "data": {"shortcut_name": "Stock Entry", "col": 3}},
+        {"id": "S3", "type": "shortcut", "data": {"shortcut_name": "Item", "col": 3}},
+        {"id": "S4", "type": "shortcut", "data": {"shortcut_name": "Warehouse", "col": 3}},
+        {"id": "H2", "type": "header", "data": {"text": '<span class="h4">Masters</span>', "col": 12}},
+        {"id": "S5", "type": "shortcut", "data": {"shortcut_name": "DUID Master", "col": 3}},
+        {"id": "S6", "type": "shortcut", "data": {"shortcut_name": "Huawei Subcon Master", "col": 3}},
+    ]
+
+    if frappe.db.exists("Workspace", workspace_name):
+        frappe.db.set_value("Workspace", workspace_name, "content", json.dumps(content))
+        frappe.db.commit()
+    else:
+        try:
+            frappe.get_doc({
+                "doctype": "Workspace",
+                "name": workspace_name,
+                "label": workspace_name,
+                "title": workspace_name,
+                "module": "Inet App",
+                "icon": "project-2",
+                "public": 1,
+                "content": json.dumps(content),
+                "roles": [],
+                "shortcuts": [],
+                "links": [],
+            }).insert(ignore_permissions=True)
+            frappe.db.commit()
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "Workspace creation failed")
 
 
 def _drop_unused_customer_activity_type_doctype():
@@ -177,3 +220,48 @@ def _ensure_pic_permissions():
                     pass
     frappe.db.commit()
 
+
+def _ensure_stock_manager_role():
+    """Create Stock Manager role if not present."""
+    if not frappe.db.exists("Role", "Stock Manager"):
+        try:
+            frappe.get_doc({"doctype": "Role", "role_name": "Stock Manager", "desk_access": 1}).insert(ignore_permissions=True)
+            frappe.db.commit()
+        except Exception:
+            pass
+
+
+def _ensure_duid_inventory_dimension():
+    """Set up DUID as an ERPNext Inventory Dimension for stock tracking by site."""
+    if not frappe.db.exists("DocType", "Inventory Dimension"):
+        return
+    if frappe.db.exists("Inventory Dimension", "DUID"):
+        return
+    try:
+        ref_doc = frappe.db.exists("DocType", "DUID Master")
+        doc = frappe.get_doc({
+            "doctype": "Inventory Dimension",
+            "dimension_name": "DUID",
+            "reference_document": "DUID Master" if ref_doc else None,
+            "apply_to_all_doctypes": 1,
+        })
+        doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "DUID Inventory Dimension setup failed")
+
+
+def _ensure_outbound_custom_fields():
+    """Add huawei_outbound_plan Link field on Stock Entry."""
+    from frappe.custom.doctype.custom_field.custom_field import create_custom_field
+    try:
+        create_custom_field("Stock Entry", {
+            "fieldname": "huawei_outbound_plan",
+            "fieldtype": "Link",
+            "label": "Huawei Outbound Plan",
+            "options": "Huawei Outbound Plan",
+            "insert_after": "stock_entry_type",
+            "module": "Inet App",
+        })
+    except Exception:
+        pass

@@ -171,6 +171,9 @@ doc_events = {
 	"Sales Invoice": {
 		"on_submit": "inet_app.api.pic.on_sales_invoice_submit"
 	},
+	"Stock Entry": {
+		"on_submit": "inet_app.api.material_management.on_stock_entry_submit"
+	},
 }
 
 # Scheduled Tasks

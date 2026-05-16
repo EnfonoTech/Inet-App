@@ -1,0 +1,88 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"H1\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Inventory</span>\",\"col\":12}},{\"id\":\"H2\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Masters</span>\",\"col\":12}},{\"id\":\"UoLsvLp37f\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Huawei Outbound Plan\",\"col\":3}}]",
+ "creation": "2026-05-15 00:00:00",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "project-2",
+ "idx": 0,
+ "indicator_color": "blue",
+ "is_hidden": 0,
+ "label": "Warehouse Management",
+ "links": [],
+ "modified": "2026-05-15 16:15:53.693886",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Warehouse Management",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 21.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Huawei Outbound Plan",
+   "link_to": "Huawei Outbound Plan",
+   "stats_filter": "[]",
+   "type": "DocType"
+  }
+ ],
+ "title": "Warehouse Management"
+}

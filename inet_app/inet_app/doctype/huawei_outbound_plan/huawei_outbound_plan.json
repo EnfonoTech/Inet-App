@@ -1,0 +1,169 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:bill_no",
+ "creation": "2026-05-15 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bill_no",
+  "request_no",
+  "outbound_date",
+  "project_name",
+  "project",
+  "subcon",
+  "outbound_status",
+  "column_break_avmv",
+  "du_id",
+  "duid_master",
+  "customer_site_id",
+  "delivery_purpose",
+  "total_volume",
+  "material_receipt"
+ ],
+ "fields": [
+  {
+   "fieldname": "bill_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Bill No.",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "request_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Request No."
+  },
+  {
+   "fieldname": "outbound_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Outbound Date"
+  },
+  {
+   "fieldname": "project_name",
+   "fieldtype": "Data",
+   "label": "Project Name"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project Control Center"
+  },
+  {
+   "fieldname": "subcon",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Subcon",
+   "options": "Huawei Subcon Master"
+  },
+  {
+   "fieldname": "outbound_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Outbound Status",
+   "options": "Prepared\nPending\nReceived"
+  },
+  {
+   "fieldname": "du_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "DU ID"
+  },
+  {
+   "fieldname": "duid_master",
+   "fieldtype": "Link",
+   "label": "DUID Master",
+   "options": "DUID Master",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer_site_id",
+   "fieldtype": "Data",
+   "label": "Customer Site ID"
+  },
+  {
+   "fieldname": "delivery_purpose",
+   "fieldtype": "Data",
+   "label": "Delivery Purpose"
+  },
+  {
+   "fieldname": "total_volume",
+   "fieldtype": "Float",
+   "label": "Total Volume",
+   "precision": "4"
+  },
+  {
+   "fieldname": "material_receipt",
+   "fieldtype": "Link",
+   "label": "Material Receipt",
+   "options": "Stock Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_avmv",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-05-15 17:05:17.882941",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Huawei Outbound Plan",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "share": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "outbound_date",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
