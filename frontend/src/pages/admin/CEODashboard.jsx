@@ -40,7 +40,7 @@ export default function CEODashboard() {
     l: ((im.revenue || 0) * 0.8) / 1000000,
   }));
 
-  const topProjects = (top_teams || []).slice(0, 3).map((t, i) => ({
+  const topProjects = (top_teams || []).slice(0, 5).map((t, i) => ({
     name: t.team_name || `Team ${i + 1}`,
     client: t.team || "",
     progress: t.target > 0 ? Math.min(Math.round((t.achieved / t.target) * 100), 100) : 0,
@@ -79,14 +79,14 @@ export default function CEODashboard() {
         ))}
       </div>
 
-      <div className="nd-grid col2">
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="nd-grid col2" style={{ alignItems: "stretch" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
           <div className="nd-panel"><div className="nd-panel-body" style={{ textAlign: "center", padding: "12px 14px" }}>
             <div className="nd-kpi-label">Operational Coverage</div>
             <div style={{ fontSize: 28, fontWeight: 800, color: Number(coveragePct) >= 50 ? C.green : C.amber }}>{coveragePct}%</div>
             <div style={{ fontSize: 11, color: "#64748b" }}>Revenue vs Target</div>
           </div></div>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>Financial Overview</h3></div>
+          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Financial Overview</h3></div>
             <div className="nd-panel-body">
               <div className="nd-donut-row">
                 <div style={{ position: "relative", width: 90, height: 55, flexShrink: 0, overflow: "hidden" }}>
@@ -99,8 +99,8 @@ export default function CEODashboard() {
             </div></div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>Revenue Trend</h3><span style={{ fontSize: 11, color: C.green }}>SAR {fmt.format(totalRevenue)} YTD</span></div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
+          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Revenue Trend</h3><span style={{ fontSize: 11, color: C.green }}>SAR {fmt.format(totalRevenue)} YTD</span></div>
             <div className="nd-panel-body nd-chart-h160">
               <ResponsiveContainer><AreaChart data={revTrend.length ? revTrend : [{ m: "—", t: 0, l: 0 }]}><CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" /><XAxis dataKey="m" tick={{ fontSize: 11 }} /><Tooltip formatter={(v) => `SAR ${v}M`} /><Area type="monotone" dataKey="l" stroke="#94a3b8" fill="#e2e8f0" /><Area type="monotone" dataKey="t" stroke={C.green} fill="#c8e6c9" /></AreaChart></ResponsiveContainer>
             </div></div>
@@ -122,7 +122,7 @@ export default function CEODashboard() {
       <div className="nd-grid col3">
         <div className="nd-panel"><div className="nd-panel-header"><h3>IM Performance</h3></div><div className="nd-panel-body">
           <table className="nd-table"><thead><tr><th>IM</th><th>Revenue</th><th>Profit</th></tr></thead><tbody>
-            {(im_performance || []).slice(0, 4).map((im) => (
+            {(im_performance || []).slice(0, 5).map((im) => (
               <tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {fmt.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {fmt.format(im.profit || 0)}</td></tr>
             ))}
           </tbody></table>

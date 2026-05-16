@@ -48,6 +48,18 @@ function profitColor(v) {
   return v < 0 ? "text-red" : v > 0 ? "text-green" : "";
 }
 
+/** Count working days (Mon–Thu, Sat–Sun — excludes Fridays) from start to end inclusive */
+function countWorkingDays(startStr, endStr) {
+  const cur = new Date((startStr || new Date().toISOString().slice(0, 10)) + "T00:00:00");
+  const end = new Date((endStr   || new Date().toISOString().slice(0, 10)) + "T00:00:00");
+  let count = 0;
+  while (cur <= end) {
+    if (cur.getDay() !== 5) count++; // 5 = Friday
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
 /* ── Loading Screen ────────────────────────────────────────── */
 
 function ShimmerRow() {
@@ -225,6 +237,21 @@ export default function CommandDashboard() {
     { label: "In Progress", value: ts.in_progress || 0, color: "green" },
   ];
 
+  /* ── INET Target Calculations (INET teams only, excl. Backend) ──
+   * Monthly Target      = monthly cost × 1.25  (cost + 25% margin)
+   * Target as of Today  = monthly target × (working_days_elapsed / 26)
+   *                       working days = all days excluding Fridays
+   * Achieved as of Today= SUM of Work Done line amounts (from API)
+   * Gap as of Today     = target as of today − achieved           */
+  const _now          = new Date();
+  const _monthStart   = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, "0")}-01`;
+  const _todayStr     = _now.toISOString().slice(0, 10);
+  const inetMonthlyCost    = inet.inet_monthly_cost || 0;
+  const inetMonthlyTarget  = Math.round(inetMonthlyCost * 1.25);
+  const workingDaysElapsed = countWorkingDays(_monthStart, _todayStr);
+  const inetTargetToday    = Math.round(inetMonthlyTarget * (workingDaysElapsed / 26));
+  const inetAchieved       = inet.inet_achieved || 0;
+  const inetGapToday       = inetTargetToday - inetAchieved;
 
   return (
     <div className="dashboard">
@@ -259,11 +286,11 @@ export default function CommandDashboard() {
       <div className="section-label">INET Teams Performance</div>
       <div className="kpi-row kpi-row-inet">
         <KPICard label="Active Teams" value={inet.active_inet_teams} colorClass="text-green" />
-        <KPICard label="Monthly Cost" value={inet.inet_monthly_cost} />
-        <KPICard label="Monthly Target" value={inet.inet_monthly_target} />
-        <KPICard label="Target Today" value={inet.inet_target_today} />
-        <KPICard label="Achieved" value={inet.inet_achieved} colorClass="text-green" />
-        <KPICard label="Gap Today" value={inet.inet_gap_today} colorClass="text-red" />
+        <KPICard label="Monthly Cost" value={inetMonthlyCost} />
+        <KPICard label="Monthly Target" value={inetMonthlyTarget} />
+        <KPICard label="Target as of Today" value={inetTargetToday} />
+        <KPICard label="Achieved as of Today" value={inetAchieved} colorClass="text-green" />
+        <KPICard label="Gap as of Today" value={inetGapToday} colorClass={inetGapToday > 0 ? "text-red" : "text-green"} />
       </div>
 
       {/* ── Row 3: Subcontractor Performance ───────────────── */}

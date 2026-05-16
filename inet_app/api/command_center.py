@@ -5828,16 +5828,21 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         (inet_monthly_target * day_of_month) / days_in_month if days_in_month else 0.0
     )
 
+    # Achieved as of today: sum PO Dispatch line_amount for INET teams (excl. backend)
+    # Always uses current month 1st → today, independent of the date range filter
+    _ach_first = get_first_day(today)
     inet_achieved_rows = frappe.db.sql(
         """
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS total
+        SELECT COALESCE(SUM(pd.line_amount), 0) AS total
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
         JOIN `tabINET Team` it ON it.name = exe.team
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
         WHERE it.team_type = 'INET'
+        AND IFNULL(it.team_category, '') != 'Backend Team'
         AND exe.execution_date BETWEEN %s AND %s
         """,
-        (first_day, last_day),
+        (_ach_first, today),
         as_dict=True,
     )
     inet_achieved = flt(inet_achieved_rows[0].total if inet_achieved_rows else 0)

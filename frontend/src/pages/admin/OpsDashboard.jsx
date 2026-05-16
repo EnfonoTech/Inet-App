@@ -43,7 +43,7 @@ export default function OpsDashboard() {
   ];
   const maxCost = Math.max(...costs.map((c) => c.v), 1);
 
-  const techs = (top_teams || []).slice(0, 3).map((t) => ({
+  const techs = (top_teams || []).slice(0, 5).map((t) => ({
     n: t.team_name || t.team || "—",
     j: t.achieved || 0,
     r: t.revenue || t.achieved || 0,
@@ -73,9 +73,9 @@ export default function OpsDashboard() {
         <div className="nd-panel"><div className="nd-panel-header"><h3>Team Distribution</h3></div><div className="nd-panel-body" style={{ textAlign: "center" }}><div className="nd-chart-h170"><ResponsiveContainer><PieChart><Pie data={jobBreakdown} dataKey="v" innerRadius={55} outerRadius={80} paddingAngle={2}>{jobBreakdown.map((d) => <Cell key={d.n} fill={d.c} />)}</Pie></PieChart></ResponsiveContainer></div><div style={{ fontSize: 18, fontWeight: 800, marginTop: -32 }}>{(team_status.active || 0) + (team_status.idle || 0)}</div><div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11, fontWeight: 600, marginTop: 4 }}>{jobBreakdown.map((d) => <span key={d.n} style={{ color: d.c }}>{d.n}: {d.v}</span>)}</div></div></div>
       </div>
 
-      <div className="nd-grid col3">
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>Operational Costs</h3></div><div className="nd-panel-body">
+      <div className="nd-grid col3 stretch">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
+          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Operational Costs</h3></div><div className="nd-panel-body">
             {costs.map((c) => (<div key={c.l} style={{ marginBottom: 6 }}><div className="nd-row-xs"><span style={{ fontSize: 12 }}>{c.l}</span><span style={{ fontWeight: 700, fontSize: 12 }}>SAR {fmt.format(c.v)}</span></div><div className="nd-progress thin"><div className="nd-progress-bar" style={{ width: (c.v / maxCost) * 100 + "%", background: c.bc }} /></div></div>))}
           </div></div>
         </div>
@@ -92,10 +92,10 @@ export default function OpsDashboard() {
             </tbody></table>
           </div></div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>IM Performance</h3></div><div className="nd-panel-body">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
+          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>IM Performance</h3></div><div className="nd-panel-body">
             <table className="nd-table"><thead><tr><th>IM</th><th style={{ textAlign: "right" }}>Revenue</th><th style={{ textAlign: "right" }}>Profit</th></tr></thead><tbody>
-              {(im_performance || []).slice(0, 4).map((im) => (<tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {fmt.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {fmt.format(im.profit || 0)}</td></tr>))}
+              {(im_performance || []).slice(0, 5).map((im) => (<tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {fmt.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {fmt.format(im.profit || 0)}</td></tr>))}
             </tbody></table>
           </div></div>
         </div>

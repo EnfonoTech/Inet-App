@@ -143,10 +143,15 @@
 .nd-row-sm { height: 32px; display: flex; align-items: center; justify-content: space-between; }
 .nd-row-xs { height: 28px; display: flex; align-items: center; justify-content: space-between; }
 
+/* ── Stretch alignment (equal-height columns) ─────────────────── */
+.nd-grid.stretch { align-items: stretch; }
+
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 1400px) {
   .nd-kpi-row.col6 { grid-template-columns: repeat(3, 1fr); }
   .nd-grid.col3, .nd-grid.col3wide { grid-template-columns: 1fr 1fr; }
+  /* revert stretch on col3 when it wraps to 2-col — prevents huge whitespace */
+  .nd-grid.col3.stretch, .nd-grid.col3wide.stretch { align-items: start; }
 }
 @media (max-width: 1100px) {
   .nd-kpi-row { grid-template-columns: repeat(3, 1fr); }

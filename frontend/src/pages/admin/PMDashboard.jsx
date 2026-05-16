@@ -41,14 +41,14 @@ export default function PMDashboard() {
   ];
 
   const statusData = charts?.projects_by_status || [];
-  const budgetData = (charts?.budget_vs_actual || []).slice(0, 3).map((p) => ({
+  const budgetData = (charts?.budget_vs_actual || []).slice(0, 5).map((p) => ({
     n: p.project_code || "—",
     p: p.budget_amount > 0 ? Math.round((p.actual_cost / p.budget_amount) * 100) : 0,
     s: p.actual_cost > p.budget_amount ? "Over" : "On Track",
     c: p.actual_cost > p.budget_amount ? "red" : "green",
   }));
 
-  const milestoneData = (charts?.completion_timeline || []).slice(0, 3).map((p) => ({
+  const milestoneData = (charts?.completion_timeline || []).slice(0, 5).map((p) => ({
     m: p.project_code || "—",
     p: p.project_code || "",
     d: p.completion_percentage ? `${Math.round(p.completion_percentage)}%` : "—",
@@ -69,14 +69,14 @@ export default function PMDashboard() {
         ))}
       </div>
 
-      <div className="nd-grid col3">
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="nd-grid col3 stretch">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
           <div className="nd-panel"><div className="nd-panel-header"><h3>Project Health</h3></div>
             <div className="nd-panel-body" style={{ textAlign: "center" }}>
               <div style={{ width: 120, height: 120, margin: "0 auto" }}><ResponsiveContainer><PieChart><Pie data={health} dataKey="v" innerRadius={38} outerRadius={52} paddingAngle={2}>{health.map((d) => <Cell key={d.n} fill={d.c} />)}</Pie></PieChart></ResponsiveContainer></div>
               <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11, fontWeight: 600, marginTop: -4 }}>{health.map((d) => <span key={d.n} style={{ color: d.c }}>{d.n}: {d.v}%</span>)}</div>
             </div></div>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>Project Status Distribution</h3></div><div className="nd-panel-body" style={{ textAlign: "center" }}>
+          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Project Status Distribution</h3></div><div className="nd-panel-body" style={{ textAlign: "center" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               {(statusData.length ? statusData : [{ label: "No data", value: 0 }]).slice(0, 4).map((s) => (
                 <div key={s.label} style={{ textAlign: "center", padding: "8px 6px", borderRadius: 6, background: "#f8fafc", height: 56 }}><div style={{ fontSize: 22, fontWeight: 800, color: C.blue }}>{s.value}</div><div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>{s.label}</div></div>
@@ -85,13 +85,13 @@ export default function PMDashboard() {
           </div></div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
           <div className="nd-panel"><div className="nd-panel-header"><h3>Budget vs Actual</h3></div><div className="nd-panel-body">
             <table className="nd-table"><thead><tr><th>Project</th><th>Progress</th><th>Status</th></tr></thead><tbody>
               {budgetData.map((p) => (<tr key={p.n}><td><strong>{p.n}</strong></td><td style={{ width: "22%" }}><div className="nd-progress"><div className={"nd-progress-bar " + p.c} style={{ width: p.p + "%" }} /></div></td><td><span className={"nd-badge " + p.c}>{p.s}</span></td></tr>))}
             </tbody></table>
           </div></div>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>Financial Overview</h3></div><div className="nd-panel-body">
+          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Financial Overview</h3></div><div className="nd-panel-body">
             {[{ l: "Budget Spent", v: `SAR ${fmt.format(actualSpent)}`, p: utilization, c: C.blue },
               { l: "Remaining", v: `SAR ${fmt.format(Math.max(totalBudget - actualSpent, 0))}`, p: 100 - utilization, c: C.green },
               { l: "Total Budget", v: `SAR ${fmt.format(totalBudget)}`, p: 100, c: C.blue }].map((f) => (
@@ -100,13 +100,13 @@ export default function PMDashboard() {
           </div></div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
           <div className="nd-panel"><div className="nd-panel-header"><h3>Top Projects</h3></div><div className="nd-panel-body">
             <table className="nd-table compact"><thead><tr><th>Project</th><th>Completion</th></tr></thead><tbody>
               {milestoneData.map((m) => (<tr key={m.m}><td>{m.m}</td><td><span className="nd-badge amber">{m.d}</span></td></tr>))}
             </tbody></table>
           </div></div>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>Project Domain Distribution</h3></div><div className="nd-panel-body">
+          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Project Domain Distribution</h3></div><div className="nd-panel-body">
             {(charts?.project_distribution_by_domain || []).slice(0, 4).map((d) => (
               <div key={d.label} style={{ marginBottom: 8 }}><div className="nd-row-xs"><span style={{ fontSize: 12 }}>{d.label}</span><span style={{ fontWeight: 700, fontSize: 12 }}>{d.value}</span></div></div>
             ))}
