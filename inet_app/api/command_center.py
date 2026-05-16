@@ -6333,7 +6333,9 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
         {rp_im_join}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
-        WHERE pd.im IN ({ph}){status_clause}{portal_clause}
+        WHERE pd.im IN ({ph})
+          AND IFNULL(pd.po_line_status, 'New') NOT IN ('Closed', 'Cancelled')
+          {status_clause}{portal_clause}
         ORDER BY rp.plan_date DESC, rp.modified DESC
         {_sql_limit_suffix(lim_rp)}
         """,
