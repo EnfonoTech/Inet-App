@@ -225,38 +225,73 @@ def _ensure_inet_roles():
 
 
 def _ensure_pic_permissions():
-    """Grant INET PIC role the permissions needed for invoice creation."""
+    """Grant INET PIC role the permissions needed for invoice creation.
+
+    Frappe uses Custom DocPerm mode for a doctype the moment ANY Custom DocPerm
+    row exists — it then ignores all standard DocPerm entries completely. To
+    avoid wiping other roles' access we first migrate existing standard DocPerm
+    rows to Custom DocPerm, then add the INET PIC entry.
+    """
     role = "INET PIC"
     if not frappe.db.exists("Role", role):
         return
 
-    # Doctypes PIC needs access to
+    # Doctypes PIC needs and the flags it requires (permlevel 0)
     doctypes = [
-        ("Sales Invoice", ("read", "write", "create")),
-        ("Sales Invoice Item", ("read", "write", "create")),
-        ("Sales Taxes and Charges", ("read",)),
-        ("Sales Taxes and Charges Template", ("read",)),
-        ("Customer", ("read",)),
-        ("Item", ("read",)),
+        ("Sales Invoice",                  {"read": 1, "write": 1, "create": 1}),
+        ("Sales Invoice Item",             {"read": 1, "write": 1, "create": 1}),
+        ("Sales Taxes and Charges",        {"read": 1}),
+        ("Sales Taxes and Charges Template", {"read": 1}),
+        ("Customer",                       {"read": 1}),
+        ("Item",                           {"read": 1}),
     ]
 
-    for dt_name, perms in doctypes:
+    for dt_name, perm_map in doctypes:
         if not frappe.db.exists("DocType", dt_name):
             continue
-        for perm_level in perms:
-            if frappe.db.exists("Custom DocPerm", {"parent": dt_name, "role": role}):
-                frappe.db.set_value("Custom DocPerm", {"parent": dt_name, "role": role}, perm_level, 1)
-            else:
+
+        # If no Custom DocPerm exists yet for this doctype, copy all standard
+        # DocPerm rows first so other roles keep their access after we flip the
+        # doctype into Custom DocPerm mode.
+        if not frappe.db.count("Custom DocPerm", {"parent": dt_name}):
+            for ep in frappe.db.get_all(
+                "DocPerm",
+                filters={"parent": dt_name},
+                fields=["role", "permlevel", "read", "write", "create",
+                        "delete", "submit", "cancel", "amend", "report",
+                        "export", "import", "share", "print", "email"],
+            ):
+                if frappe.db.exists("Custom DocPerm",
+                                    {"parent": dt_name, "role": ep.role,
+                                     "permlevel": ep.permlevel}):
+                    continue
                 try:
-                    dp = frappe.get_doc({
+                    frappe.get_doc({
                         "doctype": "Custom DocPerm",
                         "parent": dt_name,
-                        "role": role,
-                        perm_level: 1,
-                    })
-                    dp.insert(ignore_permissions=True)
+                        **{k: v for k, v in ep.items() if k != "name"},
+                    }).insert(ignore_permissions=True)
                 except Exception:
                     pass
+
+        # Now add or update the INET PIC row
+        existing = frappe.db.get_value(
+            "Custom DocPerm", {"parent": dt_name, "role": role, "permlevel": 0}, "name"
+        )
+        if existing:
+            frappe.db.set_value("Custom DocPerm", existing, perm_map)
+        else:
+            try:
+                frappe.get_doc({
+                    "doctype": "Custom DocPerm",
+                    "parent": dt_name,
+                    "role": role,
+                    "permlevel": 0,
+                    **perm_map,
+                }).insert(ignore_permissions=True)
+            except Exception:
+                pass
+
     frappe.db.commit()
 
 
