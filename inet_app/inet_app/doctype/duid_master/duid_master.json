@@ -6,7 +6,6 @@
  "engine": "InnoDB",
  "field_order": [
   "duid",
-  "site_id",
   "site_name",
   "area",
   "center_area",
@@ -23,13 +22,6 @@
    "label": "DUID",
    "reqd": 1,
    "unique": 1
-  },
-  {
-   "fieldname": "site_id",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Site ID"
   },
   {
    "fieldname": "site_name",

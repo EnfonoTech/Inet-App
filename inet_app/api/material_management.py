@@ -183,22 +183,15 @@ def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
             except Exception:
                 pass
 
-        # Ensure DUID Master — also populate site_id from customer_site_id
-        customer_site_id = _cell(row, "Customer Site ID")
-        if du_id:
-            existing_dm = frappe.db.get_value("DUID Master", du_id, ["name", "site_id"], as_dict=True)
-            if existing_dm:
-                if customer_site_id and not existing_dm.get("site_id"):
-                    frappe.db.set_value("DUID Master", du_id, "site_id", customer_site_id, update_modified=False)
-            else:
-                try:
-                    frappe.get_doc({
-                        "doctype": "DUID Master",
-                        "duid": du_id,
-                        "site_id": customer_site_id or "",
-                    }).insert(ignore_permissions=True)
-                except Exception:
-                    pass
+        # Ensure DUID Master
+        if du_id and not frappe.db.exists("DUID Master", du_id):
+            try:
+                frappe.get_doc({
+                    "doctype": "DUID Master",
+                    "duid": du_id,
+                }).insert(ignore_permissions=True)
+            except Exception:
+                pass
 
         # Look up Project Control Center — first by name (project_code), then by project_name field
         project_link = None
@@ -232,7 +225,7 @@ def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
             "outbound_status": row_status,
             "du_id": du_id or "",
             "duid_master": duid_link or None,
-            "customer_site_id": customer_site_id,
+            "customer_site_id": _cell(row, "Customer Site ID"),
             "delivery_purpose": _cell(row, "Delivery Purpose"),
             "total_volume": flt(_cell(row, "Total Volume")),
             "import_batch": import_batch,
