@@ -1,5 +1,11 @@
 frappe.listview_settings["Huawei Outbound Plan"] = {
     onload(listview) {
+        // Default to INET-only for non-admin users (admins see all for analytics)
+        const isAdmin = frappe.user_roles.includes("System Manager") || frappe.user_roles.includes("Administrator");
+        if (!isAdmin) {
+            listview.filter_area.add([["Huawei Outbound Plan", "subcon", "=", "INET"]]);
+        }
+
         listview.page.add_inner_button(__("Import from Excel"), () => {
             frappe.new_doc("Huawei Outbound Import");
         }, __("Actions"));

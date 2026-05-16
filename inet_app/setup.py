@@ -252,8 +252,10 @@ def _ensure_duid_inventory_dimension():
 
 
 def _ensure_outbound_custom_fields():
-    """Add huawei_outbound_plan Link field on Stock Entry."""
+    """Add huawei_outbound_plan Link field on Stock Entry (idempotent)."""
     from frappe.custom.doctype.custom_field.custom_field import create_custom_field
+    if frappe.db.exists("Custom Field", "Stock Entry-huawei_outbound_plan"):
+        return
     try:
         create_custom_field("Stock Entry", {
             "fieldname": "huawei_outbound_plan",
@@ -263,5 +265,6 @@ def _ensure_outbound_custom_fields():
             "insert_after": "stock_entry_type",
             "module": "Inet App",
         })
+        frappe.db.commit()
     except Exception:
-        pass
+        frappe.log_error(frappe.get_traceback(), "huawei_outbound_plan custom field setup failed")

@@ -19,7 +19,9 @@
   "customer_site_id",
   "delivery_purpose",
   "total_volume",
-  "material_receipt"
+  "material_receipt",
+  "import_section",
+  "import_batch"
  ],
  "fields": [
   {
@@ -108,6 +110,18 @@
   {
    "fieldname": "column_break_avmv",
    "fieldtype": "Column Break"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "import_section",
+   "fieldtype": "Section Break",
+   "label": "Import Info"
+  },
+  {
+   "fieldname": "import_batch",
+   "fieldtype": "Data",
+   "label": "Import Batch",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

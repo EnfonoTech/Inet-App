@@ -8,10 +8,16 @@ frappe.ui.form.on('Huawei Outbound Plan', {
                     freeze: true,
                     callback: function(r) {
                         if (r.message && r.message.redirect_url) {
-                            window.open(r.message.redirect_url, '_blank');
+                            window.location.href = r.message.redirect_url;
                         }
                     }
                 });
+            });
+        }
+
+        if (frm.doc.material_receipt) {
+            frm.add_custom_button(__('View Material Receipt'), function() {
+                frappe.set_route('Form', 'Stock Entry', frm.doc.material_receipt);
             });
         }
     }

@@ -51,6 +51,10 @@ after_migrate = "inet_app.setup.after_migrate"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/inet_app/css/inet_app.css"
+doctype_js = {
+	"Stock Entry": "public/js/stock_entry.js",
+}
+
 # app_include_js = "/assets/inet_app/js/inet_app.js"
 
 # include js, css files in header of web template
