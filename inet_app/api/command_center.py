@@ -2300,6 +2300,9 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
     htm = (pf.get("has_target_month") or "").strip().lower()
     if htm == "yes" and "target_month" in fields:
         wheres.append("`target_month` IS NOT NULL AND `target_month` != ''")
+        # IM Rollout Planning view: never show Closed/Cancelled dispatches
+        if "dispatch_status" in fields:
+            wheres.append("IFNULL(`dispatch_status`, 'Pending') NOT IN ('Closed', 'Cancelled')")
     elif htm == "no" and "target_month" in fields:
         wheres.append("(`target_month` IS NULL OR `target_month` = '')")
 
@@ -6333,9 +6336,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
         {rp_im_join}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
-        WHERE pd.im IN ({ph})
-          AND IFNULL(pd.po_line_status, 'New') NOT IN ('Closed', 'Cancelled')
-          {status_clause}{portal_clause}
+        WHERE pd.im IN ({ph}){status_clause}{portal_clause}
         ORDER BY rp.plan_date DESC, rp.modified DESC
         {_sql_limit_suffix(lim_rp)}
         """,
