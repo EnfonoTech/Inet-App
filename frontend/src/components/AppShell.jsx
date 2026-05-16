@@ -105,6 +105,14 @@ const icons = {
       <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
     </svg>
   ),
+  package: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+      <line x1="12" y1="22.08" x2="12" y2="12" />
+    </svg>
+  ),
 };
 
 /* ── Navigation definitions per role ────────────────────────── */
@@ -123,7 +131,7 @@ const adminNav = [
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/approvals", label: "Approvals", icon: "shieldCheck" },
   { to: "/overview",   label: "Search / Overview", icon: "search" },
-  { to: "/im-material-request", label: "Material Requests", icon: "briefcase" },
+  { to: "/im-material-request", label: "Material Requests", icon: "package" },
   { to: "/masters",    label: "Masters",     icon: "settings" },
 ];
 
@@ -137,7 +145,7 @@ const imNav = [
   { to: "/im-execution", label: "Rollout Work Done", icon: "eye" },
   { to: "/im-work-done", label: "Work Done",    icon: "checkCircle" },
   { to: "/im-issues-risks", label: "Issues & Risks", icon: "clipboard" },
-  { to: "/im-material-request", label: "Material Request", icon: "briefcase" },
+  { to: "/im-material-request", label: "Material Request", icon: "package" },
   { to: "/im-reports",   label: "Reports",      icon: "barChart" },
   { to: "/im-timesheets", label: "Time logs",   icon: "clock" },
 ];

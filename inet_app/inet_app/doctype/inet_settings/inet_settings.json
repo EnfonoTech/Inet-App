@@ -4,7 +4,9 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "sales_tax_template"
+  "sales_tax_template",
+  "material_section",
+  "source_warehouse"
  ],
  "fields": [
   {
@@ -12,6 +14,18 @@
    "fieldtype": "Link",
    "label": "Sales Taxes and Charges Template",
    "options": "Sales Taxes and Charges Template"
+  },
+  {
+   "fieldname": "material_section",
+   "fieldtype": "Section Break",
+   "label": "Material Management"
+  },
+  {
+   "fieldname": "source_warehouse",
+   "fieldtype": "Link",
+   "label": "Main Store Warehouse",
+   "options": "Warehouse",
+   "description": "Default source warehouse for all material transfer requests (e.g. Stores - INET)"
   }
  ],
  "index_web_pages_for_search": 1,

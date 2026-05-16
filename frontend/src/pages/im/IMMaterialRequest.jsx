@@ -2,18 +2,21 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import SearchableSelect from "../../components/SearchableSelect";
 
-// ─── Status helpers ───────────────────────────────────────────────────────────
+// ─── Status ───────────────────────────────────────────────────────────────────
 
 const STATUS_COLORS = {
   "Pending Approval": { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" },
-  "Approved":         { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" },
+  "Transferred":      { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" },
   "Rejected":         { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" },
   "Issued":           { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" },
+  "Submitted":        { bg: "#f0f9ff", fg: "#0369a1", dot: "#38bdf8" },
+  "Draft":            { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8" },
 };
 
 function StatusBadge({ status }) {
-  const c = STATUS_COLORS[status] || { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8" };
+  const c = STATUS_COLORS[status] || STATUS_COLORS["Draft"];
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 5,
@@ -24,6 +27,36 @@ function StatusBadge({ status }) {
       <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.dot, flexShrink: 0 }} />
       {status}
     </span>
+  );
+}
+
+// ─── Tab bar ──────────────────────────────────────────────────────────────────
+
+function Tabs({ active, onChange, tabs }) {
+  return (
+    <div style={{ display: "flex", gap: 2, padding: "0 16px 0", borderBottom: "1px solid #e2e8f0", marginBottom: 0 }}>
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          onClick={() => onChange(t.id)}
+          style={{
+            padding: "10px 18px", fontSize: "0.84rem", fontWeight: 600,
+            background: "none", border: "none", cursor: "pointer",
+            color: active === t.id ? "#1d4ed8" : "#64748b",
+            borderBottom: active === t.id ? "2px solid #1d4ed8" : "2px solid transparent",
+            marginBottom: -1,
+          }}
+        >
+          {t.label}
+          {t.badge > 0 && (
+            <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 999, background: "#fee2e2", color: "#b91c1c", fontSize: "0.68rem", fontWeight: 700 }}>
+              {t.badge}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -40,15 +73,15 @@ function Modal({ open, onClose, title, children, footer, width = 560 }) {
         style={{ background: "#fff", borderRadius: 14, width, maxWidth: "calc(100vw - 40px)", maxHeight: "calc(100dvh - 40px)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)", display: "flex", flexDirection: "column", overflow: "hidden" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 24px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 22px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
           <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700 }}>{title}</h3>
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
         </div>
-        <div style={{ padding: "20px 24px", overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
+        <div style={{ padding: "18px 22px", overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
           {children}
         </div>
         {footer && (
-          <div style={{ padding: "14px 24px", borderTop: "1px solid #e2e8f0", display: "flex", gap: 10, justifyContent: "flex-end", flexShrink: 0, background: "#fff" }}>
+          <div style={{ padding: "12px 22px", borderTop: "1px solid #e2e8f0", display: "flex", gap: 10, justifyContent: "flex-end", flexShrink: 0, background: "#fafbfc" }}>
             {footer}
           </div>
         )}
@@ -57,262 +90,418 @@ function Modal({ open, onClose, title, children, footer, width = 560 }) {
   );
 }
 
-// ─── Form field helpers ───────────────────────────────────────────────────────
-
-function Field({ label, children }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#475569", marginBottom: 5 }}>{label}</label>
-      {children}
-    </div>
-  );
-}
-
-const inputStyle = {
+const inp = {
   width: "100%", padding: "8px 10px", borderRadius: 8,
   border: "1px solid #e2e8f0", fontSize: "0.86rem", boxSizing: "border-box",
+  fontFamily: "inherit",
 };
+const label = (text, required) => (
+  <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: "#475569", marginBottom: 4 }}>
+    {text}{required && <span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>}
+  </label>
+);
 
-// ─── Detail row ───────────────────────────────────────────────────────────────
+// ─── Item type badges ─────────────────────────────────────────────────────────
 
-function DetailItem({ label, value }) {
+function HuaweiBadge() {
   return (
-    <div style={{ background: "#f8fafc", borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
-      <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: "0.86rem", color: "#0f172a", fontWeight: 500 }}>{value || "—"}</div>
-    </div>
+    <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", whiteSpace: "nowrap" }}>
+      Huawei
+    </span>
+  );
+}
+function CompanyBadge() {
+  return (
+    <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#ecfdf5", color: "#047857", border: "1px solid #6ee7b7", whiteSpace: "nowrap" }}>
+      Company
+    </span>
   );
 }
 
 // ─── New Request Form ─────────────────────────────────────────────────────────
 
-const EMPTY_ITEM = { item_code: "", qty: "", uom: "", valuation_rate: "" };
+function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
+  // POID
+  const [selectedPoid, setSelectedPoid] = useState("");
+  const [poidSearch, setPoidSearch]     = useState("");
+  const [poidOptions, setPoidOptions]   = useState([]);
+  const [poidInfo, setPoidInfo]         = useState(null);
+  const [poidLoading, setPoidLoading]   = useState(false);
 
-function NewRequestForm({ onSubmit, onCancel, imName }) {
-  const [poid, setPoid] = useState("");
-  const [poidDetails, setPoidDetails] = useState(null);
-  const [poidLoading, setPoidLoading] = useState(false);
-  const [poidError, setPoidError] = useState("");
-  const [teamWarehouse, setTeamWarehouse] = useState("");
-  const [sourceWarehouse, setSourceWarehouse] = useState("Stores - INET");
-  const [team, setTeam] = useState("");
+  // DUID / team
+  const [duid, setDuid]   = useState(prefillDuid || "");
+  const [team, setTeam]   = useState("");
+  const [teams, setTeams] = useState([]);
+
+  // Items — two separate lists
+  const [huaweiItems, setHuaweiItems]   = useState([]);   // auto-filled from DUID receipt
+  const [huaweiQtys, setHuaweiQtys]     = useState({});   // item_code → requested qty
+  const [huaweiLoading, setHuaweiLoading] = useState(false);
+  const [companyItems, setCompanyItems] = useState([]);   // manually added company items
+  const [itemSearch, setItemSearch]     = useState("");
+  const [itemOptions, setItemOptions]   = useState([]);
+  const [sourceWh, setSourceWh]         = useState("");
+
   const [remark, setRemark] = useState("");
-  const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
+  const [busy, setBusy]     = useState(false);
+  const [err, setErr]       = useState("");
 
-  async function loadPoid() {
-    const p = poid.trim();
-    if (!p) return;
+  // Load teams + source warehouse on mount
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      pmApi.getImTeams(imName).catch(() => []),
+      pmApi.getSourceWarehouse().catch(() => ""),
+    ]).then(([t, sw]) => {
+      if (cancelled) return;
+      setTeams(Array.isArray(t) ? t : []);
+      setSourceWh(sw || "");
+    });
+    return () => { cancelled = true; };
+  }, [imName]);
+
+  // Load Huawei items when DUID is set
+  useEffect(() => {
+    if (!duid) { setHuaweiItems([]); setHuaweiQtys({}); return; }
+    let cancelled = false;
+    setHuaweiLoading(true);
+    pmApi.getDuidReceivedItems(duid)
+      .then((res) => {
+        if (cancelled) return;
+        const list = Array.isArray(res) ? res : [];
+        setHuaweiItems(list);
+        // Default requested qty = received qty
+        const qtys = {};
+        list.forEach((i) => { qtys[i.item_code] = i.qty; });
+        setHuaweiQtys(qtys);
+      })
+      .catch(() => { if (!cancelled) setHuaweiItems([]); })
+      .finally(() => { if (!cancelled) setHuaweiLoading(false); });
+    return () => { cancelled = true; };
+  }, [duid]);
+
+  // Search PO Dispatches for the IM
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.searchPoDispatches({ query: poidSearch, im: imName, limit: 30 })
+      .then((r) => { if (!cancelled) setPoidOptions(Array.isArray(r) ? r : []); })
+      .catch(() => { if (!cancelled) setPoidOptions([]); });
+    return () => { cancelled = true; };
+  }, [poidSearch, imName]);
+
+  // Search company items
+  useEffect(() => {
+    let cancelled = false;
+    if (!itemSearch.trim()) { setItemOptions([]); return; }
+    pmApi.searchItems({ query: itemSearch, warehouse: sourceWh || undefined, limit: 20 })
+      .then((r) => { if (!cancelled) setItemOptions(Array.isArray(r) ? r : []); })
+      .catch(() => { if (!cancelled) setItemOptions([]); });
+    return () => { cancelled = true; };
+  }, [itemSearch, sourceWh]);
+
+  async function handlePoidSelect(poidValue) {
+    setSelectedPoid(poidValue);
+    if (!poidValue) { setPoidInfo(null); setDuid(prefillDuid || ""); setTeam(""); return; }
     setPoidLoading(true);
-    setPoidError("");
-    setPoidDetails(null);
     try {
-      const res = await pmApi.getPoidDetails(p);
-      setPoidDetails(res);
-    } catch (e) {
-      setPoidError(e.message || "POID not found");
-    } finally {
-      setPoidLoading(false);
+      const res = await pmApi.getPoidDetails(poidValue);
+      setPoidInfo(res);
+      if (res.site_code) setDuid(res.site_code);
+      // Always update team (sets to "" if no rollout plan found so user knows to pick)
+      setTeam(res.team || "");
+    } catch { setPoidInfo(null); }
+    finally { setPoidLoading(false); }
+  }
+
+  function setCompanyItem(i, f, v) {
+    setCompanyItems((p) => p.map((r, idx) => idx === i ? { ...r, [f]: v } : r));
+  }
+
+  function addCompanyItemFromSearch(item) {
+    // Avoid duplicates
+    if (companyItems.some((r) => r.item_code === item.item_code)) return;
+    setCompanyItems((p) => [...p, {
+      item_code: item.item_code,
+      item_name: item.item_name,
+      qty: "",
+      uom: item.stock_uom || "",
+      actual_qty: item.actual_qty ?? null,
+    }]);
+    setItemSearch("");
+    setItemOptions([]);
+  }
+
+  async function submit() {
+    setErr("");
+    if (!team.trim()) { setErr("Please select a team."); return; }
+
+    // Huawei items: only include those with qty > 0
+    const huaweiSelected = huaweiItems
+      .map((h) => ({ ...h, requestedQty: Number(huaweiQtys[h.item_code] || 0) }))
+      .filter((h) => h.requestedQty > 0);
+
+    // Company items: only include those with code + qty
+    const companySelected = companyItems.filter((r) => r.item_code.trim() && Number(r.qty) > 0);
+
+    if (!huaweiSelected.length && !companySelected.length) {
+      setErr("Add at least one item to request.");
+      return;
     }
-  }
 
-  function setItem(i, field, value) {
-    setItems((prev) => prev.map((row, idx) => idx === i ? { ...row, [field]: value } : row));
-  }
+    const allItems = [
+      ...huaweiSelected.map((h) => ({
+        item_code: h.item_code,
+        qty: h.requestedQty,
+        uom: h.uom || "Nos",
+        is_huawei: true,
+      })),
+      ...companySelected.map((c) => ({
+        item_code: c.item_code.trim(),
+        qty: Number(c.qty),
+        uom: c.uom.trim() || undefined,
+        is_huawei: false,
+      })),
+    ];
 
-  function addItem() {
-    setItems((prev) => [...prev, { ...EMPTY_ITEM }]);
-  }
-
-  function removeItem(i) {
-    setItems((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  async function handleSubmit() {
-    setError("");
-    if (!teamWarehouse.trim()) { setError("Team Warehouse is required."); return; }
-    const validItems = items.filter((r) => r.item_code.trim() && Number(r.qty) > 0);
-    if (!validItems.length) { setError("Add at least one item with item code and qty > 0."); return; }
-
-    setSubmitting(true);
+    setBusy(true);
     try {
-      await onSubmit({
-        poid: poid.trim() || undefined,
-        duid: poidDetails?.site_code || "",
+      await pmApi.createMaterialRequest({
+        poid: selectedPoid || undefined,
+        duid: duid.trim(),
         im: imName,
-        team: team.trim() || undefined,
-        team_warehouse: teamWarehouse.trim(),
-        source_warehouse: sourceWarehouse.trim() || "Stores - INET",
+        team,
         remark: remark.trim() || undefined,
-        items: validItems.map((r) => ({
-          item_code: r.item_code.trim(),
-          qty: Number(r.qty),
-          uom: r.uom.trim() || undefined,
-          valuation_rate: Number(r.valuation_rate) || 0,
-        })),
+        items: allItems,
       });
+      onDone("Material request submitted successfully.");
     } catch (e) {
-      setError(e.message || "Submission failed");
-      setSubmitting(false);
+      setErr(e.message || "Submission failed");
+      setBusy(false);
     }
   }
+
+  const poidSelectOptions = poidOptions.map((p) => ({
+    id: p.poid,
+    label: p.poid + (p.project_code ? ` — ${p.project_code}` : "") + (p.site_code ? ` · ${p.site_code}` : ""),
+  }));
 
   return (
     <div>
-      {error && <div className="notice error" style={{ marginBottom: 12 }}>{error}</div>}
+      {err && <div className="notice error" style={{ marginBottom: 12 }}>{err}</div>}
 
-      <Field label="POID (optional)">
-        <div style={{ display: "flex", gap: 8 }}>
-          <input style={{ ...inputStyle, flex: 1 }} value={poid} onChange={(e) => setPoid(e.target.value)} placeholder="e.g. W-4178-ATN-01-REL-01" />
-          <button type="button" className="btn-secondary" style={{ whiteSpace: "nowrap" }} onClick={loadPoid} disabled={poidLoading || !poid.trim()}>
-            {poidLoading ? "…" : "Load"}
-          </button>
-        </div>
-        {poidError && <div style={{ fontSize: "0.78rem", color: "#b91c1c", marginTop: 4 }}>{poidError}</div>}
-        {poidDetails && (
-          <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, background: "#ecfdf5", fontSize: "0.8rem", color: "#047857" }}>
-            DUID: <strong>{poidDetails.site_code || "—"}</strong> · Project: <strong>{poidDetails.project_code || "—"}</strong>
+      {/* POID */}
+      <div style={{ marginBottom: 14 }}>
+        {label("POID")}
+        <SearchableSelect
+          value={selectedPoid}
+          onChange={handlePoidSelect}
+          onSearch={setPoidSearch}
+          options={poidSelectOptions}
+          placeholder="Search POID…"
+          allLabel="Search POID…"
+          style={{ display: "block", width: "100%" }}
+          minWidth={0}
+          triggerStyle={{ width: "100%", padding: "8px 28px 8px 10px", borderRadius: 8, fontSize: "0.86rem", boxSizing: "border-box" }}
+          panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
+        />
+        {poidLoading && <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginTop: 3 }}>Loading POID details…</div>}
+        {poidInfo && (
+          <div style={{ marginTop: 5, padding: "6px 10px", borderRadius: 6, background: "#ecfdf5", fontSize: "0.78rem", color: "#047857" }}>
+            DUID: <strong>{poidInfo.site_code || "—"}</strong>
+            {poidInfo.project_code && <> · Project: <strong>{poidInfo.project_code}</strong></>}
+            {poidInfo.team
+              ? <> · Team: <strong>{poidInfo.team}</strong> ✓</>
+              : <span style={{ color: "#b45309" }}> · No rollout plan found — select team below</span>
+            }
           </div>
         )}
-      </Field>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-        <Field label="Team Warehouse *">
-          <input style={inputStyle} value={teamWarehouse} onChange={(e) => setTeamWarehouse(e.target.value)} placeholder="Team Warehouse name" />
-        </Field>
-        <Field label="Source Warehouse">
-          <input style={inputStyle} value={sourceWarehouse} onChange={(e) => setSourceWarehouse(e.target.value)} placeholder="Stores - INET" />
-        </Field>
-        <Field label="Team (optional)">
-          <input style={inputStyle} value={team} onChange={(e) => setTeam(e.target.value)} placeholder="Team ID" />
-        </Field>
       </div>
 
-      <Field label="Remark">
-        <textarea style={{ ...inputStyle, resize: "vertical", minHeight: 56, fontFamily: "inherit" }} value={remark} onChange={(e) => setRemark(e.target.value)} placeholder="Reason for request…" />
-      </Field>
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>ITEMS</div>
-        <button type="button" className="btn-secondary" style={{ fontSize: "0.74rem", padding: "4px 10px" }} onClick={addItem}>+ Add row</button>
+      {/* DUID */}
+      <div style={{ marginBottom: 14 }}>
+        {label("DUID")}
+        <input style={{ ...inp, background: poidInfo ? "#f8fafc" : "#fff" }}
+          value={duid} onChange={(e) => { if (!poidInfo) setDuid(e.target.value); }}
+          readOnly={!!poidInfo} placeholder="Auto-filled from POID" />
       </div>
 
-      <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
-          <thead>
-            <tr style={{ background: "#f8fafc" }}>
-              <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>Item Code</th>
-              <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600, color: "#475569", width: 80 }}>Qty</th>
-              <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#475569", width: 80 }}>UOM</th>
-              <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600, color: "#475569", width: 110 }}>Val. Rate</th>
-              <th style={{ width: 36 }} />
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((row, i) => (
-              <tr key={i} style={{ borderTop: i > 0 ? "1px solid #f1f5f9" : undefined }}>
-                <td style={{ padding: "6px 10px" }}>
-                  <input
-                    style={{ ...inputStyle, padding: "5px 8px" }}
-                    value={row.item_code}
-                    onChange={(e) => setItem(i, "item_code", e.target.value)}
-                    placeholder="Item code"
-                  />
-                </td>
-                <td style={{ padding: "6px 10px" }}>
-                  <input
-                    type="number"
-                    min="0"
-                    style={{ ...inputStyle, padding: "5px 8px", textAlign: "right" }}
-                    value={row.qty}
-                    onChange={(e) => setItem(i, "qty", e.target.value)}
-                    placeholder="0"
-                  />
-                </td>
-                <td style={{ padding: "6px 10px" }}>
-                  <input
-                    style={{ ...inputStyle, padding: "5px 8px" }}
-                    value={row.uom}
-                    onChange={(e) => setItem(i, "uom", e.target.value)}
-                    placeholder="Nos"
-                  />
-                </td>
-                <td style={{ padding: "6px 10px" }}>
-                  <input
-                    type="number"
-                    min="0"
-                    style={{ ...inputStyle, padding: "5px 8px", textAlign: "right" }}
-                    value={row.valuation_rate}
-                    onChange={(e) => setItem(i, "valuation_rate", e.target.value)}
-                    placeholder="0"
-                  />
-                </td>
-                <td style={{ padding: "6px 6px", textAlign: "center" }}>
-                  {items.length > 1 && (
-                    <button type="button" onClick={() => removeItem(i)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 16, padding: 2 }}>×</button>
-                  )}
-                </td>
+      {/* Team */}
+      <div style={{ marginBottom: 14 }}>
+        {label("Team", true)}
+        <select style={inp} value={team} onChange={(e) => setTeam(e.target.value)}>
+          <option value="">— Select team —</option>
+          {teams.map((t) => (
+            <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        {label("Remark")}
+        <textarea style={{ ...inp, resize: "vertical", minHeight: 44 }} value={remark}
+          onChange={(e) => setRemark(e.target.value)} placeholder="Optional note…" />
+      </div>
+
+      {/* ── Huawei Materials (auto-filled) ── */}
+      <div style={{ marginBottom: 16, padding: 14, borderRadius: 10, background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <HuaweiBadge />
+          <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#1d4ed8" }}>Huawei Materials</span>
+        </div>
+        {huaweiLoading ? (
+          <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>Loading received items…</div>
+        ) : huaweiItems.length === 0 ? (
+          <div style={{ fontSize: "0.78rem", color: "#64748b" }}>
+            {duid ? "No received materials found for this DUID yet." : "Select a POID or enter a DUID to see received materials."}
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+            <thead>
+              <tr>
+                <th style={{ padding: "5px 8px", textAlign: "left", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem" }}>Item</th>
+                <th style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 90 }}>Received</th>
+                <th style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 90 }}>Request Qty</th>
+                <th style={{ padding: "5px 8px", textAlign: "left", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 60 }}>UOM</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {huaweiItems.map((h) => (
+                <tr key={h.item_code}>
+                  <td style={{ padding: "5px 8px" }}>
+                    <div style={{ fontWeight: 600, color: "#0f172a" }}>{h.item_code}</div>
+                    {h.item_name !== h.item_code && <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{h.item_name}</div>}
+                  </td>
+                  <td style={{ padding: "5px 8px", textAlign: "right", color: "#475569" }}>{h.qty}</td>
+                  <td style={{ padding: "5px 8px" }}>
+                    <input type="number" min="0" max={h.qty}
+                      style={{ ...inp, padding: "4px 6px", textAlign: "right", width: "100%", boxSizing: "border-box" }}
+                      value={huaweiQtys[h.item_code] ?? h.qty}
+                      onChange={(e) => setHuaweiQtys((q) => ({ ...q, [h.item_code]: e.target.value }))} />
+                  </td>
+                  <td style={{ padding: "5px 8px", color: "#64748b" }}>{h.uom}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
-        <button type="button" className="btn-secondary" onClick={onCancel} disabled={submitting}>Cancel</button>
-        <button type="button" className="btn-primary" onClick={handleSubmit} disabled={submitting}>
-          {submitting ? "Submitting…" : "Submit Request"}
+      {/* ── Company Materials (manual select) ── */}
+      <div style={{ marginBottom: 20, padding: 14, borderRadius: 10, background: "#f0fdf4", border: "1px solid #6ee7b7" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <CompanyBadge />
+          <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#047857" }}>Company Materials</span>
+        </div>
+
+        {/* Item search */}
+        <div style={{ position: "relative", marginBottom: 8 }}>
+          <input style={{ ...inp, borderColor: "#6ee7b7" }} value={itemSearch}
+            onChange={(e) => setItemSearch(e.target.value)} placeholder="Search item code or name…" />
+          {itemOptions.length > 0 && (
+            <div style={{
+              position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200,
+              background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto",
+            }}>
+              {itemOptions.map((opt) => (
+                <div key={opt.item_code}
+                  onClick={() => addCompanyItemFromSearch(opt)}
+                  style={{ padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid #f1f5f9" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
+                >
+                  <div style={{ fontWeight: 600, fontSize: "0.84rem" }}>{opt.item_code}</div>
+                  <div style={{ display: "flex", gap: 12, fontSize: "0.72rem", color: "#64748b" }}>
+                    <span>{opt.item_name}</span>
+                    {opt.actual_qty != null && (
+                      <span style={{ color: opt.actual_qty > 0 ? "#047857" : "#b91c1c" }}>
+                        Stock: {opt.actual_qty} {opt.stock_uom}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {companyItems.length === 0 ? (
+          <div style={{ fontSize: "0.78rem", color: "#64748b" }}>Search and select company items above.</div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+            <thead>
+              <tr>
+                <th style={{ padding: "5px 8px", textAlign: "left", fontWeight: 600, color: "#047857", fontSize: "0.72rem" }}>Item</th>
+                <th style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: "#047857", fontSize: "0.72rem", width: 90 }}>Qty</th>
+                <th style={{ padding: "5px 8px", textAlign: "left", fontWeight: 600, color: "#047857", fontSize: "0.72rem", width: 60 }}>UOM</th>
+                <th style={{ width: 30 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {companyItems.map((row, i) => (
+                <tr key={i} style={{ borderTop: i > 0 ? "1px solid #d1fae5" : undefined }}>
+                  <td style={{ padding: "5px 8px" }}>
+                    <div style={{ fontWeight: 600 }}>{row.item_code}</div>
+                    {row.item_name && row.item_name !== row.item_code && (
+                      <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{row.item_name}</div>
+                    )}
+                  </td>
+                  <td style={{ padding: "5px 8px" }}>
+                    <input type="number" min="0"
+                      style={{ ...inp, padding: "4px 6px", textAlign: "right", width: "100%", boxSizing: "border-box", borderColor: "#6ee7b7" }}
+                      value={row.qty} onChange={(e) => setCompanyItem(i, "qty", e.target.value)} placeholder="0" />
+                  </td>
+                  <td style={{ padding: "5px 8px" }}>
+                    <input style={{ ...inp, padding: "4px 6px", borderColor: "#6ee7b7" }}
+                      value={row.uom} onChange={(e) => setCompanyItem(i, "uom", e.target.value)} placeholder="Nos" />
+                  </td>
+                  <td style={{ padding: "5px 6px", textAlign: "center" }}>
+                    <button type="button" onClick={() => setCompanyItems((p) => p.filter((_, j) => j !== i))}
+                      style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 17, lineHeight: 1 }}>×</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="button" className="btn-primary" onClick={submit} disabled={busy}>
+          {busy ? "Submitting…" : "Submit Request"}
         </button>
       </div>
     </div>
   );
 }
 
-// ─── Request Detail Modal ─────────────────────────────────────────────────────
+// ─── Request Detail ───────────────────────────────────────────────────────────
 
-function RequestDetail({ row, isAdmin, onApprove, onReject, onIssue, onClose }) {
+function RequestDetail({ row, onClose }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectReason, setRejectReason] = useState("");
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const d = await pmApi.getMaterialRequest(row.name);
-        if (!cancelled) { setDetail(d); setLoading(false); }
-      } catch (e) {
-        if (!cancelled) { setErr(e.message || "Failed to load"); setLoading(false); }
-      }
-    })();
+    pmApi.getMaterialRequest(row.name).then((d) => {
+      if (!cancelled) { setDetail(d); setLoading(false); }
+    }).catch((e) => {
+      if (!cancelled) { setErr(e.message || "Failed to load"); setLoading(false); }
+    });
     return () => { cancelled = true; };
   }, [row.name]);
 
-  async function handleApprove() {
-    setBusy(true); setErr("");
-    try { await onApprove(row.name); onClose(); }
-    catch (e) { setErr(e.message || "Approve failed"); setBusy(false); }
-  }
-
-  async function handleReject() {
-    setBusy(true); setErr("");
-    try { await onReject(row.name, rejectReason); onClose(); }
-    catch (e) { setErr(e.message || "Reject failed"); setBusy(false); }
-  }
-
-  async function handleIssue() {
-    setBusy(true); setErr("");
-    try { await onIssue(row.name); onClose(); }
-    catch (e) { setErr(e.message || "Issue failed"); setBusy(false); }
-  }
-
   const status = detail?.request_status || row.request_status;
-  const isPending = status === "Pending Approval";
-  const isApproved = status === "Approved";
+  function DItem({ label: l, value }) {
+    return value ? (
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginBottom: 1 }}>{l}</div>
+        <div style={{ fontSize: "0.86rem", color: "#0f172a", fontWeight: 500 }}>{value}</div>
+      </div>
+    ) : null;
+  }
 
   return (
     <div>
@@ -321,50 +510,49 @@ function RequestDetail({ row, isAdmin, onApprove, onReject, onIssue, onClose }) 
         <div style={{ padding: 24, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
       ) : (
         <>
-          <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
             <StatusBadge status={status} />
-            <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{detail?.name}</span>
+            <span style={{ fontSize: "0.75rem", color: "#94a3b8", fontFamily: "monospace" }}>{detail?.name}</span>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
-            <DetailItem label="POID" value={detail?.poid} />
-            <DetailItem label="DUID" value={detail?.duid} />
-            <DetailItem label="IM" value={detail?.im} />
-            <DetailItem label="Team" value={detail?.team} />
-            <DetailItem label="Source Warehouse" value={detail?.source_warehouse} />
-            <DetailItem label="Team Warehouse" value={detail?.team_warehouse} />
-            {detail?.remark && <DetailItem label="Remark" value={detail.remark} />}
-            {status === "Rejected" && detail?.rejection_reason && (
-              <DetailItem label="Rejection Reason" value={detail.rejection_reason} />
-            )}
-            {detail?.stock_entry_transfer && <DetailItem label="Material Transfer" value={detail.stock_entry_transfer} />}
-            {detail?.stock_entry_issue && <DetailItem label="Material Issue" value={detail.stock_entry_issue} />}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+            <DItem label="POID" value={detail?.poid} />
+            <DItem label="DUID" value={detail?.duid} />
+            <DItem label="IM" value={detail?.im} />
+            <DItem label="Source Warehouse" value={detail?.source_warehouse} />
+            <DItem label="Team Warehouse" value={detail?.team_warehouse} />
+            {detail?.rejection_reason && <DItem label="Rejection Reason" value={detail.rejection_reason} />}
+            {detail?.stock_entry_transfer && <DItem label="Transfer Entry" value={detail.stock_entry_transfer} />}
+            {detail?.stock_entry_issue && <DItem label="Issue Entry" value={detail.stock_entry_issue} />}
           </div>
 
           {detail?.items?.length > 0 && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#94a3b8", marginBottom: 8 }}>ITEMS</div>
+              <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#94a3b8", marginBottom: 6, letterSpacing: "0.05em" }}>ITEMS</div>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
                 <thead>
                   <tr style={{ background: "#f8fafc" }}>
-                    <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>Item</th>
-                    <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600, color: "#475569" }}>Qty</th>
-                    <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>UOM</th>
-                    <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600, color: "#475569" }}>Val. Rate</th>
+                    <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>Item</th>
+                    <th style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: "#475569" }}>Qty</th>
+                    <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>UOM</th>
                   </tr>
                 </thead>
                 <tbody>
                   {detail.items.map((item, i) => (
                     <tr key={i} style={{ borderTop: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "7px 10px" }}>
-                        <div style={{ fontWeight: 600 }}>{item.item_code}</div>
+                      <td style={{ padding: "6px 10px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontWeight: 600 }}>{item.item_code}</span>
+                          {item.valuation_rate === 0 || item.valuation_rate == null
+                            ? <HuaweiBadge />
+                            : <CompanyBadge />}
+                        </div>
                         {item.item_name && item.item_name !== item.item_code && (
-                          <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{item.item_name}</div>
+                          <div style={{ fontSize: "0.73rem", color: "#64748b" }}>{item.item_name}</div>
                         )}
                       </td>
-                      <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600 }}>{item.qty}</td>
-                      <td style={{ padding: "7px 10px" }}>{item.uom || "—"}</td>
-                      <td style={{ padding: "7px 10px", textAlign: "right" }}>{item.valuation_rate ? Number(item.valuation_rate).toLocaleString() : "—"}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600 }}>{item.qty}</td>
+                      <td style={{ padding: "6px 10px", color: "#64748b" }}>{item.uom || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -372,65 +560,123 @@ function RequestDetail({ row, isAdmin, onApprove, onReject, onIssue, onClose }) 
             </div>
           )}
 
-          {isAdmin && isPending && !rejectOpen && (
-            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-              <button type="button" className="btn-primary" onClick={handleApprove} disabled={busy}>
-                {busy ? "Processing…" : "Approve & Transfer"}
-              </button>
-              <button type="button" className="btn-secondary" onClick={() => setRejectOpen(true)} disabled={busy}
-                style={{ color: "#b91c1c", borderColor: "#fecaca" }}>
-                Reject
-              </button>
-            </div>
-          )}
-
-          {isAdmin && isPending && rejectOpen && (
-            <div style={{ marginTop: 16, padding: 14, background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca" }}>
-              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#b91c1c", marginBottom: 6 }}>Rejection Reason</label>
-              <textarea
-                style={{ ...inputStyle, minHeight: 60, resize: "vertical", fontFamily: "inherit", borderColor: "#fecaca" }}
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="State the reason…"
-              />
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button type="button" onClick={() => setRejectOpen(false)} className="btn-secondary" disabled={busy}>Cancel</button>
-                <button type="button" onClick={handleReject} disabled={busy}
-                  style={{ padding: "8px 18px", borderRadius: 8, background: "#b91c1c", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700 }}>
-                  {busy ? "Rejecting…" : "Confirm Reject"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {isAdmin && isApproved && !detail?.stock_entry_issue && (
-            <div style={{ marginTop: 20 }}>
-              <button type="button" className="btn-primary" onClick={handleIssue} disabled={busy}>
-                {busy ? "Processing…" : "Issue Materials (Work Done)"}
-              </button>
-            </div>
-          )}
         </>
       )}
     </div>
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── DUID Stock Tab ───────────────────────────────────────────────────────────
 
-const ALL_STATUSES = ["Pending Approval", "Approved", "Rejected", "Issued"];
+function DuidStockTab({ onRequest }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
 
-export default function IMMaterialRequest() {
-  const { imName, role } = useAuth();
-  const isAdmin = role === "admin";
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await pmApi.getDuidStockSummary();
+        if (!cancelled) setRows(Array.isArray(res) ? res : []);
+      } catch (e) {
+        if (!cancelled) setError(e.message || "Failed to load");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
+  const visible = rows.filter((r) =>
+    !search.trim() || r.duid.toLowerCase().includes(search.trim().toLowerCase()) || (r.project_name || "").toLowerCase().includes(search.trim().toLowerCase())
+  );
+
+  return (
+    <div style={{ padding: "16px 0" }}>
+      <div style={{ padding: "0 16px 12px", display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="search" placeholder="Search DUID or project…" value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260 }} />
+        <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{visible.length} DUIDs</span>
+      </div>
+
+      {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
+
+      <DataTableWrapper>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+        ) : visible.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">📦</div>
+            <h3>No INET materials found</h3>
+            <p>Huawei Outbound Plans for INET subcon will appear here.</p>
+          </div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>DUID</th>
+                <th>Project</th>
+                <th style={{ textAlign: "center" }}>Received</th>
+                <th style={{ textAlign: "center" }}>Pending</th>
+                <th style={{ textAlign: "right" }}>Volume (m³)</th>
+                <th>Latest Date</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((row) => (
+                <tr key={row.duid}>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.8rem", fontWeight: 600 }}>{row.duid}</td>
+                  <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.project_name}>{row.project_name || "—"}</td>
+                  <td style={{ textAlign: "center" }}>
+                    {row.received_count > 0 ? (
+                      <span style={{ padding: "2px 10px", borderRadius: 999, background: "#ecfdf5", color: "#047857", fontSize: "0.74rem", fontWeight: 700 }}>
+                        {row.received_count}
+                      </span>
+                    ) : <span style={{ color: "#cbd5e1" }}>0</span>}
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    {row.prepared_count > 0 ? (
+                      <span style={{ padding: "2px 10px", borderRadius: 999, background: "#fffbeb", color: "#b45309", fontSize: "0.74rem", fontWeight: 700 }}>
+                        {row.prepared_count}
+                      </span>
+                    ) : <span style={{ color: "#cbd5e1" }}>0</span>}
+                  </td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace", fontSize: "0.82rem" }}>{row.total_volume}</td>
+                  <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{row.latest_date}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      style={{ fontSize: "0.72rem", padding: "4px 12px", whiteSpace: "nowrap" }}
+                      onClick={() => onRequest(row.duid)}
+                    >
+                      Request
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </DataTableWrapper>
+    </div>
+  );
+}
+
+// ─── Requests Tab ─────────────────────────────────────────────────────────────
+
+const ALL_STATUSES = ["Pending Approval", "Transferred", "Rejected", "Issued"];
+
+function RequestsTab({ isAdmin, imName, refresh }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [showNew, setShowNew] = useState(false);
   const [detailRow, setDetailRow] = useState(null);
-  const [successMsg, setSuccessMsg] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -446,37 +692,111 @@ export default function IMMaterialRequest() {
     } finally {
       setLoading(false);
     }
-  }, [imName, isAdmin, statusFilter]);
+  }, [isAdmin, imName, statusFilter]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refresh]);
 
-  async function handleCreate(payload) {
-    await pmApi.createMaterialRequest(payload);
+  const pending = rows.filter((r) => r.request_status === "Pending Approval").length;
+
+  return (
+    <div style={{ padding: "16px 0" }}>
+      <div style={{ padding: "0 16px 12px", display: "flex", gap: 8, alignItems: "center" }}>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
+          <option value="">All Statuses</option>
+          {ALL_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {statusFilter && (
+          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => setStatusFilter("")}>Clear</button>
+        )}
+        <button className="btn-secondary" style={{ marginLeft: "auto", fontSize: "0.78rem", padding: "5px 12px" }} onClick={load} disabled={loading}>
+          {loading ? "…" : "Refresh"}
+        </button>
+      </div>
+
+
+      {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
+
+      <DataTableWrapper>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">📋</div>
+            <h3>No requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
+            <p>Click "+ New Request" to submit your first request.</p>
+          </div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Request No.</th>
+                <th>Date</th>
+                <th>POID</th>
+                <th>DUID</th>
+                {isAdmin && <th>IM</th>}
+                <th>Team Warehouse</th>
+                <th>Status</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.name}>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{row.request_date}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{row.poid || "—"}</td>
+                  <td style={{ fontSize: "0.78rem", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }} title={row.duid}>{row.duid || "—"}</td>
+                  {isAdmin && <td style={{ fontSize: "0.82rem" }}>{row.im || "—"}</td>}
+                  <td style={{ fontSize: "0.82rem" }}>{row.team_warehouse || "—"}</td>
+                  <td><StatusBadge status={row.request_status} /></td>
+                  <td>
+                    <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 10px" }}
+                      onClick={() => setDetailRow(row)}>
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </DataTableWrapper>
+
+      <Modal open={!!detailRow} onClose={() => setDetailRow(null)}
+        title={`Request · ${detailRow?.name || ""}`} width={660}>
+        {detailRow && (
+          <RequestDetail row={detailRow} onClose={() => setDetailRow(null)} />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
+export default function IMMaterialRequest() {
+  const { imName, role } = useAuth();
+  const isAdmin = role === "admin";
+
+  const [tab, setTab] = useState("requests");
+  const [showNew, setShowNew] = useState(false);
+  const [prefillDuid, setPrefillDuid] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  function openNew(duid = "") {
+    setPrefillDuid(duid);
+    setShowNew(true);
+  }
+
+  function handleDone(msg) {
     setShowNew(false);
-    setSuccessMsg("Material request submitted successfully.");
-    await load();
+    setSuccessMsg(msg);
+    setRefreshKey((k) => k + 1);
+    setTab("requests");
+    setTimeout(() => setSuccessMsg(""), 5000);
   }
-
-  async function handleApprove(name) {
-    await pmApi.approveMaterialRequest(name);
-    setSuccessMsg("Request approved. Material Transfer created.");
-    await load();
-  }
-
-  async function handleReject(name, reason) {
-    await pmApi.rejectMaterialRequest(name, reason);
-    setSuccessMsg("Request rejected.");
-    await load();
-  }
-
-  async function handleIssue(name) {
-    await pmApi.issueMaterialsWorkDone(name);
-    setSuccessMsg("Materials issued. Stock Entry created.");
-    await load();
-  }
-
-  // Count pending for admin badge
-  const pendingCount = rows.filter((r) => r.request_status === "Pending Approval").length;
 
   return (
     <div>
@@ -484,134 +804,45 @@ export default function IMMaterialRequest() {
         <div>
           <h1 className="page-title">Material Requests</h1>
           <div className="page-subtitle">
-            {isAdmin ? "Review and approve material requests from IMs." : "Request materials for your POID/DUID."}
+            {isAdmin ? "Review and approve material transfer requests." : "Request materials from main warehouse to your team."}
           </div>
         </div>
-        <div className="page-actions" style={{ display: "flex", gap: 8 }}>
-          <button className="btn-secondary" onClick={load} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
-          <button className="btn-primary" onClick={() => setShowNew(true)}>
-            + New Request
-          </button>
+        <div className="page-actions">
+          <button className="btn-primary" onClick={() => openNew()}>+ New Request</button>
         </div>
       </div>
 
       {successMsg && (
-        <div className="notice success" style={{ margin: "0 28px 16px" }}>
+        <div className="notice success" style={{ margin: "0 28px 12px" }}>
           <span>✓</span> {successMsg}
         </div>
       )}
 
-      {isAdmin && pendingCount > 0 && !statusFilter && (
-        <div style={{ margin: "0 16px 12px", padding: "10px 14px", borderRadius: 10, background: "#fffbeb", border: "1px solid #fcd34d", fontSize: "0.84rem", color: "#92400e", fontWeight: 600 }}>
-          {pendingCount} request{pendingCount !== 1 ? "s" : ""} pending approval
-        </div>
+      <Tabs
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { id: "requests", label: "My Requests" },
+          { id: "duid", label: "DUID Stock (Main Warehouse)" },
+        ]}
+      />
+
+      {tab === "requests" && (
+        <RequestsTab isAdmin={isAdmin} imName={imName} refresh={refreshKey} />
       )}
 
-      <div className="toolbar">
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}
-          >
-            <option value="">All Statuses</option>
-            {ALL_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          {statusFilter && (
-            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => setStatusFilter("")}>
-              Clear
-            </button>
-          )}
-        </div>
-      </div>
+      {tab === "duid" && (
+        <DuidStockTab onRequest={(duid) => openNew(duid)} />
+      )}
 
-      <div className="page-content">
-        {error && <div className="notice error" style={{ marginBottom: 16 }}>{error}</div>}
-
-        <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading requests…</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📦</div>
-              <h3>No material requests</h3>
-              <p>{statusFilter ? `No requests with status "${statusFilter}".` : "Click \"+ New Request\" to submit your first request."}</p>
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Request No.</th>
-                  <th>Date</th>
-                  <th>POID</th>
-                  <th>DUID</th>
-                  {isAdmin && <th>IM</th>}
-                  <th>Team Warehouse</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.name}>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
-                    <td>{row.request_date}</td>
-                    <td>{row.poid || "—"}</td>
-                    <td>{row.duid || "—"}</td>
-                    {isAdmin && <td>{row.im || "—"}</td>}
-                    <td>{row.team_warehouse || "—"}</td>
-                    <td><StatusBadge status={row.request_status} /></td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        style={{ fontSize: "0.7rem", padding: "3px 10px" }}
-                        onClick={() => { setSuccessMsg(""); setDetailRow(row); }}
-                      >
-                        {isAdmin && row.request_status === "Pending Approval" ? "Review" : "View"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </DataTableWrapper>
-      </div>
-
-      {/* New Request Modal */}
-      <Modal
-        open={showNew}
-        onClose={() => setShowNew(false)}
-        title="New Material Request"
-        width={680}
-      >
+      <Modal open={showNew} onClose={() => setShowNew(false)}
+        title="New Material Request" width={640}>
         <NewRequestForm
           imName={imName}
-          onSubmit={handleCreate}
-          onCancel={() => setShowNew(false)}
+          prefillDuid={prefillDuid}
+          onClose={() => setShowNew(false)}
+          onDone={handleDone}
         />
-      </Modal>
-
-      {/* Detail / Review Modal */}
-      <Modal
-        open={!!detailRow}
-        onClose={() => setDetailRow(null)}
-        title={`Request · ${detailRow?.name || ""}`}
-        width={680}
-      >
-        {detailRow && (
-          <RequestDetail
-            row={detailRow}
-            isAdmin={isAdmin}
-            onApprove={handleApprove}
-            onReject={handleReject}
-            onIssue={handleIssue}
-            onClose={() => { setDetailRow(null); }}
-          />
-        )}
       </Modal>
     </div>
   );

@@ -23,6 +23,7 @@ def after_migrate():
     _ensure_stock_manager_role()
     _ensure_duid_inventory_dimension()
     _ensure_outbound_custom_fields()
+    _ensure_poid_accounting_dimension()
 
 
 def _resync_pms_workspace():
@@ -50,24 +51,62 @@ def _resync_pms_workspace():
 
 
 def _resync_warehouse_workspace():
-    """Create Warehouse Management workspace programmatically."""
+    """Create or fully rebuild the Warehouse Management workspace.
+
+    Both the content JSON and the shortcuts child table must match —
+    content references shortcuts by label, child table holds link_to.
+    """
     import json
 
     workspace_name = "Warehouse Management"
+
+    _shortcuts = [
+        # (label, link_to, color)
+        ("Huawei Outbound Plan",   "Huawei Outbound Plan",   "Blue"),
+        ("Huawei Outbound Import", "Huawei Outbound Import", "Blue"),
+        ("Material Request",       "Material Request",       "Green"),
+        ("Stock Entry",            "Stock Entry",            "Green"),
+        ("Item",                   "Item",                   "Grey"),
+        ("Warehouse",              "Warehouse",              "Grey"),
+        ("DUID Master",            "DUID Master",            "Orange"),
+        ("Huawei Subcon Master",   "Huawei Subcon Master",   "Orange"),
+        ("INET Team",              "INET Team",              "Purple"),
+        ("INET Settings",          "INET Settings",          "Red"),
+    ]
+
     content = [
-        {"id": "H1", "type": "header", "data": {"text": '<span class="h4">Inventory</span>', "col": 12}},
-        {"id": "S1", "type": "shortcut", "data": {"shortcut_name": "Huawei Outbound Plan", "col": 3}},
-        {"id": "S2", "type": "shortcut", "data": {"shortcut_name": "Stock Entry", "col": 3}},
-        {"id": "S3", "type": "shortcut", "data": {"shortcut_name": "Item", "col": 3}},
-        {"id": "S4", "type": "shortcut", "data": {"shortcut_name": "Warehouse", "col": 3}},
-        {"id": "H2", "type": "header", "data": {"text": '<span class="h4">Masters</span>', "col": 12}},
-        {"id": "S5", "type": "shortcut", "data": {"shortcut_name": "DUID Master", "col": 3}},
-        {"id": "S6", "type": "shortcut", "data": {"shortcut_name": "Huawei Subcon Master", "col": 3}},
+        {"id": "h-inbound", "type": "header", "data": {"text": '<span class="h4">Inbound</span>', "col": 12}},
+    ]
+    for i, (lbl, _link, _color) in enumerate(_shortcuts[:2], 1):
+        content.append({"id": f"s{i}", "type": "shortcut", "data": {"shortcut_name": lbl, "col": 3}})
+
+    content.append({"id": "h-stock", "type": "header", "data": {"text": '<span class="h4">Stock</span>', "col": 12}})
+    for i, (lbl, _link, _color) in enumerate(_shortcuts[2:6], 3):
+        content.append({"id": f"s{i}", "type": "shortcut", "data": {"shortcut_name": lbl, "col": 3}})
+
+    content.append({"id": "h-masters", "type": "header", "data": {"text": '<span class="h4">Masters</span>', "col": 12}})
+    for i, (lbl, _link, _color) in enumerate(_shortcuts[6:], 7):
+        content.append({"id": f"s{i}", "type": "shortcut", "data": {"shortcut_name": lbl, "col": 3}})
+
+    shortcut_rows = [
+        {
+            "doctype": "Workspace Shortcut",
+            "type": "DocType",
+            "link_to": link,
+            "label": lbl,
+            "color": color,
+            "doc_view": "List",
+        }
+        for lbl, link, color in _shortcuts
     ]
 
     if frappe.db.exists("Workspace", workspace_name):
-        frappe.db.set_value("Workspace", workspace_name, "content", json.dumps(content))
-        frappe.db.commit()
+        doc = frappe.get_doc("Workspace", workspace_name)
+        doc.content = json.dumps(content)
+        doc.shortcuts = []
+        for row in shortcut_rows:
+            doc.append("shortcuts", row)
+        doc.save(ignore_permissions=True)
     else:
         try:
             frappe.get_doc({
@@ -76,16 +115,16 @@ def _resync_warehouse_workspace():
                 "label": workspace_name,
                 "title": workspace_name,
                 "module": "Inet App",
-                "icon": "project-2",
+                "icon": "package",
                 "public": 1,
                 "content": json.dumps(content),
                 "roles": [],
-                "shortcuts": [],
+                "shortcuts": shortcut_rows,
                 "links": [],
             }).insert(ignore_permissions=True)
-            frappe.db.commit()
         except Exception:
             frappe.log_error(frappe.get_traceback(), "Workspace creation failed")
+    frappe.db.commit()
 
 
 def _drop_unused_customer_activity_type_doctype():
@@ -252,19 +291,90 @@ def _ensure_duid_inventory_dimension():
 
 
 def _ensure_outbound_custom_fields():
-    """Add huawei_outbound_plan Link field on Stock Entry (idempotent)."""
+    """Add custom fields on Stock Entry and Material Request doctypes (idempotent)."""
     from frappe.custom.doctype.custom_field.custom_field import create_custom_field
-    if frappe.db.exists("Custom Field", "Stock Entry-huawei_outbound_plan"):
+
+    _add_field("Stock Entry", "Stock Entry-huawei_outbound_plan", {
+        "fieldname": "huawei_outbound_plan",
+        "fieldtype": "Link",
+        "label": "Huawei Outbound Plan",
+        "options": "Huawei Outbound Plan",
+        "insert_after": "stock_entry_type",
+        "module": "Inet App",
+    })
+
+    # IM, POID and DUID on Material Request header for INET tracking
+    _add_field("Material Request", "Material Request-im", {
+        "fieldname": "im",
+        "fieldtype": "Link",
+        "label": "IM",
+        "options": "IM Master",
+        "insert_after": "company",
+        "module": "Inet App",
+    })
+    _add_field("Material Request", "Material Request-poid", {
+        "fieldname": "poid",
+        "fieldtype": "Link",
+        "label": "POID",
+        "options": "PO Dispatch",
+        "insert_after": "im",
+        "module": "Inet App",
+    })
+    _add_field("Material Request", "Material Request-duid", {
+        "fieldname": "duid",
+        "fieldtype": "Data",
+        "label": "DUID",
+        "insert_after": "poid",
+        "module": "Inet App",
+    })
+    _add_field("Material Request", "Material Request-rejection_reason", {
+        "fieldname": "rejection_reason",
+        "fieldtype": "Small Text",
+        "label": "Rejection Reason",
+        "insert_after": "duid",
+        "read_only": 1,
+        "module": "Inet App",
+    })
+
+    frappe.db.commit()
+
+    # Drop stale duid field on Material Request Item if it was added previously
+    if frappe.db.exists("Custom Field", "Material Request Item-duid"):
+        frappe.delete_doc("Custom Field", "Material Request Item-duid", ignore_missing=True, force=True)
+        frappe.db.commit()
+
+
+def _ensure_poid_accounting_dimension():
+    """Create the POID Accounting Dimension (linked to PO Dispatch) if it does not exist.
+
+    ERPNext Accounting Dimension fields: name, document_type, label, fieldname, disabled.
+    When created, ERPNext auto-adds the poid field to financial documents.
+    """
+    if not frappe.db.exists("DocType", "Accounting Dimension"):
+        return
+    if frappe.db.exists("Accounting Dimension", "POID"):
+        return
+    if not frappe.db.exists("DocType", "PO Dispatch"):
         return
     try:
-        create_custom_field("Stock Entry", {
-            "fieldname": "huawei_outbound_plan",
-            "fieldtype": "Link",
-            "label": "Huawei Outbound Plan",
-            "options": "Huawei Outbound Plan",
-            "insert_after": "stock_entry_type",
-            "module": "Inet App",
-        })
+        frappe.get_doc({
+            "doctype": "Accounting Dimension",
+            "name": "POID",
+            "document_type": "PO Dispatch",
+            "label": "POID",
+            "fieldname": "poid",
+            "disabled": 0,
+        }).insert(ignore_permissions=True)
         frappe.db.commit()
     except Exception:
-        frappe.log_error(frappe.get_traceback(), "huawei_outbound_plan custom field setup failed")
+        frappe.log_error(frappe.get_traceback(), "POID Accounting Dimension setup failed")
+
+
+def _add_field(dt, cf_name, definition):
+    from frappe.custom.doctype.custom_field.custom_field import create_custom_field
+    if frappe.db.exists("Custom Field", cf_name):
+        return
+    try:
+        create_custom_field(dt, definition)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), f"Custom field {cf_name} setup failed")
