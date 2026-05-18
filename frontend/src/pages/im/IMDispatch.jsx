@@ -220,6 +220,16 @@ export default function IMDispatch() {
   // change when the user picks a different row-limit preset.
   const [stats, setStats] = useState({ total: 0, auto: 0, manual: 0, dispatched: 0 });
 
+  // ── Backend assignment ─────────────────────────────────────────────────
+  const [canBackend, setCanBackend] = useState(false);
+  const [showBackendModal, setShowBackendModal] = useState(false);
+  const [backendTeams, setBackendTeams] = useState([]);
+  const [backendTeamsLoading, setBackendTeamsLoading] = useState(false);
+  const [backendTeamId, setBackendTeamId] = useState("");
+  const [backendRemark, setBackendRemark] = useState("");
+  const [backendBusy, setBackendBusy] = useState(false);
+  const [backendError, setBackendError] = useState(null);
+
   useResetOnRowLimitChange(() => {
     setRows([]);
     setLoading(true);
@@ -282,6 +292,19 @@ export default function IMDispatch() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await pmApi.getMyBackendCapability();
+        if (!cancelled) setCanBackend(!!res?.can_assign_backend);
+      } catch {
+        if (!cancelled) setCanBackend(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!showModal || !imName) return;
@@ -484,6 +507,54 @@ export default function IMDispatch() {
     }
   }
 
+  async function openBackendModal() {
+    if (selected.size < 1) return;
+    setBackendError(null);
+    setBackendTeamId("");
+    setBackendRemark("");
+    setShowBackendModal(true);
+    setBackendTeamsLoading(true);
+    try {
+      const list = await pmApi.listBackendTeamsForPicker();
+      setBackendTeams(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setBackendError(err.message || "Failed to load backend teams");
+      setBackendTeams([]);
+    } finally {
+      setBackendTeamsLoading(false);
+    }
+  }
+
+  async function submitBackend() {
+    if (selected.size < 1 || !backendTeamId) return;
+    const ids = Array.from(selected);
+    setBackendBusy(true);
+    setBackendError(null);
+    try {
+      const res = await pmApi.assignBackend(ids, backendTeamId, backendRemark);
+      const summary = res?.summary || {};
+      const okN = summary.updated_count ?? 0;
+      const errN = summary.error_count ?? 0;
+      const teamLbl = summary.subcon_team_name || backendTeamId;
+      if (errN === 0) {
+        setShowBackendModal(false);
+        setSuccessMsg(`Assigned ${okN} POID${okN !== 1 ? "s" : ""} to backend team ${teamLbl}.`);
+        setTimeout(() => setSuccessMsg(null), 4500);
+        setSelected(new Set());
+        load();
+      } else {
+        const firstErr = (res?.errors || [])[0];
+        const tail = firstErr ? `${firstErr.poid || firstErr.po_dispatch}: ${firstErr.error}` : "see errors";
+        setBackendError(`${okN} assigned, ${errN} failed (${tail})`);
+        if (okN > 0) load();
+      }
+    } catch (err) {
+      setBackendError(err.message || "Failed to assign to backend");
+    } finally {
+      setBackendBusy(false);
+    }
+  }
+
   function openCreatePlanModal() {
     setCreateError(null);
     setPlanTeam("");
@@ -557,6 +628,7 @@ export default function IMDispatch() {
     .reduce((s, r) => s + (r.line_amount || 0), 0);
 
   const createPlanSelRows = rows.filter((r) => selected.has(r.name));
+  const selectedBackendRows = createPlanSelRows;
   const createPlanDuids = [...new Set(createPlanSelRows.map((r) => r.site_code || r.name).filter(Boolean))];
   const createPlanTotalQty = createPlanSelRows.reduce((s, r) => s + Number(r.qty || 0), 0);
   const planTeamsAssignedQty = (planTeams || [])
@@ -744,6 +816,17 @@ export default function IMDispatch() {
           >
             Create rollout plans ({selected.size})
           </button>
+          {canBackend && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={openBackendModal}
+              disabled={selected.size === 0}
+              style={{ borderColor: "#a78bfa", color: "#7c3aed" }}
+            >
+              Assign to Backend ({selected.size})
+            </button>
+          )}
         </div>
       </div>
 
@@ -1354,6 +1437,60 @@ export default function IMDispatch() {
           filterActive={!!hasFilters || visibleRows.length !== rows.length}
         />
       </div>
+
+      {showBackendModal && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={backendBusy ? undefined : () => setShowBackendModal(false)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>
+                Assign to Backend <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span>
+              </h3>
+              <button type="button" onClick={() => setShowBackendModal(false)} disabled={backendBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            {selectedBackendRows.length > 0 && (
+              <div style={{ fontSize: "0.76rem", color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12, maxHeight: 140, overflowY: "auto" }}>
+                {selectedBackendRows.map((r) => (
+                  <div key={r.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#0f172a" }}>{r.poid || r.name}</span>
+                    <span style={{ color: "#64748b" }}>{r.po_no || "—"} · {r.item_code || "—"} · {r.site_code || "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Backend Team *</label>
+              <select value={backendTeamId} onChange={(e) => setBackendTeamId(e.target.value)} disabled={backendBusy || backendTeamsLoading} required>
+                <option value="">{backendTeamsLoading ? "Loading teams…" : "— Select a backend team —"}</option>
+                {backendTeams.map((t) => (
+                  <option key={t.name} value={t.name}>{t.team_name || t.team_id}{t.team_id && t.team_name ? ` (${t.team_id})` : ""}</option>
+                ))}
+              </select>
+              {!backendTeamsLoading && backendTeams.length === 0 && (
+                <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginTop: 4 }}>No active teams with category "Backend Team".</div>
+              )}
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Note (optional)</label>
+              <textarea rows={3} value={backendRemark} onChange={(e) => setBackendRemark(e.target.value)} placeholder="Any reference / scope notes for this backend assignment…" disabled={backendBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
+            </div>
+            {backendError && (
+              <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {backendError}</div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="btn-secondary" onClick={() => setShowBackendModal(false)} disabled={backendBusy}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitBackend} disabled={backendBusy || !backendTeamId} style={{ background: "#7c3aed", borderColor: "#7c3aed" }}>
+                {backendBusy ? "Assigning…" : `Assign ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
