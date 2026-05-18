@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
@@ -139,6 +140,7 @@ export default function ExecutionMonitor() {
   const intervalRef = useRef(null);
 
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [planStatusFilter, setPlanStatusFilter] = useState(["Planned", "In Execution", "Completed", "Planning with Issue"]);
   const [executionStatusFilter, setExecutionStatusFilter] = useState([]);
   const [visitFilter, setVisitFilter] = useState([]);
@@ -208,7 +210,7 @@ export default function ExecutionMonitor() {
         if (duidFilter.length) filters.site_code = duidFilter;
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
-        if (search.trim()) filters.search = search.trim();
+        if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
         if (cancelled) return;
         setRows(Array.isArray(list) ? list : []);
@@ -229,7 +231,7 @@ export default function ExecutionMonitor() {
         intervalRef.current = null;
       }
     };
-  }, [rowLimit, search, planStatusFilter, executionStatusFilter, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [rowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey]);
 
   function formatTime(d) {
     if (!d) return "";
@@ -249,7 +251,7 @@ export default function ExecutionMonitor() {
     return { id: tid, label: hit?.team_name || tid };
   });
 
-  const hasFilters = !!(search || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   return (
     <div>

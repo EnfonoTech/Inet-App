@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
@@ -104,6 +105,7 @@ export default function WorkDone() {
   const [error, setError] = useState(null);
 
   const [search, setSearch] = useState("");
+  const searchDebounced = useDebounced(search, 300);
   const [billingFilter, setBillingFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
@@ -157,7 +159,7 @@ export default function WorkDone() {
         if (duidFilter.length) filters.site_code = duidFilter;
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
-        if (search.trim()) filters.search = search.trim();
+        if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const list = await pmApi.listWorkDoneRows(filters, rowLimit);
         if (cancelled) return;
         setRows(Array.isArray(list) ? list : []);
@@ -168,9 +170,9 @@ export default function WorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, search, billingFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [rowLimit, searchDebounced, billingFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
 
-  const hasFilters = !!(search || billingFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || billingFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const { options: teamOpts } = useFilterOptions("INET Team", ["team_id"]);
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);

@@ -51,50 +51,18 @@ class PODispatch(Document):
         self._fill_payment_term_pcts()
         self._compute_ms_amounts()
 
+    def before_save(self):
+        # Capture current im BEFORE the save so on_update can detect a change.
+        # on_update runs after the row is committed so reading from DB there
+        # would always return the new value.
+        self._old_im = (frappe.db.get_value("PO Dispatch", self.name, "im") or "") if not self.is_new() else ""
+
     def on_update(self):
-        self._cascade_im_change()
-
-    def _cascade_im_change(self):
-        """When im changes, propagate to all linked Rollout Plans and Daily
-        Executions so IM-scoped queries stay consistent.
-
-        Skips cancelled records — they are historical and attribution is fixed.
-        Active / completed records are re-attributed to the new IM so the new
-        IM's dashboard reflects the full picture of what they now own.
-        """
-        new_im = (getattr(self, "im", "") or "").strip()
-        if not new_im:
-            return
-        old_im = frappe.db.get_value("PO Dispatch", self.name, "im") if not self.is_new() else None
-        if old_im == new_im:
-            return
-
-        # Cascade to non-cancelled Rollout Plans
-        if frappe.db.has_column("Rollout Plan", "im"):
-            plans = frappe.db.get_all(
-                "Rollout Plan",
-                filters={"po_dispatch": self.name, "plan_status": ["!=", "Cancelled"]},
-                fields=["name"],
-            )
-            for rp in plans:
-                frappe.db.set_value("Rollout Plan", rp.name, "im", new_im, update_modified=False)
-
-        # Cascade to Daily Executions via those plans
-        if frappe.db.has_column("Daily Execution", "im"):
-            plan_names = [rp.name for rp in plans] if frappe.db.has_column("Rollout Plan", "im") else []
-            if not plan_names:
-                plan_names = [
-                    r.name for r in frappe.db.get_all(
-                        "Rollout Plan", filters={"po_dispatch": self.name}, fields=["name"]
-                    )
-                ]
-            if plan_names:
-                ph = ", ".join(["%s"] * len(plan_names))
-                frappe.db.sql(
-                    f"UPDATE `tabDaily Execution` SET im = %s "
-                    f"WHERE rollout_plan IN ({ph}) AND IFNULL(execution_status,'') != 'Cancelled'",
-                    [new_im] + plan_names,
-                )
+        new_im = (self.im or "").strip()
+        old_im = (getattr(self, "_old_im", "") or "").strip()
+        if new_im and old_im != new_im:
+            from inet_app.api.command_center import _cascade_im_on_dispatch
+            _cascade_im_on_dispatch(self.name, new_im)
 
     def before_insert(self):
         # Immutable internal reference = first autoname (SYS-{year}-{#####}). Name may later be renamed to POID.

@@ -2999,6 +2999,8 @@ def convert_dispatch_mode(payload):
                 frappe.db.set_value(
                     "PO Dispatch", dispatch_name, update_vals, update_modified=False
                 )
+                if new_im:
+                    _cascade_im_on_dispatch(dispatch_name, new_im)
             count += len(dispatch_names)
 
         frappe.db.commit()
@@ -4685,7 +4687,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
             "IFNULL(rp.visit_type,'')",
             "IFNULL(rp.plan_status,'')",
             "IFNULL(rp.po_dispatch,'')",
-            "IFNULL(pd.poid,'')",
+            "COALESCE(NULLIF(pd.poid,''), pd.name, '')",
             "IFNULL(pd.po_no,'')",
             "IFNULL(pd.item_code,'')",
             "IFNULL(pd.item_description,'')",
@@ -4985,17 +4987,19 @@ def list_work_done_rows(filters=None, limit=500):
             "IFNULL(wd.system_id,'')",
             "IFNULL(wd.item_code,'')",
             "CAST(wd.executed_qty AS CHAR)",
-            "IFNULL(pd.poid,'')",
-            "IFNULL(pd.po_no,'')",
-            "IFNULL(pd.project_code,'')",
-            "IFNULL(pd.site_code,'')",
-            "IFNULL(pd.site_name,'')",
-            "IFNULL(pd.item_description,'')",
-            "IFNULL(pd.center_area,'')",
-            "IFNULL(pd.region_type,'')",
-            "IFNULL(pd.original_dummy_poid,'')",
+            # pd is via rollout-plan chain; pd_sys is direct via wd.system_id
+            # (backend assignments have no rollout plan so pd is NULL)
+            "COALESCE(NULLIF(pd.poid,''), NULLIF(pd_sys.poid,''), pd.name, pd_sys.name, '')",
+            "COALESCE(NULLIF(pd.po_no,''), pd_sys.po_no, '')",
+            "COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code, '')",
+            "COALESCE(NULLIF(pd.site_code,''), pd_sys.site_code, '')",
+            "COALESCE(NULLIF(pd.site_name,''), pd_sys.site_name, '')",
+            "COALESCE(NULLIF(pd.item_description,''), pd_sys.item_description, '')",
+            "COALESCE(NULLIF(pd.center_area,''), pd_sys.center_area, '')",
+            "COALESCE(NULLIF(pd.region_type,''), pd_sys.region_type, '')",
+            "COALESCE(NULLIF(pd.original_dummy_poid,''), pd_sys.original_dummy_poid, '')",
             "IFNULL(it.team_name,'')",
-            "IFNULL(pd.im,'')",
+            "COALESCE(NULLIF(pd.im,''), pd_sys.im, '')",
         ]
         if frappe.db.has_column("Work Done", "region_type"):
             concat_parts.append("IFNULL(wd.region_type,'')")
@@ -5015,6 +5019,9 @@ def list_work_done_rows(filters=None, limit=500):
         "INNER JOIN `tabDaily Execution` de ON de.name = wd.execution "
         "LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
         "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+        # Direct fallback join for backend assignments where de.rollout_plan is NULL
+        # and the rp→pd chain gives no PO Dispatch context.
+        "LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id "
         "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
         f"{rp_im_join_wd} {pd_im_join_wd} "
         f"WHERE {' AND '.join(wheres)} "
@@ -5024,7 +5031,9 @@ def list_work_done_rows(filters=None, limit=500):
     wd_id_rows = frappe.db.sql(id_sql, tuple(params), as_dict=True)
     wd_ids = [r.wd_name for r in (wd_id_rows or []) if r.get("wd_name")]
     if not wd_ids:
-        return []
+        # No regular Work Done records matched — still try synthesized backend rows
+        # (dispatches with subcon_status='Work Done' but no Daily Execution/Rollout Plan).
+        return _synthesize_subcon_workdone_rows(filters) or []
 
     order_index = {n: i for i, n in enumerate(wd_ids)}
     rows = frappe.get_all(
@@ -5067,8 +5076,13 @@ def list_work_done_rows(filters=None, limit=500):
         rp_map = {r.name: r for r in rp_rows}
 
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
+    # Also include dispatches reachable via wd.system_id for backend assignments
+    # where de.rollout_plan is NULL (no rollout plan chain).
+    known = set(dispatch_names)
+    sys_id_extras = [r.system_id for r in rows if r.get("system_id") and r.system_id not in known]
+    all_dispatch_names = dispatch_names + sys_id_extras
     pd_map = {}
-    if dispatch_names:
+    if all_dispatch_names:
         pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer", "line_amount", "po_line_no", "dispatch_status"]
         for opt in ("general_remark", "manager_remark", "team_lead_remark"):
             if frappe.db.has_column("PO Dispatch", opt):
@@ -5089,7 +5103,7 @@ def list_work_done_rows(filters=None, limit=500):
             pd_fields_wd.append("subcon_submission_status")
         pd_rows = frappe.get_all(
             "PO Dispatch",
-            filters={"name": ["in", dispatch_names]},
+            filters={"name": ["in", all_dispatch_names]},
             fields=pd_fields_wd,
             limit_page_length=rel_cap,
         )
@@ -5131,7 +5145,10 @@ def list_work_done_rows(filters=None, limit=500):
     for r in rows:
         ex = ex_map.get(r.execution)
         rp = rp_map.get(ex.rollout_plan) if ex and ex.rollout_plan else None
-        pd = pd_map.get(rp.po_dispatch) if rp and rp.po_dispatch else None
+        # Primary: via rollout-plan chain. Fallback: via wd.system_id (backend
+        # assignments where no rollout plan exists).
+        pd = (pd_map.get(rp.po_dispatch) if rp and rp.po_dispatch else None) \
+             or pd_map.get(r.get("system_id"))
         team = (rp.team if rp else None) or (ex.team if ex else None)
         project_code = pd.project_code if pd else None
         ex_date = ex.execution_date if ex else None
@@ -5151,9 +5168,9 @@ def list_work_done_rows(filters=None, limit=500):
                 "billing_status": billing_override,
                 "pic_status": pic_status_val,
                 "rollout_plan": ex.rollout_plan if ex else None,
-                "po_dispatch": rp.po_dispatch if rp else None,
+                "po_dispatch": (rp.po_dispatch if rp else None) or r.get("system_id"),
                 # Business POID from dispatch (fall back to dispatch name on legacy docs).
-                "poid": ((pd.get("poid") if pd else None) or (pd.name if pd else None) or (rp.po_dispatch if rp else None)),
+                "poid": ((pd.get("poid") if pd else None) or (pd.name if pd else None) or (rp.po_dispatch if rp else None) or r.get("system_id")),
                 "po_no": pd.po_no if pd else None,
                 "project_code": project_code,
                 "site_name": pd.site_name if pd else None,
@@ -5518,7 +5535,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         concat_parts = [
             "IFNULL(rp.name,'')",
             "IFNULL(rp.po_dispatch,'')",
-            "IFNULL(pd.poid,'')",
+            "COALESCE(NULLIF(pd.poid,''), pd.name, '')",
             "IFNULL(rp.issue_category,'')",
             "IFNULL(rp.team,'')",
             "IFNULL(it.team_name,'')",
@@ -6280,7 +6297,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         concat_parts = [
             "IFNULL(rp.name,'')",
             "IFNULL(rp.po_dispatch,'')",
-            "IFNULL(pd.poid,'')",
+            "COALESCE(NULLIF(pd.poid,''), pd.name, '')",
             "CAST(rp.plan_date AS CHAR)",
             "IFNULL(rp.visit_type,'')",
             "IFNULL(rp.team,'')",
@@ -6426,7 +6443,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             "IFNULL(it.team_name,'')",
             "IFNULL(de.execution_status,'')",
             "IFNULL(de.qc_status,'')",
-            "IFNULL(pd.poid,'')",
+            "COALESCE(NULLIF(pd.poid,''), pd.name, '')",
             "IFNULL(pd.po_no,'')",
             "IFNULL(pd.project_code,'')",
             "IFNULL(pd.site_code,'')",
@@ -6689,6 +6706,36 @@ def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route
         "revisit_rollout_plan": revisit_name,
         "plan_status": new_status,
     }
+
+
+def _cascade_im_on_dispatch(dispatch_name, new_im):
+    """Cascade a new IM value to all non-Cancelled Rollout Plans and Daily
+    Executions linked to *dispatch_name*.
+
+    Called both from the PO Dispatch controller (Frappe form save) and from
+    any API that updates pd.im via frappe.db.set_value (which bypasses hooks).
+    """
+    if not dispatch_name or not new_im:
+        return
+    plan_names = frappe.db.sql(
+        "SELECT name FROM `tabRollout Plan` WHERE po_dispatch = %s AND IFNULL(plan_status,'') != 'Cancelled'",
+        (dispatch_name,), as_dict=False,
+    )
+    plan_names = [r[0] for r in plan_names]
+    if not plan_names:
+        return
+    ph = ", ".join(["%s"] * len(plan_names))
+    if frappe.db.has_column("Rollout Plan", "im"):
+        frappe.db.sql(
+            f"UPDATE `tabRollout Plan` SET im = %s WHERE name IN ({ph})",
+            [new_im] + plan_names,
+        )
+    if frappe.db.has_column("Daily Execution", "im"):
+        frappe.db.sql(
+            f"UPDATE `tabDaily Execution` SET im = %s "
+            f"WHERE rollout_plan IN ({ph}) AND IFNULL(execution_status,'') != 'Cancelled'",
+            [new_im] + plan_names,
+        )
 
 
 @frappe.whitelist()
