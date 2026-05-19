@@ -26,6 +26,7 @@ fixtures = [
 		"dt": "Role",
 		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team", "INET PIC"]]],
 	},
+	{"dt": "Report", "filters": [["name", "=", "Huawei Outbound Analytics"]]},
 ]
 
 after_migrate = "inet_app.setup.after_migrate"
@@ -176,6 +177,7 @@ doc_events = {
 		"on_submit": "inet_app.api.pic.on_sales_invoice_submit"
 	},
 	"Stock Entry": {
+		"before_submit": "inet_app.api.material_management.before_stock_entry_submit",
 		"on_submit": "inet_app.api.material_management.on_stock_entry_submit"
 	},
 }

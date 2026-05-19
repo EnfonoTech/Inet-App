@@ -81,8 +81,7 @@
    "fieldname": "duid_master",
    "fieldtype": "Link",
    "label": "DUID Master",
-   "options": "DUID Master",
-   "read_only": 1
+   "options": "DUID Master"
   },
   {
    "fieldname": "customer_site_id",
@@ -126,7 +125,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-15 17:05:17.882941",
+ "modified": "2026-05-18 10:29:13.605514",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "Huawei Outbound Plan",

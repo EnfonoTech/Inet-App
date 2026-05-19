@@ -24,6 +24,7 @@ def after_migrate():
     _ensure_duid_inventory_dimension()
     _ensure_outbound_custom_fields()
     _ensure_poid_accounting_dimension()
+    _ensure_material_permissions()
 
 
 def _resync_pms_workspace():
@@ -405,6 +406,75 @@ def _ensure_poid_accounting_dimension():
         frappe.log_error(frappe.get_traceback(), "POID Accounting Dimension setup failed")
 
 
+def _ensure_material_permissions():
+    """Grant Stock Manager role the permissions needed for material management.
+
+    Frappe uses Custom DocPerm mode for a doctype the moment ANY Custom DocPerm
+    row exists — it then ignores all standard DocPerm entries completely. To
+    avoid wiping other roles' access we first migrate existing standard DocPerm
+    rows to Custom DocPerm, then add the Stock Manager entry.
+    """
+    role = "Stock Manager"
+    if not frappe.db.exists("Role", role):
+        return
+
+    doctypes = [
+        ("Material Request",      {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "amend": 1}),
+        ("Stock Entry",           {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "amend": 1}),
+        ("Item",                  {"read": 1}),
+        ("Warehouse",             {"read": 1, "write": 1, "create": 1}),
+        ("Huawei Outbound Plan",  {"read": 1, "write": 1, "create": 1, "delete": 1}),
+    ]
+
+    for dt_name, perm_map in doctypes:
+        if not frappe.db.exists("DocType", dt_name):
+            continue
+
+        # If no Custom DocPerm exists yet for this doctype, copy all standard
+        # DocPerm rows first so other roles keep their access after we flip the
+        # doctype into Custom DocPerm mode.
+        if not frappe.db.count("Custom DocPerm", {"parent": dt_name}):
+            for ep in frappe.db.get_all(
+                "DocPerm",
+                filters={"parent": dt_name},
+                fields=["role", "permlevel", "read", "write", "create",
+                        "delete", "submit", "cancel", "amend", "report",
+                        "export", "import", "share", "print", "email"],
+            ):
+                if frappe.db.exists("Custom DocPerm",
+                                    {"parent": dt_name, "role": ep.role,
+                                     "permlevel": ep.permlevel}):
+                    continue
+                try:
+                    frappe.get_doc({
+                        "doctype": "Custom DocPerm",
+                        "parent": dt_name,
+                        **{k: v for k, v in ep.items() if k != "name"},
+                    }).insert(ignore_permissions=True)
+                except Exception:
+                    pass
+
+        # Now add or update the Stock Manager row
+        existing = frappe.db.get_value(
+            "Custom DocPerm", {"parent": dt_name, "role": role, "permlevel": 0}, "name"
+        )
+        if existing:
+            frappe.db.set_value("Custom DocPerm", existing, perm_map)
+        else:
+            try:
+                frappe.get_doc({
+                    "doctype": "Custom DocPerm",
+                    "parent": dt_name,
+                    "role": role,
+                    "permlevel": 0,
+                    **perm_map,
+                }).insert(ignore_permissions=True)
+            except Exception:
+                pass
+
+    frappe.db.commit()
+
+
 def _add_field(dt, cf_name, definition):
     from frappe.custom.doctype.custom_field.custom_field import create_custom_field
     if frappe.db.exists("Custom Field", cf_name):
@@ -413,3 +483,5 @@ def _add_field(dt, cf_name, definition):
         create_custom_field(dt, definition)
     except Exception:
         frappe.log_error(frappe.get_traceback(), f"Custom field {cf_name} setup failed")
+
+

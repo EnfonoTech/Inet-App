@@ -4076,6 +4076,26 @@ def update_execution(payload):
         if field in payload and hasattr(doc, field):
             setattr(doc, field, payload[field])
 
+    # material_usage child table — replace rows with what the field team submitted
+    if "material_usage" in payload and hasattr(doc, "material_usage"):
+        usage_raw = payload["material_usage"]
+        if isinstance(usage_raw, str):
+            try:
+                usage_raw = frappe.parse_json(usage_raw)
+            except Exception:
+                usage_raw = []
+        if isinstance(usage_raw, list) and usage_raw:  # only replace when non-empty
+            doc.set("material_usage", [])
+            for row in usage_raw:
+                doc.append("material_usage", {
+                    "item_code": row.get("item_code") or "",
+                    "item_name": row.get("item_name") or "",
+                    "material_request": row.get("material_request") or "",
+                    "qty_transferred": flt(row.get("qty_transferred", 0)),
+                    "qty_used": flt(row.get("qty_used", 0)),
+                    "uom": row.get("uom") or "",
+                })
+
     if hasattr(doc, "execution_status"):
         doc.execution_status = _normalize_execution_status(doc.execution_status)
         if doc.execution_status and doc.execution_status not in _ALLOWED_DAILY_EXECUTION_STATUSES:
@@ -4504,7 +4524,76 @@ def generate_work_done(execution_name):
                 frappe.db.set_value("PO Intake Line", intake_line, "po_line_status", "Completed")
         frappe.db.commit()
 
+    # Auto-issue materials used by the field team (fire-and-forget; errors are logged)
+    _auto_issue_materials_for_execution(exec_doc)
+
     return {"name": wd.name}
+
+
+def _auto_issue_materials_for_execution(exec_doc):
+    """Create a Material Issue Stock Entry for the materials used in this execution.
+
+    Reads exec_doc.material_usage (JSON saved by field team on submit) for qty
+    overrides. If no overrides, issues the full transferred qty. Silently skips
+    when no transferred Material Request exists for the POID.
+
+    Returns the created Stock Entry name, or None.
+    """
+    try:
+        pd_name = exec_doc.system_id
+        if not pd_name:
+            return None
+
+        # Find MRs for this POID that have at least one submitted Transfer SE
+        # (join on SED.material_request — the field lives on the item row, not SE header)
+        mr_rows = frappe.db.sql(
+            """SELECT DISTINCT mr.name
+               FROM `tabMaterial Request` mr
+               JOIN `tabStock Entry Detail` sed ON sed.material_request = mr.name
+               JOIN `tabStock Entry` se ON se.name = sed.parent
+               WHERE mr.poid = %s
+                 AND mr.material_request_type = 'Material Transfer'
+                 AND mr.docstatus = 1
+                 AND se.docstatus = 1
+                 AND se.stock_entry_type = 'Material Transfer'""",
+            (pd_name,), as_list=True,
+        )
+        if not mr_rows:
+            return None
+
+        # Build qty_overrides from this execution's material_usage child table
+        usage_rows = getattr(exec_doc, "material_usage", None)
+        if not usage_rows:
+            usage_rows = frappe.db.get_all(
+                "Daily Execution Material",
+                filters={"parent": exec_doc.name},
+                fields=["item_code", "qty_used"],
+            )
+        qty_overrides = {
+            r.get("item_code"): flt(r.get("qty_used", 0))
+            for r in (usage_rows or [])
+            if r.get("item_code")
+        }
+
+        from inet_app.api.material_management import _create_material_issue_se
+        first_se = None
+        for (mr_name,) in mr_rows:
+            try:
+                result = _create_material_issue_se(mr_name, qty_overrides)
+                if not first_se:
+                    first_se = result.get("stock_entry")
+            except Exception:
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    f"_auto_issue: SE creation failed for MR {mr_name}",
+                )
+        return first_se
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"_auto_issue_materials_for_execution failed for {exec_doc.name}",
+        )
+        return None
 
 
 def _ensure_work_done_for_execution(execution_name):

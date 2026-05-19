@@ -23,7 +23,9 @@
   "ciag_status",
   "revisit_flag",
   "section_break_yvjh",
-  "remarks"
+  "remarks",
+  "material_usage_section",
+  "material_usage"
  ],
  "fields": [
   {
@@ -147,11 +149,22 @@
   {
    "fieldname": "section_break_yvjh",
    "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "material_usage_section",
+   "fieldtype": "Section Break",
+   "label": "Material Usage"
+  },
+  {
+   "fieldname": "material_usage",
+   "fieldtype": "Table",
+   "label": "Material Usage",
+   "options": "Daily Execution Material"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-08 12:07:07.628598",
+ "modified": "2026-05-18 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "Daily Execution",

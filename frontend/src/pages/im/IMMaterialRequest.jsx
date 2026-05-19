@@ -128,10 +128,11 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
   const [poidInfo, setPoidInfo]         = useState(null);
   const [poidLoading, setPoidLoading]   = useState(false);
 
-  // DUID / team
+  // DUID / team / IM (IM auto-fetched from POID for admin users who have no IM record)
   const [duid, setDuid]   = useState(prefillDuid || "");
   const [team, setTeam]   = useState("");
   const [teams, setTeams] = useState([]);
+  const [poidIm, setPoidIm] = useState("");
 
   // Items — two separate lists
   const [huaweiItems, setHuaweiItems]   = useState([]);   // auto-filled from DUID receipt
@@ -201,14 +202,15 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
 
   async function handlePoidSelect(poidValue) {
     setSelectedPoid(poidValue);
-    if (!poidValue) { setPoidInfo(null); setDuid(prefillDuid || ""); setTeam(""); return; }
+    if (!poidValue) { setPoidInfo(null); setDuid(prefillDuid || ""); setTeam(""); setPoidIm(""); return; }
     setPoidLoading(true);
     try {
       const res = await pmApi.getPoidDetails(poidValue);
       setPoidInfo(res);
       if (res.site_code) setDuid(res.site_code);
-      // Always update team (sets to "" if no rollout plan found so user knows to pick)
       setTeam(res.team || "");
+      // For admin users who have no IM record, fetch IM from the POID
+      setPoidIm(res.im || "");
     } catch { setPoidInfo(null); }
     finally { setPoidLoading(false); }
   }
@@ -268,7 +270,7 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
       await pmApi.createMaterialRequest({
         poid: selectedPoid || undefined,
         duid: duid.trim(),
-        im: imName,
+        im: imName || poidIm || undefined,  // admin: IM from POID; IM user: from auth
         team,
         remark: remark.trim() || undefined,
         items: allItems,
@@ -309,10 +311,14 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
           <div style={{ marginTop: 5, padding: "6px 10px", borderRadius: 6, background: "#ecfdf5", fontSize: "0.78rem", color: "#047857" }}>
             DUID: <strong>{poidInfo.site_code || "—"}</strong>
             {poidInfo.project_code && <> · Project: <strong>{poidInfo.project_code}</strong></>}
+            {poidInfo.im && <> · IM: <strong>{poidInfo.im}</strong></>}
             {poidInfo.team
               ? <> · Team: <strong>{poidInfo.team}</strong> ✓</>
               : <span style={{ color: "#b45309" }}> · No rollout plan found — select team below</span>
             }
+            {!imName && !poidInfo.im && (
+              <span style={{ color: "#b91c1c" }}> · No IM on this POID — IM will not be set</span>
+            )}
           </div>
         )}
       </div>

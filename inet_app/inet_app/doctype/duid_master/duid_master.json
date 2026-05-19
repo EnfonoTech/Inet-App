@@ -1,7 +1,7 @@
 {
  "actions": [],
  "autoname": "field:duid",
- "creation": "2026-04-14 00:00:00.000000",
+ "creation": "2026-04-14 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -9,6 +9,7 @@
   "site_name",
   "area",
   "center_area",
+  "column_break_lcbh",
   "region_type",
   "latitude",
   "longitude"
@@ -66,11 +67,15 @@
    "fieldtype": "Float",
    "label": "Longitude",
    "precision": "6"
+  },
+  {
+   "fieldname": "column_break_lcbh",
+   "fieldtype": "Column Break"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-14 00:00:00.000000",
+ "modified": "2026-05-18 10:29:01.334907",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "DUID Master",
@@ -109,7 +114,9 @@
    "role": "INET IM"
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
+ "states": [],
  "track_changes": 1
 }

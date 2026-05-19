@@ -7,6 +7,59 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
+function StockRowWithSources({ it, isCustomer, sources }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <tr style={{ borderTop: "1px solid #f1f5f9" }}>
+        <td style={{ padding: "8px 10px" }}>
+          <div style={{ fontWeight: 600, color: "#1e293b" }}>{it.item_name || it.item_code}</div>
+          <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontFamily: "ui-monospace, monospace" }}>{it.item_code}</div>
+        </td>
+        <td style={{ padding: "8px 10px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start" }}>
+            <span style={{
+              fontSize: "0.68rem", fontWeight: 700, padding: "1px 7px", borderRadius: 999,
+              background: isCustomer ? "rgba(245,158,11,0.12)" : "rgba(59,130,246,0.12)",
+              color: isCustomer ? "#b45309" : "#1d4ed8",
+            }}>
+              {isCustomer ? "Huawei" : "Company (INET)"}
+            </span>
+            {sources.length > 0 && (
+              <button type="button" onClick={() => setOpen(o => !o)} style={{
+                background: "none", border: "none", cursor: "pointer", padding: 0,
+                fontSize: "0.68rem", color: "#94a3b8",
+              }}>
+                {open ? "▲ hide" : `▼ ${sources.length} source${sources.length > 1 ? "s" : ""}`}
+              </button>
+            )}
+          </div>
+        </td>
+        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: it.qty <= 2 ? "#ef4444" : "#0f172a" }}>
+          {Number(it.qty).toLocaleString()}
+          {it.qty <= 2 && <span style={{ marginLeft: 4, fontSize: "0.68rem", color: "#ef4444" }}>⚠</span>}
+        </td>
+        <td style={{ padding: "8px 10px", color: "#64748b" }}>{it.uom}</td>
+      </tr>
+      {open && sources.length > 0 && (
+        <tr style={{ background: "#fafafa" }}>
+          <td colSpan={4} style={{ padding: "6px 16px 8px 24px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {sources.map((s, i) => (
+                <div key={i} style={{ fontSize: "0.76rem", display: "flex", flexWrap: "wrap", gap: "2px 14px", color: "#475569", alignItems: "center" }}>
+                  {s.poid && <span>POID: <strong style={{ fontFamily: "ui-monospace, monospace" }}>{s.poid}</strong></span>}
+                  {s.duid && <span>DUID: <strong style={{ fontFamily: "ui-monospace, monospace" }}>{s.duid}</strong></span>}
+                  {s.qty > 0 && <span>Qty: <strong>{s.qty} {s.uom}</strong></span>}
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 function statusTone(value) {
   const s = String(value || "").toLowerCase();
   if (s.includes("active") || s.includes("approved")) return { bg: "#ecfdf5", fg: "#047857" };
@@ -48,6 +101,8 @@ export default function IMTeams() {
   const [detailRow, setDetailRow] = useState(null);
   const [detailMembers, setDetailMembers] = useState([]);
   const [detailMembersLoading, setDetailMembersLoading] = useState(false);
+  const [detailStock, setDetailStock] = useState([]);
+  const [detailStockLoading, setDetailStockLoading] = useState(false);
 
   // Edit modal state
   const [editRow, setEditRow] = useState(null);     // shows the modal when set
@@ -100,12 +155,14 @@ export default function IMTeams() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imName, user?.full_name]);
 
-  // Pull full team detail (incl. members) when the View modal opens.
+  // Pull full team detail (incl. members + stock) when the View modal opens.
   useEffect(() => {
     if (!detailRow?.name) return;
     let alive = true;
     setDetailMembers([]);
+    setDetailStock([]);
     setDetailMembersLoading(true);
+    setDetailStockLoading(true);
     pmApi.getIMTeamDetail(detailRow.name)
       .then((d) => {
         if (!alive) return;
@@ -113,6 +170,13 @@ export default function IMTeams() {
       })
       .catch(() => { if (alive) setDetailMembers([]); })
       .finally(() => { if (alive) setDetailMembersLoading(false); });
+    pmApi.getTeamMaterialStock(detailRow.name)
+      .then((data) => {
+        if (!alive) return;
+        setDetailStock((Array.isArray(data) ? data : [])[0]?.items || []);
+      })
+      .catch(() => { if (alive) setDetailStock([]); })
+      .finally(() => { if (alive) setDetailStockLoading(false); });
     return () => { alive = false; };
   }, [detailRow?.name]);
 
@@ -791,6 +855,65 @@ export default function IMTeams() {
                         </tr>
                       ))}
                     </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* ── Material Stock ─────────────────────────────── */}
+            <div style={{ marginTop: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <h4 style={{ margin: 0, fontSize: "0.88rem", fontWeight: 700, color: "#0f172a" }}>
+                  Warehouse Stock
+                  {!detailStockLoading && (
+                    <span style={{ color: "#94a3b8", fontWeight: 500, fontSize: "0.78rem", marginLeft: 6 }}>
+                      ({detailStock.length} item{detailStock.length !== 1 ? "s" : ""})
+                    </span>
+                  )}
+                </h4>
+                {detailRow?.warehouse && (
+                  <span style={{ fontSize: "0.72rem", color: "#64748b", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "2px 8px" }}>
+                    {detailRow.warehouse}
+                  </span>
+                )}
+              </div>
+              {detailStockLoading ? (
+                <div style={{ padding: 12, textAlign: "center", color: "#94a3b8", fontSize: "0.82rem" }}>Loading stock…</div>
+              ) : detailStock.length === 0 ? (
+                <div style={{ padding: 12, textAlign: "center", color: "#94a3b8", fontSize: "0.82rem", border: "1px dashed #e2e8f0", borderRadius: 8 }}>
+                  No materials in warehouse.
+                </div>
+              ) : (
+                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                    <thead>
+                      <tr style={{ background: "#f8fafc" }}>
+                        <th style={{ textAlign: "left", padding: "8px 10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.04em" }}>Item</th>
+                        <th style={{ textAlign: "left", padding: "8px 10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.04em" }}>Type</th>
+                        <th style={{ textAlign: "right", padding: "8px 10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.04em" }}>Qty</th>
+                        <th style={{ textAlign: "left", padding: "8px 10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.04em" }}>UOM</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailStock.map((it) => {
+                        const isCustomer = it.item_type === "customer";
+                        const sources = (it.sources || []).filter(s => s.poid || s.duid);
+                        return (
+                          <StockRowWithSources key={it.item_code} it={it} isCustomer={isCustomer} sources={sources} />
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                        <td colSpan={2} style={{ padding: "7px 10px", fontWeight: 700, fontSize: "0.78rem", color: "#475569" }}>
+                          {detailStock.length} item{detailStock.length !== 1 ? "s" : ""}
+                        </td>
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700, fontSize: "0.78rem", color: "#475569" }}>
+                          {detailStock.reduce((s, it) => s + Number(it.qty || 0), 0).toLocaleString()}
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               )}

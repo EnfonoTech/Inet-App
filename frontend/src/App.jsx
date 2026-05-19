@@ -55,6 +55,7 @@ import ExecutionForm from "./pages/field/ExecutionForm";
 import FieldQcCiag from "./pages/field/FieldQcCiag";
 import FieldHistory from "./pages/field/FieldHistory";
 import FieldTimesheet from "./pages/field/Timesheet";
+import FieldMyStock from "./pages/field/FieldMyStock";
 
 /* -- Loading Screen --------------------------------------------- */
 function LoadingScreen() {
@@ -159,6 +160,7 @@ function AppContent() {
             <Route path="/field-qc-ciag" element={<FieldQcCiag />} />
             <Route path="/field-history" element={<FieldHistory />} />
             <Route path="/field-timesheet" element={<FieldTimesheet />} />
+            <Route path="/field-my-stock" element={<FieldMyStock />} />
           </>
         )}
 

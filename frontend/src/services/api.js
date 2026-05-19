@@ -555,5 +555,15 @@ export const pmApi = {
   createMaterialRequest:   (payload) => call("inet_app.api.material_management.create_material_request", { payload: JSON.stringify(payload) }),
   approveMaterialRequest:  (name)   => call("inet_app.api.material_management.approve_material_request", { name }),
   rejectMaterialRequest:   (name, reason) => call("inet_app.api.material_management.reject_material_request", { name, reason: reason || "" }),
-  issueMaterialsWorkDone:  (name)   => call("inet_app.api.material_management.issue_materials_for_work_done", { name }),
+  issueMaterialsWorkDone:  (name, qty_overrides)   => call("inet_app.api.material_management.issue_materials_for_work_done", { name, ...(qty_overrides ? { qty_overrides: JSON.stringify(qty_overrides) } : {}) }),
+  getAvailableStock:       (item_code, warehouse)  => call("inet_app.api.material_management.get_available_stock", { item_code, ...(warehouse ? { warehouse } : {}) }),
+  getPoidMaterials:        (po_dispatch)           => call("inet_app.api.material_management.get_poid_materials", { po_dispatch }),
+  getTeamMaterialStock:    (team_id)               => call("inet_app.api.material_management.get_team_material_stock", team_id ? { team_id } : {}),
+  saveMaterialUsage:       (po_dispatch, material_request, execution, usage_items) =>
+    call("inet_app.api.material_management.save_material_usage", {
+      po_dispatch, material_request, execution,
+      usage_items: JSON.stringify(usage_items),
+    }),
+  getMaterialUsage:        (po_dispatch, material_request) =>
+    call("inet_app.api.material_management.get_material_usage", { po_dispatch, material_request: material_request || "" }),
 };

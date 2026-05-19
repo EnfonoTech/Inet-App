@@ -275,7 +275,10 @@ def create_material_receipt_from_outbound(bill_no):
     if plan.material_receipt:
         frappe.throw(f"Material Receipt already exists: {plan.material_receipt}")
 
-    du_id = plan.du_id or ""
+    # Prefer the Link field (duid_master) over the Data field (du_id); the Link
+    # field is always the canonical DUID Master record name. Fall back to du_id
+    # for plans imported before duid_master was populated.
+    du_id = (plan.duid_master or plan.du_id or "").strip()
 
     new_se_url = (
         f"/app/stock-entry/new-stock-entry"
@@ -287,6 +290,63 @@ def create_material_receipt_from_outbound(bill_no):
         "redirect_url": new_se_url,
         "du_id": du_id,
     }
+
+
+def before_stock_entry_submit(doc, method=None):
+    """Fill DUID inventory dimension on Stock Entry items following the
+    correct direction per entry type:
+
+    - Material Receipt  → to_duid only   (stock arriving at a location)
+    - Material Transfer → duid + to_duid (stock moving between locations)
+    - Material Issue    → duid only      (stock leaving a location)
+
+    Source is the linked Material Request's duid field, falling back to
+    the PO Dispatch site_code via mr.poid.
+    """
+    se_type = doc.stock_entry_type
+    if se_type not in ("Material Receipt", "Material Transfer", "Material Issue"):
+        return
+
+    set_source = se_type in ("Material Transfer", "Material Issue")
+    set_target = se_type in ("Material Receipt", "Material Transfer")
+
+    # Batch-resolve MR → DUID to avoid N+1 queries
+    mr_names = list({item.get("material_request") for item in doc.items if item.get("material_request")})
+    mr_duid_map = {}
+    if mr_names:
+        for mr_row in frappe.db.get_all(
+            "Material Request",
+            filters={"name": ["in", mr_names]},
+            fields=["name", "duid", "poid"],
+            ignore_permissions=True,
+        ):
+            duid = (mr_row.get("duid") or "").strip()
+            if not duid:
+                poid = mr_row.get("poid")
+                if poid:
+                    duid = (frappe.db.get_value("PO Dispatch", poid, "site_code") or "").strip()
+            mr_duid_map[mr_row["name"]] = duid
+
+    # For Material Receipt from Huawei Outbound Plan, use plan's DUID
+    plan_duid = ""
+    if se_type == "Material Receipt" and doc.get("huawei_outbound_plan"):
+        plan = frappe.db.get_value(
+            "Huawei Outbound Plan",
+            doc.huawei_outbound_plan,
+            ["duid_master", "du_id"],
+            as_dict=True,
+        ) or {}
+        plan_duid = (plan.get("duid_master") or plan.get("du_id") or "").strip()
+
+    for item in doc.items:
+        mr_name = item.get("material_request")
+        duid = mr_duid_map.get(mr_name) or plan_duid or ""
+        if not duid:
+            continue
+        if set_source and not item.get("duid"):
+            item.duid = duid
+        if set_target and not item.get("to_duid"):
+            item.to_duid = duid
 
 
 def on_stock_entry_submit(doc, method=None):
@@ -389,6 +449,7 @@ def list_material_requests(im=None, status=None, limit=50):
             poid_map[row["name"]] = row["poid"]
 
     for r in rows:
+        r["request_date"] = str(r.pop("transaction_date", "") or "")
         r["request_status"] = _request_status(r["status"], r["transfer_status"])
         r["team_warehouse"] = r.pop("set_warehouse", "")
         r["source_warehouse"] = r.pop("set_from_warehouse", "")
@@ -633,10 +694,22 @@ def search_po_dispatches(query="", im=None, limit=20):
 
 @frappe.whitelist()
 def get_im_teams(im=None):
-    """Return teams for the current IM with their warehouse info."""
+    """Return teams for the current IM with their warehouse info.
+
+    When called by an admin (System Manager / INET Admin) who has no IM record,
+    returns all active teams so the material request popup can pre-select one.
+    """
     if not im:
         im = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
     if not im:
+        roles = set(frappe.get_roles(frappe.session.user))
+        if roles & {"System Manager", "INET Admin", "Administrator"}:
+            return frappe.db.get_all(
+                "INET Team",
+                filters={"status": "Active"},
+                fields=["team_id", "team_name", "warehouse"],
+                order_by="team_name asc",
+            )
         return []
     return frappe.db.get_all(
         "INET Team",
@@ -728,6 +801,21 @@ def create_material_request(payload):
     if not target_wh:
         frappe.throw("Team Warehouse not configured. Please set a Warehouse on the selected team in INET Team.")
 
+    # Prevent duplicate active MRs for the same POID + team warehouse
+    if poid and target_wh:
+        existing_mr = frappe.db.get_value(
+            "Material Request",
+            {"poid": poid, "set_warehouse": target_wh,
+             "material_request_type": "Material Transfer", "docstatus": ["!=", 2]},
+            "name",
+        )
+        if existing_mr:
+            frappe.throw(
+                f"Material Request {existing_mr} already exists for this POID and team. "
+                "Cancel the existing request before creating a new one.",
+                title="Duplicate Request",
+            )
+
     doc = frappe.get_doc({
         "doctype": "Material Request",
         "material_request_type": "Material Transfer",
@@ -807,41 +895,447 @@ def reject_material_request(name, reason=None):
     return {"name": name, "status": "Rejected"}
 
 
-@frappe.whitelist()
-def issue_materials_for_work_done(name):
-    """Create Material Issue Stock Entry from team warehouse when work is done."""
-    frappe.only_for(["System Manager", "Stock Manager"])
+def _create_material_issue_se(mr_name, qty_map=None):
+    """Internal: create and submit a Material Issue SE for materials used in an execution.
 
-    mr = frappe.get_doc("Material Request", name)
-    if mr.transfer_status != "Completed":
-        frappe.throw("Material Transfer must be completed before issuing materials.")
+    qty_map — dict {item_code: qty_used} from Daily Execution Material child table.
+              If None/empty, issues the full transferred qty per item.
+    Idempotent: returns existing SE if one already exists for this MR.
+    Returns {"name": mr_name, "stock_entry": se.name, "status": ...}.
+    """
+    qty_map = qty_map or {}
 
-    duid = mr.get("duid") or ""
+    # Idempotency: return existing Issue SE if already created for this MR
+    existing_issue = frappe.db.sql(
+        """SELECT se.name FROM `tabStock Entry` se
+           JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+           WHERE se.docstatus = 1
+             AND se.stock_entry_type = 'Material Issue'
+             AND sed.material_request = %s
+           LIMIT 1""",
+        (mr_name,), as_list=True,
+    )
+    if existing_issue:
+        return {"name": mr_name, "stock_entry": existing_issue[0][0], "status": "Already Issued"}
+
+    # Verify at least one submitted Transfer SE exists for this MR
+    has_transfer = frappe.db.sql(
+        """SELECT 1 FROM `tabStock Entry` se
+           JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+           WHERE se.docstatus = 1
+             AND se.stock_entry_type = 'Material Transfer'
+             AND sed.material_request = %s
+           LIMIT 1""",
+        (mr_name,), as_list=True,
+    )
+    if not has_transfer:
+        frappe.throw("No completed Material Transfer found for this request. Transfer the materials first.")
+
+    # Get DUID per item from the Transfer SE Detail — this is the correct
+    # inventory dimension value (Link to DUID Master) rather than the
+    # plain string on the MR header.
+    duid_by_item = {}
+    transfer_item_rows = frappe.db.sql(
+        """SELECT sed.item_code, sed.duid
+           FROM `tabStock Entry` se
+           JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+           WHERE se.docstatus = 1
+             AND se.stock_entry_type = 'Material Transfer'
+             AND sed.material_request = %s""",
+        (mr_name,), as_dict=True,
+    )
+    for row in transfer_item_rows:
+        if row.item_code not in duid_by_item and row.duid:
+            duid_by_item[row.item_code] = row.duid
+
+    mr = frappe.get_doc("Material Request", mr_name)
+    mr_duid = mr.get("duid") or ""  # fallback when SE item has no duid
     poid_val = mr.get("poid") or ""
     team_wh = mr.set_warehouse
 
     se_items = []
     for item in mr.items:
+        used_qty = flt(qty_map.get(item.item_code, item.qty))
+        if used_qty <= 0:
+            continue
         se_items.append({
             "item_code": item.item_code,
-            "qty": item.qty,
+            "qty": used_qty,
             "uom": item.uom or item.stock_uom,
             "s_warehouse": team_wh,
-            "duid": duid,
-            "material_request": name,
+            "duid": duid_by_item.get(item.item_code) or mr_duid,
+            "material_request": mr_name,
             "material_request_item": item.name,
         })
+
+    if not se_items:
+        frappe.throw("No items to issue (all quantities are zero).")
 
     se = frappe.get_doc({
         "doctype": "Stock Entry",
         "stock_entry_type": "Material Issue",
         "purpose": "Material Issue",
         "from_warehouse": team_wh,
-        "material_request": name,
         "poid": poid_val,
         "items": se_items,
     })
     se.insert(ignore_permissions=True)
     se.submit()
     frappe.db.commit()
-    return {"name": name, "stock_entry": se.name, "status": "Issued"}
+    return {"name": mr_name, "stock_entry": se.name, "status": "Issued"}
+
+
+@frappe.whitelist()
+def issue_materials_for_work_done(name, qty_overrides=None):
+    """Create Material Issue Stock Entry from team warehouse when work is done.
+
+    qty_overrides — optional JSON dict mapping item_code → qty_used.
+    When provided, only that qty is issued (0 = skip item).
+    If not provided, checks Daily Execution material_usage for field team adjustments.
+    """
+    frappe.only_for(["System Manager", "Stock Manager"])
+
+    # parse qty_overrides if JSON string
+    if isinstance(qty_overrides, str):
+        try:
+            qty_overrides = frappe.parse_json(qty_overrides)
+        except Exception:
+            qty_overrides = None
+    qty_map = qty_overrides or {}
+
+    # If no overrides passed, check if field team saved usage on the DE child table
+    if not qty_map:
+        poid = frappe.db.get_value("Material Request", name, "poid")
+        if poid:
+            de_name = frappe.db.get_value(
+                "Daily Execution", {"system_id": poid}, "name", order_by="modified desc"
+            )
+            if de_name and frappe.db.exists("DocType", "Daily Execution Material"):
+                rows = frappe.db.get_all(
+                    "Daily Execution Material",
+                    filters={"parent": de_name},
+                    fields=["item_code", "qty_used"],
+                )
+                qty_map = {r["item_code"]: flt(r["qty_used"]) for r in rows if r.get("item_code")}
+
+    return _create_material_issue_se(name, qty_map)
+
+
+# ─── Phase 3: Stock Balance & POID Material APIs ─────────────────────────────
+
+@frappe.whitelist()
+def get_team_material_stock(team_id=None):
+    """Return current warehouse stock for one or more INET teams.
+
+    - Field team user: their own team's stock (team_id auto-resolved from session).
+    - IM: all active teams under their supervision.
+    - Admin / System Manager: all active INET teams (or specific team_id if provided).
+
+    Returns a list of:
+      { team_id, team_name, warehouse, items: [{ item_code, item_name, qty, uom }] }
+    """
+    roles = set(frappe.get_roles(frappe.session.user))
+    is_admin = bool(roles & {"System Manager", "INET Admin", "Administrator"})
+    is_im = "INET IM" in roles
+
+    # Determine which teams to fetch
+    if team_id:
+        teams = frappe.db.get_all(
+            "INET Team", filters={"name": team_id, "status": "Active"},
+            fields=["name as team_id", "team_name", "warehouse"],
+            ignore_permissions=True,
+        )
+    elif is_admin:
+        teams = frappe.db.get_all(
+            "INET Team", filters={"status": "Active"},
+            fields=["name as team_id", "team_name", "warehouse"],
+            order_by="team_name asc", ignore_permissions=True,
+        )
+    elif is_im:
+        im = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
+        if not im:
+            return []
+        teams = frappe.db.get_all(
+            "INET Team", filters={"im": im, "status": "Active"},
+            fields=["name as team_id", "team_name", "warehouse"],
+            order_by="team_name asc", ignore_permissions=True,
+        )
+    else:
+        # Field user — resolve their team.
+        # Primary: field_user field on INET Team matches the session user.
+        # Fallback: find via team member employee → user_id link.
+        resolved_team = frappe.db.get_value(
+            "INET Team", {"field_user": frappe.session.user, "status": "Active"}, "name"
+        )
+        if not resolved_team:
+            emp = frappe.db.get_value("Employee", {"user_id": frappe.session.user, "status": "Active"}, "name")
+            if emp:
+                member_parent = frappe.db.get_value("INET Team Member", {"employee": emp}, "parent")
+                if member_parent:
+                    team_status = frappe.db.get_value("INET Team", member_parent, "status")
+                    if team_status == "Active":
+                        resolved_team = member_parent
+        if not resolved_team:
+            return []
+        teams = frappe.db.get_all(
+            "INET Team", filters={"name": resolved_team},
+            fields=["name as team_id", "team_name", "warehouse"],
+            ignore_permissions=True,
+        )
+
+    out = []
+    for team in teams:
+        wh = team.get("warehouse") or ""
+        items = []
+        if wh:
+            # ── Step 1: total qty per item from Bin (ground truth) ──
+            bins = frappe.db.sql(
+                """SELECT b.item_code,
+                          IFNULL(i.item_name, b.item_code) AS item_name,
+                          b.actual_qty                     AS qty,
+                          IFNULL(i.stock_uom, '')          AS uom
+                   FROM `tabBin` b
+                   LEFT JOIN `tabItem` i ON i.name = b.item_code
+                   WHERE b.warehouse = %s AND b.actual_qty > 0
+                   ORDER BY i.item_name""",
+                (wh,), as_dict=True,
+            )
+
+            # ── Step 2: per-DUID balance from SE Detail ──
+            # SLE does not carry the duid inventory dimension column in this
+            # installation. Reconstruct per-DUID balance from Stock Entry Detail:
+            #   Transfer SE  → items arriving  (t_warehouse=team, to_duid set)
+            #   Issue SE     → items consumed  (s_warehouse=team, duid set)
+            duid_balance = {}   # (item_code, duid) → net qty
+            if bins:
+                ic_list = [r["item_code"] for r in bins]
+                placeholders = ", ".join(["%s"] * len(ic_list))
+
+                # Items transferred IN to this warehouse
+                in_rows = frappe.db.sql(
+                    f"""SELECT sed.item_code, sed.to_duid AS duid, SUM(sed.qty) AS qty
+                        FROM `tabStock Entry Detail` sed
+                        JOIN `tabStock Entry` se ON se.name = sed.parent
+                        WHERE se.docstatus             = 1
+                          AND se.stock_entry_type      = 'Material Transfer'
+                          AND sed.t_warehouse          = %s
+                          AND sed.to_duid IS NOT NULL AND sed.to_duid != ''
+                          AND sed.item_code IN ({placeholders})
+                        GROUP BY sed.item_code, sed.to_duid""",
+                    (wh, *ic_list), as_dict=True,
+                )
+                for r in in_rows:
+                    key = (r["item_code"], r["duid"])
+                    duid_balance[key] = duid_balance.get(key, 0.0) + flt(r["qty"])
+
+                # Items issued OUT from this warehouse
+                out_rows = frappe.db.sql(
+                    f"""SELECT sed.item_code, sed.duid, SUM(sed.qty) AS qty
+                        FROM `tabStock Entry Detail` sed
+                        JOIN `tabStock Entry` se ON se.name = sed.parent
+                        WHERE se.docstatus         = 1
+                          AND se.stock_entry_type  = 'Material Issue'
+                          AND sed.s_warehouse      = %s
+                          AND sed.duid IS NOT NULL AND sed.duid != ''
+                          AND sed.item_code IN ({placeholders})
+                        GROUP BY sed.item_code, sed.duid""",
+                    (wh, *ic_list), as_dict=True,
+                )
+                for r in out_rows:
+                    key = (r["item_code"], r["duid"])
+                    duid_balance[key] = duid_balance.get(key, 0.0) - flt(r["qty"])
+
+            # ── Step 3: build item_map with per-DUID sources ──
+            item_map = {}
+            for r in bins:
+                ic = r["item_code"]
+                uom = r["uom"] or ""
+                sources = [
+                    {"duid": duid, "qty": round(qty, 4), "uom": uom, "poid": "", "material_request": ""}
+                    for (item_code, duid), qty in duid_balance.items()
+                    if item_code == ic and qty > 0
+                ]
+                item_map[ic] = {
+                    "item_code": ic,
+                    "item_name": r["item_name"] or ic,
+                    "uom": uom,
+                    "qty": flt(r["qty"]),
+                    "sources": sources,
+                }
+
+            # ── Step 3: enrich sources with POID from Material Request ──
+            # Join MR → PO Dispatch to get the business POID for each DUID.
+            if item_map:
+                ic_list = list(item_map.keys())
+                placeholders = ", ".join(["%s"] * len(ic_list))
+                mr_rows = frappe.db.sql(
+                    f"""SELECT mri.item_code,
+                               IFNULL(pd.poid, '') AS poid,
+                               IFNULL(mr.duid, '') AS duid,
+                               mr.name             AS material_request
+                        FROM `tabMaterial Request Item` mri
+                        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+                        LEFT JOIN `tabPO Dispatch` pd ON pd.name = mr.poid
+                        WHERE mr.set_warehouse          = %s
+                          AND mr.material_request_type  = 'Material Transfer'
+                          AND mr.docstatus              = 1
+                          AND mri.item_code IN ({placeholders})
+                        ORDER BY mr.creation DESC""",
+                    (wh, *ic_list), as_dict=True,
+                )
+                # (item_code, duid) → first matching MR with a POID
+                mr_lookup = {}
+                for r in mr_rows:
+                    key = (r["item_code"], r["duid"])
+                    if key not in mr_lookup and r["poid"]:
+                        mr_lookup[key] = {"poid": r["poid"], "material_request": r["material_request"]}
+
+                for ic, item in item_map.items():
+                    for s in item["sources"]:
+                        info = mr_lookup.get((ic, s["duid"])) or {}
+                        s["poid"] = info.get("poid", "")
+                        s["material_request"] = info.get("material_request", "")
+
+            # ── Step 4: build final items list ──
+            for item in item_map.values():
+                has_customer = any(s["poid"] for s in item["sources"])
+                item["item_type"] = "customer" if has_customer else "company"
+                items.append(item)
+
+        out.append({
+            "team_id": team["team_id"],
+            "team_name": team.get("team_name") or team["team_id"],
+            "warehouse": wh,
+            "items": items,
+        })
+    return out
+
+
+@frappe.whitelist()
+def get_available_stock(item_code, warehouse=None):
+    """Return available qty for an item, optionally scoped to a warehouse."""
+    if not item_code:
+        return []
+    if warehouse:
+        qty = frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty") or 0
+        return [{"warehouse": warehouse, "qty": flt(qty)}]
+    rows = frappe.db.get_all("Bin", filters={"item_code": item_code, "actual_qty": [">", 0]},
+                              fields=["warehouse", "actual_qty"])
+    return [{"warehouse": r.warehouse, "qty": flt(r.actual_qty)} for r in rows]
+
+
+@frappe.whitelist()
+def get_poid_materials(po_dispatch):
+    """Return material items transferred for a POID (for field execution form)."""
+    # resolve po_dispatch name
+    pd_name = _resolve_po_dispatch(po_dispatch) if po_dispatch else None
+    if not pd_name:
+        return []
+    # Get all submitted Material Requests for this POID
+    mrs = frappe.get_all("Material Request",
+        filters={"poid": pd_name, "material_request_type": "Material Transfer", "docstatus": 1},
+        fields=["name", "set_warehouse"],
+        ignore_permissions=True)
+    if not mrs:
+        return []
+
+    out = []
+    for mr in mrs:
+        team_wh = mr.set_warehouse or ""
+
+        # Sum actual transferred qty per item from Stock Entry Detail rows
+        # that reference this MR. material_request lives on SED, not SE header.
+        se_items = frappe.db.sql(
+            """SELECT sed.item_code,
+                      IFNULL(MAX(sed.item_name), sed.item_code) AS item_name,
+                      SUM(sed.qty)                               AS qty_transferred,
+                      IFNULL(MAX(sed.uom), MAX(sed.stock_uom))  AS uom
+               FROM `tabStock Entry`        se
+               JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+               WHERE se.docstatus              = 1
+                 AND se.stock_entry_type       = 'Material Transfer'
+                 AND sed.material_request      = %s
+               GROUP BY sed.item_code""",
+            (mr.name,), as_dict=True,
+        )
+
+        if se_items:
+            for row in se_items:
+                out.append({
+                    "material_request": mr.name,
+                    "transferred": True,
+                    "item_code": row.item_code,
+                    "item_name": row.item_name or row.item_code,
+                    "qty_transferred": flt(row.qty_transferred),
+                    "qty_used": flt(row.qty_transferred),
+                    "uom": row.uom or "Nos",
+                    "team_warehouse": team_wh,
+                })
+        else:
+            # SE not yet created — show MR items as Pending
+            mr_items = frappe.get_all("Material Request Item",
+                filters={"parent": mr.name},
+                fields=["item_code", "item_name", "qty", "uom", "stock_uom"],
+                ignore_permissions=True)
+            for it in mr_items:
+                out.append({
+                    "material_request": mr.name,
+                    "transferred": False,
+                    "item_code": it.item_code,
+                    "item_name": it.item_name or it.item_code,
+                    "qty_transferred": flt(it.qty),
+                    "qty_used": flt(it.qty),
+                    "uom": it.uom or it.stock_uom or "Nos",
+                    "team_warehouse": team_wh,
+                })
+    return out
+
+
+# ─── Field Team Material Usage ────────────────────────────────────────────────
+
+@frappe.whitelist()
+def save_material_usage(po_dispatch, material_request, execution, usage_items):
+    """Save field team's actual material usage for a POID execution."""
+    if isinstance(usage_items, str):
+        usage_items = frappe.parse_json(usage_items)
+
+    existing = frappe.db.get_value("INET Material Usage",
+        {"po_dispatch": po_dispatch, "material_request": material_request}, "name")
+    if existing:
+        frappe.db.set_value("INET Material Usage", existing, {
+            "execution": execution or "",
+            "usage_items": frappe.as_json(usage_items),
+            "status": "Saved",
+        })
+        return {"name": existing, "action": "updated"}
+    doc = frappe.get_doc({
+        "doctype": "INET Material Usage",
+        "po_dispatch": po_dispatch,
+        "material_request": material_request,
+        "execution": execution or "",
+        "usage_items": frappe.as_json(usage_items),
+        "created_by_team": frappe.session.user,
+        "status": "Saved",
+    })
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"name": doc.name, "action": "created"}
+
+
+@frappe.whitelist()
+def get_material_usage(po_dispatch, material_request=None):
+    """Get saved material usage for a POID."""
+    filters = {"po_dispatch": po_dispatch}
+    if material_request:
+        filters["material_request"] = material_request
+    rows = frappe.db.get_all("INET Material Usage", filters=filters,
+                              fields=["name", "material_request", "execution", "usage_items"],
+                              order_by="creation desc", limit=1)
+    if not rows:
+        return None
+    r = rows[0]
+    try:
+        r["usage_items"] = frappe.parse_json(r["usage_items"]) if r.get("usage_items") else []
+    except Exception:
+        r["usage_items"] = []
+    return r

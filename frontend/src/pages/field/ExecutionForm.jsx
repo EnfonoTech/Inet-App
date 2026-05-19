@@ -249,6 +249,119 @@ function TlRemarkPicker({ templates, picked, creating, onPick, onCreate }) {
   );
 }
 
+function MaterialsSection({ poDispatch, savedUsage, onUsageChange }) {
+  const [materials, setMaterials] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!poDispatch) return;
+    setLoading(true);
+    pmApi.getPoidMaterials(poDispatch)
+      .then(items => {
+        // Pre-fill qty_used from savedUsage (previous execution's material_usage)
+        const usageMap = {};
+        if (Array.isArray(savedUsage)) {
+          savedUsage.forEach(u => { if (u.item_code) usageMap[u.item_code] = u.qty_used; });
+        }
+        const initialItems = (items || []).map(it => ({
+          ...it,
+          qty_used: usageMap[it.item_code] !== undefined ? usageMap[it.item_code] : it.qty_transferred,
+        }));
+        setMaterials(initialItems);
+        onUsageChange && onUsageChange(initialItems);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poDispatch]);
+
+  function updateQty(idx, val) {
+    setMaterials(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], qty_used: parseFloat(val) || 0 };
+      onUsageChange && onUsageChange(next);
+      return next;
+    });
+  }
+
+  if (!poDispatch) return null;
+  if (loading) return (
+    <div style={{ padding: "8px 0", color: "var(--text-muted)", fontSize: 13 }}>Loading materials…</div>
+  );
+
+  return (
+    <div style={{ marginTop: 16 }} className="exec-section" >
+      <div className="exec-section-title">
+        Materials
+        {materials.length > 0 && (
+          <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
+            adjust qty used if different
+          </span>
+        )}
+      </div>
+
+      {materials.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "6px 0" }}>
+          No materials assigned for this POID yet.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {materials.map((m, i) => (
+            <div key={`${m.item_code}-${i}`} style={{
+              background: "var(--surface, #f8fafc)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              padding: "12px 14px",
+            }}>
+              {/* Item name + status */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>{m.item_name}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 2 }}>{m.item_code}</div>
+                </div>
+                {m.transferred
+                  ? <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999, background: "rgba(16,185,129,0.1)", color: "#047857", flexShrink: 0 }}>In Warehouse</span>
+                  : <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999, background: "rgba(245,158,11,0.1)", color: "#b45309", flexShrink: 0 }}>Pending</span>
+                }
+              </div>
+
+              {/* Transferred qty + used input on same row */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                  Transferred: <strong style={{ color: "var(--text)" }}>{m.qty_transferred} {m.uom}</strong>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Used</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    max={m.qty_transferred}
+                    step="1"
+                    value={m.qty_used}
+                    onChange={e => updateQty(i, e.target.value)}
+                    style={{
+                      width: 80, textAlign: "center",
+                      padding: "10px 8px",
+                      border: "2px solid var(--blue, #1d4ed8)",
+                      borderRadius: 8,
+                      fontSize: 16, fontWeight: 700,
+                      background: "#fff",
+                      color: "var(--text)",
+                      WebkitAppearance: "none",
+                      MozAppearance: "textfield",
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ExecutionForm() {
   const { id: idParam } = useParams();
   const id = idParam ? decodeURIComponent(idParam) : undefined;
@@ -294,6 +407,7 @@ export default function ExecutionForm() {
   const timerSkewMsRef = useRef(0);
 
   const [existingExec, setExistingExec] = useState(null);
+  const [materialUsage, setMaterialUsage] = useState([]);
   const [attachments, setAttachments] = useState([]);        // uploaded URLs
   const [pendingUploads, setPendingUploads] = useState([]);  // [{id, preview}] in-flight
   const [attachmentBusy, setAttachmentBusy] = useState(false);
@@ -568,6 +682,8 @@ export default function ExecutionForm() {
         // a TL clears them.
         team_lead_remark: tlRemark,
         photos: attachments.length ? attachments.join("\n") : undefined,
+        // material_usage child table rows — auto-saved from MaterialsSection on submit
+        material_usage: materialUsage.length ? materialUsage : undefined,
       };
       // Multi-team: tell the backend which team this submission is for
       // so it upserts the per-team Daily Execution row, not the lead
@@ -963,6 +1079,13 @@ export default function ExecutionForm() {
                   multi-team plans display the per-team table without
                   depending on teams_total being correctly reported. */}
               <PlanTeamsBreakdown rolloutPlan={plan.name} />
+              {/* Materials transferred for this POID — field team can
+                  adjust used qtys before final issue. */}
+              <MaterialsSection
+                poDispatch={plan.po_dispatch || ""}
+                savedUsage={Array.isArray(existingExec?.material_usage) ? existingExec.material_usage : []}
+                onUsageChange={setMaterialUsage}
+              />
             </div>
           )}
 
