@@ -388,18 +388,18 @@ export default function FieldMyStock() {
           <button type="button" style={tabStyle("stock")} onClick={() => setTab("stock")}>Stock</button>
           <button type="button" style={tabStyle("returns")} onClick={() => setTab("returns")}>Return Requests</button>
         </div>
-        {tab === "stock" && (
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {items.length > 0 && (
-              <button className="btn-primary" type="button" onClick={() => setShowReturn(true)} style={{ fontSize: "0.78rem", padding: "6px 12px" }}>
-                Return Materials
-              </button>
-            )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {items.length > 0 && (
+            <button className="btn-primary" type="button" onClick={() => setShowReturn(true)} style={{ fontSize: "0.78rem", padding: "6px 12px" }}>
+              Return Materials
+            </button>
+          )}
+          {tab === "stock" && (
             <button className="btn-secondary" type="button" onClick={() => load(true)} disabled={refreshing} style={{ fontSize: "0.78rem", padding: "6px 10px" }}>
               <span style={{ display: "inline-block", animation: refreshing ? "spin 0.7s linear infinite" : "none" }}>↻</span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="exec-body" style={{ paddingTop: 8 }}>
