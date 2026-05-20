@@ -442,22 +442,42 @@ def list_material_requests(im=None, status=None, limit=50):
         order_by="`tabMaterial Request`.transaction_date desc, `tabMaterial Request`.creation desc",
         limit=int(limit),
     )
-    # Collect unique system-name poids and resolve to business POIDs in one batch
+    # Batch: POID system-name → business POID
     poid_links = list({r["poid"] for r in rows if r.get("poid")})
     poid_map = {}
     if poid_links:
         for row in frappe.db.get_all(
-            "PO Dispatch",
-            filters={"name": ["in", poid_links]},
-            fields=["name", "poid"],
+            "PO Dispatch", filters={"name": ["in", poid_links]}, fields=["name", "poid"],
         ):
             poid_map[row["name"]] = row["poid"]
+
+    # Batch: IM Master name → user full_name
+    im_names = list({r["im"] for r in rows if r.get("im")})
+    im_fullname_map = {}
+    if im_names:
+        for im_row in frappe.db.get_all("IM Master", filters={"name": ["in", im_names]}, fields=["name", "user"]):
+            if im_row.get("user"):
+                im_fullname_map[im_row["name"]] = (
+                    frappe.db.get_value("User", im_row["user"], "full_name") or im_row["user"]
+                )
+
+    # Batch: warehouse → INET Team name
+    warehouses = list({r.get("set_warehouse") for r in rows if r.get("set_warehouse")})
+    wh_team_map = {}
+    if warehouses:
+        for t in frappe.db.get_all(
+            "INET Team", filters={"warehouse": ["in", warehouses]}, fields=["warehouse", "team_name"],
+        ):
+            wh_team_map[t["warehouse"]] = t["team_name"]
 
     for r in rows:
         r["request_date"] = str(r.pop("transaction_date", "") or "")
         r["request_status"] = _request_status(r["status"], r["transfer_status"])
-        r["team_warehouse"] = r.pop("set_warehouse", "")
+        wh = r.pop("set_warehouse", "")
+        r["team_warehouse"] = wh
+        r["team_name"] = wh_team_map.get(wh) or wh
         r["source_warehouse"] = r.pop("set_from_warehouse", "")
+        r["im_full_name"] = im_fullname_map.get(r.get("im") or "", r.get("im") or "")
         if r.get("poid"):
             r["poid"] = poid_map.get(r["poid"], r["poid"])
 
@@ -1286,10 +1306,23 @@ def get_team_material_stock(team_id=None):
                         s["poid"] = info.get("poid", "")
                         s["material_request"] = info.get("material_request", "")
 
-            # ── Step 4: build final items list ──
+            # ── Step 4: classify item_type from Item master, build final list ──
+            # "customer" = is_customer_provided_item=1 (Huawei-supplied)
+            # "company"  = purchased by INET (allow purchase, not customer-provided)
+            customer_set = set()
+            if item_map:
+                ic_list_cls = list(item_map.keys())
+                ph_cls = ", ".join(["%s"] * len(ic_list_cls))
+                cust_items = frappe.db.sql(
+                    f"""SELECT name FROM `tabItem`
+                        WHERE name IN ({ph_cls})
+                          AND is_customer_provided_item = 1""",
+                    ic_list_cls, as_list=True,
+                )
+                customer_set = {r[0] for r in cust_items}
+
             for item in item_map.values():
-                has_customer = any(s["poid"] for s in item["sources"])
-                item["item_type"] = "customer" if has_customer else "company"
+                item["item_type"] = "customer" if item["item_code"] in customer_set else "company"
                 items.append(item)
 
         out.append({
@@ -1604,6 +1637,16 @@ def list_return_requests(team_id=None, status=None, limit=50):
         ):
             wh_team_map[t["warehouse"]] = {"team_id": t["name"], "team_name": t["team_name"]}
 
+    # Batch: IM Master → user full_name
+    im_names = list({r["im"] for r in rows if r.get("im")})
+    im_fullname_map = {}
+    if im_names:
+        for im_row in frappe.db.get_all("IM Master", filters={"name": ["in", im_names]}, fields=["name", "user"]):
+            if im_row.get("user"):
+                im_fullname_map[im_row["name"]] = (
+                    frappe.db.get_value("User", im_row["user"], "full_name") or im_row["user"]
+                )
+
     for r in rows:
         r["request_date"] = str(r.pop("transaction_date", "") or "")
         r["request_status"] = _request_status(r["status"], r["transfer_status"])
@@ -1611,6 +1654,7 @@ def list_return_requests(team_id=None, status=None, limit=50):
         r["team_id"] = team_info.get("team_id", "")
         r["team_name"] = team_info.get("team_name") or r.get("set_from_warehouse", "—")
         r["team_warehouse"] = r.get("set_from_warehouse", "")
+        r["im_full_name"] = im_fullname_map.get(r.get("im") or "", r.get("im") or "")
         r["reason"] = r.pop("return_reason", "") or ""
 
     if status:

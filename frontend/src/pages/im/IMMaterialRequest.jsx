@@ -624,7 +624,7 @@ function DuidStockTab({ onRequest }) {
             <p>Huawei Outbound Plans for INET subcon will appear here.</p>
           </div>
         ) : (
-          <table className="data-table">
+          <table className="data-table" data-table-key="im-duid-stock-v2">
             <thead>
               <tr>
                 <th>DUID</th>
@@ -738,15 +738,15 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
             <p>Click "+ New Request" to submit your first request.</p>
           </div>
         ) : (
-          <table className="data-table">
+          <table className="data-table" data-table-key="im-material-requests-v2">
             <thead>
               <tr>
                 <th>Request No.</th>
                 <th>Date</th>
                 <th>POID</th>
                 <th>DUID</th>
-                {isAdmin && <th>IM</th>}
-                <th>Team Warehouse</th>
+                <th>Team</th>
+                <th>IM</th>
                 <th>Status</th>
                 <th />
               </tr>
@@ -758,8 +758,8 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
                   <td style={{ fontSize: "0.82rem" }}>{row.request_date}</td>
                   <td style={{ fontSize: "0.82rem" }}>{row.poid || "—"}</td>
                   <td style={{ fontSize: "0.78rem", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }} title={row.duid}>{row.duid || "—"}</td>
-                  {isAdmin && <td style={{ fontSize: "0.82rem" }}>{row.im || "—"}</td>}
-                  <td style={{ fontSize: "0.82rem" }}>{row.team_warehouse || "—"}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{row.team_name || row.team_warehouse || "—"}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{row.im_full_name || row.im || "—"}</td>
                   <td><StatusBadge status={row.request_status} /></td>
                   <td>
                     <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 10px" }}
@@ -1008,14 +1008,13 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
             <p>Field teams can request to return excess materials from their stock page.</p>
           </div>
         ) : (
-          <table className="data-table">
+          <table className="data-table" data-table-key="im-return-requests-v2">
             <thead>
               <tr>
                 <th>Request No.</th>
                 <th>Date</th>
                 <th>Team</th>
-                <th>Team Warehouse</th>
-                {isAdmin && <th>IM</th>}
+                <th>IM</th>
                 <th>Reason</th>
                 <th>Status</th>
                 <th />
@@ -1027,8 +1026,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                   <td style={{ fontSize: "0.82rem" }}>{row.request_date}</td>
                   <td style={{ fontSize: "0.82rem", fontWeight: 600 }}>{row.team_name || "—"}</td>
-                  <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{row.team_warehouse || "—"}</td>
-                  {isAdmin && <td style={{ fontSize: "0.82rem" }}>{row.im || "—"}</td>}
+                  <td style={{ fontSize: "0.82rem" }}>{row.im_full_name || row.im || "—"}</td>
                   <td style={{ fontSize: "0.82rem", color: "#64748b", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.reason}>{row.reason || "—"}</td>
                   <td><StatusBadge status={row.request_status} /></td>
                   <td>

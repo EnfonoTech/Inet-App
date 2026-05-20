@@ -177,7 +177,10 @@ export default function DataTablePro() {
         const baseColumnKeys = columns.map((c) => c.key);
 
         const userKey = String(user?.email || "user").replace(/[:/\\]+/g, "_");
-        const tableId = `${userKey}:${role || "user"}:${pathname}:table:${tIdx + 1}`;
+        const customKey = tableEl.getAttribute("data-table-key");
+        const tableId = customKey
+          ? `${userKey}:${role || "user"}:${pathname}:${customKey}`
+          : `${userKey}:${role || "user"}:${pathname}:table:${tIdx + 1}`;
         const tableDoctype = detectTableDoctype(pathname, tIdx);
         const saved = await prefsApi.load(tableId);
         const savedDyn = Array.isArray(saved.dynamic_fields) ? saved.dynamic_fields : [];
