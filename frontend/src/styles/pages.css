@@ -583,8 +583,8 @@
   background: var(--bg-white);
   border-bottom: 1px solid var(--border-light);
   position: sticky;
-  /* Sit below typical one-line page header (title + subtitle) */
-  top: 5.5rem;
+  /* page-header is ~54px (8+4px padding + title ~25px + subtitle ~17px) */
+  top: 3.5rem;
   z-index: 35;
   box-shadow: 0 1px 0 rgba(226, 232, 240, 0.85);
 }
