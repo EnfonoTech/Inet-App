@@ -415,6 +415,14 @@ export default function ExecutionForm() {
   // map uploaded URL → local blob URL for preview
   const previewMapRef = useRef({});
 
+  // ── Inline expense tracking ────────────────────────────────────────────────
+  const [expenseTypes, setExpenseTypes] = useState([]);
+  const [expenseLines, setExpenseLines] = useState([]);   // queued lines, submitted with the execution form
+  const [expenseType, setExpenseType] = useState("");
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseDesc, setExpenseDesc] = useState("");
+  const [expenseError, setExpenseError] = useState(null);
+
   useEffect(() => {
     const iv = setInterval(() => timerTick((x) => x + 1), 1000);
     return () => clearInterval(iv);
@@ -499,6 +507,13 @@ export default function ExecutionForm() {
     return () => { cancelled = true; };
   }, []);
 
+  // Load expense claim types once for the inline expense section.
+  useEffect(() => {
+    pmApi.getExpenseClaimTypes()
+      .then((types) => setExpenseTypes(Array.isArray(types) ? types : []))
+      .catch(() => {});
+  }, []);
+
   // Pre-populate the picked checklist + extra textarea from the
   // existing PO Dispatch.team_lead_remark so a follow-up edit doesn't
   // lose what the previous TL wrote.
@@ -545,6 +560,17 @@ export default function ExecutionForm() {
     } finally {
       setNewTemplateBusy(false);
     }
+  }
+
+  function addExpenseLine() {
+    if (!expenseType || !expenseAmount || Number(expenseAmount) <= 0) return;
+    setExpenseLines((prev) => [
+      ...prev,
+      { expense_type: expenseType, amount: Number(expenseAmount), description: expenseDesc },
+    ]);
+    setExpenseType("");
+    setExpenseAmount("");
+    setExpenseDesc("");
   }
 
   // Build the final TL remark string: checked templates joined with
@@ -700,6 +726,24 @@ export default function ExecutionForm() {
       // surface to the top of the list next time. Fire-and-forget.
       if (tlRemarkPicked.size > 0) {
         pmApi.bumpFieldRemarkTemplateUsage(Array.from(tlRemarkPicked)).catch(() => {});
+      }
+      // Create expense claim if lines were added — same submit, one claim per execution.
+      if (expenseLines.length > 0 && plan?.po_dispatch) {
+        try {
+          await pmApi.createProjectExpenseClaim({
+            date: new Date().toISOString().slice(0, 10),
+            remarks: `From execution: ${plan?.poid || id}`,
+            expense_lines: expenseLines.map((l) => ({
+              expense_type: l.expense_type,
+              description: l.description || "",
+              amount: l.amount,
+              poids: [plan.po_dispatch],
+            })),
+          });
+        } catch (err) {
+          // Execution already submitted — surface the expense failure without blocking success.
+          setExpenseError(err.message || "Expense claim creation failed. Please file from the Expenses page.");
+        }
       }
       try {
         const refreshed = await pmApi.getRolloutPlanDetails(id);
@@ -1247,6 +1291,89 @@ export default function ExecutionForm() {
               />
             </div>
           </div>
+
+          {/* ── Expenses ─────────────────────────────────────── */}
+          {plan?.po_dispatch && (
+            <div className="exec-section">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div className="exec-section-title" style={{ marginBottom: 0 }}>Expenses</div>
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", fontFamily: "monospace" }}>
+                  {plan.poid || plan.po_dispatch}
+                </span>
+              </div>
+
+              {/* Input row */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div style={{ flex: "0 0 auto", minWidth: 140 }}>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 3 }}>Type</div>
+                  <select
+                    value={expenseType}
+                    onChange={(e) => setExpenseType(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", fontFamily: "inherit", background: "#fff", boxSizing: "border-box", width: "100%" }}
+                  >
+                    <option value="">Select...</option>
+                    {expenseTypes.map((t) => (
+                      <option key={t.name} value={t.name}>{t.expense_type || t.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: "0 0 auto", width: 110 }}>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 3 }}>Amount (SAR)</div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={expenseAmount}
+                    onChange={(e) => setExpenseAmount(e.target.value)}
+                    placeholder="0.00"
+                    style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", width: "100%", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div style={{ flex: 1, minWidth: 100 }}>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 3 }}>Description</div>
+                  <input
+                    type="text"
+                    value={expenseDesc}
+                    onChange={(e) => setExpenseDesc(e.target.value)}
+                    placeholder="Optional"
+                    style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", width: "100%", boxSizing: "border-box" }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={addExpenseLine}
+                  disabled={!expenseType || !expenseAmount || Number(expenseAmount) <= 0}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: (expenseType && expenseAmount && Number(expenseAmount) > 0) ? "#3b82f6" : "#94a3b8", color: "#fff", fontWeight: 700, cursor: (expenseType && expenseAmount && Number(expenseAmount) > 0) ? "pointer" : "not-allowed", fontSize: "0.84rem", alignSelf: "flex-end", whiteSpace: "nowrap" }}
+                >
+                  + Add
+                </button>
+              </div>
+
+              {/* Queued lines — will be submitted together with the execution form */}
+              {expenseLines.length > 0 && (
+                <div style={{ marginBottom: 6 }}>
+                  {expenseLines.map((l, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", background: "#f8fafc", borderRadius: 7, marginBottom: 4, fontSize: "0.82rem" }}>
+                      <span style={{ flex: 1, fontWeight: 600 }}>{l.expense_type}</span>
+                      {l.description && <span style={{ color: "#64748b", flex: 2, fontSize: "0.78rem" }}>{l.description}</span>}
+                      <span style={{ fontWeight: 700, color: "#1d4ed8" }}>SAR {Number(l.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <button type="button" onClick={() => setExpenseLines((p) => p.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, lineHeight: 1, padding: 0 }}>&times;</button>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: "0.78rem", color: "#64748b", marginTop: 4 }}>
+                    Total: <strong>SAR {expenseLines.reduce((s, l) => s + l.amount, 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> · Will be submitted with execution
+                  </div>
+                </div>
+              )}
+
+              {expenseError && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "8px 12px", color: "#dc2626", fontSize: "0.82rem", marginTop: 6 }}>
+                  {expenseError}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Photos ───────────────────────────────────────── */}
           <div className="exec-section">

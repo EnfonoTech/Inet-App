@@ -47,6 +47,7 @@ import PICReports from "./pages/pic/PICReports";
 import IMWorkDone from "./pages/im/IMWorkDone";
 import IMIssuesRisks from "./pages/im/IMIssuesRisks";
 import IMMaterialRequest from "./pages/im/IMMaterialRequest";
+import IMExpense from "./pages/im/IMExpense";
 import OperationsOverview from "./pages/OperationsOverview";
 
 /* -- Field pages ------------------------------------------------ */
@@ -56,6 +57,7 @@ import FieldQcCiag from "./pages/field/FieldQcCiag";
 import FieldHistory from "./pages/field/FieldHistory";
 import FieldTimesheet from "./pages/field/Timesheet";
 import FieldMyStock from "./pages/field/FieldMyStock";
+import FieldExpense from "./pages/field/FieldExpense";
 
 /* -- Loading Screen --------------------------------------------- */
 function LoadingScreen() {
@@ -124,6 +126,7 @@ function AppContent() {
             <Route path="/reports" element={<Reports />} />
             <Route path="/timesheets" element={<AdminTimesheets />} />
             <Route path="/approvals" element={<TeamAllocationApprovals />} />
+            <Route path="/expenses" element={<IMExpense isAdmin={true} />} />
             <Route path="/masters" element={<Masters />} />
             <Route path="/overview" element={<OperationsOverview />} />
             <Route path="/im-material-request" element={<IMMaterialRequest />} />
@@ -146,6 +149,7 @@ function AppContent() {
             <Route path="/im-work-done" element={<IMWorkDone />} />
             <Route path="/im-issues-risks" element={<IMIssuesRisks />} />
             <Route path="/im-material-request" element={<IMMaterialRequest />} />
+            <Route path="/im-expense" element={<IMExpense />} />
             <Route path="/im-reports" element={<IMReports />} />
             <Route path="/im-timesheets" element={<IMTimesheets />} />
           </>
@@ -161,6 +165,7 @@ function AppContent() {
             <Route path="/field-history" element={<FieldHistory />} />
             <Route path="/field-timesheet" element={<FieldTimesheet />} />
             <Route path="/field-my-stock" element={<FieldMyStock />} />
+            <Route path="/field-expense" element={<FieldExpense />} />
           </>
         )}
 

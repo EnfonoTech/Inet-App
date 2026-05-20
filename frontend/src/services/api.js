@@ -573,4 +573,24 @@ export const pmApi = {
   approveReturnRequest:    (name)    => call("inet_app.api.material_management.approve_material_return_request", { name }),
   rejectReturnRequest:     (name, reason) => call("inet_app.api.material_management.reject_material_request", { name, reason: reason || "" }),
   createDirectReturn:      (payload) => call("inet_app.api.material_management.create_direct_return_transfer", { payload: JSON.stringify(payload) }),
+
+  // ── Project Expense Claims ─────────────────────────────────
+  getFieldUserTeam:        ()             => call("inet_app.api.expense.get_field_user_team"),
+  getExpenseClaimTypes:    ()             => callCached("inet_app.api.expense.get_expense_claim_types", {}, 300_000),
+  getAvailablePoids:       (team)         => call("inet_app.api.expense.get_available_poids", team ? { team } : {}),
+  createProjectExpenseClaim: (payload)   => call("inet_app.api.expense.create_project_expense_claim", {
+    date: payload.date || "",
+    remarks: payload.remarks || "",
+    inet_team: payload.inet_team || "",
+    expense_lines: JSON.stringify(payload.expense_lines || []),
+  }),
+  listMyExpenseClaims:     ()             => call("inet_app.api.expense.list_my_expense_claims"),
+  listPendingExpenseApprovals: ()         => call("inet_app.api.expense.list_pending_expense_approvals"),
+  listImAllClaims:             ()         => call("inet_app.api.expense.list_im_all_claims"),
+  listAllExpenseClaims:    (filters)      => call("inet_app.api.expense.list_all_expense_claims", { filters: JSON.stringify(filters || {}) }),
+  getExpenseClaimDetail:   (claim_name)   => call("inet_app.api.expense.get_expense_claim_detail", { claim_name }),
+  approveExpenseClaim:     (claim_name)   => call("inet_app.api.expense.approve_expense_claim", { claim_name }),
+  rejectExpenseClaim:      (claim_name, reason) => call("inet_app.api.expense.reject_expense_claim", { claim_name, reason: reason || "" }),
+  getImListForFilter:      ()             => callCached("inet_app.api.expense.get_im_list_for_filter", {}, 300_000),
+  getTeamsForFilter:       (im_user)      => call("inet_app.api.expense.get_teams_for_filter", im_user ? { im_user } : {}),
 };

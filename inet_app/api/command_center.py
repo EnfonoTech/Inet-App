@@ -6961,6 +6961,24 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     revenue = flt(revenue_rows[0].revenue if revenue_rows else 0)
     cost = flt(revenue_rows[0].cost if revenue_rows else 0)
 
+    # Add approved project expense claims filed against this IM's teams
+    im_users = [u for u in [frappe.db.get_value("IM Master", im_resolved, "user")] if u]
+    if im_users:
+        expense_rows = frappe.db.sql(
+            """
+            SELECT COALESCE(SUM(total_sanctioned_amount), 0) AS expense_cost
+            FROM `tabExpense Claim`
+            WHERE is_project_claim = 1
+              AND expense_approver IN %s
+              AND approval_status = 'Approved'
+              AND docstatus = 1
+              AND posting_date BETWEEN %s AND %s
+            """,
+            (tuple(im_users), first_day, last_day),
+            as_dict=True,
+        )
+        cost += flt(expense_rows[0].expense_cost if expense_rows else 0)
+
     # Monthly target — projects where this IM is implementation_manager
     im_ph = ", ".join(["%s"] * len(im_identifiers))
     monthly_target_rows = frappe.db.sql(

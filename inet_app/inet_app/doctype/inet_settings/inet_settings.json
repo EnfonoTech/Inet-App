@@ -6,7 +6,9 @@
  "field_order": [
   "sales_tax_template",
   "material_section",
-  "source_warehouse"
+  "source_warehouse",
+  "expense_section",
+  "expense_payable_account"
  ],
  "fields": [
   {
@@ -26,12 +28,24 @@
    "label": "Main Store Warehouse",
    "options": "Warehouse",
    "description": "Default source warehouse for all material transfer requests (e.g. Stores - INET)"
+  },
+  {
+   "fieldname": "expense_section",
+   "fieldtype": "Section Break",
+   "label": "Expense Settings"
+  },
+  {
+   "fieldname": "expense_payable_account",
+   "fieldtype": "Link",
+   "label": "Expense Claim Payable Account",
+   "options": "Account",
+   "description": "Default payable account auto-populated on project expense claims before submission"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-13 00:00:00",
+ "modified": "2026-05-20 00:00:00",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "INET Settings",

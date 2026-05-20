@@ -137,6 +137,7 @@ const adminNav = [
   { to: "/reports",    label: "Reports",     icon: "barChart" },
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/approvals", label: "Approvals", icon: "shieldCheck" },
+  { to: "/expenses",   label: "Expenses",    icon: "dollar" },
   { to: "/overview",   label: "Search / Overview", icon: "search" },
   { to: "/im-material-request", label: "Material Requests", icon: "package" },
   { to: "/masters",    label: "Masters",     icon: "settings" },
@@ -153,6 +154,7 @@ const imNav = [
   { to: "/im-work-done", label: "Work Done",    icon: "checkCircle" },
   { to: "/im-issues-risks", label: "Issues & Risks", icon: "clipboard" },
   { to: "/im-material-request", label: "Material Request", icon: "package" },
+  { to: "/im-expense",   label: "Expense Approvals", icon: "dollar" },
   { to: "/im-reports",   label: "Reports",      icon: "barChart" },
   { to: "/im-timesheets", label: "Time logs",   icon: "clock" },
 ];
@@ -170,6 +172,7 @@ const fieldNav = [
   { to: "/field-qc-ciag", label: "QC / CIAG", shortLabel: "QC", icon: "eye" },
   { to: "/field-history", label: "History", shortLabel: "History", icon: "checkCircle" },
   { to: "/field-my-stock", label: "Materials", shortLabel: "Stock", icon: "layers" },
+  { to: "/field-expense", label: "Expenses", shortLabel: "Expense", icon: "dollar" },
   { to: "/field-timesheet", label: "Time log", shortLabel: "Time", icon: "clock" },
 ];
 
