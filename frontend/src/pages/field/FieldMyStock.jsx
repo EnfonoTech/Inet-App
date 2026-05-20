@@ -371,48 +371,38 @@ export default function FieldMyStock() {
 
   return (
     <div className="exec-page">
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Materials</h1>
-          <div className="page-subtitle">
-            {teamData
-              ? `${teamData.team_name || teamData.team_id} · ${teamData.warehouse || "—"}`
-              : "Current stock in your team's warehouse"}
-          </div>
+      {/* Tab bar — sticky, also hosts action buttons so they're visible on mobile
+          (page-header is hidden on mobile via CSS for exec-page) */}
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        borderBottom: "1px solid var(--border)",
+        padding: "0 16px",
+        position: "sticky",
+        top: 0,
+        zIndex: 39,
+        background: "var(--bg)",
+      }}>
+        <div style={{ display: "flex" }}>
+          <button type="button" style={tabStyle("stock")} onClick={() => setTab("stock")}>Stock</button>
+          <button type="button" style={tabStyle("returns")} onClick={() => setTab("returns")}>Return Requests</button>
         </div>
-        <div className="page-actions" style={{ display: "flex", gap: 8 }}>
-          {tab === "stock" && items.length > 0 && (
-            <button
-              className="btn-primary"
-              type="button"
-              onClick={() => setShowReturn(true)}
-              style={{ fontSize: "0.78rem" }}
-            >
-              Return Materials
-            </button>
-          )}
-          {tab === "stock" && (
-            <button
-              className="btn-secondary"
-              type="button"
-              onClick={() => load(true)}
-              disabled={refreshing}
-              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.78rem" }}
-            >
+        {tab === "stock" && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {items.length > 0 && (
+              <button className="btn-primary" type="button" onClick={() => setShowReturn(true)} style={{ fontSize: "0.78rem", padding: "6px 12px" }}>
+                Return Materials
+              </button>
+            )}
+            <button className="btn-secondary" type="button" onClick={() => load(true)} disabled={refreshing} style={{ fontSize: "0.78rem", padding: "6px 10px" }}>
               <span style={{ display: "inline-block", animation: refreshing ? "spin 0.7s linear infinite" : "none" }}>↻</span>
-              {refreshing ? "Refreshing…" : "Refresh"}
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: "1px solid var(--border)", padding: "0 16px" }}>
-        <button type="button" style={tabStyle("stock")} onClick={() => setTab("stock")}>Stock</button>
-        <button type="button" style={tabStyle("returns")} onClick={() => setTab("returns")}>Return Requests</button>
-      </div>
-
-      <div className="exec-body">
+      <div className="exec-body" style={{ paddingTop: 8 }}>
 
         {successMsg && (
           <div style={{
