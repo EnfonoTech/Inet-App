@@ -177,7 +177,7 @@ export default function DataTablePro() {
         const baseColumnKeys = columns.map((c) => c.key);
 
         const userKey = String(user?.email || "user").replace(/[:/\\]+/g, "_");
-        const customKey = tableEl.getAttribute("data-table-key");
+        const customKey = table.getAttribute("data-table-key");
         const tableId = customKey
           ? `${userKey}:${role || "user"}:${pathname}:${customKey}`
           : `${userKey}:${role || "user"}:${pathname}:table:${tIdx + 1}`;
