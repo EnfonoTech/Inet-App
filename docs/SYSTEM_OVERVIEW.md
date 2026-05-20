@@ -34,16 +34,25 @@ Frappe Desk for power users.
                   ┌──────────┐  ┌────────────────────────┐
                   │ Rollout  │  │ pic_status (MS1)       │
                   │  Plan    │  │ pic_status_ms2 (MS2)   │
-                  └────┬─────┘  │ + amounts / dates /    │
-                       ▼        │   owners / unbilled    │
-              ┌──────────────┐  └────────────────────────┘
-              │ Daily Exec   │
+                  └────┬─────┘  └────────────────────────┘
+                       ▼
+              ┌──────────────┐
+              │ Daily Exec   │  ← material_usage child table
               │ (per visit)  │
               └─────┬────────┘
                     ▼
               ┌──────────┐
-              │ Work Done│  (submission_status drives PIC initial state)
+              │ Work Done│  → auto-issues materials (Material Issue SE)
               └──────────┘
+
+Material flow (separate chain):
+  Huawei Outbound Plan
+       ↓ (Material Receipt SE, to_duid = DUID)
+  Source Warehouse (INET main)
+       ↓ (Material Request → Material Transfer SE, duid = source DUID)
+  Team Warehouse (INET Team.warehouse)
+       ↓ (Material Issue SE on Work Done, duid = team DUID)
+  Consumed
 ```
 
 ## Repository layout
@@ -52,35 +61,35 @@ Frappe Desk for power users.
 apps/inet_app/
 ├── inet_app/                     ← Frappe app
 │   ├── api/
-│   │   ├── command_center.py     ← ~9k-line monolithic API surface
+│   │   ├── command_center.py     ← main pipeline API (~10k lines)
+│   │   ├── material_management.py← material request / stock / receipt / issue
 │   │   ├── pic.py                ← PIC role: list / update / dashboard / reports
-│   │   └── project_management.py ← session bootstrap + a few PM-side helpers
-│   ├── inet_app/doctype/         ← 30+ doctypes (PO Dispatch is the spine)
-│   ├── www/
-│   │   └── pms.html              ← Frappe template that hosts the SPA
-│   ├── public/portal/            ← built Vite output (SPA bundle + service worker)
-│   ├── hooks.py                  ← role_home_page, fixtures, after_migrate
-│   └── setup.py                  ← `_ensure_inet_roles()` etc.
+│   │   └── project_management.py ← session bootstrap + PM helpers
+│   ├── inet_app/doctype/         ← 30+ doctypes
+│   │   └── daily_execution_material/ ← child table: item/qty_transferred/qty_used
+│   ├── public/
+│   │   ├── portal/               ← built Vite output (SPA bundle + service worker)
+│   │   └── js/stock_entry.js     ← desk-side DUID auto-fill for Stock Entry
+│   ├── hooks.py                  ← role_home_page, fixtures, after_migrate, doc_events
+│   └── setup.py                  ← after_migrate: roles, permissions, material setup
 ├── frontend/                     ← Vite + React 18 SPA
 │   ├── src/
 │   │   ├── App.jsx               ← role-gated route table
 │   │   ├── components/
 │   │   │   ├── AppShell.jsx      ← sidebar + role nav
 │   │   │   ├── DataTablePro.jsx  ← table chrome (manage cols / sort / filter)
+│   │   │   │                       listens for "tablepro:check" custom event
 │   │   │   └── …                 ← SearchableSelect, DateRangePicker, etc.
 │   │   ├── context/              ← Auth, TableRowLimit
 │   │   ├── pages/
 │   │   │   ├── admin/            ← PM views
-│   │   │   ├── im/               ← IM views
-│   │   │   ├── field/            ← Field views (PWA-friendly)
-│   │   │   └── pic/              ← PIC views (new)
+│   │   │   ├── im/               ← IM views (incl. IMMaterialRequest.jsx)
+│   │   │   ├── field/            ← Field views (PWA-friendly, incl. FieldMyStock.jsx)
+│   │   │   └── pic/              ← PIC views
 │   │   ├── services/api.js       ← single fetch wrapper + endpoint helpers
 │   │   └── styles/
 │   └── vite.config.js            ← PWA registration, scope=/pms/
 └── docs/
-    ├── USER_GUIDE.md             ← role-by-role how-to
-    ├── SYSTEM_OVERVIEW.md        ← this doc
-    └── FINDINGS.md               ← bugs / perf / enhancement backlog
 ```
 
 ## Roles & login
@@ -96,12 +105,8 @@ SPA landing path:
 | `INET PIC`         | `pic`           | `/pms/pic-dashboard`|
 
 `get_logged_user` ([api/project_management.py](../inet_app/api/project_management.py))
-runs the role-resolution priority **PIC → IM → Field → Admin**, so a user
-with multiple INET roles gets the most specific UI. `INET Admin`,
+runs the role-resolution priority **PIC → IM → Field → Admin**. `INET Admin`,
 `System Manager`, and `Administrator` all map to the admin SPA.
-
-Roles are created idempotently on `bench migrate` via
-[setup.py](../inet_app/setup.py)'s `_ensure_inet_roles()` hook.
 
 ## Central data model
 
@@ -109,248 +114,188 @@ Roles are created idempotently on `bench migrate` via
 
 Every active POID lives as one row in `PO Dispatch`. It carries:
 
-| Section          | Key fields                                                                                                        |
-|------------------|-------------------------------------------------------------------------------------------------------------------|
-| Identity         | `name` (system_id, `SYS-YYYY-#####`), `poid`, `po_no`, `po_line_no`, `item_code`, `item_description`, `qty`, `rate`, `line_amount`, `tax_rate`, `payment_terms`, `project_domain` |
-| Assignment       | `project_code` → Project Control Center, `customer`, `im` → IM Master, `target_month`, `dispatch_status`, `dispatch_mode` |
-| Site             | `center_area`, `region_type`, `site_code` → DUID Master, `site_name`                                              |
-| Remarks          | `general_remark` (PM), `manager_remark` (IM), `team_lead_remark` (Field)                                          |
-| Sub-Contract     | `subcon_team`, `subcon_status`, `subcon_completed_on`, `subcon_remark`, `subcon_submission_status`                 |
-| Invoice (PIC)    | `payment_terms`, `ms1_pct`, `ms2_pct`, `ms1_amount`, `ms2_amount`, `pic_status`, `isdp_ibuy_owner`, `pic_detail_remark`, `ms1_applied_date`, `ms1_invoiced`, `ms1_unbilled`, `subcon_pct_ms1`, `inet_pct_ms1`, `ms1_invoice_month`, `ms1_ibuy_inv_date`, `ms1_payment_received_date`, mirrored MS2 set, `remaining_milestone_pct`, `sqc_status`, `pat_status`, `im_rejection_remark` |
-| Dummy lifecycle  | `is_dummy_po`, `was_dummy_po`, `original_dummy_poid`, `dummy_note`                                                |
-
-Validate hook ([po_dispatch.py](../inet_app/inet_app/doctype/po_dispatch/po_dispatch.py))
-parses Payment Terms via `parse_payment_terms_pcts()` (handles all 10
-master-tracker patterns including the `ã€TTã€‘` mojibake variant), stamps
-`ms1_pct/ms2_pct` only when at default, then derives `ms1_amount`,
-`ms2_amount`, `ms1_unbilled`, `ms2_unbilled` from `line_amount × pct`.
+| Section      | Key fields |
+|--------------|-----------|
+| Identity     | `name` (system_id), `poid`, `po_no`, `po_line_no`, `item_code`, `qty`, `rate`, `line_amount` |
+| Assignment   | `project_code`, `customer`, `im` → IM Master, `dispatch_status` |
+| Site         | `site_code` → DUID Master / DUID string |
+| Sub-Contract | `subcon_team`, `subcon_status`, `subcon_submission_status` |
+| Invoice (PIC)| `pic_status`, `pic_status_ms2`, `ms1_pct`, `ms2_pct`, `ms1_amount`, `ms2_amount` |
 
 `dispatch_status` enum: `Pending → Dispatched → Planned → Completed`,
-plus terminals `Sub-Contracted`, `Closed`, `Cancelled`. There is
-**no formal state machine** — see FINDINGS for the gap.
+plus terminals `Sub-Contracted`, `Closed`, `Cancelled`. **No formal state
+machine** — see FINDINGS.
 
-### Adjacent doctypes
+### Material flow doctypes
 
-- **PO Intake / PO Intake Line**: parents the dispatch rows. The line carries
-  the original Excel cells (qty, rate, payment terms…) and `po_line_status`
-  (mirror of dispatch status, used by the PM "Pending Dispatch" tab).
-- **Rollout Plan**: per-visit plan; `po_dispatch` link, `team`, `plan_date`,
-  `visit_type`, `visit_number`, `plan_status`. One PO Dispatch can have
-  multiple plans (re-visits).
-- **Daily Execution**: the field team's check-in for a plan visit;
-  `execution_date`, `execution_status`, `qc_status`, `ciag_status`,
-  `tl_status`, photos.
-- **Work Done**: created when execution is Completed; `submission_status`
-  (Ready for Confirmation / Confirmation Done) hands off to PIC.
-- **INET Team / IM Master / Subcontractor Master**: org graph.
-  `team_category` (Field Team / Sub-Contract Team) gates which teams the
-  rollout plan picker shows. `Subcontractor Master.sub_payout_pct` and
-  `inet_margin_pct` feed the PIC's INET-vs-Subcon split.
-- **Project Control Center**: project metadata + monthly target; doctype with
-  multiple child tables (team, materials, tasks, documents).
-- **DUID Master**: site directory (latitude/longitude, area). The
-  `area` link → **Area Master** drives the dashboard's "Location" labels.
-- **PO Upload Log / PO Upload Log Detail**: audit history of standard +
-  archive uploads. Carries `lines_skipped_terminal`, `lines_skipped_closed`,
-  `lines_skipped_cancelled`, and a JSON `terminal_dupe_samples` so users see
-  why duplicates didn't refresh.
+| Doctype | Purpose |
+|---------|---------|
+| **Huawei Outbound Plan** | Shipment from Huawei; `outbound_status=Received` triggers Material Receipt SE. `du_id` / `duid_master` = site DUID. |
+| **Material Request** (ERPNext) | Transfer request from main warehouse → team warehouse. Custom fields: `poid`, `duid`, `im`, `team_warehouse`, `request_status`. |
+| **INET Team** | `warehouse` field links the team to its ERPNext warehouse. |
+| **Daily Execution Material** | Child table on Daily Execution. Fields: `item_code`, `item_name`, `material_request`, `qty_transferred`, `qty_used`, `uom`. |
+| **INET Settings** | `source_warehouse` = main INET warehouse. |
+
+### DUID Inventory Dimension
+
+ERPNext Inventory Dimensions add two columns to `tabStock Entry Detail`:
+
+| Column | Direction | Set when |
+|--------|-----------|----------|
+| `duid` | Source (from) | Material Transfer (leaving source WH), Material Issue |
+| `to_duid` | Target (to) | Material Receipt (arriving at target WH), Material Transfer (arriving at team WH) |
+
+**Critical**: `duid` does NOT exist on `tabStock Ledger Entry` in this
+installation. All per-DUID balance queries must use `tabStock Entry Detail`.
+
+Per-DUID balance formula:
+```
+balance = SUM(SE Detail qty WHERE type=Transfer AND to_duid=X AND t_warehouse=WH)
+        - SUM(SE Detail qty WHERE type=Issue    AND duid=X    AND s_warehouse=WH)
+```
+
+Legacy SEs (before direction fix) may have `duid` set on receipts instead of
+`to_duid`. Queries use `COALESCE(NULLIF(to_duid,''), NULLIF(duid,''))` for
+receipts to handle both.
 
 ## Major flows
 
 ### 1. PO Upload (standard)
-
-1. PM uploads `.xlsx` / `.csv` from `/pms/po-upload` → **Step 1: Upload**.
-2. `upload_po_file` parses, normalizes columns by alias, validates row-by-row
-   (qty > 0, rate > 0, item_code resolvable). Rows with `PO Status = CLOSED
-   or CANCELLED` are pushed to `error_rows` with the message *"use the Archive
-   tab"* — only OPEN rows reach Step 2.
-3. **Step 2: Review** shows valid + error rows; user clicks Confirm.
-4. `confirm_po_upload` chunks rows by `po_no`, ensures masters
-   (Project Control Center, Item, Customer Item Master, DUID Master), then
-   for each PO group either creates a new `PO Intake` doc or appends to the
-   existing one. After save, every new line gets a `PO Dispatch` row via
-   `_upsert_po_dispatch_for_line` with `dispatch_status='Pending'`. If a row
-   has a blank or `NA` item_code, `_resolve_item_code_with_fallback` swaps in
-   the description (truncated to 140 chars). `flags.ignore_mandatory=True` on
-   save lets legacy edge-cases through.
-5. **Step 3: Summary** shows lines imported / skipped / new POs + a
-   per-PO breakdown. Skipped duplicates are split into Closed vs Cancelled
-   buckets so users can see why a row didn't refresh.
-6. `record_po_upload_log` persists everything to **PO Upload Log** with the
-   source file attached.
+1. PM uploads `.xlsx`/`.csv` → `upload_po_file` parses, normalizes, validates.
+2. `confirm_po_upload` chunks by `po_no`, creates PO Intake + PO Dispatch rows.
+3. `record_po_upload_log` persists the audit trail.
 
 ### 2. PO Upload (archive)
-
-For backfilling closed/cancelled history from the Master Tracker. Same page,
-separate Archive section.
-
-1. `preview_po_archive_file` quickly scans the file (xlsb / xlsx / csv, with
-   `pyxlsb` for binary), reports counts (CLOSED / CANCELLED / OPEN / OTHER),
-   missing UOMs, missing Items, missing Projects, and projects without
-   customer.
-2. `start_po_archive_import` enqueues `_run_po_archive_import` on the `long`
-   queue (3600s timeout) and creates a `PO Upload Log` doc to poll.
-3. The worker reads only CLOSED + CANCELLED rows, resolves customer per-row
-   from `Project Control Center.customer`, batch-creates intake + lines +
-   dispatches with `dispatch_status='Closed' / 'Cancelled'`, **and stamps
-   the rich PIC payload** (PIC Remarks, ISDP/I-Buy Owner, MS1/MS2 amounts,
-   invoicing dates, subcon%/inet%) onto each dispatch via
-   `frappe.db.set_value`. No auto-dispatch — these stay out of the workflow.
-4. FE polls `get_po_archive_import_status(log_name)` every ~3s and displays
-   progress + final summary.
+`start_po_archive_import` enqueues `_run_po_archive_import` (long queue,
+3600s). Reads CLOSED/CANCELLED rows only, creates intake/lines/dispatches
+with `dispatch_status='Closed'/'Cancelled'` and stamps PIC payload.
 
 ### 3. IM Workflow
-
 ```
-PO Control (intake) → Rollout Planning → Rollout Execution → Rollout Work Done
-                                                              ↓
-                                                            Subcon
+PO Control → Rollout Planning → Rollout Execution → Work Done
+```
+- **PO Control**: assign `target_month` to move to planning.
+- **Rollout Planning**: create `Rollout Plan` (team, date).
+- **Work Done**: `generate_work_done()` auto-issues materials consumed by the
+  field team (reads `Daily Execution.material_usage` child table → creates
+  Material Issue SE idempotently).
+
+### 4. Material Management Workflow
+```
+Huawei ships materials (Huawei Outbound Plan, status=Received)
+    → IM creates Material Receipt SE (to_duid = DUID)
+    → IM creates Material Request (source WH → team WH)
+    → IM approves → Material Transfer SE (duid=source, to_duid=team)
+    → Field team records qty_used in Daily Execution (material_usage tab)
+    → IM generates Work Done → auto Material Issue SE (duid = team DUID)
 ```
 
-- **PO Control** (`/pms/im-po-intake`): lines awaiting target_month assignment.
-  Multi-select to set target_month (move to "Rollout Planning") or, if the IM
-  has `can_subcon=1`, sub-contract to a non-field team via the Sub-Contract
-  flow. Closed / Cancelled / Sub-Contracted / Completed lines are filtered out.
-- **Rollout Planning** (`/pms/im-dispatch`): create a `Rollout Plan` (visit_type,
-  date, team, manager_remark). Already-planned lines are hidden except
-  unmapped Dummy POs.
-- **Rollout Execution** (`/pms/im-planning`): list of planned rollouts;
-  Daily Execution rows from the field show up here.
-- **Rollout Work Done** (`/pms/im-execution`): execution-monitor view of the
-  IM's lines; QC / CIAG / Execution Status visible.
-- **Work Done** (`/pms/im-work-done`): Work Done docs for the IM. Submission
-  status (`Ready for Confirmation` / `Confirmation Done`) hands the line off
-  to PIC. Also shows the PIC-rolled-up billing pill with the raw PIC status
-  as a tooltip.
+**Portal pages:**
+- `/pms/im-material-request` (`IMMaterialRequest.jsx`) — IM view: Requests
+  tab (list with filters) + DUID Stock tab (main WH overview, search/filter,
+  auto-hides fully-transferred DUIDs).
+- `/pms/materials` (`FieldMyStock.jsx`) — Field user's team warehouse stock,
+  per-DUID breakdown.
+- IMTeams detail panel — stock section per team with per-DUID sources.
 
-### 4. Field Workflow (PWA-friendly)
+**Duplicate guard**: `create_material_request` blocks if an active MR already
+exists for the same `poid + set_warehouse`.
 
-- **Today's Work** (`/pms/today`): plans assigned to the field user's team
-  for today.
+**Idempotent auto-issue**: `generate_work_done` checks existing Issue SEs via
+`sed.material_request` join before creating new SE.
+
+### 5. Field Workflow (PWA)
+- **Today's Work** (`/pms/today`): plans for today.
 - **Execute** (`/pms/field-execute/:id`): start/stop timer, capture
-  qty/CIAG/QC, upload photos.
-- **QC / CIAG**, **History**, **Time log**: role-scoped slices of the
-  Daily Execution data.
+  qty/CIAG/QC, photos, material usage (qty_used per item).
+- **Materials** (`/pms/materials`): current stock in team's warehouse.
 
-The PWA scope is `/pms/` (vite.config.js) and `registerType: "autoUpdate"` so
-older wider-scope service workers get replaced silently.
+### 6. Sub-Contract flow
+No Rollout Plan / Daily Execution / Work Done — `subcon_status` tracks
+progress. Subcon completions are unioned into Work Done feed via
+`_synthesize_subcon_workdone_rows`.
 
-### 5. Sub-Contract flow
-
-Lives entirely outside the rollout chain — no Rollout Plan / Daily Execution /
-Work Done created. Each subcon dispatch carries its own `subcon_status`
-(Pending / Work Done) and a `subcon_submission_status` field that mirrors
-PIC's submission concept for subcon work. The IM's PO Control list excludes
-`dispatch_status='Sub-Contracted'`, and the dedicated
-`/pms/im-subcon` page lists pending subcon items with bulk Mark Work Done.
-Subcon completions are unioned into the Work Done feed via
-`_synthesize_subcon_workdone_rows` so revenue dashboards reflect them.
-
-### 6. PIC (Invoice Controller)
-
+### 7. PIC (Invoice Controller)
 ```
-IM marks Work Done.submission_status = "Confirmation Done"
-                              ↓
-              PIC sees POID as "Under Process to Apply"
-                              ↓
-         Under I-BUY / Under ISDP → I-BUY Rejected / ISDP Rejected
-                              ↓
-                    Ready for Invoice
-                              ↓
-                Commercial Invoice Submitted
-                              ↓
-                Commercial Invoice Closed       (terminal)
-                              ↓
-         PO Need to Cancel → PO Line Canceled   (alternate terminal)
+Confirmation Done → Under Process to Apply → Under I-BUY/ISDP
+    → Ready for Invoice → Commercial Invoice Submitted → Closed
 ```
-
-MS1 and MS2 each have independent status. The MS1/MS2 split (parsed from
-Payment Terms) decides how `line_amount` divides into 1st and 2nd payment
-amounts. `remaining_milestone_pct` is auto-calculated as total unbilled /
-line amount — fully invoiced lines (0%) are hidden from PIC Tracker by
-default.
-
-PIC pages:
-
-- **PIC Dashboard** (`/pms/pic-dashboard`) — gradient hero with KPIs +
-  closed-vs-pipeline progress bar, acceptance pipeline table, monthly
-  invoicing roll-up, INET-vs-Subcon split, pending I-BUY / ISDP owner
-  tables. Auto-refreshes every 5 minutes.
-- **PIC Tracker** (`/pms/pic-tracker`) — full POID list with multi-select,
-  bulk status change, per-row edit popover (gradient hero + MS1/MS2 tabs +
-  sticky save footer). Invoiced Amount and Remaining Milestone % are
-  read-only (auto-calculated). Totals tfoot stays aligned through Manage
-  Table reorder/hide.
-- **Invoice Tracker** (`/pms/pic-invoice-tracker`) — lines in invoicing-stage
-  statuses. Create ERPNext Sales Invoices directly from the portal with
-  auto-detected MS1/MS2 per row. Mark Submitted/Closed buttons update
-  status per milestone. Linked Invoices column shows all invoices per POID.
-- **PIC Reports** (`/pms/pic-reports`) — canned reports (pipeline / monthly /
-  aging / closed / rejected) with adaptive filters and CSV download.
-
-Billing coupling: `list_work_done_rows` derives `billing_status` from PIC
-status — "Commercial Invoice Submitted" → Invoiced, "Commercial Invoice
-Closed" → Closed, everything else → Pending. Work Done billing_status is
-synced automatically when PIC changes status or a Sales Invoice is
-submitted. The PM Command Dashboard includes PIC KPIs via the **Commercial**
-tab.
+MS1 and MS2 each have independent status. Split parsed from Payment Terms.
 
 ## API surface
 
-All RPC endpoints are whitelisted Python functions. The FE talks to them via
-the single `call()` wrapper in [services/api.js](../frontend/src/services/api.js).
+| Module | Highlights |
+|--------|-----------|
+| `inet_app.api.command_center` | List endpoints (PO Intake Lines, Dispatches, Rollout Plans, Daily Execution, Work Done, Issues & Risks), upload + archive import, masters CRUD, dashboard KPIs, table preferences. |
+| `inet_app.api.material_management` | `create_material_request`, `list_material_requests`, `get_material_request`, `approve_material_request`, `get_poid_materials`, `get_team_material_stock`, `get_duid_stock_summary`, `get_duid_received_items`, `create_material_receipt_from_outbound`, `issue_materials_for_work_done`, `get_im_teams`, `get_source_warehouse`, `search_po_dispatches`, `get_poid_details`, `search_items`. |
+| `inet_app.api.pic` | `list_pic_rows`, `update_pic_row`, `bulk_update_pic_status`, `get_pic_dashboard`, `get_pic_report`, `list_invoice_tracker_rows`, `create_sales_invoice_from_pic`. |
+| `inet_app.api.project_management` | `get_logged_user` (session bootstrap), PM helpers. |
 
-| Module                          | Highlights |
-|---------------------------------|------------|
-| `inet_app.api.command_center`   | List endpoints (PO Intake Lines, PO Dispatches, Rollout Plans, Daily Execution, Work Done, Issues & Risks, Execution Monitor), upload + archive import, masters CRUD via `genericList`/`genericCount`, dashboard KPIs, table preferences. |
-| `inet_app.api.pic`              | `list_pic_rows`, `update_pic_row`, `bulk_update_pic_status`, `get_pic_dashboard`, `get_pic_report`, `list_invoice_tracker_rows`, `create_sales_invoice_from_pic`, `on_sales_invoice_submit`. Initial-state rule via `_PIC_INITIAL_RULE_SQL`. |
-| `inet_app.api.project_management`| `get_logged_user` (session bootstrap with role resolution), a few PM helpers. |
+## hooks.py doc_events
+
+```python
+doc_events = {
+    "Sales Invoice": {
+        "on_submit": "inet_app.api.pic.on_sales_invoice_submit"
+    },
+    "Stock Entry": {
+        "before_submit": "inet_app.api.material_management.before_stock_entry_submit",
+        "on_submit":     "inet_app.api.material_management.on_stock_entry_submit"
+    },
+}
+```
+
+`before_stock_entry_submit` auto-fills `duid`/`to_duid` on SE Detail rows
+from the linked Material Request (or PO Dispatch fallback) based on entry
+type:
+- Material Receipt → set `to_duid` only
+- Material Transfer → set both `duid` (source) and `to_duid` (target)
+- Material Issue → set `duid` only
 
 ## Frontend conventions
 
-- **DataTablePro** ([components/DataTablePro.jsx](../frontend/src/components/DataTablePro.jsx))
-  is a single global component that auto-attaches a toolbar (Manage Table,
-  Filters, Reset, Sort) to every `<table class="data-table">` inside a
-  `<DataTableWrapper>`. It persists per-user prefs (column order, hidden,
-  frozen, widths, filters, sort) via `useTablePreferences`. Stale prefs that
-  no longer match a current column are filtered out automatically.
-- **Cancellation guards** were added to PIC Tracker: `useEffect` returns a
-  `cancelled` flag in cleanup so a slow earlier fetch can't overwrite a
-  fast newer one when the row limit / filters change. Other list pages
-  still use the older `useResetOnRowLimitChange` pattern (see FINDINGS).
-- **`call()` wrapper** in `api.js` handles CSRF token refresh, JSON
-  serialization of array payloads, and translates Frappe's error envelope.
-- **PWA**: scope `/pms/`, `registerType: "autoUpdate"`. `main.jsx` has a
-  defensive guard that unregisters wider-scope SWs and redirects to `/app`
-  if the bundle ever boots outside `/pms`.
+- **DataTablePro** auto-attaches a toolbar (Manage Table, Filters, Reset,
+  Sort) to every `<table class="data-table">` inside a `<DataTableWrapper>`.
+  Persists per-user prefs via `useTablePreferences`.
+  **Tab-switching fix**: When a React tab switch unmounts the whole
+  `.data-table-wrapper` subtree, the `.data-table-scroll` MutationObserver
+  never fires. The fix: tab-switching components dispatch
+  `document.dispatchEvent(new CustomEvent("tablepro:check"))` after 60ms;
+  DataTablePro listens and calls `scheduleReinitFromDom()`.
+- **`call()` wrapper** in `api.js` handles CSRF, JSON serialization, and
+  Frappe error envelope translation.
+- **PWA**: scope `/pms/`, `registerType: "autoUpdate"`. `main.jsx` unregisters
+  wider-scope SWs and redirects to `/app` if booting outside `/pms`.
+- **Standard tab pattern** (IMMaterialRequest, IMTeams): pill tablist
+  (`role="tablist"` div), `.toolbar` div for filters, `.page-content` wrapper
+  for `<DataTableWrapper>`. Dispatch `tablepro:check` in tab switch.
+- **Field pages**: card-based PWA layout using `exec-page`, `history-card`,
+  `today-chip` CSS classes. Large inputs (`inputMode="decimal"`) for easy
+  touch entry.
 
 ## Migrations & deploy
 
 ```sh
 git pull && bench --site <site> migrate
 cd apps/inet_app/frontend && npm run build
-bench restart      # picks up worker-loaded code (frappe.enqueue)
+bench restart
 ```
 
-The `after_migrate` hook (setup.py) creates roles idempotently. `fixtures` in
-hooks.py exports Custom Fields and the four INET roles. New schema fields
-land via the doctype JSONs; back-fill scripts live in `/tmp` (see commit
-notes — `payment_terms` MS1/MS2 backfill, POID `.0` cleanup, etc.).
-
-## Background jobs
-
-- `_run_po_archive_import` (long queue, 3600s timeout) — large archive
-  imports.
-- Frappe's standard scheduler — used by ERPNext but the app doesn't add its
-  own scheduled events as of this writing.
+`after_migrate` hook creates roles, ensures material permissions (Stock
+Manager role), ensures `Daily Execution Material` child doctype fields. New
+schema fields land via doctype JSONs.
 
 ## Where to look first
 
-- **Need to change a list page**: the page file under `frontend/src/pages/<role>/`
-  + the matching `list_*` endpoint in `command_center.py` (or `pic.py`).
-- **Need to add a column**: doctype JSON + the `pd_fields_wd` style projection
-  list in the relevant endpoint + the FE column header / cell.
-- **Need to add a role**: setup.py `_ensure_inet_roles`, hooks.py
-  `role_home_page`, `get_logged_user`, AppShell `*Nav`, App.jsx route gate.
-- **Performance bug**: see FINDINGS for the index recommendations and the
-  N+1 hotspots already identified.
+- **List page change**: `frontend/src/pages/<role>/*.jsx` + matching `list_*`
+  endpoint in `command_center.py` (or `pic.py` / `material_management.py`).
+- **Material flow bug**: `material_management.py` — check the SE Detail query
+  for the affected function; remember DUID is on SE Detail not SLE.
+- **DUID balance wrong**: Check whether the SE has `duid`/`to_duid` set
+  correctly. Legacy SEs may have the wrong column. Inspect via Frappe Desk
+  → Stock Entry → Items child table → DUID / Target DUID fields.
+- **DataTablePro missing on tab**: The page's tab-switch function must
+  dispatch `tablepro:check` after the new content mounts.
+- **Add a role**: `setup.py` `_ensure_inet_roles`, `hooks.py` `role_home_page`,
+  `get_logged_user`, AppShell `*Nav`, `App.jsx` route gate.
+- **Performance bug**: see FINDINGS for index recommendations and N+1 hotspots.

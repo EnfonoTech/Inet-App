@@ -1,14 +1,10 @@
 # INET App — Findings Backlog
 
-Actionable list of bugs, performance work, and enhancement opportunities
-identified by an audit pass of the codebase. Prioritized by blast radius:
-**P0** would lose / corrupt data, **P1** is wrong behavior or measurable
-slowness, **P2** is UX or polish.
+Actionable list of bugs, performance work, and enhancement opportunities.
+Prioritized by blast radius: **P0** = data loss / corruption, **P1** = wrong
+behavior or measurable slowness, **P2** = UX / polish.
 
-Every entry has:
-- **Where** — file:line or a flow name.
-- **Why it matters** — 1 line.
-- **Fix** — what to do.
+Every entry has **Where**, **Why it matters**, and **Fix**.
 
 ---
 
@@ -18,27 +14,18 @@ Every entry has:
 - **Where**: PO Dispatch enum touched from many places (`confirm_po_upload`,
   `_run_po_archive_import`, `mark_subcon_work_done`, `assign_subcon`, etc.).
 - **Why**: Nothing prevents `Closed → Pending` or `Completed → Cancelled`.
-  The sub-contract flow currently manages `Sub-Contracted → Completed` by
-  convention only; an admin clicking the wrong row could revert a finished
-  invoice flow.
-- **Fix**: Add a `validate` hook on PO Dispatch that consults a transition
-  matrix and rejects illegal moves. Allow admin override via
-  `flags.allow_status_override = True` for one-off corrections.
+  Sub-contract flow manages `Sub-Contracted → Completed` by convention only.
+- **Fix**: Add a `validate` hook on PO Dispatch with a transition matrix.
+  Allow admin override via `flags.allow_status_override = True`.
 
 ### `frappe.db.set_value` bypasses validate
-- **Where**:
-  - `pic.py` — `bulk_update_pic_status` (line ~298) writes `pic_status` /
-    `pic_status_ms2` raw via `frappe.db.set_value`.
-  - `command_center.py` — `_stamp_archive_pic_fields` (archive import) writes
-    the full PIC payload raw.
-- **Why**: PO Dispatch's validate hook recomputes `ms1_amount` / `ms2_amount`
-  / `ms1_unbilled` / `ms2_unbilled`. Bypassing it leaves derived columns
-  stale when the underlying invoiced amount changes.
-- **Fix**: For bulk PIC status (no monetary fields touched) the bypass is
-  fine — keep it. For the archive importer, after `set_value` of the bulk
-  payload, manually recompute `ms1_unbilled` / `ms2_unbilled` (already
-  partially done) so reads stay consistent without paying the `doc.save()`
-  cost on 12k rows.
+- **Where**: `pic.py` `bulk_update_pic_status`; `command_center.py`
+  `_stamp_archive_pic_fields`.
+- **Why**: Derived columns (`ms1_unbilled`, `ms2_unbilled`) go stale when the
+  invoiced amount changes and the validate hook is skipped.
+- **Fix**: For bulk PIC status (no monetary fields) the bypass is fine — keep
+  it. For the archive importer, manually recompute unbilled amounts after
+  `set_value` so reads stay consistent.
 
 ---
 
@@ -46,114 +33,110 @@ Every entry has:
 
 ### PIC drift after retroactive Work Done changes
 - **Where**: `pic.py` `_PIC_INITIAL_RULE_SQL`.
-- **Why**: The rule reads "if `pic_status` is null, derive from
-  `Work Done.submission_status='Confirmation Done'`." Once the PIC saves,
-  the stored value wins forever. If the IM later marks Work Done as
-  un-confirmed (e.g. because of a rejection), the PIC row keeps showing the
-  old status.
-- **Fix**: When IM toggles `submission_status` away from
-  `Confirmation Done`, also clear `pic_status` (or set it to
-  `Work Not Done`) on the linked PO Dispatch. Add the hook to
-  `update_work_done_submission`.
+- **Why**: Once the PIC saves, the stored value wins forever. If the IM later
+  un-confirms Work Done, the PIC row keeps showing the old status.
+- **Fix**: When IM toggles `submission_status` away from `Confirmation Done`,
+  also clear / revert `pic_status` on the linked PO Dispatch.
 
 ### Race in older list pages (still on `useResetOnRowLimitChange`)
-- **Status**: shipped to IMPOIntake, ExecutionMonitor, IMWorkDone, admin
-  WorkDone (the explicitly listed ones). Remaining pages still use the
-  old hook but don't show the bug because they don't reset rows mid-load
-  on row-limit change. Migrate as they get touched.
+- **Status**: Patched on IMPOIntake, ExecutionMonitor, IMWorkDone, admin
+  WorkDone. Remaining pages are low-risk (they don't reset mid-load on row
+  limit change). Migrate as pages get touched.
 
 ### Many SELECTs miss `has_column` guards
-- **Where**: After the recent prod fix the `general_remark` /
-  `manager_remark` / `team_lead_remark` projections are guarded everywhere,
-  but the surrounding columns (`pic_status`, `subcon_submission_status`,
-  `payment_terms`, `tax_rate`, `project_domain`) only have guards in some
-  spots.
-- **Why**: A site that's pulled the new code but hasn't run `bench migrate`
-  yet will throw `OperationalError 1054` from the next list endpoint that
-  hasn't been guarded.
-- **Fix**: Use the existing `_po_dispatch_col_expr` helper consistently.
-  `command_center.py` projections + `pic.py` SELECT need a one-time pass.
-  Migration is the long-term fix; guards are seat-belts.
+- **Where**: `command_center.py` list projections, `pic.py` SELECT.
+- **Why**: A site that pulled code but hasn't run `bench migrate` yet will
+  throw `OperationalError 1054`.
+- **Fix**: Use the existing `_po_dispatch_col_expr` helper consistently across
+  all query sites.
 
 ### `frappe.parse_json` without try/except
-- **Where**: a handful of payload-parsing call sites in command_center.py
-  (search `frappe.parse_json(`).
-- **Why**: A truncated payload returns `None`; downstream code does
-  `payload.get(...)` which throws `AttributeError`. The user sees a server
-  500 instead of a clean validation error.
-- **Fix**: Wrap each `frappe.parse_json` boundary call in try/except and
-  `frappe.throw("Malformed payload")` on failure.
+- **Where**: Several payload-parsing call sites in `command_center.py`.
+- **Why**: Truncated payload → `None` → `AttributeError` on `.get()` → 500.
+- **Fix**: Wrap each boundary call in try/except; `frappe.throw("Malformed
+  payload")` on failure.
 
-### Standard upload still hits Frappe `MandatoryError` for some legacy rows
-- **Where**: `confirm_po_upload`. The `_resolve_item_code_with_fallback`
-  helper covers the obvious cases (blank, "NA", "-") and we set
-  `doc.flags.ignore_mandatory = True`, but some rows still fail with
-  `Row #1: Value missing for: Item Code` if Frappe's validate runs *before*
-  the flag is read by the child save.
-- **Fix**: Set the flag on the child entries directly — `append_row["__skip_mandatory"] = True`
-  isn't a Frappe convention; instead pass `ignore_mandatory=True` to
-  `doc.save(ignore_mandatory=True)` rather than via flags. Or short-circuit
-  by stamping a placeholder code (`MISC-{poid}`) when both code + desc are
-  empty, so mandatory passes naturally.
+### DUID inventory dimension only on `tabStock Entry Detail`, not `tabStock Ledger Entry`
+- **Where**: `material_management.py` — any query that tries to use `sle.duid`.
+- **Why**: ERPNext Inventory Dimensions are added as columns on `tabStock Entry
+  Detail` (and optionally on SLE), but on this installation the DUID dimension
+  does NOT exist on `tabStock Ledger Entry`. Querying `sle.duid` raises
+  `OperationalError 1054` silently swallowed by try/except, returning empty
+  results.
+- **Fix** (done): Per-DUID balance uses SE Detail queries only
+  (`tabStock Entry Detail`). Do not add SLE queries for DUID unless the
+  dimension is confirmed present on `tabStock Ledger Entry`.
+
+### Legacy Material Receipt SEs have wrong DUID column direction
+- **Where**: Old Stock Entry Details (Material Receipt) have `duid` (source
+  field) populated instead of `to_duid` (target field).
+- **Why**: Before the direction fix, the JS auto-fill used the wrong field.
+  Those SEs are already submitted and cannot be amended.
+- **Fix** (done): `get_duid_stock_summary` uses
+  `COALESCE(NULLIF(to_duid,''), NULLIF(duid,''))` for receipt rows so legacy
+  data is counted correctly.
+
+### Material Request duplicate check is per-`poid + set_warehouse`
+- **Where**: `create_material_request` in `material_management.py`.
+- **Why**: If the same POID has two DUIDs or two teams requesting, the second
+  request is blocked even if it's legitimately different.
+- **Note**: Current behaviour is intentional to prevent re-requesting the same
+  materials. If multi-request-per-POID is needed, the duplicate check key
+  must be extended (e.g. add `duid`).
+
+### Standard upload still hits `MandatoryError` for some legacy rows
+- **Where**: `confirm_po_upload`.
+- **Why**: `flags.ignore_mandatory = True` doesn't always propagate to child
+  saves before Frappe's validate runs.
+- **Fix**: Pass `ignore_mandatory=True` directly to `doc.save(...)`, or stamp
+  a placeholder code (`MISC-{poid}`) so mandatory passes naturally.
 
 ---
 
 ## P1 — Performance
 
 ### `_batch_customer_activity_types` runs on every list
-- **Where**: `command_center.py` — called by every list_po_dispatches and
-  list_work_done_rows.
-- **Why**: Looks up Customer Item Master per `(customer, item_code)` pair
-  in a row, even if the column is hidden.
-- **Fix**: Cache via `frappe.cache().hset("inet_cim_map", ...)` with a
-  1-hour TTL; invalidate on Customer Item Master create/update/delete via
-  on_change hook.
+- **Where**: `command_center.py` — called by `list_po_dispatches` and
+  `list_work_done_rows`.
+- **Why**: N+1-style Customer Item Master lookup per `(customer, item_code)`
+  pair, even if the column is hidden.
+- **Fix**: Cache via `frappe.cache().hset("inet_cim_map", ...)` with 1-hour
+  TTL; invalidate on CIM create/update/delete.
 
 ### `frappe.db.commit()` in per-row loops
 - **Where**: `_run_po_archive_import` commits inside the per-PO loop.
-- **Why**: Each commit flushes binlog + replication; for 16k rows that's
-  16k flushes. Throughput ~2× lower than batched commits.
-- **Fix**: Commit every 200 POs (already chunked by `chunk_size` — move
-  the commit call to the chunk boundary, not the inner `for po_no in chunk`
-  loop).
+- **Why**: Each commit flushes the binlog — 16k rows = 16k flushes.
+- **Fix**: Move the commit to the chunk boundary (every 200 POs), not the
+  inner per-row loop.
 
 ---
 
-## P2 — Inconsistent UX
-
-### Generic error messages
-- **Where**: `pic.py` `_pic_role_or_throw()` says "Not permitted — PIC role
-  required." but doesn't list the other roles that ARE permitted.
-- **Fix**: Echo the user's actual roles + the required ones.
+## P2 — UX / polish
 
 ### Edit popovers don't pre-validate
-- **Where**: PIC Tracker edit, IM Team edit (members), PO Upload Standard
-  Step 2 confirm.
+- **Where**: PIC Tracker edit, IM Team edit, PO Upload Step 2.
 - **Why**: Users hit Save, wait for the round-trip, then see a 400 error.
-- **Fix**: Add a `validate(formData)` step that runs locally before
-  `submit()`. Cheap things like "MS1 % + MS2 % ≤ 100", "Applied Date
-  not in the future", "Item Code can't be blank when Description is also
-  blank". Show inline error states.
+- **Fix**: Add a local `validate(formData)` step before `submit()`. Cheap
+  checks: MS1% + MS2% ≤ 100, Applied Date not in the future, etc.
+
+### Generic error messages
+- **Where**: `pic.py` `_pic_role_or_throw()`.
+- **Fix**: Echo the user's actual roles + the required ones.
 
 ---
 
-## P2 — Backend / data quality
+## P2 — Data quality
 
 ### Foreign-key fields stored as Data
-- **Where**: `subcon_team` is a Link to INET Team — that's correct. But
-  some places in the code (`isdp_ibuy_owner`, `isdp_owner_ms2`) store
-  free-text owner names. If owners stabilise into a known list, promote
-  to a Link to a new "Huawei Owner Master".
-- **Fix**: Defer until owner list is stable; not urgent.
+- **Where**: `isdp_ibuy_owner`, `isdp_owner_ms2` store free-text owner names.
+- **Fix**: Defer until owner list is stable; promote to a Link to a new
+  "Huawei Owner Master" when ready.
 
-### `_stamp_archive_pic_fields` doesn't recompute everything validate would
-- **Where**: archive importer.
-- **Why**: It manually computes `ms1_unbilled` / `ms2_unbilled` after
-  set_value but skips `region_type`, etc. New derived fields added later
-  won't get backfilled.
-- **Fix**: Run `frappe.get_doc("PO Dispatch", name); doc.run_method("validate"); doc.db_update()`
-  on a periodic basis after archive imports — or add a one-shot
-  `bench execute` recompute helper.
+### `_stamp_archive_pic_fields` doesn't recompute all derived fields
+- **Where**: Archive importer computes `ms1_unbilled` / `ms2_unbilled` after
+  `set_value` but skips other derived fields (e.g. `region_type`).
+- **Fix**: Run a periodic or one-shot `bench execute` recompute pass, or call
+  `doc.run_method("validate"); doc.db_update()` after archive imports.
 
 ---
 
@@ -161,6 +144,12 @@ Every entry has:
 
 - Owner Master + Link conversion for `isdp_ibuy_owner`.
 - Cursor pagination for PO Dump and PIC Tracker (currently offset-based).
-- Replace per-page sort dropdowns with the global DataTablePro sort menu
-  everywhere (Execution Monitor still has a per-page one).
-- Code-split the portal frontend bundle (currently 1.3 MB — Vite warns chunk > 500 kB). Use React.lazy + Suspense for page-level components to reduce initial download size.
+- Replace per-page sort dropdowns with DataTablePro sort menu everywhere.
+- Code-split the portal bundle (currently ~1.8 MB — Vite warns chunk > 500 kB).
+  Use `React.lazy + Suspense` for page-level components.
+- Material Request: consider extending duplicate-check key to include `duid`
+  if multi-request-per-POID is ever needed.
+- DataTablePro: consider a global `MutationObserver` on the app root as a
+  long-term alternative to the `tablepro:check` custom-event pattern, to
+  auto-detect new `.data-table-wrapper` elements without requiring each
+  tab-switching component to dispatch the event.
