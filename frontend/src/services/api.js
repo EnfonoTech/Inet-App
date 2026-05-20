@@ -559,14 +559,6 @@ export const pmApi = {
   getAvailableStock:       (item_code, warehouse)  => call("inet_app.api.material_management.get_available_stock", { item_code, ...(warehouse ? { warehouse } : {}) }),
   getPoidMaterials:        (po_dispatch)           => call("inet_app.api.material_management.get_poid_materials", { po_dispatch }),
   getTeamMaterialStock:    (team_id)               => call("inet_app.api.material_management.get_team_material_stock", team_id ? { team_id } : {}),
-  saveMaterialUsage:       (po_dispatch, material_request, execution, usage_items) =>
-    call("inet_app.api.material_management.save_material_usage", {
-      po_dispatch, material_request, execution,
-      usage_items: JSON.stringify(usage_items),
-    }),
-  getMaterialUsage:        (po_dispatch, material_request) =>
-    call("inet_app.api.material_management.get_material_usage", { po_dispatch, material_request: material_request || "" }),
-
   // ── Material Return Flow ────────────────────────────────────
   createReturnRequest:     (payload) => call("inet_app.api.material_management.create_material_return_request", { payload: JSON.stringify(payload) }),
   listReturnRequests:      (args)    => call("inet_app.api.material_management.list_return_requests", args || {}),

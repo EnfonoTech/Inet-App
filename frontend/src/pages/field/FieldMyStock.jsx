@@ -317,6 +317,7 @@ function ReturnHistory({ refresh }) {
 
 export default function FieldMyStock() {
   const { teamId } = useAuth();
+  const [tab, setTab] = useState("stock");
   const [teamData, setTeamData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -343,6 +344,7 @@ export default function FieldMyStock() {
     setShowReturn(false);
     setSuccessMsg(msg);
     setReturnRefresh(k => k + 1);
+    setTab("returns");
     load(true);
     setTimeout(() => setSuccessMsg(""), 6000);
   }
@@ -354,6 +356,18 @@ export default function FieldMyStock() {
         (it.item_code || "").toLowerCase().includes(search.toLowerCase())
       )
     : items;
+
+  const tabStyle = (key) => ({
+    padding: "9px 18px",
+    fontSize: "0.84rem",
+    fontWeight: tab === key ? 700 : 500,
+    color: tab === key ? "#2563eb" : "#64748b",
+    background: "none",
+    border: "none",
+    borderBottom: tab === key ? "2px solid #2563eb" : "2px solid transparent",
+    cursor: "pointer",
+    marginBottom: -1,
+  });
 
   return (
     <div className="exec-page">
@@ -367,7 +381,7 @@ export default function FieldMyStock() {
           </div>
         </div>
         <div className="page-actions" style={{ display: "flex", gap: 8 }}>
-          {items.length > 0 && (
+          {tab === "stock" && items.length > 0 && (
             <button
               className="btn-primary"
               type="button"
@@ -377,20 +391,25 @@ export default function FieldMyStock() {
               Return Materials
             </button>
           )}
-          <button
-            className="btn-secondary"
-            type="button"
-            onClick={() => load(true)}
-            disabled={refreshing}
-            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.78rem" }}
-          >
-            <span style={{
-              display: "inline-block",
-              animation: refreshing ? "spin 0.7s linear infinite" : "none",
-            }}>↻</span>
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
+          {tab === "stock" && (
+            <button
+              className="btn-secondary"
+              type="button"
+              onClick={() => load(true)}
+              disabled={refreshing}
+              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.78rem" }}
+            >
+              <span style={{ display: "inline-block", animation: refreshing ? "spin 0.7s linear infinite" : "none" }}>↻</span>
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          )}
         </div>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", borderBottom: "1px solid var(--border)", padding: "0 16px" }}>
+        <button type="button" style={tabStyle("stock")} onClick={() => setTab("stock")}>Stock</button>
+        <button type="button" style={tabStyle("returns")} onClick={() => setTab("returns")}>Return Requests</button>
       </div>
 
       <div className="exec-body">
@@ -406,80 +425,78 @@ export default function FieldMyStock() {
           </div>
         )}
 
-        {/* Stock section */}
-        {loading ? (
-          <div className="exec-section">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="history-card" style={{ marginBottom: 10 }}>
-                <div className="skeleton-line" style={{ width: "60%", height: 14, marginBottom: 8 }} />
-                <div className="skeleton-line" style={{ width: "25%", height: 22 }} />
-              </div>
-            ))}
-          </div>
-        ) : !teamData ? (
-          <div className="exec-section">
-            <div className="empty-state">
-              <div className="empty-icon">📦</div>
-              <h3>No team found</h3>
-              <p>Your account isn't linked to an active team warehouse. Contact your IM.</p>
-            </div>
-          </div>
-        ) : (
-          <>
-            {items.length > 0 && <SummaryBar items={items} />}
-
-            {lastUpdated && (
-              <div style={{ padding: "0 16px 6px", fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </div>
-            )}
-
-            {items.length > 5 && (
-              <div style={{ padding: "0 16px 10px" }}>
-                <input
-                  type="search"
-                  className="exec-field input"
-                  placeholder="Search by item name or code…"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  style={{
-                    width: "100%", boxSizing: "border-box",
-                    padding: "9px 14px", borderRadius: 10,
-                    border: "1px solid var(--border)", fontSize: "0.88rem",
-                    background: "var(--surface)",
-                  }}
-                />
-              </div>
-            )}
-
-            <div className="exec-section" style={{ paddingTop: 4 }}>
-              {filtered.length === 0 ? (
-                <div className="empty-state" style={{ padding: "24px 0" }}>
-                  <div className="empty-icon">🔍</div>
-                  <h3>{search ? "No items match" : "No materials in stock"}</h3>
-                  {search && <p>Try a different search term.</p>}
+        {/* Stock tab */}
+        {tab === "stock" && (
+          loading ? (
+            <div className="exec-section">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="history-card" style={{ marginBottom: 10 }}>
+                  <div className="skeleton-line" style={{ width: "60%", height: 14, marginBottom: 8 }} />
+                  <div className="skeleton-line" style={{ width: "25%", height: 22 }} />
                 </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {filtered.map(it => <StockCard key={it.item_code} item={it} />)}
+              ))}
+            </div>
+          ) : !teamData ? (
+            <div className="exec-section">
+              <div className="empty-state">
+                <div className="empty-icon">📦</div>
+                <h3>No team found</h3>
+                <p>Your account isn't linked to an active team warehouse. Contact your IM.</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {items.length > 0 && <SummaryBar items={items} />}
+
+              {lastUpdated && (
+                <div style={{ padding: "0 16px 6px", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </div>
               )}
 
-              {search && filtered.length > 0 && (
-                <div style={{ textAlign: "center", marginTop: 10, fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                  {filtered.length} of {items.length} items
+              {items.length > 5 && (
+                <div style={{ padding: "0 16px 10px" }}>
+                  <input
+                    type="search"
+                    className="exec-field input"
+                    placeholder="Search by item name or code…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    style={{
+                      width: "100%", boxSizing: "border-box",
+                      padding: "9px 14px", borderRadius: 10,
+                      border: "1px solid var(--border)", fontSize: "0.88rem",
+                      background: "var(--surface)",
+                    }}
+                  />
                 </div>
               )}
-            </div>
-          </>
+
+              <div className="exec-section" style={{ paddingTop: 4 }}>
+                {filtered.length === 0 ? (
+                  <div className="empty-state" style={{ padding: "24px 0" }}>
+                    <div className="empty-icon">🔍</div>
+                    <h3>{search ? "No items match" : "No materials in stock"}</h3>
+                    {search && <p>Try a different search term.</p>}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {filtered.map(it => <StockCard key={it.item_code} item={it} />)}
+                  </div>
+                )}
+                {search && filtered.length > 0 && (
+                  <div style={{ textAlign: "center", marginTop: 10, fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                    {filtered.length} of {items.length} items
+                  </div>
+                )}
+              </div>
+            </>
+          )
         )}
 
-        {/* Return requests history */}
-        {teamData && (
-          <div className="exec-section" style={{ paddingTop: 8, borderTop: "1px solid var(--border)", marginTop: 8 }}>
-            <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-muted)", padding: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-              Return Requests
-            </div>
+        {/* Return requests tab */}
+        {tab === "returns" && (
+          <div className="exec-section">
             <ReturnHistory refresh={returnRefresh} />
           </div>
         )}

@@ -443,6 +443,7 @@ export default function FieldExpense() {
   const [team, setTeam] = useState(null);
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("pending");
   const [showCreate, setShowCreate] = useState(false);
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [error, setError] = useState(null);
@@ -464,9 +465,11 @@ export default function FieldExpense() {
     }
   }, []);
 
-  const pendingTotal = claims
-    .filter((c) => effectiveStatus(c) !== "Approved" && effectiveStatus(c) !== "Rejected")
-    .reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0);
+  const pendingClaims = claims.filter(
+    (c) => effectiveStatus(c) !== "Approved" && effectiveStatus(c) !== "Rejected"
+  );
+  const pendingTotal = pendingClaims.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0);
+  const visibleClaims = tab === "pending" ? pendingClaims : claims;
 
   useEffect(() => { load(); }, [load]);
 
@@ -514,17 +517,61 @@ export default function FieldExpense() {
         </div>
       )}
 
+      {/* Tab bar */}
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: 14 }}>
+        {[
+          { key: "pending", label: "Pending", count: pendingClaims.length },
+          { key: "all", label: "All" },
+        ].map(({ key, label, count }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            style={{
+              padding: "9px 18px",
+              fontSize: "0.84rem",
+              fontWeight: tab === key ? 700 : 500,
+              color: tab === key ? "#2563eb" : "#64748b",
+              background: "none",
+              border: "none",
+              borderBottom: tab === key ? "2px solid #2563eb" : "2px solid transparent",
+              cursor: "pointer",
+              marginBottom: -1,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {label}
+            {count > 0 && (
+              <span style={{ background: tab === key ? "#dbeafe" : "#f1f5f9", color: tab === key ? "#1d4ed8" : "#64748b", borderRadius: 10, padding: "1px 6px", fontSize: "0.72rem", fontWeight: 700 }}>
+                {count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>Loading...</div>
-      ) : claims.length === 0 ? (
+      ) : visibleClaims.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>
           <div style={{ fontSize: "2rem", marginBottom: 8 }}>📋</div>
-          <div>No expense claims yet.</div>
-          <div style={{ fontSize: "0.8rem", marginTop: 4 }}>Tap + New Claim to file one.</div>
+          <div>{tab === "pending" ? "No pending claims." : "No expense claims yet."}</div>
+          {tab === "pending" && claims.length > 0 && (
+            <div style={{ fontSize: "0.8rem", marginTop: 4 }}>
+              <button type="button" onClick={() => setTab("all")} style={{ background: "none", border: "none", color: "#3b82f6", cursor: "pointer", fontSize: "0.8rem", textDecoration: "underline" }}>
+                View all claims
+              </button>
+            </div>
+          )}
+          {tab === "pending" && claims.length === 0 && (
+            <div style={{ fontSize: "0.8rem", marginTop: 4 }}>Tap + New Claim to file one.</div>
+          )}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {claims.map((c) => (
+          {visibleClaims.map((c) => (
             <button
               key={c.name}
               type="button"

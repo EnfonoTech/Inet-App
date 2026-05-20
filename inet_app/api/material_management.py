@@ -1414,56 +1414,6 @@ def get_poid_materials(po_dispatch):
     return out
 
 
-# ─── Field Team Material Usage ────────────────────────────────────────────────
-
-@frappe.whitelist()
-def save_material_usage(po_dispatch, material_request, execution, usage_items):
-    """Save field team's actual material usage for a POID execution."""
-    if isinstance(usage_items, str):
-        usage_items = frappe.parse_json(usage_items)
-
-    existing = frappe.db.get_value("INET Material Usage",
-        {"po_dispatch": po_dispatch, "material_request": material_request}, "name")
-    if existing:
-        frappe.db.set_value("INET Material Usage", existing, {
-            "execution": execution or "",
-            "usage_items": frappe.as_json(usage_items),
-            "status": "Saved",
-        })
-        return {"name": existing, "action": "updated"}
-    doc = frappe.get_doc({
-        "doctype": "INET Material Usage",
-        "po_dispatch": po_dispatch,
-        "material_request": material_request,
-        "execution": execution or "",
-        "usage_items": frappe.as_json(usage_items),
-        "created_by_team": frappe.session.user,
-        "status": "Saved",
-    })
-    doc.insert(ignore_permissions=True)
-    frappe.db.commit()
-    return {"name": doc.name, "action": "created"}
-
-
-@frappe.whitelist()
-def get_material_usage(po_dispatch, material_request=None):
-    """Get saved material usage for a POID."""
-    filters = {"po_dispatch": po_dispatch}
-    if material_request:
-        filters["material_request"] = material_request
-    rows = frappe.db.get_all("INET Material Usage", filters=filters,
-                              fields=["name", "material_request", "execution", "usage_items"],
-                              order_by="creation desc", limit=1)
-    if not rows:
-        return None
-    r = rows[0]
-    try:
-        r["usage_items"] = frappe.parse_json(r["usage_items"]) if r.get("usage_items") else []
-    except Exception:
-        r["usage_items"] = []
-    return r
-
-
 # ─── Material Return Flow ──────────────────────────────────────────────────────
 
 
