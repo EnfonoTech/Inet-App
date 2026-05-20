@@ -566,4 +566,11 @@ export const pmApi = {
     }),
   getMaterialUsage:        (po_dispatch, material_request) =>
     call("inet_app.api.material_management.get_material_usage", { po_dispatch, material_request: material_request || "" }),
+
+  // ── Material Return Flow ────────────────────────────────────
+  createReturnRequest:     (payload) => call("inet_app.api.material_management.create_material_return_request", { payload: JSON.stringify(payload) }),
+  listReturnRequests:      (args)    => call("inet_app.api.material_management.list_return_requests", args || {}),
+  approveReturnRequest:    (name)    => call("inet_app.api.material_management.approve_material_return_request", { name }),
+  rejectReturnRequest:     (name, reason) => call("inet_app.api.material_management.reject_material_request", { name, reason: reason || "" }),
+  createDirectReturn:      (payload) => call("inet_app.api.material_management.create_direct_return_transfer", { payload: JSON.stringify(payload) }),
 };

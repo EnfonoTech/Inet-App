@@ -25,6 +25,7 @@ def after_migrate():
     _ensure_outbound_custom_fields()
     _ensure_poid_accounting_dimension()
     _ensure_material_permissions()
+    _ensure_material_return_field()
 
 
 def _resync_pms_workspace():
@@ -472,6 +473,26 @@ def _ensure_material_permissions():
             except Exception:
                 pass
 
+    frappe.db.commit()
+
+
+def _ensure_material_return_field():
+    """Add is_return_request flag and return_reason to Material Request."""
+    _add_field("Material Request", "Material Request-is_return_request", {
+        "fieldname": "is_return_request",
+        "label": "Is Return Request",
+        "fieldtype": "Check",
+        "default": "0",
+        "insert_after": "set_from_warehouse",
+        "hidden": 1,
+    })
+    _add_field("Material Request", "Material Request-return_reason", {
+        "fieldname": "return_reason",
+        "label": "Return Reason",
+        "fieldtype": "Small Text",
+        "insert_after": "is_return_request",
+        "hidden": 1,
+    })
     frappe.db.commit()
 
 

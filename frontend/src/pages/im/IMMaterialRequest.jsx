@@ -785,6 +785,325 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
   );
 }
 
+// ─── Direct Return Form (IM only) ────────────────────────────────────────────
+
+function DirectReturnForm({ teams, onClose, onDone }) {
+  const [teamId, setTeamId] = useState("");
+  const [stockItems, setStockItems] = useState([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [returnQtys, setReturnQtys] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function loadTeamStock(id) {
+    setTeamId(id);
+    setStockItems([]);
+    setReturnQtys({});
+    if (!id) return;
+    setStockLoading(true);
+    try {
+      const res = await pmApi.getTeamMaterialStock(id);
+      const team = (Array.isArray(res) ? res : [])[0];
+      setStockItems(team?.items || []);
+    } catch { setStockItems([]); }
+    finally { setStockLoading(false); }
+  }
+
+  async function submit() {
+    setErr("");
+    const items = stockItems
+      .map(it => ({ item_code: it.item_code, qty: parseFloat(returnQtys[it.item_code] || 0), uom: it.uom || "pcs" }))
+      .filter(i => i.qty > 0);
+
+    if (!teamId) { setErr("Please select a team."); return; }
+    if (items.length === 0) { setErr("Enter return quantity for at least one item."); return; }
+
+    for (const it of items) {
+      const avail = Number(stockItems.find(s => s.item_code === it.item_code)?.qty || 0);
+      if (it.qty > avail) {
+        const name = stockItems.find(s => s.item_code === it.item_code)?.item_name || it.item_code;
+        setErr(`Return qty for "${name}" (${it.qty}) exceeds available stock (${avail}).`);
+        return;
+      }
+    }
+
+    setBusy(true);
+    try {
+      const res = await pmApi.createDirectReturn({ team_id: teamId, items });
+      onDone(`Materials returned to main warehouse. Stock Entry: ${res.stock_entry}`);
+    } catch (e) {
+      setErr(e.message || "Transfer failed.");
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <p style={{ margin: 0, fontSize: "0.84rem", color: "#475569" }}>
+        Creates a Material Transfer SE directly from team warehouse → main warehouse. No approval needed.
+      </p>
+
+      <div>
+        {label("Team", true)}
+        <select style={inp} value={teamId} onChange={e => loadTeamStock(e.target.value)}>
+          <option value="">— Select team —</option>
+          {teams.map(t => <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>)}
+        </select>
+      </div>
+
+      {stockLoading && (
+        <div style={{ fontSize: "0.82rem", color: "#94a3b8", textAlign: "center", padding: 12 }}>Loading team stock…</div>
+      )}
+
+      {teamId && !stockLoading && stockItems.length === 0 && (
+        <div style={{ fontSize: "0.82rem", color: "#94a3b8", textAlign: "center", padding: 12 }}>No stock in this team's warehouse.</div>
+      )}
+
+      {stockItems.length > 0 && (
+        <div>
+          {label("Items to Return")}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {stockItems.map(it => (
+              <div key={it.item_code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: returnQtys[it.item_code] > 0 ? "rgba(29,78,216,0.04)" : "var(--surface)" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: "0.84rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.item_name || it.item_code}</div>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Available: {Number(it.qty || 0).toLocaleString()} {it.uom || "pcs"}</div>
+                </div>
+                <input
+                  type="number" min="0" step="0.01" max={it.qty}
+                  placeholder="0"
+                  inputMode="decimal"
+                  value={returnQtys[it.item_code] || ""}
+                  onChange={e => setReturnQtys(p => ({ ...p, [it.item_code]: e.target.value }))}
+                  style={{ width: 80, padding: "6px 8px", borderRadius: 6, border: "1px solid var(--border)", fontSize: "0.86rem", textAlign: "right" }}
+                />
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0 }}>{it.uom || "pcs"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {err && (
+        <div style={{ padding: "8px 12px", borderRadius: 8, background: "#fef2f2", color: "#dc2626", fontSize: "0.82rem", border: "1px solid #fecaca" }}>
+          {err}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button type="button" className="btn-secondary" onClick={onClose} disabled={busy} style={{ fontSize: "0.84rem" }}>Cancel</button>
+        <button type="button" className="btn-primary" onClick={submit} disabled={busy || !teamId || stockItems.length === 0} style={{ fontSize: "0.84rem" }}>
+          {busy ? "Transferring…" : "Transfer to Main Warehouse"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Return Requests Tab ──────────────────────────────────────────────────────
+
+const RETURN_STATUSES = ["Pending Approval", "Transferred", "Rejected"];
+
+function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [actionRow, setActionRow] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionErr, setActionErr] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [showDirectReturn, setShowDirectReturn] = useState(false);
+  const [directSuccessMsg, setDirectSuccessMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const args = { limit: 100 };
+      if (statusFilter) args.status = statusFilter;
+      if (!isAdmin && imName) args.im = imName;
+      const res = await pmApi.listReturnRequests(args);
+      const list = Array.isArray(res) ? res : [];
+      setRows(list);
+      onPendingCount?.(list.filter(r => r.request_status === "Pending Approval").length);
+    } catch (e) {
+      setError(e.message || "Failed to load");
+    } finally { setLoading(false); }
+  }, [isAdmin, imName, statusFilter]);
+
+  useEffect(() => { load(); }, [load, refresh]);
+
+  async function approve(name) {
+    setActionBusy(true);
+    setActionErr("");
+    try {
+      await pmApi.approveReturnRequest(name);
+      setActionRow(null);
+      load();
+    } catch (e) {
+      setActionErr(e.message || "Approval failed.");
+    } finally { setActionBusy(false); }
+  }
+
+  async function reject(name) {
+    if (!rejectReason.trim()) { setActionErr("Please enter a rejection reason."); return; }
+    setActionBusy(true);
+    setActionErr("");
+    try {
+      await pmApi.rejectReturnRequest(name, rejectReason.trim());
+      setActionRow(null);
+      setRejectReason("");
+      load();
+    } catch (e) {
+      setActionErr(e.message || "Rejection failed.");
+    } finally { setActionBusy(false); }
+  }
+
+  function openAction(row) {
+    setActionRow(row);
+    setActionErr("");
+    setRejectReason("");
+  }
+
+  function handleDirectDone(msg) {
+    setShowDirectReturn(false);
+    setDirectSuccessMsg(msg);
+    load();
+    setTimeout(() => setDirectSuccessMsg(""), 6000);
+  }
+
+  return (
+    <>
+      <div className="toolbar">
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
+          <option value="">All Statuses</option>
+          {RETURN_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {statusFilter && (
+          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => setStatusFilter("")}>Clear</button>
+        )}
+        <button className="btn-secondary" style={{ marginLeft: "auto", fontSize: "0.78rem", padding: "5px 12px" }} onClick={load} disabled={loading}>
+          {loading ? "…" : "Refresh"}
+        </button>
+        <button className="btn-primary" style={{ fontSize: "0.78rem", padding: "5px 14px" }} onClick={() => setShowDirectReturn(true)}>
+          + Direct Return
+        </button>
+      </div>
+
+      {directSuccessMsg && (
+        <div className="notice success" style={{ margin: "0 16px 12px" }}>✓ {directSuccessMsg}</div>
+      )}
+
+      {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
+
+      <div className="page-content">
+      <DataTableWrapper>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">↩</div>
+            <h3>No return requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
+            <p>Field teams can request to return excess materials from their stock page.</p>
+          </div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Request No.</th>
+                <th>Date</th>
+                <th>Team</th>
+                <th>Team Warehouse</th>
+                {isAdmin && <th>IM</th>}
+                <th>Reason</th>
+                <th>Status</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => (
+                <tr key={row.name}>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{row.request_date}</td>
+                  <td style={{ fontSize: "0.82rem", fontWeight: 600 }}>{row.team_name || "—"}</td>
+                  <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{row.team_warehouse || "—"}</td>
+                  {isAdmin && <td style={{ fontSize: "0.82rem" }}>{row.im || "—"}</td>}
+                  <td style={{ fontSize: "0.82rem", color: "#64748b", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.reason}>{row.reason || "—"}</td>
+                  <td><StatusBadge status={row.request_status} /></td>
+                  <td>
+                    {row.request_status === "Pending Approval" ? (
+                      <button type="button" className="btn-primary" style={{ fontSize: "0.7rem", padding: "3px 10px" }}
+                        onClick={() => openAction(row)}>
+                        Review
+                      </button>
+                    ) : (
+                      <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 10px" }}
+                        onClick={() => openAction(row)}>
+                        View
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </DataTableWrapper>
+      </div>
+
+      {/* Review / view modal */}
+      <Modal open={!!actionRow} onClose={() => { setActionRow(null); setActionErr(""); setRejectReason(""); }}
+        title={`Return Request · ${actionRow?.name || ""}`} width={520}>
+        {actionRow && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <StatusBadge status={actionRow.request_status} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px", fontSize: "0.84rem" }}>
+              <div><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Team</span><br /><strong>{actionRow.team_name}</strong></div>
+              <div><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Date</span><br />{actionRow.request_date}</div>
+              {actionRow.team_warehouse && <div><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Team WH</span><br />{actionRow.team_warehouse}</div>}
+              {actionRow.reason && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Reason</span><br />{actionRow.reason}</div>}
+            </div>
+
+            {actionRow.request_status === "Pending Approval" && (
+              <>
+                <div>
+                  {label("Rejection reason (required to reject)")}
+                  <input style={inp} value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                    placeholder="Enter reason if rejecting…" disabled={actionBusy} />
+                </div>
+                {actionErr && <div style={{ color: "#dc2626", fontSize: "0.82rem" }}>{actionErr}</div>}
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-secondary" style={{ color: "#dc2626", borderColor: "#fca5a5" }}
+                    onClick={() => reject(actionRow.name)} disabled={actionBusy || !rejectReason.trim()}>
+                    {actionBusy ? "…" : "Reject"}
+                  </button>
+                  <button type="button" className="btn-primary"
+                    onClick={() => approve(actionRow.name)} disabled={actionBusy}>
+                    {actionBusy ? "Processing…" : "Approve & Transfer"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* IM direct return modal */}
+      <Modal open={showDirectReturn} onClose={() => setShowDirectReturn(false)}
+        title="Direct Material Return" width={560}>
+        <DirectReturnForm
+          teams={teams}
+          onClose={() => setShowDirectReturn(false)}
+          onDone={handleDirectDone}
+        />
+      </Modal>
+    </>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function IMMaterialRequest() {
@@ -797,10 +1116,16 @@ export default function IMMaterialRequest() {
   const [successMsg, setSuccessMsg] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
+  const [pendingReturnCount, setPendingReturnCount] = useState(0);
+  const [teams, setTeams] = useState([]);
+
+  // Pre-load teams for the direct-return form so it doesn't need to fetch again
+  useEffect(() => {
+    pmApi.getImTeams(imName).then(t => setTeams(Array.isArray(t) ? t : [])).catch(() => {});
+  }, [imName]);
+
   function switchTab(id) {
     setTab(id);
-    // After React mounts the new tab's table, tell DataTablePro to re-init.
-    // (The .data-table-scroll MutationObserver never fires on full unmount.)
     setTimeout(() => document.dispatchEvent(new CustomEvent("tablepro:check")), 60);
   }
 
@@ -820,6 +1145,7 @@ export default function IMMaterialRequest() {
   const TABS = [
     { id: "requests", label: "Requests", count: pendingCount },
     { id: "duid", label: "DUID Stock" },
+    { id: "returns", label: "Returns", count: pendingReturnCount },
   ];
 
   return (
@@ -882,6 +1208,15 @@ export default function IMMaterialRequest() {
       )}
       {tab === "duid" && (
         <DuidStockTab onRequest={(duid) => openNew(duid)} />
+      )}
+      {tab === "returns" && (
+        <ReturnRequestsTab
+          isAdmin={isAdmin}
+          imName={imName}
+          refresh={refreshKey}
+          onPendingCount={setPendingReturnCount}
+          teams={teams}
+        />
       )}
 
       <Modal open={showNew} onClose={() => setShowNew(false)}

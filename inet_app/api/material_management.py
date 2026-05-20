@@ -417,6 +417,11 @@ def list_material_requests(im=None, status=None, limit=50):
     is_admin = bool(roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin"})
 
     filters = {"material_request_type": "Material Transfer"}
+    try:
+        if frappe.db.has_column("Material Request", "is_return_request"):
+            filters["is_return_request"] = ["!=", 1]
+    except Exception:
+        pass
     if not is_admin:
         im_name = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
         if im_name:
@@ -939,11 +944,11 @@ def approve_material_request(name):
     frappe.only_for(["System Manager", "Stock Manager"])
 
     mr = frappe.get_doc("Material Request", name)
-    if mr.status == "Cancelled":
+    if mr.docstatus == 2:
         frappe.throw("This request has been cancelled.")
     if mr.transfer_status == "Completed":
         frappe.throw("Material Transfer already completed for this request.")
-    if mr.status != "Submitted":
+    if mr.docstatus != 1:
         frappe.throw(f"Cannot approve a request in status '{mr.status}'. Submit it first.")
 
     from erpnext.stock.doctype.material_request.material_request import make_stock_entry
@@ -1424,3 +1429,281 @@ def get_material_usage(po_dispatch, material_request=None):
     except Exception:
         r["usage_items"] = []
     return r
+
+
+# ─── Material Return Flow ──────────────────────────────────────────────────────
+
+
+def _get_team_duid_per_item(team_wh, item_codes):
+    """Return {item_code: duid} for items in a team warehouse.
+
+    Uses the Transfer SE Detail to_duid (the DUID items arrived under).
+    Returns the DUID with the highest transferred qty per item, which is the
+    primary source DUID to tag on the return SE.
+    """
+    if not item_codes or not team_wh:
+        return {}
+    placeholders = ", ".join(["%s"] * len(item_codes))
+    rows = frappe.db.sql(
+        f"""SELECT sed.item_code, sed.to_duid, SUM(sed.qty) AS total_qty
+            FROM `tabStock Entry Detail` sed
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.docstatus = 1
+              AND se.stock_entry_type = 'Material Transfer'
+              AND sed.t_warehouse = %s
+              AND sed.to_duid IS NOT NULL AND sed.to_duid != ''
+              AND sed.item_code IN ({placeholders})
+            GROUP BY sed.item_code, sed.to_duid
+            ORDER BY total_qty DESC""",
+        (team_wh, *item_codes), as_dict=True,
+    )
+    result = {}
+    for r in rows:
+        if r["item_code"] not in result:   # highest-qty DUID wins
+            result[r["item_code"]] = r["to_duid"]
+    return result
+
+
+def _resolve_team_for_user():
+    """Resolve INET Team name for the current field user (same logic as get_team_material_stock)."""
+    resolved = frappe.db.get_value(
+        "INET Team", {"field_user": frappe.session.user, "status": "Active"}, "name"
+    )
+    if not resolved:
+        emp = frappe.db.get_value("Employee", {"user_id": frappe.session.user, "status": "Active"}, "name")
+        if emp:
+            parent = frappe.db.get_value("INET Team Member", {"employee": emp}, "parent")
+            if parent and frappe.db.get_value("INET Team", parent, "status") == "Active":
+                resolved = parent
+    return resolved or ""
+
+
+@frappe.whitelist()
+def create_material_return_request(payload):
+    """Field team (or IM on behalf of a team) submits a return request:
+    team warehouse → source warehouse.  Creates a Material Request with
+    is_return_request=1 that the IM then approves.
+    """
+    import json
+    roles = set(frappe.get_roles(frappe.session.user))
+    allowed = roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin", "INET IM", "INET Field Team"}
+    if not allowed:
+        frappe.throw("Not permitted.", frappe.PermissionError)
+
+    data = json.loads(payload) if isinstance(payload, str) else payload
+    items = [i for i in (data.get("items") or []) if flt(i.get("qty", 0)) > 0]
+    if not items:
+        frappe.throw("At least one item with quantity > 0 is required.")
+
+    # Resolve team
+    team_id = (data.get("team_id") or "").strip()
+    if not team_id:
+        team_id = _resolve_team_for_user()
+    if not team_id:
+        frappe.throw("Team not found. Your account may not be linked to an active team.")
+
+    team_wh = frappe.db.get_value("INET Team", team_id, "warehouse") or ""
+    if not team_wh:
+        frappe.throw("Team Warehouse not configured on the selected team.")
+
+    source_wh = frappe.db.get_single_value("INET Settings", "source_warehouse") or ""
+    if not source_wh:
+        frappe.throw("Source Warehouse not configured in INET Settings.")
+
+    company = frappe.defaults.get_global_default("company")
+    req_date = nowdate()
+    im = frappe.db.get_value("INET Team", team_id, "im") or ""
+    reason = (data.get("reason") or "").strip()
+
+    doc = frappe.get_doc({
+        "doctype": "Material Request",
+        "material_request_type": "Material Transfer",
+        "transaction_date": req_date,
+        "schedule_date": req_date,
+        "company": company,
+        "set_from_warehouse": team_wh,
+        "set_warehouse": source_wh,
+        "is_return_request": 1,
+        "im": im,
+        **({"return_reason": reason} if reason and frappe.db.has_column("Material Request", "return_reason") else {}),
+        "items": [
+            {
+                "item_code": i["item_code"],
+                "qty": flt(i["qty"]),
+                "uom": i.get("uom") or frappe.db.get_value("Item", i["item_code"], "stock_uom") or "",
+                "warehouse": source_wh,
+                "from_warehouse": team_wh,
+                "schedule_date": req_date,
+            }
+            for i in items
+        ],
+    })
+    doc.insert(ignore_permissions=True)
+    doc.submit()
+    frappe.db.commit()
+    return {"name": doc.name, "status": "Pending Approval"}
+
+
+@frappe.whitelist()
+def list_return_requests(team_id=None, status=None, limit=50):
+    """List Material Return Requests.
+
+    Field team: sees their team's requests.
+    IM: sees all requests from teams under their supervision.
+    Admin / Stock Manager: sees all.
+    """
+    roles = set(frappe.get_roles(frappe.session.user))
+    is_admin = bool(roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin"})
+    is_im = "INET IM" in roles
+
+    filters = {
+        "material_request_type": "Material Transfer",
+        "is_return_request": 1,
+    }
+
+    if is_admin:
+        pass
+    elif is_im:
+        im = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
+        if im:
+            filters["im"] = im
+        else:
+            return []
+    else:
+        resolved = _resolve_team_for_user()
+        if not resolved:
+            return []
+        team_wh = frappe.db.get_value("INET Team", resolved, "warehouse") or ""
+        if team_wh:
+            filters["set_from_warehouse"] = team_wh
+
+    if team_id:
+        team_wh_override = frappe.db.get_value("INET Team", team_id, "warehouse") or ""
+        if team_wh_override:
+            filters["set_from_warehouse"] = team_wh_override
+
+    rows = frappe.db.get_all(
+        "Material Request",
+        filters=filters,
+        fields=[
+            "name", "transaction_date", "owner", "im",
+            "status", "transfer_status", "set_from_warehouse", "set_warehouse",
+            *( ["return_reason"] if frappe.db.has_column("Material Request", "return_reason") else [] ),
+        ],
+        order_by="`tabMaterial Request`.transaction_date desc, `tabMaterial Request`.creation desc",
+        limit=int(limit),
+    )
+
+    # Resolve team names from warehouse reverse-lookup (batch)
+    warehouses = list({r["set_from_warehouse"] for r in rows if r.get("set_from_warehouse")})
+    wh_team_map = {}
+    if warehouses:
+        for t in frappe.db.get_all(
+            "INET Team", filters={"warehouse": ["in", warehouses]},
+            fields=["warehouse", "name", "team_name"],
+        ):
+            wh_team_map[t["warehouse"]] = {"team_id": t["name"], "team_name": t["team_name"]}
+
+    for r in rows:
+        r["request_date"] = str(r.pop("transaction_date", "") or "")
+        r["request_status"] = _request_status(r["status"], r["transfer_status"])
+        team_info = wh_team_map.get(r.get("set_from_warehouse") or "", {})
+        r["team_id"] = team_info.get("team_id", "")
+        r["team_name"] = team_info.get("team_name") or r.get("set_from_warehouse", "—")
+        r["team_warehouse"] = r.get("set_from_warehouse", "")
+        r["reason"] = r.pop("return_reason", "") or ""
+
+    if status:
+        rows = [r for r in rows if r["request_status"] == status]
+
+    return rows
+
+
+@frappe.whitelist()
+def approve_material_return_request(name):
+    """IM/Stock Manager approves a return request.
+
+    Creates a Material Transfer SE: s_warehouse = team WH → t_warehouse = source WH.
+    Sets duid = team DUID per item (inventory dimension for source-side tracking).
+    """
+    frappe.only_for(["System Manager", "Stock Manager"])
+
+    mr = frappe.get_doc("Material Request", name)
+    if not mr.get("is_return_request"):
+        frappe.throw("This is not a return request. Use approve_material_request instead.")
+    if mr.docstatus == 2:
+        frappe.throw("This request has been cancelled.")
+    if mr.transfer_status == "Completed":
+        frappe.throw("Transfer already completed for this request.")
+    if mr.docstatus != 1:
+        frappe.throw(f"Cannot approve a request in status '{mr.status}'. Submit it first.")
+
+    from erpnext.stock.doctype.material_request.material_request import make_stock_entry
+    se = make_stock_entry(name)
+
+    # Tag each item with the team DUID (inventory dimension — source side of transfer)
+    team_wh = mr.set_from_warehouse
+    item_codes = [i.item_code for i in mr.items]
+    duid_by_item = _get_team_duid_per_item(team_wh, item_codes)
+
+    for item in se.items:
+        duid = duid_by_item.get(item.item_code, "")
+        if duid:
+            item.duid = duid   # before_stock_entry_submit respects pre-set values
+
+    se.insert(ignore_permissions=True)
+    se.submit()
+    frappe.db.commit()
+    return {"name": name, "stock_entry": se.name, "status": "Approved"}
+
+
+@frappe.whitelist()
+def create_direct_return_transfer(payload):
+    """IM creates a Material Transfer SE directly (team WH → source WH) without MR.
+
+    Used when the IM wants to return materials without a field-team request.
+    """
+    frappe.only_for(["System Manager", "Stock Manager"])
+    import json
+
+    data = json.loads(payload) if isinstance(payload, str) else payload
+    team_id = (data.get("team_id") or "").strip()
+    items = [i for i in (data.get("items") or []) if flt(i.get("qty", 0)) > 0]
+
+    if not team_id:
+        frappe.throw("Team is required.")
+    if not items:
+        frappe.throw("At least one item with quantity > 0 is required.")
+
+    team_wh = frappe.db.get_value("INET Team", team_id, "warehouse") or ""
+    if not team_wh:
+        frappe.throw("Team Warehouse not configured on the selected team.")
+
+    source_wh = frappe.db.get_single_value("INET Settings", "source_warehouse") or ""
+    if not source_wh:
+        frappe.throw("Source Warehouse not configured in INET Settings.")
+
+    company = frappe.defaults.get_global_default("company")
+    item_codes = [i["item_code"] for i in items]
+    duid_by_item = _get_team_duid_per_item(team_wh, item_codes)
+
+    se = frappe.get_doc({
+        "doctype": "Stock Entry",
+        "stock_entry_type": "Material Transfer",
+        "company": company,
+        "items": [
+            {
+                "item_code": i["item_code"],
+                "qty": flt(i["qty"]),
+                "uom": i.get("uom") or frappe.db.get_value("Item", i["item_code"], "stock_uom") or "",
+                "s_warehouse": team_wh,
+                "t_warehouse": source_wh,
+                "duid": duid_by_item.get(i["item_code"], ""),
+            }
+            for i in items
+        ],
+    })
+    se.insert(ignore_permissions=True)
+    se.submit()
+    frappe.db.commit()
+    return {"stock_entry": se.name, "status": "Transferred"}
