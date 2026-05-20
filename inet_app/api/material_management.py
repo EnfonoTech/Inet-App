@@ -725,6 +725,7 @@ def get_duid_stock_summary():
 
     Groups all INET Huawei Outbound Plan rows by DUID, showing
     how many shipments arrived (Received) vs. are expected (Prepared).
+    DUIDs whose net stock in the source warehouse is zero (fully transferred out) are excluded.
     """
     plans = frappe.db.get_all(
         "Huawei Outbound Plan",
@@ -756,9 +757,93 @@ def get_duid_stock_summary():
             g["prepared_count"] += 1
         if str(p["outbound_date"] or "") > g["latest_date"]:
             g["latest_date"] = str(p["outbound_date"])
-    # Sort: received first, then by latest date
+
+    # Build set of DUIDs that are fully transferred out of source warehouse.
+    # Two checks — either is sufficient to mark a DUID as fully transferred:
+    #
+    #  1. SE balance: received_qty (to_duid OR duid on Receipt) - transferred_qty
+    #     (duid on Transfer) - issued_qty (duid on Issue) <= 0
+    #     Note: legacy SEs may have the wrong DUID column set (duid instead of
+    #     to_duid on a Receipt), so we COALESCE both columns for receipts.
+    #
+    #  2. MR status fallback: all submitted MRs for this DUID are Transferred/
+    #     Issued and none are Pending Approval — catches cases where the
+    #     Transfer SE was created without the DUID dimension being set.
+    fully_transferred = set()
+    source_wh = frappe.db.get_single_value("INET Settings", "source_warehouse") or ""
+    if source_wh:
+        # Received: prefer to_duid; fall back to duid (legacy SEs had wrong direction)
+        receipt_rows = frappe.db.sql("""
+            SELECT COALESCE(NULLIF(sed.to_duid,''), NULLIF(sed.duid,'')) AS duid,
+                   SUM(sed.qty) AS qty
+            FROM `tabStock Entry Detail` sed
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.docstatus = 1
+              AND se.stock_entry_type = 'Material Receipt'
+              AND sed.t_warehouse = %s
+              AND (NULLIF(sed.to_duid,'') IS NOT NULL OR NULLIF(sed.duid,'') IS NOT NULL)
+            GROUP BY COALESCE(NULLIF(sed.to_duid,''), NULLIF(sed.duid,''))
+        """, (source_wh,), as_dict=True)
+
+        transfer_rows = frappe.db.sql("""
+            SELECT sed.duid, SUM(sed.qty) AS qty
+            FROM `tabStock Entry Detail` sed
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.docstatus = 1
+              AND se.stock_entry_type = 'Material Transfer'
+              AND sed.s_warehouse = %s
+              AND sed.duid IS NOT NULL AND sed.duid != ''
+            GROUP BY sed.duid
+        """, (source_wh,), as_dict=True)
+
+        issue_rows = frappe.db.sql("""
+            SELECT sed.duid, SUM(sed.qty) AS qty
+            FROM `tabStock Entry Detail` sed
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.docstatus = 1
+              AND se.stock_entry_type = 'Material Issue'
+              AND sed.s_warehouse = %s
+              AND sed.duid IS NOT NULL AND sed.duid != ''
+            GROUP BY sed.duid
+        """, (source_wh,), as_dict=True)
+
+        received   = {r.duid: flt(r.qty) for r in receipt_rows}
+        transferred = {r.duid: flt(r.qty) for r in transfer_rows}
+        issued     = {r.duid: flt(r.qty) for r in issue_rows}
+
+        for duid, recv_qty in received.items():
+            out_qty = transferred.get(duid, 0) + issued.get(duid, 0)
+            if recv_qty > 0 and (recv_qty - out_qty) <= 0:
+                fully_transferred.add(duid)
+
+    # MR status fallback: DUIDs where all submitted MRs are done and none pending.
+    # This catches SEs that were submitted without DUID dimension set.
+    try:
+        mr_rows = frappe.db.get_all(
+            "Material Request",
+            filters={"docstatus": 1},
+            fields=["duid", "request_status"],
+        )
+        from collections import defaultdict
+        mr_counts = defaultdict(lambda: {"done": 0, "pending": 0})
+        for mr in mr_rows:
+            d = (mr.get("duid") or "").strip()
+            if not d:
+                continue
+            s = mr.get("request_status") or ""
+            if s in ("Transferred", "Issued"):
+                mr_counts[d]["done"] += 1
+            elif s == "Pending Approval":
+                mr_counts[d]["pending"] += 1
+        for d, counts in mr_counts.items():
+            if counts["done"] > 0 and counts["pending"] == 0:
+                fully_transferred.add(d)
+    except Exception:
+        pass
+
+    # Sort: received first, then by latest date; exclude fully-transferred DUIDs
     result = sorted(
-        by_duid.values(),
+        (v for v in by_duid.values() if v["duid"] not in fully_transferred),
         key=lambda x: (-x["received_count"], x["latest_date"]),
         reverse=False,
     )

@@ -6,57 +6,20 @@ import SearchableSelect from "../../components/SearchableSelect";
 
 // ─── Status ───────────────────────────────────────────────────────────────────
 
-const STATUS_COLORS = {
-  "Pending Approval": { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" },
-  "Transferred":      { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" },
-  "Rejected":         { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" },
-  "Issued":           { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" },
-  "Submitted":        { bg: "#f0f9ff", fg: "#0369a1", dot: "#38bdf8" },
-  "Draft":            { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8" },
-};
-
-function StatusBadge({ status }) {
-  const c = STATUS_COLORS[status] || STATUS_COLORS["Draft"];
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 5,
-      padding: "3px 10px", borderRadius: 999,
-      fontSize: "0.72rem", fontWeight: 700,
-      background: c.bg, color: c.fg,
-    }}>
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.dot, flexShrink: 0 }} />
-      {status}
-    </span>
-  );
+function statusClass(status) {
+  const s = (status || "").toLowerCase().replace(/\s+/g, "-");
+  if (s === "transferred" || s === "issued") return "completed";
+  if (s === "pending-approval") return "in-progress";
+  if (s === "rejected") return "cancelled";
+  return "new";
 }
 
-// ─── Tab bar ──────────────────────────────────────────────────────────────────
-
-function Tabs({ active, onChange, tabs }) {
+function StatusBadge({ status }) {
   return (
-    <div style={{ display: "flex", gap: 2, padding: "0 16px 0", borderBottom: "1px solid #e2e8f0", marginBottom: 0 }}>
-      {tabs.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          onClick={() => onChange(t.id)}
-          style={{
-            padding: "10px 18px", fontSize: "0.84rem", fontWeight: 600,
-            background: "none", border: "none", cursor: "pointer",
-            color: active === t.id ? "#1d4ed8" : "#64748b",
-            borderBottom: active === t.id ? "2px solid #1d4ed8" : "2px solid transparent",
-            marginBottom: -1,
-          }}
-        >
-          {t.label}
-          {t.badge > 0 && (
-            <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 999, background: "#fee2e2", color: "#b91c1c", fontSize: "0.68rem", fontWeight: 700 }}>
-              {t.badge}
-            </span>
-          )}
-        </button>
-      ))}
-    </div>
+    <span className={`status-badge ${statusClass(status)}`}>
+      <span className="status-dot" />
+      {status || "—"}
+    </span>
   );
 }
 
@@ -235,6 +198,7 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
 
   async function submit() {
     setErr("");
+    if (!selectedPoid) { setErr("Please select a POID."); return; }
     if (!team.trim()) { setErr("Please select a team."); return; }
 
     // Huawei items: only include those with qty > 0
@@ -293,7 +257,7 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
 
       {/* POID */}
       <div style={{ marginBottom: 14 }}>
-        {label("POID")}
+        {label("POID", true)}
         <SearchableSelect
           value={selectedPoid}
           onChange={handlePoidSelect}
@@ -577,39 +541,79 @@ function RequestDetail({ row, onClose }) {
 function DuidStockTab({ onRequest }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(""); // "" | "received" | "pending"
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await pmApi.getDuidStockSummary();
-        if (!cancelled) setRows(Array.isArray(res) ? res : []);
-      } catch (e) {
-        if (!cancelled) setError(e.message || "Failed to load");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError("");
+    try {
+      const res = await pmApi.getDuidStockSummary();
+      setRows(Array.isArray(res) ? res : []);
+    } catch (e) {
+      setError(e.message || "Failed to load");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  const visible = rows.filter((r) =>
-    !search.trim() || r.duid.toLowerCase().includes(search.trim().toLowerCase()) || (r.project_name || "").toLowerCase().includes(search.trim().toLowerCase())
-  );
+  useEffect(() => { load(); }, [load]);
+
+  const projects = [...new Set(rows.map((r) => r.project_name).filter(Boolean))].sort();
+
+  const visible = rows.filter((r) => {
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      if (!r.duid.toLowerCase().includes(q) && !(r.project_name || "").toLowerCase().includes(q)) return false;
+    }
+    if (projectFilter && r.project_name !== projectFilter) return false;
+    if (statusFilter === "received" && r.received_count === 0) return false;
+    if (statusFilter === "pending" && r.prepared_count === 0) return false;
+    return true;
+  });
+
+  const hasFilters = search.trim() || projectFilter || statusFilter;
 
   return (
-    <div style={{ padding: "16px 0" }}>
-      <div style={{ padding: "0 16px 12px", display: "flex", gap: 8, alignItems: "center" }}>
-        <input type="search" placeholder="Search DUID or project…" value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260 }} />
+    <>
+      <div className="toolbar">
+        <input type="search" placeholder="Search DUID…"
+          value={search} onChange={(e) => setSearch(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 200 }} />
+        {projects.length > 0 && (
+          <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}>
+            <option value="">All Projects</option>
+            {projects.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}>
+          <option value="">All Status</option>
+          <option value="received">Received</option>
+          <option value="pending">Pending</option>
+        </select>
+        {hasFilters && (
+          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setSearch(""); setProjectFilter(""); setStatusFilter(""); }}>
+            Clear
+          </button>
+        )}
         <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{visible.length} DUIDs</span>
+        <button className="btn-secondary" style={{ marginLeft: "auto", fontSize: "0.78rem", padding: "5px 12px" }}
+          onClick={() => load(true)} disabled={refreshing}>
+          {refreshing ? "…" : "Refresh"}
+        </button>
       </div>
 
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
+      <div className="page-content">
       <DataTableWrapper>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
@@ -669,7 +673,8 @@ function DuidStockTab({ onRequest }) {
           </table>
         )}
       </DataTableWrapper>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -677,7 +682,7 @@ function DuidStockTab({ onRequest }) {
 
 const ALL_STATUSES = ["Pending Approval", "Transferred", "Rejected", "Issued"];
 
-function RequestsTab({ isAdmin, imName, refresh }) {
+function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -692,7 +697,9 @@ function RequestsTab({ isAdmin, imName, refresh }) {
       if (statusFilter) args.status = statusFilter;
       if (!isAdmin && imName) args.im = imName;
       const res = await pmApi.listMaterialRequests(args);
-      setRows(Array.isArray(res) ? res : []);
+      const list = Array.isArray(res) ? res : [];
+      setRows(list);
+      onPendingCount?.(list.filter((r) => r.request_status === "Pending Approval").length);
     } catch (e) {
       setError(e.message || "Failed to load");
     } finally {
@@ -702,11 +709,9 @@ function RequestsTab({ isAdmin, imName, refresh }) {
 
   useEffect(() => { load(); }, [load, refresh]);
 
-  const pending = rows.filter((r) => r.request_status === "Pending Approval").length;
-
   return (
-    <div style={{ padding: "16px 0" }}>
-      <div style={{ padding: "0 16px 12px", display: "flex", gap: 8, alignItems: "center" }}>
+    <>
+      <div className="toolbar">
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
           style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
           <option value="">All Statuses</option>
@@ -720,9 +725,9 @@ function RequestsTab({ isAdmin, imName, refresh }) {
         </button>
       </div>
 
-
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
+      <div className="page-content">
       <DataTableWrapper>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
@@ -768,6 +773,7 @@ function RequestsTab({ isAdmin, imName, refresh }) {
           </table>
         )}
       </DataTableWrapper>
+      </div>
 
       <Modal open={!!detailRow} onClose={() => setDetailRow(null)}
         title={`Request · ${detailRow?.name || ""}`} width={660}>
@@ -775,7 +781,7 @@ function RequestsTab({ isAdmin, imName, refresh }) {
           <RequestDetail row={detailRow} onClose={() => setDetailRow(null)} />
         )}
       </Modal>
-    </div>
+    </>
   );
 }
 
@@ -790,6 +796,13 @@ export default function IMMaterialRequest() {
   const [prefillDuid, setPrefillDuid] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  function switchTab(id) {
+    setTab(id);
+    // After React mounts the new tab's table, tell DataTablePro to re-init.
+    // (The .data-table-scroll MutationObserver never fires on full unmount.)
+    setTimeout(() => document.dispatchEvent(new CustomEvent("tablepro:check")), 60);
+  }
 
   function openNew(duid = "") {
     setPrefillDuid(duid);
@@ -803,6 +816,11 @@ export default function IMMaterialRequest() {
     setTab("requests");
     setTimeout(() => setSuccessMsg(""), 5000);
   }
+
+  const TABS = [
+    { id: "requests", label: "Requests", count: pendingCount },
+    { id: "duid", label: "DUID Stock" },
+  ];
 
   return (
     <div>
@@ -819,24 +837,49 @@ export default function IMMaterialRequest() {
       </div>
 
       {successMsg && (
-        <div className="notice success" style={{ margin: "0 28px 12px" }}>
+        <div className="notice success" style={{ margin: "0 16px 12px" }}>
           <span>✓</span> {successMsg}
         </div>
       )}
 
-      <Tabs
-        active={tab}
-        onChange={setTab}
-        tabs={[
-          { id: "requests", label: "My Requests" },
-          { id: "duid", label: "DUID Stock (Main Warehouse)" },
-        ]}
-      />
+      <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 8px", width: "fit-content" }}>
+        {TABS.map((t) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => switchTab(t.id)}
+              style={{
+                padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700,
+                border: "none", borderRadius: 6, cursor: "pointer",
+                background: active ? "#1d4ed8" : "transparent",
+                color: active ? "#fff" : "#475569",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}
+            >
+              {t.label}
+              {!!t.count && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  minWidth: 18, height: 18, padding: "0 6px",
+                  borderRadius: 999, fontSize: "0.66rem", fontWeight: 800,
+                  background: active ? "#fff" : "#f59e0b",
+                  color: active ? "#1d4ed8" : "#fff",
+                }}>
+                  {t.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
       {tab === "requests" && (
-        <RequestsTab isAdmin={isAdmin} imName={imName} refresh={refreshKey} />
+        <RequestsTab isAdmin={isAdmin} imName={imName} refresh={refreshKey} onPendingCount={setPendingCount} />
       )}
-
       {tab === "duid" && (
         <DuidStockTab onRequest={(duid) => openNew(duid)} />
       )}

@@ -1077,9 +1077,18 @@ export default function DataTablePro() {
       }
     }
 
+    // Re-init when a tab switch unmounts/remounts a table. React removes the
+    // whole .data-table-wrapper subtree in one go, so the .data-table-scroll
+    // MutationObserver never fires — nothing tells us to look again.
+    // Any component that switches tabs dispatches "tablepro:check" after the
+    // new tab content mounts; we respond by scheduling a reinit.
+    const onExternalCheck = () => scheduleReinitFromDom();
+    document.addEventListener("tablepro:check", onExternalCheck);
+
     init();
     return () => {
       destroyed = true;
+      document.removeEventListener("tablepro:check", onExternalCheck);
       if (reinitTimer) clearTimeout(reinitTimer);
       wrapperMoList.forEach(({ mo }) => {
         try {
