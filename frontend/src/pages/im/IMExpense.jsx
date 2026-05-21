@@ -16,6 +16,29 @@ function effectiveStatus(claim) {
   return claim.approval_status || "Pending";
 }
 
+function paymentStatus(claim) {
+  if (!claim) return null;
+  if ((claim.status || "").toLowerCase() === "paid") return "Paid";
+  if (effectiveStatus(claim) === "Approved") return "Unpaid";
+  return null;
+}
+
+function PaymentBadge({ claim }) {
+  const ps = paymentStatus(claim);
+  if (!ps) return <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>;
+  const isPaid = ps === "Paid";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700,
+      background: isPaid ? "#dcfce7" : "#fef9c3",
+      color: isPaid ? "#15803d" : "#92400e",
+    }}>
+      {isPaid ? "Paid" : "Unpaid"}
+    </span>
+  );
+}
+
 function statusClass(s) {
   const v = (s || "").toLowerCase();
   if (v === "approved") return "completed";
@@ -92,6 +115,7 @@ function ClaimDetailModal({ open, claim, onClose }) {
             { label: "Team", value: claim.team_name || claim.inet_team || "—" },
             { label: "IM", value: claim.im_name || "—" },
             { label: "Amount", value: `SAR ${fmtAmt(claim.total_claimed_amount)}` },
+            { label: "Payment", value: paymentStatus(claim) || "—" },
           ].map(({ label, value }) => (
             <div key={label} style={{ flex: "1 1 110px", background: "#f8fafc", borderRadius: 8, padding: "8px 10px" }}>
               <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>{label}</div>
@@ -286,7 +310,12 @@ export default function IMExpense({ isAdmin = false }) {
   useEffect(() => { load(); }, [load]);
 
   const rows = useMemo(() => {
-    let base = tab === "pending" ? pending : allClaims;
+    let base;
+    if (tab === "pending") base = pending;
+    else if (tab === "unpaid") base = allClaims.filter((c) => effectiveStatus(c) === "Approved" && (c.status || "").toLowerCase() !== "paid");
+    else if (tab === "paid")   base = allClaims.filter((c) => (c.status || "").toLowerCase() === "paid");
+    else base = allClaims;
+
     if (search.trim()) {
       const q = search.toLowerCase();
       base = base.filter((c) =>
@@ -311,6 +340,9 @@ export default function IMExpense({ isAdmin = false }) {
     if (dateTo) base = base.filter((c) => c.posting_date <= dateTo);
     return base;
   }, [tab, pending, allClaims, search, statusFilter, imFilter, teamFilter, dateFrom, dateTo, isAdmin]);
+
+  const unpaidCount = useMemo(() => allClaims.filter((c) => effectiveStatus(c) === "Approved" && (c.status || "").toLowerCase() !== "paid").length, [allClaims]);
+  const paidCount   = useMemo(() => allClaims.filter((c) => (c.status || "").toLowerCase() === "paid").length, [allClaims]);
 
   const totalAmt = useMemo(() => rows.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0), [rows]);
   const hasFilters = search || dateFrom || dateTo || (tab === "all" && statusFilter) || imFilter || teamFilter;
@@ -340,18 +372,10 @@ export default function IMExpense({ isAdmin = false }) {
       </div>
 
       <div className="tabs">
-        <TabBtn
-          label="Pending"
-          count={pending.length}
-          active={tab === "pending"}
-          onClick={() => { setTab("pending"); setStatusFilter(""); }}
-        />
-        <TabBtn
-          label="All Claims"
-          count={0}
-          active={tab === "all"}
-          onClick={() => { setTab("all"); setStatusFilter(""); }}
-        />
+        <TabBtn label="Pending"    count={pending.length} active={tab === "pending"} onClick={() => { setTab("pending"); setStatusFilter(""); }} />
+        <TabBtn label="Unpaid"     count={unpaidCount}    active={tab === "unpaid"}  onClick={() => { setTab("unpaid");  setStatusFilter(""); }} />
+        <TabBtn label="Paid"       count={paidCount}      active={tab === "paid"}    onClick={() => { setTab("paid");    setStatusFilter(""); }} />
+        <TabBtn label="All Claims" count={0}              active={tab === "all"}     onClick={() => { setTab("all");     setStatusFilter(""); }} />
       </div>
 
       <div className="toolbar">
@@ -421,6 +445,7 @@ export default function IMExpense({ isAdmin = false }) {
                   {isAdmin && <th>IM</th>}
                   <th style={{ textAlign: "right" }}>Amount (SAR)</th>
                   <th>Status</th>
+                  <th>Payment</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -434,6 +459,7 @@ export default function IMExpense({ isAdmin = false }) {
                     {isAdmin && <td style={{ padding: "10px 14px", fontSize: "0.83rem", color: "#475569" }}>{c.im_name || "—"}</td>}
                     <td style={{ padding: "10px 14px", fontWeight: 700, textAlign: "right", color: "#1d4ed8" }}>SAR {fmtAmt(c.total_claimed_amount)}</td>
                     <td style={{ padding: "10px 14px" }}><StatusBadge status={effectiveStatus(c)} /></td>
+                    <td style={{ padding: "10px 14px" }}><PaymentBadge claim={c} /></td>
                     <td style={{ padding: "10px 14px" }}>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} onClick={() => setViewClaim(c)}>View</button>

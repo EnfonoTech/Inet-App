@@ -40,6 +40,29 @@ function StatusBadge({ status }) {
   );
 }
 
+function paymentStatus(claim) {
+  if (!claim) return null;
+  if ((claim.status || "").toLowerCase() === "paid") return "Paid";
+  if (effectiveStatus(claim) === "Approved") return "Unpaid";
+  return null;
+}
+
+function PaymentBadge({ claim }) {
+  const ps = paymentStatus(claim);
+  if (!ps) return null;
+  const isPaid = ps === "Paid";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      padding: "2px 8px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700,
+      background: isPaid ? "#dcfce7" : "#fef9c3",
+      color: isPaid ? "#15803d" : "#92400e",
+    }}>
+      {isPaid ? "Paid" : "Unpaid"}
+    </span>
+  );
+}
+
 // ── Inline style helpers ──────────────────────────────────────────────────────
 
 const inp = {
@@ -468,8 +491,17 @@ export default function FieldExpense() {
   const pendingClaims = claims.filter(
     (c) => effectiveStatus(c) !== "Approved" && effectiveStatus(c) !== "Rejected"
   );
+  const unpaidClaims = claims.filter(
+    (c) => effectiveStatus(c) === "Approved" && (c.status || "").toLowerCase() !== "paid"
+  );
+  const paidClaims = claims.filter((c) => (c.status || "").toLowerCase() === "paid");
   const pendingTotal = pendingClaims.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0);
-  const visibleClaims = tab === "pending" ? pendingClaims : claims;
+
+  const visibleClaims =
+    tab === "pending" ? pendingClaims :
+    tab === "unpaid"  ? unpaidClaims :
+    tab === "paid"    ? paidClaims :
+    claims;
 
   useEffect(() => { load(); }, [load]);
 
@@ -518,17 +550,19 @@ export default function FieldExpense() {
       )}
 
       {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: 14 }}>
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: 14, overflowX: "auto" }}>
         {[
-          { key: "pending", label: "Pending", count: pendingClaims.length },
-          { key: "all", label: "All" },
+          { key: "pending", label: "Pending",  count: pendingClaims.length },
+          { key: "unpaid",  label: "Unpaid",   count: unpaidClaims.length },
+          { key: "paid",    label: "Paid",     count: paidClaims.length },
+          { key: "all",     label: "All" },
         ].map(({ key, label, count }) => (
           <button
             key={key}
             type="button"
             onClick={() => setTab(key)}
             style={{
-              padding: "9px 18px",
+              padding: "9px 16px",
               fontSize: "0.84rem",
               fontWeight: tab === key ? 700 : 500,
               color: tab === key ? "#2563eb" : "#64748b",
@@ -539,7 +573,8 @@ export default function FieldExpense() {
               marginBottom: -1,
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              gap: 5,
+              whiteSpace: "nowrap",
             }}
           >
             {label}
@@ -557,8 +592,13 @@ export default function FieldExpense() {
       ) : visibleClaims.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>
           <div style={{ fontSize: "2rem", marginBottom: 8 }}>📋</div>
-          <div>{tab === "pending" ? "No pending claims." : "No expense claims yet."}</div>
-          {tab === "pending" && claims.length > 0 && (
+          <div>
+            {tab === "pending" ? "No pending claims." :
+             tab === "unpaid"  ? "No unpaid claims." :
+             tab === "paid"    ? "No paid claims yet." :
+             "No expense claims yet."}
+          </div>
+          {tab !== "all" && claims.length > 0 && (
             <div style={{ fontSize: "0.8rem", marginTop: 4 }}>
               <button type="button" onClick={() => setTab("all")} style={{ background: "none", border: "none", color: "#3b82f6", cursor: "pointer", fontSize: "0.8rem", textDecoration: "underline" }}>
                 View all claims
@@ -578,10 +618,13 @@ export default function FieldExpense() {
               onClick={() => setSelectedClaim(c)}
               style={{ all: "unset", display: "block", cursor: "pointer" }}
             >
-              <div className="history-card" style={{ borderLeftColor: effectiveStatus(c) === "Approved" ? "var(--green, #22c55e)" : effectiveStatus(c) === "Rejected" ? "var(--red, #ef4444)" : "var(--blue, #3b82f6)" }}>
+              <div className="history-card" style={{ borderLeftColor: (c.status || "").toLowerCase() === "paid" ? "#22c55e" : effectiveStatus(c) === "Approved" ? "#f59e0b" : effectiveStatus(c) === "Rejected" ? "var(--red, #ef4444)" : "var(--blue, #3b82f6)" }}>
                 <div className="history-card-row">
                   <div style={{ fontWeight: 700, fontSize: "0.86rem" }}>{c.name}</div>
-                  <StatusBadge status={effectiveStatus(c)} />
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <StatusBadge status={effectiveStatus(c)} />
+                    <PaymentBadge claim={c} />
+                  </div>
                 </div>
                 <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 3 }}>{c.posting_date}</div>
                 <div className="history-card-row" style={{ marginTop: 8 }}>
