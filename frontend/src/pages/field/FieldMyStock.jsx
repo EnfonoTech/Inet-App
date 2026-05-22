@@ -99,22 +99,6 @@ function StockCard({ item }) {
   );
 }
 
-function SummaryBar({ items }) {
-  const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
-  return (
-    <div className="today-summary-bar">
-      <div className="today-chip today-chip--total">
-        <span className="today-chip-value">{items.length}</span>
-        <span className="today-chip-label">Items</span>
-      </div>
-      <div className="today-chip today-chip--planned">
-        <span className="today-chip-dot" style={{ background: "var(--blue)" }} />
-        <span className="today-chip-value">{fmt(totalQty)}</span>
-        <span className="today-chip-label">Total Qty</span>
-      </div>
-    </div>
-  );
-}
 
 // ─── Return request form (modal) ─────────────────────────────────────────────
 
@@ -266,16 +250,111 @@ function ReturnForm({ items, teamId, onClose, onDone }) {
   );
 }
 
+// ─── Return request detail modal ────────────────────────────────────────────
+
+function ReturnDetailSheet({ row, onClose }) {
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!row) return;
+    setLoading(true);
+    pmApi.getMaterialRequest(row.name)
+      .then(d => setDetail(d))
+      .catch(() => setDetail(null))
+      .finally(() => setLoading(false));
+  }, [row?.name]);
+
+  if (!row) return null;
+  const borderColor = returnStatusClass(row.request_status) === "completed" ? "var(--green)" : returnStatusClass(row.request_status) === "cancelled" ? "var(--red, #ef4444)" : "var(--amber)";
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: "#fff", borderRadius: "14px 14px 0 0", width: "100%", maxWidth: 560, maxHeight: "80dvh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 -8px 40px rgba(0,0,0,0.18)" }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ padding: "16px 18px 12px", borderBottom: "1px solid #e2e8f0", borderTop: `3px solid ${borderColor}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <div>
+            <div style={{ fontFamily: "monospace", fontSize: "0.84rem", fontWeight: 700, color: "#1e40af" }}>{row.name}</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+              <ReturnStatusBadge status={row.request_status} />
+              <span style={{ fontSize: "0.74rem", color: "#64748b" }}>{row.request_date}</span>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY: "auto", flex: "1 1 auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+          {row.reason && (
+            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px", fontSize: "0.82rem", color: "#78350f" }}>
+              <span style={{ fontWeight: 600 }}>Reason: </span>{row.reason}
+            </div>
+          )}
+
+          {loading ? (
+            <div style={{ textAlign: "center", padding: "24px 0", color: "#94a3b8", fontSize: "0.84rem" }}>Loading items…</div>
+          ) : !detail?.items?.length ? (
+            <div style={{ textAlign: "center", padding: "16px 0", color: "#94a3b8", fontSize: "0.84rem" }}>No item details available.</div>
+          ) : (
+            <div>
+              <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Items · {detail.items.length}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {detail.items.map((it, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#0f172a" }}>{it.item_name || it.item_code}</div>
+                      <div style={{ fontSize: "0.72rem", color: "#64748b", fontFamily: "monospace", marginTop: 1 }}>{it.item_code}</div>
+                    </div>
+                    <div style={{ fontWeight: 800, fontSize: "1rem", color: "#1d4ed8", flexShrink: 0, marginLeft: 12 }}>
+                      {fmt(it.qty)} <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "#64748b" }}>{it.uom || "pcs"}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {detail && (
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {detail.im_full_name && (
+                <div style={{ flex: "1 1 120px", background: "#f8fafc", borderRadius: 8, padding: "8px 10px" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#64748b", marginBottom: 2 }}>IM</div>
+                  <div style={{ fontSize: "0.82rem", fontWeight: 600 }}>{detail.im_full_name}</div>
+                </div>
+              )}
+              {detail.team_warehouse && (
+                <div style={{ flex: "1 1 120px", background: "#f8fafc", borderRadius: 8, padding: "8px 10px" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#64748b", marginBottom: 2 }}>From Warehouse</div>
+                  <div style={{ fontSize: "0.78rem", fontWeight: 600, fontFamily: "monospace" }}>{detail.team_warehouse}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Return request history ──────────────────────────────────────────────────
 
 function ReturnHistory({ refresh }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await pmApi.listReturnRequests({ limit: 20 });
+      const res = await pmApi.listReturnRequests({ limit: 50 });
       setRows(Array.isArray(res) ? res : []);
     } catch { setRows([]); }
     finally { setLoading(false); }
@@ -296,20 +375,35 @@ function ReturnHistory({ refresh }) {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {rows.map(r => (
-        <div key={r.name} className="history-card" style={{ borderLeftColor: returnStatusClass(r.request_status) === "completed" ? "var(--green)" : returnStatusClass(r.request_status) === "cancelled" ? "var(--red, #ef4444)" : "var(--amber)" }}>
-          <div className="history-card-row">
-            <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>{r.name}</span>
-            <ReturnStatusBadge status={r.request_status} />
-          </div>
-          <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: 4 }}>
-            {r.request_date}
-            {r.reason && <span style={{ marginLeft: 8 }}>· {r.reason}</span>}
-          </div>
-        </div>
-      ))}
-    </div>
+    <>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map(r => {
+          const sc = returnStatusClass(r.request_status);
+          return (
+            <button
+              key={r.name}
+              type="button"
+              onClick={() => setSelected(r)}
+              style={{ all: "unset", display: "block", cursor: "pointer" }}
+            >
+              <div className="history-card" style={{ borderLeftColor: sc === "completed" ? "var(--green)" : sc === "cancelled" ? "var(--red, #ef4444)" : "var(--amber)" }}>
+                <div className="history-card-row">
+                  <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>{r.name}</span>
+                  <ReturnStatusBadge status={r.request_status} />
+                </div>
+                <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: 4 }}>
+                  {r.request_date}
+                  {r.reason && <span style={{ marginLeft: 8 }}>· {r.reason}</span>}
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "#3b82f6", marginTop: 4 }}>Tap to view items →</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <ReturnDetailSheet row={selected} onClose={() => setSelected(null)} />
+    </>
   );
 }
 
@@ -350,6 +444,7 @@ export default function FieldMyStock() {
   }
 
   const items = teamData?.items || [];
+  const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
   const filtered = search
     ? items.filter(it =>
         (it.item_name || "").toLowerCase().includes(search.toLowerCase()) ||
@@ -358,8 +453,8 @@ export default function FieldMyStock() {
     : items;
 
   const tabStyle = (key) => ({
-    padding: "9px 18px",
-    fontSize: "0.84rem",
+    padding: "8px 14px",
+    fontSize: "0.83rem",
     fontWeight: tab === key ? 700 : 500,
     color: tab === key ? "#2563eb" : "#64748b",
     background: "none",
@@ -367,38 +462,45 @@ export default function FieldMyStock() {
     borderBottom: tab === key ? "2px solid #2563eb" : "2px solid transparent",
     cursor: "pointer",
     marginBottom: -1,
+    whiteSpace: "nowrap",
   });
 
   return (
-    <div className="exec-page">
-      {/* Tab bar — sticky, also hosts action buttons so they're visible on mobile
-          (page-header is hidden on mobile via CSS for exec-page) */}
+    <div className="exec-page" style={{ paddingBottom: 80 }}>
+      {/* Sticky header — title + stats + actions + tabs */}
       <div style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        borderBottom: "1px solid var(--border)",
-        padding: "0 16px",
-        position: "sticky",
-        top: 0,
-        zIndex: 39,
-        background: "var(--bg)",
+        position: "sticky", top: 0, zIndex: 39,
+        background: "var(--bg, #fff)",
+        borderBottom: "1px solid var(--border, #e2e8f0)",
       }}>
-        <div style={{ display: "flex" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px 6px" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800 }}>My Stock</h2>
+            {!loading && teamData && (
+              <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 1 }}>
+                {items.length > 0
+                  ? <><strong style={{ color: "#0f172a" }}>{items.length}</strong> items · <strong style={{ color: "#0f172a" }}>{fmt(totalQty)}</strong> qty{lastUpdated ? ` · Updated ${lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}</>
+                  : "No materials in stock"
+                }
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+            {items.length > 0 && (
+              <button className="btn-primary" type="button" onClick={() => setShowReturn(true)} style={{ fontSize: "0.78rem", padding: "6px 12px" }}>
+                Return
+              </button>
+            )}
+            {tab === "stock" && (
+              <button className="btn-secondary" type="button" onClick={() => load(true)} disabled={refreshing} style={{ fontSize: "0.78rem", padding: "6px 10px" }}>
+                <span style={{ display: "inline-block", animation: refreshing ? "spin 0.7s linear infinite" : "none" }}>↻</span>
+              </button>
+            )}
+          </div>
+        </div>
+        <div style={{ display: "flex", padding: "0 16px" }}>
           <button type="button" style={tabStyle("stock")} onClick={() => setTab("stock")}>Stock</button>
           <button type="button" style={tabStyle("returns")} onClick={() => setTab("returns")}>Return Requests</button>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {items.length > 0 && (
-            <button className="btn-primary" type="button" onClick={() => setShowReturn(true)} style={{ fontSize: "0.78rem", padding: "6px 12px" }}>
-              Return Materials
-            </button>
-          )}
-          {tab === "stock" && (
-            <button className="btn-secondary" type="button" onClick={() => load(true)} disabled={refreshing} style={{ fontSize: "0.78rem", padding: "6px 10px" }}>
-              <span style={{ display: "inline-block", animation: refreshing ? "spin 0.7s linear infinite" : "none" }}>↻</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -436,14 +538,6 @@ export default function FieldMyStock() {
             </div>
           ) : (
             <>
-              {items.length > 0 && <SummaryBar items={items} />}
-
-              {lastUpdated && (
-                <div style={{ padding: "0 16px 6px", fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                  Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </div>
-              )}
-
               {items.length > 5 && (
                 <div style={{ padding: "0 16px 10px" }}>
                   <input
