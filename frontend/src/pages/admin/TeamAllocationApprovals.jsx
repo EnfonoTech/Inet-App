@@ -153,7 +153,7 @@ export default function TeamAllocationApprovals() {
       )}
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loadedCount={loading ? null : visible.length}>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
           ) : visible.length === 0 ? (

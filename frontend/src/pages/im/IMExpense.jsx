@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { pmApi } from "../../services/api";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import DateRangePicker from "../../components/DateRangePicker";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -272,6 +273,7 @@ export default function IMExpense({ isAdmin = false }) {
   const [viewClaim, setViewClaim] = useState(null);
   const [actionClaim, setActionClaim] = useState(null);
   const [actionMode, setActionMode] = useState(null);
+  const { rowLimit } = useTableRowLimit();
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -346,6 +348,8 @@ export default function IMExpense({ isAdmin = false }) {
 
   const totalAmt = useMemo(() => rows.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0), [rows]);
   const hasFilters = search || dateFrom || dateTo || (tab === "all" && statusFilter) || imFilter || teamFilter;
+
+  const visibleRows = rowLimit === 0 ? rows : rows.slice(0, rowLimit);
 
   const clearFilters = () => {
     setSearch(""); setDateFrom(""); setDateTo(""); setStatusFilter("");
@@ -423,7 +427,11 @@ export default function IMExpense({ isAdmin = false }) {
       </div>
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper
+          loadedCount={loading ? null : rows.length}
+          filteredCount={visibleRows.length}
+          filterActive={hasFilters}
+        >
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
           ) : rows.length === 0 ? (
@@ -432,46 +440,48 @@ export default function IMExpense({ isAdmin = false }) {
               <h3>{hasFilters ? "No results for these filters" : tab === "pending" ? "No pending expense claims" : "No expense claims found"}</h3>
             </div>
           ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Claim #</th>
-                  <th>Date</th>
-                  <th>Team Lead</th>
-                  <th>Team</th>
-                  {isAdmin && <th>IM</th>}
-                  <th style={{ textAlign: "right" }}>Amount (SAR)</th>
-                  <th>Status</th>
-                  <th>Payment</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((c) => (
-                  <tr key={c.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: "0.8rem", color: "#1e40af" }}>{c.name}</td>
-                    <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.posting_date}</td>
-                    <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.employee_name || c.employee}</td>
-                    <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.team_name || c.inet_team || "—"}</td>
-                    {isAdmin && <td style={{ padding: "10px 14px", fontSize: "0.83rem", color: "#475569" }}>{c.im_name || "—"}</td>}
-                    <td style={{ padding: "10px 14px", fontWeight: 700, textAlign: "right", color: "#1d4ed8" }}>SAR {fmtAmt(c.total_claimed_amount)}</td>
-                    <td style={{ padding: "10px 14px" }}><StatusBadge status={effectiveStatus(c)} /></td>
-                    <td style={{ padding: "10px 14px" }}><PaymentBadge claim={c} /></td>
-                    <td style={{ padding: "10px 14px" }}>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} onClick={() => setViewClaim(c)}>View</button>
-                        {!isAdmin && tab === "pending" && (
-                          <>
-                            <button type="button" onClick={() => { setActionClaim(c); setActionMode("approve"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "none", background: "#dcfce7", color: "#15803d", fontWeight: 700, cursor: "pointer", fontSize: "0.72rem" }}>Approve</button>
-                            <button type="button" onClick={() => { setActionClaim(c); setActionMode("reject"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "none", background: "#fee2e2", color: "#dc2626", fontWeight: 700, cursor: "pointer", fontSize: "0.72rem" }}>Reject</button>
-                          </>
-                        )}
-                      </div>
-                    </td>
+            <>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Claim #</th>
+                    <th>Date</th>
+                    <th>Team Lead</th>
+                    <th>Team</th>
+                    {isAdmin && <th>IM</th>}
+                    <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    <th>Status</th>
+                    <th>Payment</th>
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {visibleRows.map((c) => (
+                    <tr key={c.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: "0.8rem", color: "#1e40af" }}>{c.name}</td>
+                      <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.posting_date}</td>
+                      <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.employee_name || c.employee}</td>
+                      <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.team_name || c.inet_team || "—"}</td>
+                      {isAdmin && <td style={{ padding: "10px 14px", fontSize: "0.83rem", color: "#475569" }}>{c.im_name || "—"}</td>}
+                      <td style={{ padding: "10px 14px", fontWeight: 700, textAlign: "right", color: "#1d4ed8" }}>SAR {fmtAmt(c.total_claimed_amount)}</td>
+                      <td style={{ padding: "10px 14px" }}><StatusBadge status={effectiveStatus(c)} /></td>
+                      <td style={{ padding: "10px 14px" }}><PaymentBadge claim={c} /></td>
+                      <td style={{ padding: "10px 14px" }}>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} onClick={() => setViewClaim(c)}>View</button>
+                          {!isAdmin && tab === "pending" && (
+                            <>
+                              <button type="button" onClick={() => { setActionClaim(c); setActionMode("approve"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "none", background: "#dcfce7", color: "#15803d", fontWeight: 700, cursor: "pointer", fontSize: "0.72rem" }}>Approve</button>
+                              <button type="button" onClick={() => { setActionClaim(c); setActionMode("reject"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "none", background: "#fee2e2", color: "#dc2626", fontWeight: 700, cursor: "pointer", fontSize: "0.72rem" }}>Reject</button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
           )}
         </DataTableWrapper>
       </div>

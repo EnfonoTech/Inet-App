@@ -614,7 +614,7 @@ function DuidStockTab({ onRequest }) {
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
-      <DataTableWrapper>
+      <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
         ) : visible.length === 0 ? (
@@ -728,7 +728,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
-      <DataTableWrapper>
+      <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!statusFilter}>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
         ) : rows.length === 0 ? (
@@ -998,7 +998,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
-      <DataTableWrapper>
+      <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!statusFilter}>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
         ) : rows.length === 0 ? (

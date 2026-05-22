@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -470,6 +472,7 @@ export default function FieldExpense() {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [error, setError] = useState(null);
+  const { rowLimit } = useTableRowLimit();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -504,6 +507,8 @@ export default function FieldExpense() {
 
   const tabTotal = visibleClaims.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0);
   const tabTotalColor = { pending: "#b45309", unpaid: "#92400e", paid: "#15803d", all: "#1d4ed8" }[tab];
+
+  const pagedClaims = rowLimit === 0 ? visibleClaims : visibleClaims.slice(0, rowLimit);
 
   useEffect(() => { load(); }, [load]);
 
@@ -627,43 +632,51 @@ export default function FieldExpense() {
           )}
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {visibleClaims.map((c) => (
-            <button
-              key={c.name}
-              type="button"
-              onClick={() => setSelectedClaim(c)}
-              style={{ all: "unset", display: "block", cursor: "pointer" }}
-            >
-              <div className="history-card" style={{ borderLeftColor: (c.status || "").toLowerCase() === "paid" ? "#22c55e" : effectiveStatus(c) === "Approved" ? "#f59e0b" : effectiveStatus(c) === "Rejected" ? "var(--red, #ef4444)" : "var(--blue, #3b82f6)" }}>
-                <div className="history-card-row">
-                  <div style={{ fontWeight: 700, fontSize: "0.86rem" }}>{c.name}</div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <StatusBadge status={effectiveStatus(c)} />
-                    <PaymentBadge claim={c} />
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {pagedClaims.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                onClick={() => setSelectedClaim(c)}
+                style={{ all: "unset", display: "block", cursor: "pointer" }}
+              >
+                <div className="history-card" style={{ borderLeftColor: (c.status || "").toLowerCase() === "paid" ? "#22c55e" : effectiveStatus(c) === "Approved" ? "#f59e0b" : effectiveStatus(c) === "Rejected" ? "var(--red, #ef4444)" : "var(--blue, #3b82f6)" }}>
+                  <div className="history-card-row">
+                    <div style={{ fontWeight: 700, fontSize: "0.86rem" }}>{c.name}</div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <StatusBadge status={effectiveStatus(c)} />
+                      <PaymentBadge claim={c} />
+                    </div>
                   </div>
-                </div>
-                <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 3 }}>{c.posting_date}</div>
-                <div className="history-card-row" style={{ marginTop: 8 }}>
-                  <span style={{ fontSize: "0.76rem", color: "#64748b" }}>
-                    {(c.lines || []).length} line{(c.lines || []).length !== 1 ? "s" : ""}
-                    {(c.lines || []).some((l) => l.poid) && (
-                      <> · {[...new Set((c.lines || []).map((l) => l.poid).filter(Boolean))].length} POID{[...new Set((c.lines || []).map((l) => l.poid).filter(Boolean))].length !== 1 ? "s" : ""}</>
-                    )}
-                  </span>
-                  <span style={{ fontWeight: 700, color: "#1d4ed8", fontSize: "0.9rem" }}>
-                    SAR {fmtAmt(c.total_claimed_amount)}
-                  </span>
-                </div>
-                {c.remark && (
-                  <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: 4, fontStyle: "italic" }}>
-                    {c.remark}
+                  <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 3 }}>{c.posting_date}</div>
+                  <div className="history-card-row" style={{ marginTop: 8 }}>
+                    <span style={{ fontSize: "0.76rem", color: "#64748b" }}>
+                      {(c.lines || []).length} line{(c.lines || []).length !== 1 ? "s" : ""}
+                      {(c.lines || []).some((l) => l.poid) && (
+                        <> · {[...new Set((c.lines || []).map((l) => l.poid).filter(Boolean))].length} POID{[...new Set((c.lines || []).map((l) => l.poid).filter(Boolean))].length !== 1 ? "s" : ""}</>
+                      )}
+                    </span>
+                    <span style={{ fontWeight: 700, color: "#1d4ed8", fontSize: "0.9rem" }}>
+                      SAR {fmtAmt(c.total_claimed_amount)}
+                    </span>
                   </div>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
+                  {c.remark && (
+                    <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: 4, fontStyle: "italic" }}>
+                      {c.remark}
+                    </div>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+          <TableRowsLimitFooter
+            placement="tableCard"
+            loadedCount={visibleClaims.length}
+            filteredCount={pagedClaims.length}
+            filterActive={rowLimit > 0 && visibleClaims.length > pagedClaims.length}
+          />
+        </>
       )}
 
       <CreateExpenseModal

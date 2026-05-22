@@ -272,7 +272,7 @@ export default function PICReports() {
             </div>
           </div>
 
-          <DataTableWrapper>
+          <DataTableWrapper loadedCount={loading ? null : (data?.rows?.length ?? 0)}>
             {loading ? (
               <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
             ) : !data?.rows?.length ? (

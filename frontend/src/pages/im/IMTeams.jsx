@@ -460,7 +460,7 @@ export default function IMTeams() {
       )}
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loadedCount={loading ? null : sourceList.length} filteredCount={filtered.length} filterActive={hasFilters}>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
           ) : (tab === "my" || tab === "all") ? (
