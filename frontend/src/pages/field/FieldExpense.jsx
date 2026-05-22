@@ -495,7 +495,6 @@ export default function FieldExpense() {
     (c) => effectiveStatus(c) === "Approved" && (c.status || "").toLowerCase() !== "paid"
   );
   const paidClaims = claims.filter((c) => (c.status || "").toLowerCase() === "paid");
-  const pendingTotal = pendingClaims.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0);
 
   const visibleClaims =
     tab === "pending" ? pendingClaims :
@@ -503,90 +502,108 @@ export default function FieldExpense() {
     tab === "paid"    ? paidClaims :
     claims;
 
+  const tabTotal = visibleClaims.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0);
+  const tabTotalColor = { pending: "#b45309", unpaid: "#92400e", paid: "#15803d", all: "#1d4ed8" }[tab];
+
   useEffect(() => { load(); }, [load]);
 
   const handleCreated = () => load();
 
+  const tabDefs = [
+    { key: "pending", label: "Pending", count: pendingClaims.length },
+    { key: "unpaid",  label: "Unpaid",  count: unpaidClaims.length },
+    { key: "paid",    label: "Paid",    count: paidClaims.length },
+    { key: "all",     label: "All",     count: claims.length },
+  ];
+
   return (
-    <div className="exec-page" style={{ padding: "16px 16px 100px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800 }}>My Expense Claims</h2>
-          <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 2 }}>
-            {team && <><strong>{team.team_name}</strong>{team.im_name ? ` · ${team.im_name}` : ""}</>}
-            {!loading && pendingTotal > 0 && (
-              <span style={{ color: "#b45309", fontWeight: 600 }}>
-                {team ? " · " : ""}Pending: SAR {fmtAmt(pendingTotal)}
-              </span>
-            )}
+    <div className="exec-page" style={{ paddingBottom: "100px" }}>
+
+      {/* Sticky header + tabs */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 39,
+        background: "var(--bg, #fff)",
+        borderBottom: "1px solid #e2e8f0",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px 8px" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800 }}>My Expense Claims</h2>
+            <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 2 }}>
+              {team && <><strong>{team.team_name}</strong>{team.im_name ? ` · ${team.im_name}` : ""}</>}
+              {!loading && tabTotal > 0 && (
+                <span style={{ color: tabTotalColor, fontWeight: 600 }}>
+                  {team ? " · " : ""}
+                  {{ pending: "Pending", unpaid: "Unpaid", paid: "Paid", all: "Total" }[tab]}: SAR {fmtAmt(tabTotal)}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          disabled={!team || !team.has_employee}
-          style={{ padding: "9px 16px", borderRadius: 9, border: "none", background: (team && team.has_employee) ? "#3b82f6" : "#94a3b8", color: "#fff", fontWeight: 700, cursor: (team && team.has_employee) ? "pointer" : "not-allowed", fontSize: "0.84rem" }}
-        >
-          + New Claim
-        </button>
-      </div>
-
-      {error && (
-        <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "10px 14px", color: "#dc2626", fontSize: "0.83rem", marginBottom: 14 }}>
-          {error}
-        </div>
-      )}
-
-      {!team && !loading && (
-        <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "14px 16px", color: "#92400e", fontSize: "0.86rem", marginBottom: 16 }}>
-          No active INET Team found for your account. Contact your IM or admin.
-        </div>
-      )}
-
-      {team && !team.has_employee && !loading && (
-        <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10, padding: "14px 16px", color: "#991b1b", fontSize: "0.86rem", marginBottom: 16 }}>
-          No active Employee record linked to your account. Expense claims require an Employee record — contact HR or admin.
-        </div>
-      )}
-
-      {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: 14, overflowX: "auto" }}>
-        {[
-          { key: "pending", label: "Pending",  count: pendingClaims.length },
-          { key: "unpaid",  label: "Unpaid",   count: unpaidClaims.length },
-          { key: "paid",    label: "Paid",     count: paidClaims.length },
-          { key: "all",     label: "All" },
-        ].map(({ key, label, count }) => (
           <button
-            key={key}
             type="button"
-            onClick={() => setTab(key)}
-            style={{
-              padding: "9px 16px",
-              fontSize: "0.84rem",
-              fontWeight: tab === key ? 700 : 500,
-              color: tab === key ? "#2563eb" : "#64748b",
-              background: "none",
-              border: "none",
-              borderBottom: tab === key ? "2px solid #2563eb" : "2px solid transparent",
-              cursor: "pointer",
-              marginBottom: -1,
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              whiteSpace: "nowrap",
-            }}
+            onClick={() => setShowCreate(true)}
+            disabled={!team || !team.has_employee}
+            style={{ padding: "9px 16px", borderRadius: 9, border: "none", background: (team && team.has_employee) ? "#3b82f6" : "#94a3b8", color: "#fff", fontWeight: 700, cursor: (team && team.has_employee) ? "pointer" : "not-allowed", fontSize: "0.84rem", flexShrink: 0 }}
           >
-            {label}
-            {count > 0 && (
-              <span style={{ background: tab === key ? "#dbeafe" : "#f1f5f9", color: tab === key ? "#1d4ed8" : "#64748b", borderRadius: 10, padding: "1px 6px", fontSize: "0.72rem", fontWeight: 700 }}>
-                {count}
-              </span>
-            )}
+            + New Claim
           </button>
-        ))}
+        </div>
+
+        {/* Tab bar */}
+        <div style={{ display: "flex", overflowX: "auto", padding: "0 16px" }}>
+          {tabDefs.map(({ key, label, count }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              style={{
+                padding: "8px 14px",
+                fontSize: "0.83rem",
+                fontWeight: tab === key ? 700 : 500,
+                color: tab === key ? "#2563eb" : "#64748b",
+                background: "none",
+                border: "none",
+                borderBottom: tab === key ? "2px solid #2563eb" : "2px solid transparent",
+                cursor: "pointer",
+                marginBottom: -1,
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {label}
+              {count > 0 && (
+                <span style={{ background: tab === key ? "#dbeafe" : "#f1f5f9", color: tab === key ? "#1d4ed8" : "#64748b", borderRadius: 10, padding: "1px 6px", fontSize: "0.7rem", fontWeight: 700 }}>
+                  {count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {/* Scrollable content */}
+      <div style={{ padding: "12px 16px 0" }}>
+        {error && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "10px 14px", color: "#dc2626", fontSize: "0.83rem", marginBottom: 14 }}>
+            {error}
+          </div>
+        )}
+
+        {!team && !loading && (
+          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "14px 16px", color: "#92400e", fontSize: "0.86rem", marginBottom: 16 }}>
+            No active INET Team found for your account. Contact your IM or admin.
+          </div>
+        )}
+
+        {team && !team.has_employee && !loading && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10, padding: "14px 16px", color: "#991b1b", fontSize: "0.86rem", marginBottom: 16 }}>
+            No active Employee record linked to your account. Expense claims require an Employee record — contact HR or admin.
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: "0 16px" }}>
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>Loading...</div>
       ) : visibleClaims.length === 0 ? (
@@ -662,5 +679,6 @@ export default function FieldExpense() {
         claim={selectedClaim}
       />
     </div>
+  </div>
   );
 }

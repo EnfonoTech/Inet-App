@@ -363,10 +363,7 @@ export default function IMExpense({ isAdmin = false }) {
         <div>
           <h1 className="page-title">{isAdmin ? "Project Expense Claims" : "Expense Approvals"}</h1>
           <div className="page-subtitle">
-            {isAdmin
-              ? "All project expense claims across all IMs and teams"
-              : `${rows.length} claim${rows.length !== 1 ? "s" : ""}${rows.length > 0 ? ` · SAR ${fmtAmt(totalAmt)}` : ""}${pending.length > 0 ? ` · ${pending.length} pending` : ""}`
-            }
+            {`${rows.length} claim${rows.length !== 1 ? "s" : ""}${rows.length > 0 ? ` · SAR ${fmtAmt(totalAmt)}` : ""}${!isAdmin && pending.length > 0 ? ` · ${pending.length} pending` : ""}`}
           </div>
         </div>
       </div>
