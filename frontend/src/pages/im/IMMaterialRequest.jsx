@@ -909,6 +909,8 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [actionRow, setActionRow] = useState(null);
+  const [actionDetail, setActionDetail] = useState(null);
+  const [actionDetailLoading, setActionDetailLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionErr, setActionErr] = useState("");
   const [rejectReason, setRejectReason] = useState("");
@@ -961,8 +963,14 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
 
   function openAction(row) {
     setActionRow(row);
+    setActionDetail(null);
     setActionErr("");
     setRejectReason("");
+    setActionDetailLoading(true);
+    pmApi.getMaterialRequest(row.name)
+      .then(d => setActionDetail(d))
+      .catch(() => setActionDetail(null))
+      .finally(() => setActionDetailLoading(false));
   }
 
   function handleDirectDone(msg) {
@@ -1064,6 +1072,38 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
               {actionRow.team_warehouse && <div><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Team WH</span><br />{actionRow.team_warehouse}</div>}
               {actionRow.reason && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Reason</span><br />{actionRow.reason}</div>}
             </div>
+
+            {/* Items */}
+            {actionDetailLoading ? (
+              <div style={{ textAlign: "center", color: "#94a3b8", fontSize: "0.82rem", padding: "8px 0" }}>Loading items…</div>
+            ) : actionDetail?.items?.length > 0 && (
+              <div>
+                <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#94a3b8", marginBottom: 6, letterSpacing: "0.05em" }}>
+                  ITEMS · {actionDetail.items.length}
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.83rem", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc" }}>
+                      <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>Item</th>
+                      <th style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: "#475569" }}>Qty</th>
+                      <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>UOM</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {actionDetail.items.map((it, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "6px 10px" }}>
+                          <div style={{ fontWeight: 600, fontSize: "0.82rem" }}>{it.item_name || it.item_code}</div>
+                          <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontFamily: "monospace" }}>{it.item_code}</div>
+                        </td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: "#1d4ed8" }}>{it.qty}</td>
+                        <td style={{ padding: "6px 10px", color: "#64748b" }}>{it.uom || "pcs"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {actionRow.request_status === "Pending Approval" && (
               <>
