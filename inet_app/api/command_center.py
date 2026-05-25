@@ -5473,6 +5473,34 @@ def _synthesize_subcon_workdone_rows(filters):
     return out
 
 
+# pic_status values that are safe to clear when IM un-confirms — no PIC work
+# has been done yet. Anything beyond these means the PIC team is already
+# processing the row and must be coordinated with manually.
+_PIC_ENTRY_STATUSES = frozenset({"", "Work Not Done", "Under Process to Apply"})
+
+
+def _revert_pic_status_if_safe(po_dispatch_name):
+    """Clear pic_status on PO Dispatch when IM un-confirms Work Done, if safe.
+
+    Returns a warning string when pic_status has progressed past the entry
+    point and was therefore NOT cleared automatically.
+    """
+    if not po_dispatch_name:
+        return None
+    current = frappe.db.get_value("PO Dispatch", po_dispatch_name, "pic_status") or ""
+    if current in _PIC_ENTRY_STATUSES:
+        if current:  # blank already needs no write
+            frappe.db.set_value(
+                "PO Dispatch", po_dispatch_name, "pic_status", "",
+                update_modified=False,
+            )
+        return None
+    return (
+        f"PIC status is already '{current}' — Work Done confirmation was cleared "
+        "but pic_status was NOT reverted automatically. Coordinate with the PIC team."
+    )
+
+
 @frappe.whitelist()
 def update_work_done_submission(name, submission_status):
     """IM sets Work Done submission status: 'Ready for Confirmation' or
@@ -5486,8 +5514,29 @@ def update_work_done_submission(name, submission_status):
     if not frappe.db.exists("Work Done", name):
         frappe.throw(f"Work Done not found: {name}")
     frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
+
+    pic_warning = None
+    if status != "Confirmation Done":
+        # IM is un-confirming — clear pic_status if nothing has been processed yet
+        row = frappe.db.sql(
+            """
+            SELECT rp.po_dispatch
+            FROM `tabWork Done` wd
+            JOIN `tabDaily Execution` de ON de.name = wd.execution
+            JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+            WHERE wd.name = %s
+            LIMIT 1
+            """,
+            name, as_dict=True,
+        )
+        if row and row[0].get("po_dispatch"):
+            pic_warning = _revert_pic_status_if_safe(row[0]["po_dispatch"])
+
     frappe.db.commit()
-    return {"name": name, "submission_status": status}
+    result = {"name": name, "submission_status": status}
+    if pic_warning:
+        result["pic_warning"] = pic_warning
+    return result
 
 
 @frappe.whitelist()
@@ -5523,8 +5572,16 @@ def update_subcon_submission(po_dispatch, submission_status):
         "subcon_submission_status", status,
         update_modified=True,
     )
+
+    pic_warning = None
+    if status != "Confirmation Done":
+        pic_warning = _revert_pic_status_if_safe(name)
+
     frappe.db.commit()
-    return {"po_dispatch": name, "poid": pd.get("poid") or name, "submission_status": status}
+    result = {"po_dispatch": name, "poid": pd.get("poid") or name, "submission_status": status}
+    if pic_warning:
+        result["pic_warning"] = pic_warning
+    return result
 
 
 @frappe.whitelist()
@@ -5686,6 +5743,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             pd.line_amount,
             pd.center_area,
             pd.region_type,
+            pd.dispatch_status,
             {_remark_select()},
             de.name AS execution_name,
             de.execution_date,
@@ -5756,6 +5814,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
                 "execution_remarks": r.get("execution_remarks"),
                 "qc_status": r.get("qc_status"),
                 "ciag_status": r.get("ciag_status"),
+                "dispatch_status": r.get("dispatch_status"),
                 "modified": r.get("modified"),
             }
         )

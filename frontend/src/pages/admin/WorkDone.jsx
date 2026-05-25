@@ -117,21 +117,24 @@ export default function WorkDone() {
   const [submissionPick, setSubmissionPick] = useState("");
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const [submissionErr, setSubmissionErr] = useState(null);
+  const [submissionWarn, setSubmissionWarn] = useState(null);
 
   async function submitSubmission() {
     if (!submissionFor) return;
     setSubmissionBusy(true);
     setSubmissionErr(null);
     try {
+      let res;
       if (submissionFor.is_subcon) {
         const dispatch = submissionFor.po_dispatch || submissionFor.poid;
         if (!dispatch) throw new Error("Missing PO Dispatch reference for sub-contract row");
-        await pmApi.updateSubconSubmission(dispatch, submissionPick);
+        res = await pmApi.updateSubconSubmission(dispatch, submissionPick);
       } else {
         if (!submissionFor.name) throw new Error("Missing Work Done name");
-        await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick);
+        res = await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick);
       }
       setSubmissionFor(null);
+      if (res?.pic_warning) setSubmissionWarn(res.pic_warning);
       loadData();
     } catch (err) {
       setSubmissionErr(err.message || "Failed to update submission status");
@@ -397,6 +400,13 @@ export default function WorkDone() {
           filterActive={!!hasFilters}
         />
       </div>
+
+      {submissionWarn && (
+        <div style={{ margin: "12px 0", padding: "10px 14px", background: "#fffbeb", border: "1px solid #fbbf24", borderRadius: 8, color: "#92400e", fontSize: "0.85rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <span>{submissionWarn}</span>
+          <button type="button" onClick={() => setSubmissionWarn(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#92400e", fontWeight: 700, flexShrink: 0 }}>✕</button>
+        </div>
+      )}
 
       {submissionFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSubmissionFor(null)}>

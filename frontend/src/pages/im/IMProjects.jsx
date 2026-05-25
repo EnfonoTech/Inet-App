@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import RecordDetailView from "../../components/RecordDetailView";
@@ -64,11 +64,6 @@ export default function IMProjects() {
   const [detailRow, setDetailRow] = useState(null);
   const [metaProjects, setMetaProjects] = useState([]);
 
-  useResetOnRowLimitChange(() => {
-    setProjects([]);
-    setLoading(true);
-  });
-
   useEffect(() => {
     if (!imName) {
       setMetaProjects([]);
@@ -90,9 +85,10 @@ export default function IMProjects() {
   }, [imName]);
 
   useEffect(() => {
-    async function load() {
-      if (!imName) { setLoading(false); return; }
-      setLoading(true);
+    let cancelled = false;
+    if (!imName) { setLoading(false); return; }
+    setLoading(true);
+    (async () => {
       try {
         const list = await pmApi.listProjects({
           limit: rowLimit,
@@ -101,13 +97,14 @@ export default function IMProjects() {
           status: statusFilter || undefined,
           domain: domainFilter || undefined,
         });
-        setProjects(Array.isArray(list) ? list : []);
+        if (!cancelled) setProjects(Array.isArray(list) ? list : []);
       } catch {
-        setProjects([]);
+        if (!cancelled) setProjects([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      setLoading(false);
-    }
-    load();
+    })();
+    return () => { cancelled = true; };
   }, [imName, rowLimit, searchDebounced, statusFilter, domainFilter]);
 
   const statuses = [...new Set(metaProjects.map((p) => p.project_status).filter(Boolean))].sort();

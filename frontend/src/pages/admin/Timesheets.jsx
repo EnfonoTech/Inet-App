@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -34,32 +34,28 @@ export default function Timesheets() {
   const searchDebounced = useDebounced(search, 300);
   const [teamFilter, setTeamFilter] = useState("");
 
-  useResetOnRowLimitChange(() => {
-    setLogs([]);
-    setLoading(true);
-  });
-
-  async function loadLogs() {
-    setLoading(true);
-    try {
-      const filters = {};
-      if (dateFrom) filters.from_date = dateFrom;
-      if (dateTo) filters.to_date = dateTo;
-      if (teamFilter.trim()) filters.team_id = teamFilter.trim();
-      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
-      const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
-      setLogs(res?.logs || []);
-      setTotal(res?.total ?? (res?.logs || []).length);
-    } catch {
-      setLogs([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    loadLogs();
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const filters = {};
+        if (dateFrom) filters.from_date = dateFrom;
+        if (dateTo) filters.to_date = dateTo;
+        if (teamFilter.trim()) filters.team_id = teamFilter.trim();
+        if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
+        if (!cancelled) {
+          setLogs(res?.logs || []);
+          setTotal(res?.total ?? (res?.logs || []).length);
+        }
+      } catch {
+        if (!cancelled) { setLogs([]); setTotal(0); }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [dateFrom, dateTo, teamFilter, rowLimit, searchDebounced]);
 
   const totalHours = logs.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);

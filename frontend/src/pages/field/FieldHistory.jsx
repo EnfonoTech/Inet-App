@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { pmApi } from "../../services/api";
 import { isNotRequired } from "../../utils/qcCiagFlags";
@@ -112,15 +112,12 @@ export default function FieldHistory() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useResetOnRowLimitChange(() => {
-    setRecords([]);
-    setLoading(true);
-  });
-
   useEffect(() => {
-    async function load() {
+    let cancelled = false;
+    if (!teamId) { setRecords([]); setLoading(false); return; }
+    setLoading(true);
+    (async () => {
       try {
-        if (!teamId) { setRecords([]); setLoading(false); return; }
         // listExecutionMonitorRows joins Rollout Plan + PO Dispatch +
         // Daily Execution server-side, so we get POID, item code,
         // project, DUID, qty, etc. enriched for free. Bare
@@ -134,11 +131,14 @@ export default function FieldHistory() {
         const onlyExecuted = (Array.isArray(list) ? list : []).filter(
           (r) => !!r.execution_name
         );
-        setRecords(onlyExecuted);
-      } catch { setRecords([]); }
-      setLoading(false);
-    }
-    load();
+        if (!cancelled) setRecords(onlyExecuted);
+      } catch {
+        if (!cancelled) setRecords([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [teamId, rowLimit]);
 
   return (

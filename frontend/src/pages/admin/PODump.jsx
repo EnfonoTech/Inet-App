@@ -3,7 +3,7 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
@@ -47,16 +47,10 @@ export default function PODump() {
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setMeta(null);
-  });
   // Default: hide closed/cancelled archive lines unless explicitly toggled.
   const [showClosed, setShowClosed] = useState(cached.current?.showClosed ?? false);
   const [showCancelled, setShowCancelled] = useState(cached.current?.showCancelled ?? false);
   const [showOpen, setShowOpen] = useState(cached.current?.showOpen ?? true);
-
-
 
   const activeStatuses = useMemo(() => {
     const out = [];
@@ -66,42 +60,34 @@ export default function PODump() {
     return out;
   }, [showOpen, showClosed, showCancelled]);
 
-  async function load() {
-    const statuses = activeStatuses;
-    if (!statuses.length) {
-      setRows([]);
-      setMeta(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await pmApi.exportPODump(fromDate, toDate, statuses, rowLimit, searchDebounced);
-      const nextRows = Array.isArray(res?.rows) ? res.rows : [];
-      setMeta(res);
-      setRows(nextRows);
-      writeCache({
-        fromDate, toDate, rowLimit,
-        showOpen, showClosed, showCancelled,
-        rows: nextRows, meta: res,
-        savedAt: Date.now(),
-      });
-    } catch (e) {
-      setRows([]);
-      setMeta(null);
-      setError(e.message || "Failed to load dump");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   // Auto-fetch on any param change. A short debounce keeps rapid checkbox /
   // date-picker toggles from firing multiple requests in flight.
   useEffect(() => {
-    if (!activeStatuses.length) return;
-    const t = setTimeout(() => { load(); }, 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!activeStatuses.length) { setRows([]); setMeta(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await pmApi.exportPODump(fromDate, toDate, activeStatuses, rowLimit, searchDebounced);
+        if (!cancelled) {
+          const nextRows = Array.isArray(res?.rows) ? res.rows : [];
+          setMeta(res);
+          setRows(nextRows);
+          writeCache({
+            fromDate, toDate, rowLimit,
+            showOpen, showClosed, showCancelled,
+            rows: nextRows, meta: res,
+            savedAt: Date.now(),
+          });
+        }
+      } catch (e) {
+        if (!cancelled) { setRows([]); setMeta(null); setError(e.message || "Failed to load dump"); }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [fromDate, toDate, rowLimit, showOpen, showClosed, showCancelled, searchDebounced]);
 
   function downloadCsv() {

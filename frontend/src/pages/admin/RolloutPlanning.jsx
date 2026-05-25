@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, useResetOnRowLimitChange, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -147,10 +147,7 @@ export default function RolloutPlanning() {
   const [detailRow, setDetailRow] = useState(null);
   const [managerRemark, setManagerRemark] = useState("");
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -161,31 +158,36 @@ export default function RolloutPlanning() {
     }
   }, []);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const portal = {};
-      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-      if (projectFilter.length) portal.project_code = projectFilter;
-      if (imFilter.length) portal.im = imFilter;
-      if (duidFilter.length) portal.site_code = duidFilter;
-      if (fromDate) portal.from_date = fromDate;
-      if (toDate) portal.to_date = toDate;
-      // "all" scope drops the dispatch_status filter so the IM can pick
-      // a POID with an existing plan and create the next visit.
-      const filters = planScope === "all" ? {} : { dispatch_status: "Dispatched" };
-      const list = await pmApi.listPODispatches(filters, rowLimit, portal);
-      setRows(Array.isArray(list) ? list : []);
-    } catch (err) {
-      setError(err.message || "Failed to load dispatches");
-    } finally {
-      setLoading(false);
-    }
-  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, planScope]);
+  const loadData = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   useEffect(() => { loadMeta(); }, [loadMeta]);
-  useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const portal = {};
+        if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        if (projectFilter.length) portal.project_code = projectFilter;
+        if (imFilter.length) portal.im = imFilter;
+        if (duidFilter.length) portal.site_code = duidFilter;
+        if (fromDate) portal.from_date = fromDate;
+        if (toDate) portal.to_date = toDate;
+        // "all" scope drops the dispatch_status filter so the IM can pick
+        // a POID with an existing plan and create the next visit.
+        const filters = planScope === "all" ? {} : { dispatch_status: "Dispatched" };
+        const list = await pmApi.listPODispatches(filters, rowLimit, portal);
+        if (!cancelled) setRows(Array.isArray(list) ? list : []);
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Failed to load dispatches");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, planScope, refreshKey]);
 
   useEffect(() => {
     if (!showModal) return;

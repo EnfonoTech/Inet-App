@@ -141,6 +141,12 @@ export default function IMPOIntake() {
   async function submitBackend() {
     if (selected.size < 1 || !backendTeamId) return;
     const ids = Array.from(selected);
+    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Completed"].includes(r.dispatch_status));
+    if (blocked.length > 0) {
+      const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
+      setBackendError(`Cannot assign: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
+      return;
+    }
     setBackendBusy(true);
     setBackendError(null);
     try {

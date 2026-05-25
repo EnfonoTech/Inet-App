@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -129,10 +129,7 @@ export default function PODispatch() {
   const [successMsg, setSuccessMsg] = useState(null);
   const [errMsg, setErrMsg] = useState(null);
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const showNotice = useCallback((type, msg) => {
     if (type === "ok") { setSuccessMsg(msg); setErrMsg(null); }
@@ -140,44 +137,40 @@ export default function PODispatch() {
     setTimeout(() => { setSuccessMsg(null); setErrMsg(null); }, 5000);
   }, []);
 
-  async function loadData(tab) {
-    setLoading(true);
-    setError(null);
-    setSelected(new Set());
-    try {
-      const status = tab ?? activeTab;
-      const portal = { intake_tab: String(status || "").toLowerCase() };
-      if (tableSearchDebounced.trim()) portal.search = tableSearchDebounced.trim();
-      if (projectFilter.length) portal.project_code = projectFilter;
-      if (imFilter.length) portal.dispatched_im = imFilter;
-      if (duidFilter.length) portal.site_code = duidFilter;
-      if (fromDate) portal.from_date = fromDate;
-      if (toDate) portal.to_date = toDate;
-      const [poLines, ims] = await Promise.all([
-        pmApi.listPOIntakeLines(status, rowLimit, portal),
-        pmApi.listIMMasters({ status: "Active" }),
-      ]);
-      setRows(Array.isArray(poLines) ? poLines : []);
-      setImList(Array.isArray(ims) ? ims : []);
-    } catch (err) {
-      setError(err.message || "Failed to load data");
-    } finally {
-      setLoading(false);
-    }
+  function loadData(tab) {
+    if (tab) setActiveTab(tab);
+    setRefreshKey((k) => k + 1);
   }
 
   useEffect(() => {
-    loadData(activeTab);
-  }, [
-    activeTab,
-    rowLimit,
-    tableSearchDebounced,
-    projectFilter,
-    imFilter,
-    duidFilter,
-    fromDate,
-    toDate,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setSelected(new Set());
+    (async () => {
+      try {
+        const status = activeTab;
+        const portal = { intake_tab: String(status || "").toLowerCase() };
+        if (tableSearchDebounced.trim()) portal.search = tableSearchDebounced.trim();
+        if (projectFilter.length) portal.project_code = projectFilter;
+        if (imFilter.length) portal.dispatched_im = imFilter;
+        if (duidFilter.length) portal.site_code = duidFilter;
+        if (fromDate) portal.from_date = fromDate;
+        if (toDate) portal.to_date = toDate;
+        const [poLines, ims] = await Promise.all([
+          pmApi.listPOIntakeLines(status, rowLimit, portal),
+          pmApi.listIMMasters({ status: "Active" }),
+        ]);
+        if (!cancelled) setRows(Array.isArray(poLines) ? poLines : []);
+        if (!cancelled) setImList(Array.isArray(ims) ? ims : []);
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Failed to load data");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, rowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, refreshKey]);
 
   function switchTab(tab) { setActiveTab(tab); setSelected(new Set()); }
 

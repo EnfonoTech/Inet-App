@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -76,29 +76,33 @@ export default function IMPlanning() {
   const [cancelError, setCancelError] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
 
-  useResetOnRowLimitChange(() => {
-    setPlans([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const loadPlans = useCallback(async () => {
+  const loadPlans = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    try {
-      const portal = {};
-      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-      if (visitFilter.length) portal.visit_type = visitFilter;
-      if (projectFilter.length) portal.project_code = projectFilter;
-      if (teamFilter.length) portal.team = teamFilter;
-      if (duidFilter.length) portal.site_code = duidFilter;
-      if (fromDate) portal.from_date = fromDate;
-      if (toDate) portal.to_date = toDate;
-      const portalArg = Object.keys(portal).length ? portal : undefined;
-      const res = await pmApi.listIMRolloutPlans(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
-      setPlans(Array.isArray(res) ? res : []);
-    } catch {
-      setPlans([]);
-    }
-    setLoading(false);
+    (async () => {
+      try {
+        const portal = {};
+        if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        if (visitFilter.length) portal.visit_type = visitFilter;
+        if (projectFilter.length) portal.project_code = projectFilter;
+        if (teamFilter.length) portal.team = teamFilter;
+        if (duidFilter.length) portal.site_code = duidFilter;
+        if (fromDate) portal.from_date = fromDate;
+        if (toDate) portal.to_date = toDate;
+        const portalArg = Object.keys(portal).length ? portal : undefined;
+        const res = await pmApi.listIMRolloutPlans(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
+        if (!cancelled) setPlans(Array.isArray(res) ? res : []);
+      } catch {
+        if (!cancelled) setPlans([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [
     imName,
     statusFilter,
@@ -110,11 +114,8 @@ export default function IMPlanning() {
     duidFilter,
     fromDate,
     toDate,
+    refreshKey,
   ]);
-
-  useEffect(() => {
-    loadPlans();
-  }, [loadPlans]);
 
   // Distinct master values so dropdowns show all options regardless of row limit.
   const { options: planOpts } = useFilterOptions("Rollout Plan", ["visit_type"]);

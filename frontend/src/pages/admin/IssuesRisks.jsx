@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import RemarksCell from "../../components/RemarksCell";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
@@ -96,29 +96,30 @@ export default function IssuesRisks() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  async function loadData() {
-    setLoading(true);
-    try {
-      const portal = {};
-      if (projectFilter.length) portal.project_code = projectFilter;
-      if (teamFilter.length) portal.team = teamFilter;
-      if (duidFilter.length) portal.site_code = duidFilter;
-      const portalArg = Object.keys(portal).length ? portal : undefined;
-      const res = await pmApi.listIssueRiskRows("", rowLimit, searchDebounced.trim() || undefined, portalArg);
-      setRows(Array.isArray(res) ? res : []);
-    } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }
+  function loadData() { setRefreshKey((k) => k + 1); }
 
-  useEffect(() => { loadData(); }, [rowLimit, searchDebounced, projectFilter, teamFilter, duidFilter]);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const portal = {};
+        if (projectFilter.length) portal.project_code = projectFilter;
+        if (teamFilter.length) portal.team = teamFilter;
+        if (duidFilter.length) portal.site_code = duidFilter;
+        const portalArg = Object.keys(portal).length ? portal : undefined;
+        const res = await pmApi.listIssueRiskRows("", rowLimit, searchDebounced.trim() || undefined, portalArg);
+        if (!cancelled) setRows(Array.isArray(res) ? res : []);
+      } catch {
+        if (!cancelled) setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rowLimit, searchDebounced, projectFilter, teamFilter, duidFilter, refreshKey]);
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {

@@ -8,40 +8,7 @@ Every entry has **Where**, **Why it matters**, and **Fix**.
 
 ---
 
-## P0 — Data-integrity gaps
-
-### `dispatch_status` has no state machine
-- **Where**: PO Dispatch enum touched from many places (`confirm_po_upload`,
-  `_run_po_archive_import`, `mark_subcon_work_done`, `assign_subcon`, etc.).
-- **Why**: Nothing prevents `Closed → Pending` or `Completed → Cancelled`.
-  Sub-contract flow manages `Sub-Contracted → Completed` by convention only.
-- **Fix**: Add a `validate` hook on PO Dispatch with a transition matrix.
-  Allow admin override via `flags.allow_status_override = True`.
-
-### `frappe.db.set_value` bypasses validate
-- **Where**: `pic.py` `bulk_update_pic_status`; `command_center.py`
-  `_stamp_archive_pic_fields`.
-- **Why**: Derived columns (`ms1_unbilled`, `ms2_unbilled`) go stale when the
-  invoiced amount changes and the validate hook is skipped.
-- **Fix**: For bulk PIC status (no monetary fields) the bypass is fine — keep
-  it. For the archive importer, manually recompute unbilled amounts after
-  `set_value` so reads stay consistent.
-
----
-
 ## P1 — Bugs / fragile logic
-
-### PIC drift after retroactive Work Done changes
-- **Where**: `pic.py` `_PIC_INITIAL_RULE_SQL`.
-- **Why**: Once the PIC saves, the stored value wins forever. If the IM later
-  un-confirms Work Done, the PIC row keeps showing the old status.
-- **Fix**: When IM toggles `submission_status` away from `Confirmation Done`,
-  also clear / revert `pic_status` on the linked PO Dispatch.
-
-### Race in older list pages (still on `useResetOnRowLimitChange`)
-- **Status**: Patched on IMPOIntake, ExecutionMonitor, IMWorkDone, admin
-  WorkDone. Remaining pages are low-risk (they don't reset mid-load on row
-  limit change). Migrate as pages get touched.
 
 ### Many SELECTs miss `has_column` guards
 - **Where**: `command_center.py` list projections, `pic.py` SELECT.
@@ -55,7 +22,7 @@ Every entry has **Where**, **Why it matters**, and **Fix**.
 - **Why**: Truncated payload → `None` → `AttributeError` on `.get()` → 500.
 - **Fix**: Wrap each boundary call in try/except; `frappe.throw("Malformed
   payload")` on failure.
-
+  
 ### DUID inventory dimension only on `tabStock Entry Detail`, not `tabStock Ledger Entry`
 - **Where**: `material_management.py` — any query that tries to use `sle.duid`.
 - **Why**: ERPNext Inventory Dimensions are added as columns on `tabStock Entry

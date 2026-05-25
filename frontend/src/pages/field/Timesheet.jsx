@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import {
@@ -100,7 +100,9 @@ export default function Timesheet() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  useResetOnRowLimitChange(() => { setLogs([]); setLoading(true); });
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  function loadLogs() { setRefreshKey((k) => k + 1); }
 
   useEffect(() => {
     if (!running?.log_name) return;
@@ -122,17 +124,26 @@ export default function Timesheet() {
     } catch { setRunning(null); }
   }
 
-  async function loadLogs() {
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    try {
-      const res = await pmApi.listExecutionTimeLogs({}, rowLimit, 0);
-      setLogs(res?.logs || []);
-      setTotal(res?.total ?? (res?.logs || []).length);
-    } catch { setLogs([]); setTotal(0); }
-    finally { setLoading(false); }
-  }
+    (async () => {
+      try {
+        const res = await pmApi.listExecutionTimeLogs({}, rowLimit, 0);
+        if (!cancelled) {
+          setLogs(res?.logs || []);
+          setTotal(res?.total ?? (res?.logs || []).length);
+        }
+      } catch {
+        if (!cancelled) { setLogs([]); setTotal(0); }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [teamId, rowLimit, refreshKey]);
 
-  useEffect(() => { loadLogs(); refreshRunning(); }, [teamId, rowLimit]);
+  useEffect(() => { refreshRunning(); }, [teamId, rowLimit]);
 
   useEffect(() => {
     if (!showManual || manualDate) return;

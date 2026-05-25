@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -170,36 +170,39 @@ export default function IMExecution() {
   const [wdErr, setWdErr] = useState(null);
   const [selectedExecs, setSelectedExecs] = useState(new Set());
 
-  useResetOnRowLimitChange(() => {
-    setExecutions([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const loadExecutions = useCallback(async () => {
+  const loadExecutions = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
     if (!imName) {
       setExecutions([]);
       setLoading(false);
       return;
     }
     setLoading(true);
-    try {
-      const portal = {};
-      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-      if (qcFilter.length) portal.qc_status = qcFilter;
-      if (ciagFilter.length) portal.ciag_status = ciagFilter;
-      if (projectFilter.length) portal.project_code = projectFilter;
-      if (teamFilter.length) portal.team = teamFilter;
-      if (duidFilter.length) portal.site_code = duidFilter;
-      if (fromDate) portal.from_date = fromDate;
-      if (toDate) portal.to_date = toDate;
-      const portalArg = Object.keys(portal).length ? portal : undefined;
-      const res = await pmApi.listIMDailyExecutions(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
-      setExecutions(Array.isArray(res) ? res : []);
-    } catch {
-      setExecutions([]);
-    } finally {
-      setLoading(false);
-    }
+    (async () => {
+      try {
+        const portal = {};
+        if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        if (qcFilter.length) portal.qc_status = qcFilter;
+        if (ciagFilter.length) portal.ciag_status = ciagFilter;
+        if (projectFilter.length) portal.project_code = projectFilter;
+        if (teamFilter.length) portal.team = teamFilter;
+        if (duidFilter.length) portal.site_code = duidFilter;
+        if (fromDate) portal.from_date = fromDate;
+        if (toDate) portal.to_date = toDate;
+        const portalArg = Object.keys(portal).length ? portal : undefined;
+        const res = await pmApi.listIMDailyExecutions(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
+        if (!cancelled) setExecutions(Array.isArray(res) ? res : []);
+      } catch {
+        if (!cancelled) setExecutions([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [
     imName,
     statusFilter,
@@ -212,11 +215,8 @@ export default function IMExecution() {
     duidFilter,
     fromDate,
     toDate,
+    refreshKey,
   ]);
-
-  useEffect(() => {
-    loadExecutions();
-  }, [loadExecutions]);
 
   const qcOptions = [...new Set(executions.map((e) => e.qc_status).filter(Boolean))].sort();
   const ciagOptions = [...new Set(executions.map((e) => e.ciag_status).filter(Boolean))].sort();

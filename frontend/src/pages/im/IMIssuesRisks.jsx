@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -97,34 +97,35 @@ export default function IMIssuesRisks() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  async function loadData() {
-    setLoading(true);
-    try {
-      const portal = {};
-      if (projectFilter.length) portal.project_code = projectFilter;
-      if (teamFilter.length) portal.team = teamFilter;
-      if (duidFilter.length) portal.site_code = duidFilter;
-      const portalArg = Object.keys(portal).length ? portal : undefined;
-      const res = await pmApi.listIssueRiskRows(
-        imName || "",
-        rowLimit,
-        searchDebounced.trim() || undefined,
-        portalArg,
-      );
-      setRows(Array.isArray(res) ? res : []);
-    } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }
+  function loadData() { setRefreshKey((k) => k + 1); }
 
-  useEffect(() => { loadData(); }, [imName, rowLimit, searchDebounced, projectFilter, teamFilter, duidFilter]);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const portal = {};
+        if (projectFilter.length) portal.project_code = projectFilter;
+        if (teamFilter.length) portal.team = teamFilter;
+        if (duidFilter.length) portal.site_code = duidFilter;
+        const portalArg = Object.keys(portal).length ? portal : undefined;
+        const res = await pmApi.listIssueRiskRows(
+          imName || "",
+          rowLimit,
+          searchDebounced.trim() || undefined,
+          portalArg,
+        );
+        if (!cancelled) setRows(Array.isArray(res) ? res : []);
+      } catch {
+        if (!cancelled) setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, rowLimit, searchDebounced, projectFilter, teamFilter, duidFilter, refreshKey]);
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
@@ -187,6 +188,13 @@ export default function IMIssuesRisks() {
 
   async function createPlansFromIssues() {
     if (selected.size === 0 || !planTeam || !planDate || !planEndDate) return;
+    const selectedRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
+    const blocked = selectedRows.filter((r) => ["Closed", "Completed"].includes(r.dispatch_status));
+    if (blocked.length > 0) {
+      const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
+      setCreateError(`Cannot plan: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
+      return;
+    }
     setCreating(true);
     setCreateError(null);
     try {

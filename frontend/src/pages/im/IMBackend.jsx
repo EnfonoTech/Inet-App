@@ -145,6 +145,12 @@ export default function IMBackend() {
   async function submitDone() {
     if (selected.size < 1) return;
     const ids = Array.from(selected);
+    const blocked = rows.filter((r) => selected.has(r.po_dispatch) && ["Closed", "Cancelled"].includes(r.dispatch_status));
+    if (blocked.length > 0) {
+      const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
+      setDoneError(`Cannot mark done: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
+      return;
+    }
     setDoneBusy(true);
     setDoneError(null);
     try {

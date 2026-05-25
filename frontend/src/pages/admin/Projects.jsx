@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -218,34 +218,34 @@ export default function Projects() {
   const [domainFilter, setDomainFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [allDomains, setAllDomains] = useState([]);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  useResetOnRowLimitChange(() => {
-    setProjects([]);
-    setLoading(true);
-  });
+  function loadProjects() { setRefreshKey((k) => k + 1); }
 
   useEffect(() => {
     pmApi.listProjectDomains().then(res => setAllDomains(res || [])).catch(() => {});
   }, []);
 
-  async function loadProjects() {
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    try {
-      const res = await pmApi.listProjects({
-        limit: rowLimit,
-        search: search || undefined,
-        status: statusFilter || undefined,
-        domain: domainFilter || undefined,
-      });
-      setProjects(res || []);
-    } catch {
-      setProjects([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { loadProjects(); }, [search, statusFilter, domainFilter, rowLimit]); // eslint-disable-line react-hooks/exhaustive-deps
+    (async () => {
+      try {
+        const res = await pmApi.listProjects({
+          limit: rowLimit,
+          search: search || undefined,
+          status: statusFilter || undefined,
+          domain: domainFilter || undefined,
+        });
+        if (!cancelled) setProjects(res || []);
+      } catch {
+        if (!cancelled) setProjects([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [search, statusFilter, domainFilter, rowLimit, refreshKey]);
 
   return (
     <div>

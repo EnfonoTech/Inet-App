@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, useResetOnRowLimitChange } from "../../context/TableRowLimitContext";
+import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -230,52 +230,57 @@ export default function IMDispatch() {
   const [backendBusy, setBackendBusy] = useState(false);
   const [backendError, setBackendError] = useState(null);
 
-  useResetOnRowLimitChange(() => {
-    setRows([]);
-    setLoading(true);
-  });
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    try {
-      if (!imName) {
-        setRows([]);
-        setStats({ total: 0, auto: 0, manual: 0, dispatched: 0 });
-        setLoading(false);
-        return;
-      }
-      const filters = [["im", "=", imName]];
-      // Only rows the IM has scheduled (target_month set) — un-scheduled
-      // dispatches appear in the new PO Intake page instead.
-      const portal = { has_target_month: "yes" };
-      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-      if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
-      if (dummyFilter !== "all") portal.dummy_preset = dummyFilter;
-      if (projectFilter.length) portal.project_code = projectFilter;
-      if (teamFilter.length) portal.team = teamFilter;
-      if (duidFilter.length) portal.site_code = duidFilter;
-      if (fromDate) portal.from_date = fromDate;
-      if (toDate) portal.to_date = toDate;
-      const portalArg = Object.keys(portal).length ? portal : undefined;
-      const [res, agg] = await Promise.all([
-        pmApi.listPODispatches(filters, rowLimit, portalArg),
-        pmApi.getPODispatchStats(filters, portalArg).catch(() => null),
-      ]);
-      setRows(Array.isArray(res) ? res : []);
-      if (agg && typeof agg === "object") {
-        setStats({
-          total: Number(agg.total) || 0,
-          auto: Number(agg.auto) || 0,
-          manual: Number(agg.manual) || 0,
-          dispatched: Number(agg.dispatched) || 0,
-        });
-      }
-    } catch (err) {
-      setError(err.message || "Failed to load dispatches");
-    } finally {
+    if (!imName) {
+      setRows([]);
+      setStats({ total: 0, auto: 0, manual: 0, dispatched: 0 });
       setLoading(false);
+      return;
     }
+    (async () => {
+      try {
+        const filters = [["im", "=", imName]];
+        // Only rows the IM has scheduled (target_month set) — un-scheduled
+        // dispatches appear in the new PO Intake page instead.
+        const portal = { has_target_month: "yes" };
+        if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
+        if (dummyFilter !== "all") portal.dummy_preset = dummyFilter;
+        if (projectFilter.length) portal.project_code = projectFilter;
+        if (teamFilter.length) portal.team = teamFilter;
+        if (duidFilter.length) portal.site_code = duidFilter;
+        if (fromDate) portal.from_date = fromDate;
+        if (toDate) portal.to_date = toDate;
+        const portalArg = Object.keys(portal).length ? portal : undefined;
+        const [res, agg] = await Promise.all([
+          pmApi.listPODispatches(filters, rowLimit, portalArg),
+          pmApi.getPODispatchStats(filters, portalArg).catch(() => null),
+        ]);
+        if (!cancelled) {
+          setRows(Array.isArray(res) ? res : []);
+          if (agg && typeof agg === "object") {
+            setStats({
+              total: Number(agg.total) || 0,
+              auto: Number(agg.auto) || 0,
+              manual: Number(agg.manual) || 0,
+              dispatched: Number(agg.dispatched) || 0,
+            });
+          }
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Failed to load dispatches");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [
     imName,
     rowLimit,
@@ -287,11 +292,8 @@ export default function IMDispatch() {
     duidFilter,
     fromDate,
     toDate,
+    refreshKey,
   ]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   useEffect(() => {
     let cancelled = false;
@@ -528,6 +530,12 @@ export default function IMDispatch() {
   async function submitBackend() {
     if (selected.size < 1 || !backendTeamId) return;
     const ids = Array.from(selected);
+    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Completed"].includes(r.dispatch_status));
+    if (blocked.length > 0) {
+      const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
+      setBackendError(`Cannot assign: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
+      return;
+    }
     setBackendBusy(true);
     setBackendError(null);
     try {
@@ -572,6 +580,12 @@ export default function IMDispatch() {
     if (selected.size === 0 || !planDate || !planEndDate || !visitType || !planTeam) return;
     if (planEndDate < planDate) {
       setCreateError("Planned end date cannot be before start date.");
+      return;
+    }
+    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Completed"].includes(r.dispatch_status));
+    if (blocked.length > 0) {
+      const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
+      setCreateError(`Cannot plan: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
       return;
     }
     setCreating(true);
