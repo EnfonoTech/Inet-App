@@ -234,6 +234,25 @@ export default function PICTracker() {
   }
   async function submitEdit() {
     if (!editFor) return;
+
+    // Pre-validate before the round-trip
+    const today = new Date().toISOString().split("T")[0];
+    const futureDateFields = [
+      ["ms1_applied_date", "MS1 Applied Date"],
+      ["ms2_applied_date", "MS2 Applied Date"],
+      ["ms1_payment_received_date", "MS1 Payment Received Date"],
+      ["ms2_payment_received_date", "MS2 Payment Received Date"],
+      ["ms1_ibuy_inv_date", "MS1 iBuy Invoice Date"],
+      ["ms2_ibuy_inv_date", "MS2 iBuy Invoice Date"],
+    ];
+    for (const [key, label] of futureDateFields) {
+      const val = editFields[key];
+      if (val && val > today) {
+        setEditErr(`${label} cannot be in the future.`);
+        return;
+      }
+    }
+
     setEditBusy(true);
     setEditErr(null);
     try {

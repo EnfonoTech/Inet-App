@@ -229,6 +229,10 @@ export default function IMTeams() {
 
   async function submitEdit() {
     if (!editRow?.name) return;
+    if (!editForm.team_name?.trim()) {
+      setEditErr("Team Name is required.");
+      return;
+    }
     setEditBusy(true);
     setEditErr(null);
     try {

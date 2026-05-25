@@ -322,14 +322,16 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
           <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>Loading received items…</div>
         ) : huaweiItems.length === 0 ? (
           <div style={{ fontSize: "0.78rem", color: "#64748b" }}>
-            {duid ? "No received materials found for this DUID yet." : "Select a POID or enter a DUID to see received materials."}
+            {duid
+              ? "No remaining Huawei items to request for this DUID — all received items have already been requested."
+              : "Select a POID or enter a DUID to see received materials."}
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
             <thead>
               <tr>
                 <th style={{ padding: "5px 8px", textAlign: "left", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem" }}>Item</th>
-                <th style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 90 }}>Received</th>
+                <th style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 90 }}>Remaining</th>
                 <th style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 90 }}>Request Qty</th>
                 <th style={{ padding: "5px 8px", textAlign: "left", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 60 }}>UOM</th>
               </tr>
@@ -658,14 +660,16 @@ function DuidStockTab({ onRequest }) {
                   <td style={{ textAlign: "right", fontFamily: "monospace", fontSize: "0.82rem" }}>{row.total_volume}</td>
                   <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{row.latest_date}</td>
                   <td>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      style={{ fontSize: "0.72rem", padding: "4px 12px", whiteSpace: "nowrap" }}
-                      onClick={() => onRequest(row.duid)}
-                    >
-                      Request
-                    </button>
+                    {row.has_requestable_items && (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        style={{ fontSize: "0.72rem", padding: "4px 12px", whiteSpace: "nowrap" }}
+                        onClick={() => onRequest(row.duid)}
+                      >
+                        Request
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

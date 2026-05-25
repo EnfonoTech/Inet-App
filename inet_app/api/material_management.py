@@ -607,11 +607,11 @@ def get_source_warehouse():
 
 @frappe.whitelist()
 def get_duid_received_items(duid):
-    """Return items received in the main warehouse for a DUID.
+    """Return customer-provided items still available to request for a DUID.
 
-    Looks up Huawei Outbound Plans (INET, Received) for this DUID,
-    then reads the Stock Entry Detail rows from each Material Receipt.
-    These are customer-provided (Huawei) items — valuation_rate is 0.
+    Totals received qty across all Material Receipts for the DUID, then
+    subtracts qty already covered by active (non-cancelled) Material Requests.
+    Only items with remaining qty > 0 are returned.
     """
     if not duid:
         return []
@@ -623,31 +623,65 @@ def get_duid_received_items(duid):
     if not plans:
         return []
 
-    items = []
-    seen = set()
+    # Sum received qty per item across all receipts for this DUID
+    received = {}   # item_code → {item_name, qty, uom, material_receipt}
     for plan in plans:
         rows = frappe.db.get_all(
             "Stock Entry Detail",
             filters={"parent": plan["material_receipt"]},
-            fields=["item_code", "item_name", "qty", "uom", "t_warehouse"],
+            fields=["item_code", "item_name", "qty", "uom"],
         )
         for r in rows:
-            key = r["item_code"]
-            if key in seen:
+            ic = r["item_code"]
+            if not frappe.db.get_value("Item", ic, "is_customer_provided_item"):
                 continue
-            # Only include items flagged as customer-provided on the Item master
-            if not frappe.db.get_value("Item", r["item_code"], "is_customer_provided_item"):
-                continue
-            seen.add(key)
-            items.append({
-                "item_code": r["item_code"],
-                "item_name": r["item_name"] or r["item_code"],
-                "qty": r["qty"],
-                "uom": r["uom"] or "Nos",
-                "is_huawei": True,
-                "material_receipt": plan["material_receipt"],
-            })
-    return items
+            if ic not in received:
+                received[ic] = {
+                    "item_code": ic,
+                    "item_name": r["item_name"] or ic,
+                    "qty": flt(r["qty"]),
+                    "uom": r["uom"] or "Nos",
+                    "material_receipt": plan["material_receipt"],
+                }
+            else:
+                received[ic]["qty"] += flt(r["qty"])
+
+    if not received:
+        return []
+
+    # Subtract qty already covered by active (non-cancelled) Material Requests
+    item_codes = list(received)
+    ph = ", ".join(["%s"] * len(item_codes))
+    requested_rows = frappe.db.sql(
+        f"""
+        SELECT mri.item_code, SUM(mri.qty) AS requested_qty
+        FROM `tabMaterial Request Item` mri
+        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+        WHERE mr.docstatus != 2
+          AND mr.duid = %s
+          AND mr.material_request_type = 'Material Transfer'
+          AND mri.item_code IN ({ph})
+        GROUP BY mri.item_code
+        """,
+        [duid, *item_codes],
+        as_dict=True,
+    ) or []
+    requested_map = {r.item_code: flt(r.requested_qty) for r in requested_rows}
+
+    result = []
+    for ic, info in received.items():
+        remaining = info["qty"] - requested_map.get(ic, 0)
+        if remaining <= 0:
+            continue
+        result.append({
+            "item_code": ic,
+            "item_name": info["item_name"],
+            "qty": remaining,
+            "uom": info["uom"],
+            "is_huawei": True,
+            "material_receipt": info["material_receipt"],
+        })
+    return result
 
 
 @frappe.whitelist()
@@ -866,6 +900,60 @@ def get_duid_stock_summary():
     except Exception:
         pass
 
+    # Compute has_requestable_items: DUIDs that have at least one item with
+    # remaining qty (received total minus active MR requested total) > 0.
+    receipt_to_duid = {}
+    for p in plans:
+        if p.get("material_receipt") and (p["du_id"] or "").strip():
+            receipt_to_duid[p["material_receipt"]] = (p["du_id"] or "").strip()
+
+    received_duid_set = {d for d, v in by_duid.items() if v["received_count"] > 0 and d not in fully_transferred}
+    if receipt_to_duid and received_duid_set:
+        mr_names = [mr for mr, d in receipt_to_duid.items() if d in received_duid_set]
+        ph_mr = ", ".join(["%s"] * len(mr_names))
+        recv_rows = frappe.db.sql(
+            f"SELECT parent AS mr, item_code, SUM(qty) AS qty "
+            f"FROM `tabStock Entry Detail` WHERE parent IN ({ph_mr}) GROUP BY parent, item_code",
+            mr_names, as_dict=True,
+        ) or []
+
+        recv_by_duid = {}   # {duid: {item_code: total_received_qty}}
+        for r in recv_rows:
+            d = receipt_to_duid.get(r.mr, "")
+            if not d:
+                continue
+            recv_by_duid.setdefault(d, {}).setdefault(r.item_code, 0)
+            recv_by_duid[d][r.item_code] += flt(r.qty)
+
+        ph_d = ", ".join(["%s"] * len(received_duid_set))
+        req_rows = frappe.db.sql(
+            f"""
+            SELECT mr.duid, mri.item_code, SUM(mri.qty) AS requested_qty
+            FROM `tabMaterial Request Item` mri
+            JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+            WHERE mr.docstatus != 2
+              AND mr.duid IN ({ph_d})
+              AND mr.material_request_type = 'Material Transfer'
+            GROUP BY mr.duid, mri.item_code
+            """,
+            list(received_duid_set), as_dict=True,
+        ) or []
+        req_by_duid = {}
+        for r in req_rows:
+            req_by_duid.setdefault(r.duid, {})[r.item_code] = flt(r.requested_qty)
+
+        for d in received_duid_set:
+            items_recv = recv_by_duid.get(d, {})
+            items_req = req_by_duid.get(d, {})
+            by_duid[d]["has_requestable_items"] = any(
+                (items_recv[ic] - items_req.get(ic, 0)) > 0
+                for ic in items_recv
+            ) if items_recv else False
+
+    for d, data in by_duid.items():
+        if "has_requestable_items" not in data:
+            data["has_requestable_items"] = False
+
     # Sort: received first, then by latest date; exclude fully-transferred DUIDs
     result = sorted(
         (v for v in by_duid.values() if v["duid"] not in fully_transferred),
@@ -911,20 +999,44 @@ def create_material_request(payload):
     if not target_wh:
         frappe.throw("Team Warehouse not configured. Please set a Warehouse on the selected team in INET Team.")
 
-    # Prevent duplicate active MRs for the same POID + team warehouse
-    if poid and target_wh:
-        existing_mr = frappe.db.get_value(
-            "Material Request",
-            {"poid": poid, "set_warehouse": target_wh,
-             "material_request_type": "Material Transfer", "docstatus": ["!=", 2]},
-            "name",
-        )
-        if existing_mr:
-            frappe.throw(
-                f"Material Request {existing_mr} already exists for this POID and team. "
-                "Cancel the existing request before creating a new one.",
-                title="Duplicate Request",
+    # Block items that already have net-positive stock in the team warehouse for this DUID.
+    # A team requesting an item that's already sitting in their warehouse (same DUID)
+    # would result in a double transfer.
+    if duid and target_wh:
+        item_codes = list({i["item_code"] for i in items if i.get("item_code")})
+        if item_codes:
+            ph = ", ".join(["%s"] * len(item_codes))
+            already_stocked = frappe.db.sql(
+                f"""
+                SELECT sed.item_code,
+                       SUM(CASE WHEN se.stock_entry_type = 'Material Transfer'
+                                 AND sed.t_warehouse = %s THEN sed.qty ELSE 0 END)
+                     - SUM(CASE WHEN se.stock_entry_type = 'Material Issue'
+                                 AND sed.s_warehouse = %s THEN sed.qty ELSE 0 END)
+                       AS net_qty
+                FROM `tabStock Entry Detail` sed
+                JOIN `tabStock Entry` se ON se.name = sed.parent
+                WHERE se.docstatus = 1
+                  AND sed.item_code IN ({ph})
+                  AND sed.duid = %s
+                  AND (
+                    (se.stock_entry_type = 'Material Transfer' AND sed.t_warehouse = %s)
+                    OR
+                    (se.stock_entry_type = 'Material Issue' AND sed.s_warehouse = %s)
+                  )
+                GROUP BY sed.item_code
+                HAVING net_qty > 0
+                """,
+                [target_wh, target_wh, *item_codes, duid, target_wh, target_wh],
+                as_dict=True,
             )
+            if already_stocked:
+                dupes = ", ".join(r["item_code"] for r in already_stocked)
+                frappe.throw(
+                    f"The following items already have stock in the team warehouse for DUID {duid}: "
+                    f"{dupes}. Cancel or consume existing stock before requesting again.",
+                    title="Items Already in Stock",
+                )
 
     doc = frappe.get_doc({
         "doctype": "Material Request",

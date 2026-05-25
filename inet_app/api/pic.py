@@ -13,6 +13,7 @@ from inet_app.api.command_center import (
     _dashboard_etag,
     _ensure_list,
     _iso_now,
+    _po_dispatch_col_expr,
     _portal_filters_dict,
     _portal_row_limit,
     _sql_in_or_eq,
@@ -98,8 +99,14 @@ LEFT JOIN `tabSubcontractor Master` sm_sub ON sm_sub.name = plan_contract.subcon
 
 def _pic_role_or_throw():
     roles = set(frappe.get_roles(frappe.session.user))
-    if not roles & {"Administrator", "System Manager", "INET Admin", "INET PIC"}:
-        frappe.throw("Not permitted — PIC role required.", frappe.PermissionError)
+    required = {"Administrator", "System Manager", "INET Admin", "INET PIC"}
+    if not roles & required:
+        user_roles = ", ".join(sorted(roles - {"All", "Guest"})) or "none"
+        frappe.throw(
+            f"Not permitted. Your roles: {user_roles}. "
+            f"Required (any one of): {', '.join(sorted(required))}.",
+            frappe.PermissionError,
+        )
 
 
 @frappe.whitelist()
@@ -210,6 +217,10 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         )
         from_clause = _PIC_FROM_JOIN_LEAN
 
+    sqc_expr = _po_dispatch_col_expr("sqc_status")
+    pat_expr = _po_dispatch_col_expr("pat_status")
+    im_rej_expr = _po_dispatch_col_expr("im_rejection_remark")
+
     sql = f"""
     SELECT  /* {limit_page_length} = 0 → unlimited; with_team_type={int(with_team_type)} */
       pd.name AS po_dispatch,
@@ -232,7 +243,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       imm.full_name AS im_full_name,
       pd.dispatch_status,
       pd.payment_terms,
-      pd.sqc_status, pd.pat_status, pd.im_rejection_remark,
+      {sqc_expr}, {pat_expr}, {im_rej_expr},
       ({_PIC_INITIAL_RULE_SQL.strip()}) AS pic_status_effective,
       pd.pic_status AS pic_status_stored,
       pd.pic_status_ms2,
@@ -984,6 +995,9 @@ def list_invoice_tracker_rows(filters=None, limit=500):
         )
 
     where_str = " AND ".join(wheres)
+    _sqc2 = _po_dispatch_col_expr("sqc_status")
+    _pat2 = _po_dispatch_col_expr("pat_status")
+    _isdp2 = _po_dispatch_col_expr("isdp_ibuy_owner")
     rows = frappe.db.sql(
         f"""
         SELECT pd.name, pd.poid, pd.po_no, pd.project_code, pd.customer,
@@ -995,7 +1009,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                pd.remaining_milestone_pct,
                pd.ms1_applied_date, pd.ms1_invoice_month, pd.ms1_ibuy_inv_date,
                pd.ms2_applied_date, pd.ms2_invoice_month, pd.ms2_ibuy_inv_date,
-               pd.sqc_status, pd.pat_status, pd.isdp_ibuy_owner,
+               {_sqc2}, {_pat2}, {_isdp2},
                pd.payment_terms, pd.tax_rate,
                pd.ms1_payment_received_date, pd.ms2_payment_received_date,
                pd.subcon_pct_ms1, pd.inet_pct_ms1,

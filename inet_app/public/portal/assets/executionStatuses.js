@@ -1,0 +1,1 @@
+const e=["In Progress","Completed","Hold","Cancelled","Postponed"],t=["Late Arrival","Extra Visit","PAT Rejection","QC Rejection","POD Pending","Spare Parts Pending","Site Access Issue","Material Shortage","Customer Hold","Other"];export{e as E,t as I};

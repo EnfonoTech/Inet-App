@@ -1594,6 +1594,10 @@ def confirm_po_upload(rows):
             # blank item_code (e.g. when the source cell is whitespace). Don't
             # blow up the whole upload — the helper above already filled in a
             # description-derived code where possible.
+            # NOTE: flags.ignore_mandatory does NOT propagate to child saves in Frappe.
+            # If a child row ever has a blank mandatory field this will still throw.
+            # Fix if it surfaces: change to doc.save(ignore_mandatory=True, ...) or
+            # pre-fill the field with a placeholder before saving.
             doc.flags.ignore_mandatory = True
             doc.save(ignore_permissions=True)
             is_new_po = False
@@ -2852,6 +2856,7 @@ def dispatch_po_lines(payload):
     """
     if isinstance(payload, str):
         payload = frappe.parse_json(payload)
+    payload = payload or {}
 
     lines = payload.get("lines") or []
     im = (payload.get("im") or "").strip() or None
@@ -2962,6 +2967,7 @@ def convert_dispatch_mode(payload):
     """
     if isinstance(payload, str):
         payload = frappe.parse_json(payload)
+    payload = payload or {}
 
     scope = payload.get("scope", "lines")
     project_code = payload.get("project_code")
@@ -3099,6 +3105,7 @@ def create_rollout_plans(payload):
     """
     if isinstance(payload, str):
         payload = frappe.parse_json(payload)
+    payload = payload or {}
 
     dispatches = payload.get("dispatches") or []
     plan_date = payload.get("plan_date") or nowdate()
@@ -3428,11 +3435,16 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
     # Multi-team aggregation — pull every DE for this plan so any-team
     # completion flips the plan to Completed (per design) and amounts
     # are summed across teams.
+    _ciag_de_sel = (
+        "IFNULL(ciag_status,'') AS ciag_status"
+        if frappe.db.has_column("Daily Execution", "ciag_status")
+        else "'' AS ciag_status"
+    )
     de_rows = frappe.db.sql(
-        """
+        f"""
         SELECT name, team, execution_status, tl_status,
                IFNULL(qc_status,'') AS qc_status,
-               IFNULL(ciag_status,'') AS ciag_status,
+               {_ciag_de_sel},
                IFNULL(achieved_qty, 0) AS achieved_qty,
                IFNULL(achieved_amount, 0) AS achieved_amount
         FROM `tabDaily Execution`
@@ -3959,6 +3971,7 @@ def update_execution(payload):
     """
     if isinstance(payload, str):
         payload = frappe.parse_json(payload)
+    payload = payload or {}
 
     exec_name = payload.get("name")
 
@@ -4848,24 +4861,17 @@ def list_execution_monitor_rows(filters=None, limit=500):
         exec_cap = min(max(len(plan_names) * 25, lim), 5000)
     else:
         exec_cap = min(max(len(plan_names) * 25, 500), 50000)
+    _de_fields = [
+        "name", "rollout_plan", "execution_date", "execution_status",
+        "tl_status", "issue_category", "achieved_qty", "achieved_amount",
+        "qc_status", "photos", "gps_location", "modified",
+    ]
+    if frappe.db.has_column("Daily Execution", "ciag_status"):
+        _de_fields.append("ciag_status")
     execution_rows = frappe.get_all(
         "Daily Execution",
         filters={"rollout_plan": ["in", plan_names]},
-        fields=[
-            "name",
-            "rollout_plan",
-            "execution_date",
-            "execution_status",
-            "tl_status",
-            "issue_category",
-            "achieved_qty",
-            "achieved_amount",
-            "qc_status",
-            "ciag_status",
-            "photos",
-            "gps_location",
-            "modified",
-        ],
+        fields=_de_fields,
         order_by="modified desc",
         limit_page_length=exec_cap,
     )
@@ -4960,7 +4966,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "execution_achieved_qty": flt(ex.achieved_qty or 0) if ex else 0,
                 "execution_achieved_amount": flt(ex.achieved_amount or 0) if ex else 0,
                 "qc_status": ex.qc_status if ex else None,
-                "ciag_status": ex.ciag_status if ex else None,
+                "ciag_status": ex.get("ciag_status") if ex else None,
                 "photos": ex.photos if ex else None,
                 "gps_location": ex.gps_location if ex else None,
                 "modified": p.modified,
@@ -8482,7 +8488,7 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
     """
     if isinstance(filters, str):
         filters = frappe.parse_json(filters or "{}")
-    if not filters:
+    if not isinstance(filters, dict):
         filters = {}
 
     user = frappe.session.user
@@ -8738,6 +8744,7 @@ def create_timesheet(payload):
     """
     if isinstance(payload, str):
         payload = frappe.parse_json(payload)
+    payload = payload or {}
 
     team = payload.get("team")
     time_logs = payload.get("time_logs") or []
@@ -8796,7 +8803,7 @@ def list_timesheets(filters=None):
     """
     if isinstance(filters, str):
         filters = frappe.parse_json(filters)
-    if not filters:
+    if not isinstance(filters, dict):
         filters = {}
 
     db_filters = {}
@@ -10294,6 +10301,7 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                         })
                     continue
 
+                frappe.db.sql("SAVEPOINT _archive_po")
                 try:
                     if existing_name:
                         doc = frappe.get_doc("PO Intake", existing_name)
@@ -10319,7 +10327,7 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                         is_new_po = True
                         po_created += 1
                 except Exception as e:
-                    frappe.db.rollback()
+                    frappe.db.sql("ROLLBACK TO SAVEPOINT _archive_po")
                     # Capture the FULL error text so the user can read it from the log,
                     # along with which row triggered it where determinable.
                     err_msg = frappe.utils.cstr(e)[:1000]
@@ -10377,8 +10385,10 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                     "lines_skipped": po_skipped,
                     "is_new": is_new_po,
                 })
-                frappe.db.commit()
 
+            # One commit per chunk (200 POs) instead of per PO.
+            # Savepoints above ensure individual PO errors only undo that PO.
+            frappe.db.commit()
             _archive_log_update(
                 log_name,
                 total_rows=total_archive,
