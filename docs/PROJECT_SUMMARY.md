@@ -36,6 +36,10 @@ Material chain (runs in parallel):
        → Material Transfer SE (duid = source DUID, to_duid = team DUID)
        → [field records qty_used on Daily Execution]
        → Work Done generated  → Material Issue SE (duid = team DUID)
+
+  Return flow (field → main WH):
+       → Material Return Request (is_return_request=1, portal-created by field)
+       → IM approves → Material Transfer SE (team WH → source WH, reversed direction)
 ```
 
 ### Custom Doctypes (~32)
@@ -88,6 +92,7 @@ Project Status Summary, Budget vs Actual, Team Utilization, Daily Work Progress.
 - **Main API:** `inet_app/api/command_center.py` (~10k lines)
 - **Material API:** `inet_app/api/material_management.py`
 - **PIC API:** `inet_app/api/pic.py`
+- **Expense API:** `inet_app/api/expense.py` (project-based expense claims, IM-approved)
 - **Database:** MariaDB via Frappe ORM + raw SQL for performance-sensitive paths
 
 ### Frontend
@@ -95,7 +100,7 @@ Project Status Summary, Budget vs Actual, Team Utilization, Daily Work Progress.
 - **State:** React Context (AuthContext, TableRowLimitContext)
 - **Table features:** DataTablePro (column manage / sort / filter / freeze / widths, persisted per user)
 - **PWA:** Service worker, maskable icons, installable, scope `/pms/`
-- **Build Output:** `inet_app/public/portal/`
+- **Build Output:** `inet_app/public/portal/` — code-split via `React.lazy` + `Suspense`; main bundle ~317 kB; each page loads as a separate chunk (~10–50 kB)
 
 ### Desk-side
 - `inet_app/public/js/stock_entry.js` — auto-fills DUID/to_duid on Stock Entry items from linked Material Request or Huawei Outbound Plan.
@@ -134,6 +139,19 @@ IMs with `can_assign_backend=1` can dispatch a POID to a Backend Team. No Rollou
 ### #6 — Team Allocation Request
 IM-to-IM team transfer: Request → IM Accept/Reject → PM Decide → Complete/Cancel.
 
+### #7 — Expense Claims
+Field team leads file project-based expense claims via the portal. Each claim line maps to one or more POIDs; multi-POID amounts are split equally. IM approves (or rejects with reason) at `/im-expense`; admin sees all at `/expenses`. Backend: ERPNext `Expense Claim` doctype + custom `Expense Claim Detail` child table fields (`poid` Link).
+
+API (`inet_app/api/expense.py`):
+- `create_project_expense_claim` — creates a draft Expense Claim per INET Team
+- `list_my_expense_claims` — field user's own claims
+- `list_pending_expense_approvals` — IM's pending queue
+- `list_all_expense_claims` — admin view
+- `approve_expense_claim` / `reject_expense_claim`
+
+### #8 — Material Returns
+Field team requests to return unused materials via `FieldMyStock → Returns` tab. Creates a `Material Request` with `is_return_request=1`. IM approves at `/im-material-request → Returns` tab → auto-creates a Material Transfer SE (team WH → source WH). Normal forward material requests filter out `is_return_request=1` rows.
+
 ---
 
 ## Notable Architectural Choices
@@ -153,4 +171,4 @@ IM-to-IM team transfer: Request → IM Accept/Reject → PM Decide → Complete/
 
 ## Status
 
-**Active development** against a production-tracking site. Currently in production use. Recent major additions: full material management chain (receipt → request → transfer → usage → auto-issue), DUID inventory dimension enforcement, per-DUID stock balance views for both IM and Field roles.
+**Active development** against a production-tracking site. Currently in production use. Recent major additions: full material management chain with return flow, DUID inventory dimension enforcement, per-DUID stock balance views for IM and Field, project-based expense claims (field → IM approval), backend team (subcon) workflow, code-split portal bundle (main 317 kB, per-page chunks).

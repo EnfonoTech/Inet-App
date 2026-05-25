@@ -1,6 +1,6 @@
 # INET App — System Overview
 
-End-to-end map of what's in the codebase as of this writing. Pair with
+End-to-end map of what's in the codebase. Pair with
 [USER_GUIDE.md](USER_GUIDE.md) for role-by-role workflows and
 [FINDINGS.md](FINDINGS.md) for known bugs / performance work.
 
@@ -8,7 +8,7 @@ End-to-end map of what's in the codebase as of this writing. Pair with
 
 A Frappe v15 + ERPNext custom telecom-rollout PMS. Models the lifecycle of a
 Huawei PO line all the way from upload → dispatch → field execution →
-sub-contract or invoicing. Four portal roles (Admin / IM / Field / PIC) live
+sub-contract or invoicing. Four portal roles (Admin/PM / IM / Field / PIC) live
 under one SPA at `/pms/*`; the underlying doctypes are also editable from the
 Frappe Desk for power users.
 
@@ -53,6 +53,11 @@ Material flow (separate chain):
   Team Warehouse (INET Team.warehouse)
        ↓ (Material Issue SE on Work Done, duid = team DUID)
   Consumed
+
+  Material Return flow (reverse path):
+  Team Warehouse
+       ↓ (Material Request, is_return_request=1 → Approved → Material Transfer SE)
+  Source Warehouse (INET main)
 ```
 
 ## Repository layout
@@ -62,19 +67,19 @@ apps/inet_app/
 ├── inet_app/                     ← Frappe app
 │   ├── api/
 │   │   ├── command_center.py     ← main pipeline API (~10k lines)
-│   │   ├── material_management.py← material request / stock / receipt / issue
+│   │   ├── material_management.py← material request / stock / receipt / issue / return
 │   │   ├── pic.py                ← PIC role: list / update / dashboard / reports
 │   │   └── project_management.py ← session bootstrap + PM helpers
 │   ├── inet_app/doctype/         ← 30+ doctypes
 │   │   └── daily_execution_material/ ← child table: item/qty_transferred/qty_used
 │   ├── public/
-│   │   ├── portal/               ← built Vite output (SPA bundle + service worker)
+│   │   ├── portal/               ← built Vite output (per-page code-split chunks + SW)
 │   │   └── js/stock_entry.js     ← desk-side DUID auto-fill for Stock Entry
 │   ├── hooks.py                  ← role_home_page, fixtures, after_migrate, doc_events
 │   └── setup.py                  ← after_migrate: roles, permissions, material setup
 ├── frontend/                     ← Vite + React 18 SPA
 │   ├── src/
-│   │   ├── App.jsx               ← role-gated route table
+│   │   ├── App.jsx               ← role-gated route table (React.lazy per-page split)
 │   │   ├── components/
 │   │   │   ├── AppShell.jsx      ← sidebar + role nav
 │   │   │   ├── DataTablePro.jsx  ← table chrome (manage cols / sort / filter)
@@ -82,7 +87,7 @@ apps/inet_app/
 │   │   │   └── …                 ← SearchableSelect, DateRangePicker, etc.
 │   │   ├── context/              ← Auth, TableRowLimit
 │   │   ├── pages/
-│   │   │   ├── admin/            ← PM views
+│   │   │   ├── admin/            ← PM views (14 pages)
 │   │   │   ├── im/               ← IM views (incl. IMMaterialRequest.jsx)
 │   │   │   ├── field/            ← Field views (PWA-friendly, incl. FieldMyStock.jsx)
 │   │   │   └── pic/              ← PIC views
@@ -108,6 +113,34 @@ SPA landing path:
 runs the role-resolution priority **PIC → IM → Field → Admin**. `INET Admin`,
 `System Manager`, and `Administrator` all map to the admin SPA.
 
+## Navigation items per role
+
+### Admin (PM)
+`/dashboard`, `/po-upload`, `/po-dump`, `/projects`, `/dispatch`, `/planning`,
+`/execution`, `/work-done`, `/issues-risks`, `/backend`, `/reports`,
+`/timesheets`, `/approvals`, `/expenses`, `/overview`, `/im-material-request`,
+`/masters`
+
+Also accessible (shared with PIC role): `/pic-dashboard`, `/pic-tracker`,
+`/pic-invoice-tracker`, `/pic-reports`
+
+### IM
+`/im-dashboard`, `/im-projects`, `/im-teams`, `/im-po-intake` (PO Control),
+`/im-dispatch` (Rollout Planning), `/im-planning` (Rollout Execution),
+`/im-execution` (Rollout Work Done), `/im-work-done` (Work Done),
+`/im-issues-risks`, `/im-material-request`, `/im-expense` (Expense Approvals),
+`/im-reports`, `/im-timesheets`
+
+Conditional: `/im-backend` (Backend) — only shown when IM has
+`can_assign_backend = 1` in their IM Master record.
+
+### PIC
+`/pic-dashboard`, `/pic-tracker`, `/pic-invoice-tracker`, `/pic-reports`
+
+### Field
+`/today`, `/field-execute`, `/field-qc-ciag`, `/field-history`,
+`/field-my-stock` (Materials), `/field-expense` (Expenses), `/field-timesheet`
+
 ## Central data model
 
 ### PO Dispatch (the spine)
@@ -123,15 +156,14 @@ Every active POID lives as one row in `PO Dispatch`. It carries:
 | Invoice (PIC)| `pic_status`, `pic_status_ms2`, `ms1_pct`, `ms2_pct`, `ms1_amount`, `ms2_amount` |
 
 `dispatch_status` enum: `Pending → Dispatched → Planned → Completed`,
-plus terminals `Sub-Contracted`, `Closed`, `Cancelled`. **No formal state
-machine** — see FINDINGS.
+plus terminals `Sub-Contracted`, `Closed`, `Cancelled`.
 
 ### Material flow doctypes
 
 | Doctype | Purpose |
 |---------|---------|
 | **Huawei Outbound Plan** | Shipment from Huawei; `outbound_status=Received` triggers Material Receipt SE. `du_id` / `duid_master` = site DUID. |
-| **Material Request** (ERPNext) | Transfer request from main warehouse → team warehouse. Custom fields: `poid`, `duid`, `im`, `team_warehouse`, `request_status`. |
+| **Material Request** (ERPNext) | Transfer request from main warehouse → team warehouse, or reverse for returns. Custom fields: `poid`, `duid`, `im`, `team_warehouse`, `request_status`, `is_return_request`. |
 | **INET Team** | `warehouse` field links the team to its ERPNext warehouse. |
 | **Daily Execution Material** | Child table on Daily Execution. Fields: `item_code`, `item_name`, `material_request`, `qty_transferred`, `qty_used`, `uom`. |
 | **INET Settings** | `source_warehouse` = main INET warehouse. |
@@ -169,67 +201,96 @@ receipts to handle both.
 `start_po_archive_import` enqueues `_run_po_archive_import` (long queue,
 3600s). Reads CLOSED/CANCELLED rows only, creates intake/lines/dispatches
 with `dispatch_status='Closed'/'Cancelled'` and stamps PIC payload.
+Uses MySQL SAVEPOINT per PO for error isolation; commits at chunk boundary
+(~80 commits for 12k rows vs. the former 16k).
 
 ### 3. IM Workflow
 ```
-PO Control → Rollout Planning → Rollout Execution → Work Done
+PO Control (/im-po-intake) → Rollout Planning (/im-dispatch)
+  → Rollout Execution (/im-planning) → Rollout Work Done (/im-execution)
+  → Work Done (/im-work-done)
 ```
-- **PO Control**: assign `target_month` to move to planning.
-- **Rollout Planning**: create `Rollout Plan` (team, date).
+- **PO Control**: assign `target_month` to move dispatched lines into planning.
+- **Rollout Planning (im-dispatch)**: create/manage Rollout Plan records (team, date, visit type).
+- **Rollout Execution (im-planning)**: monitor daily execution progress.
+- **Rollout Work Done (im-execution)**: review completed executions.
 - **Work Done**: `generate_work_done()` auto-issues materials consumed by the
   field team (reads `Daily Execution.material_usage` child table → creates
   Material Issue SE idempotently).
 
 ### 4. Material Management Workflow
 ```
-Huawei ships materials (Huawei Outbound Plan, status=Received)
+Huawei ships (Huawei Outbound Plan, status=Received)
     → IM creates Material Receipt SE (to_duid = DUID)
-    → IM creates Material Request (source WH → team WH)
+    → IM creates Material Request via DUID Stock tab (source WH → team WH)
+       - Remaining qty = received total - already-requested total per item
+       - has_requestable_items flag on DUID row; Request button hidden if false
     → IM approves → Material Transfer SE (duid=source, to_duid=team)
     → Field team records qty_used in Daily Execution (material_usage tab)
     → IM generates Work Done → auto Material Issue SE (duid = team DUID)
+
+Return flow:
+    → Field submits return request (FieldMyStock.jsx → Return Materials form)
+    → MR created with is_return_request=1 (team WH → source WH)
+    → IM approves return (IMMaterialRequest.jsx → Returns tab)
+    → Material Transfer SE created (stock moves back to main WH)
 ```
 
-**Portal pages:**
-- `/pms/im-material-request` (`IMMaterialRequest.jsx`) — IM view: Requests
-  tab (list with filters) + DUID Stock tab (main WH overview, search/filter,
-  auto-hides fully-transferred DUIDs).
-- `/pms/materials` (`FieldMyStock.jsx`) — Field user's team warehouse stock,
-  per-DUID breakdown.
-- IMTeams detail panel — stock section per team with per-DUID sources.
+### 5. Backend Team Workflow
+IMs with `can_assign_backend = 1` in their IM Master record see the **Backend**
+page (`/im-backend`, also `/backend` for admin). This lists PO dispatches
+assigned to backend/subcontracted teams:
+- Two tabs: **Pending** and **Work Done**.
+- Select pending rows → **Mark Work Done** → enter completion date + remark.
+- Marks `subcon_status = Work Done` on PO Dispatch. The Work Done feed then
+  synthesises a Work Done row via `_synthesize_subcon_workdone_rows`.
 
-**Duplicate guard**: `create_material_request` blocks if an active MR already
-exists for the same `poid + set_warehouse`.
-
-**Idempotent auto-issue**: `generate_work_done` checks existing Issue SEs via
-`sed.material_request` join before creating new SE.
-
-### 5. Field Workflow (PWA)
+### 6. Field Workflow (PWA)
 - **Today's Work** (`/pms/today`): plans for today.
 - **Execute** (`/pms/field-execute/:id`): start/stop timer, capture
-  qty/CIAG/QC, photos, material usage (qty_used per item).
-- **Materials** (`/pms/materials`): current stock in team's warehouse.
+  qty/CIAG/QC, photos, GPS, material usage (qty_used per item).
+- **Materials** (`/pms/field-my-stock`): current stock in team's warehouse,
+  per-DUID breakdown, Return Materials form.
+- **Expenses** (`/pms/field-expense`): submit expense claims with line items.
+- **Time log** (`/pms/field-timesheet`): log daily hours.
 
-### 6. Sub-Contract flow
+### 7. Expense Claim Workflow
+```
+Field user creates claim (FieldExpense.jsx)
+  → Claim lines with expense type, POID (optional), description, amount
+  → IM reviews pending claims (IMExpense.jsx / /im-expense)
+  → IM approves or rejects with remark
+  → Admin can view all claims (/expenses with isAdmin=true)
+```
+
+### 8. Sub-Contract flow
 No Rollout Plan / Daily Execution / Work Done — `subcon_status` tracks
 progress. Subcon completions are unioned into Work Done feed via
-`_synthesize_subcon_workdone_rows`.
+`_synthesize_subcon_workdone_rows`. Same page (`IMBackend.jsx`) handles both
+sub-contract and backend-team assignment.
 
-### 7. PIC (Invoice Controller)
+### 9. PIC (Invoice Controller)
 ```
 Confirmation Done → Under Process to Apply → Under I-BUY/ISDP
     → Ready for Invoice → Commercial Invoice Submitted → Closed
 ```
 MS1 and MS2 each have independent status. Split parsed from Payment Terms.
+`_pic_role_or_throw()` now echoes user's actual roles + required roles in
+the error message (instead of a generic "not permitted").
+
+### 10. Team Allocation Request
+IM-to-IM team transfer: Request → IM Accept/Reject → PM Decide (Approvals
+page) → Complete/Cancel. A red dot badge on the sidebar nav link shows when
+pending approvals exist.
 
 ## API surface
 
 | Module | Highlights |
 |--------|-----------|
-| `inet_app.api.command_center` | List endpoints (PO Intake Lines, Dispatches, Rollout Plans, Daily Execution, Work Done, Issues & Risks), upload + archive import, masters CRUD, dashboard KPIs, table preferences. |
-| `inet_app.api.material_management` | `create_material_request`, `list_material_requests`, `get_material_request`, `approve_material_request`, `get_poid_materials`, `get_team_material_stock`, `get_duid_stock_summary`, `get_duid_received_items`, `create_material_receipt_from_outbound`, `issue_materials_for_work_done`, `get_im_teams`, `get_source_warehouse`, `search_po_dispatches`, `get_poid_details`, `search_items`. |
+| `inet_app.api.command_center` | List endpoints (PO Intake Lines, Dispatches, Rollout Plans, Daily Execution, Work Done, Issues & Risks), upload + archive import, masters CRUD, dashboard KPIs, table preferences, backend team dispatch. |
+| `inet_app.api.material_management` | `create_material_request`, `create_material_return_request`, `list_material_requests`, `list_return_requests`, `approve_material_request`, `approve_material_return_request`, `create_direct_return_transfer`, `get_duid_stock_summary` (with `has_requestable_items` flag), `get_duid_received_items` (remaining qty after active MRs), `get_team_material_stock`, `create_material_receipt_from_outbound`, `issue_materials_for_work_done`. |
 | `inet_app.api.pic` | `list_pic_rows`, `update_pic_row`, `bulk_update_pic_status`, `get_pic_dashboard`, `get_pic_report`, `list_invoice_tracker_rows`, `create_sales_invoice_from_pic`. |
-| `inet_app.api.project_management` | `get_logged_user` (session bootstrap), PM helpers. |
+| `inet_app.api.project_management` | `get_logged_user` (session bootstrap), PM helpers, expense claim APIs. |
 
 ## hooks.py doc_events
 
@@ -246,44 +307,55 @@ doc_events = {
 ```
 
 `before_stock_entry_submit` auto-fills `duid`/`to_duid` on SE Detail rows
-from the linked Material Request (or PO Dispatch fallback) based on entry
-type:
+from the linked Material Request (or PO Dispatch fallback) based on entry type:
 - Material Receipt → set `to_duid` only
 - Material Transfer → set both `duid` (source) and `to_duid` (target)
 - Material Issue → set `duid` only
 
 ## Frontend conventions
 
+- **Code splitting**: All page-level imports in `App.jsx` use `React.lazy()`.
+  Main bundle is ~317 kB (was 1.88 MB). Each page loads as a separate chunk
+  on first navigation. `<Suspense fallback={<LoadingScreen />}>` wraps routes.
 - **DataTablePro** auto-attaches a toolbar (Manage Table, Filters, Reset,
   Sort) to every `<table class="data-table">` inside a `<DataTableWrapper>`.
   Persists per-user prefs via `useTablePreferences`.
-  **Tab-switching fix**: When a React tab switch unmounts the whole
-  `.data-table-wrapper` subtree, the `.data-table-scroll` MutationObserver
-  never fires. The fix: tab-switching components dispatch
+  **Tab-switching fix**: Tab-switching components dispatch
   `document.dispatchEvent(new CustomEvent("tablepro:check"))` after 60ms;
   DataTablePro listens and calls `scheduleReinitFromDom()`.
+- **Pre-validation pattern**: Edit popovers validate inputs locally before
+  calling the API. Catches future dates (PICTracker), empty required fields
+  (IMTeams team_name), etc. Prevents unnecessary 400 round-trips.
 - **`call()` wrapper** in `api.js` handles CSRF, JSON serialization, and
   Frappe error envelope translation.
 - **PWA**: scope `/pms/`, `registerType: "autoUpdate"`. `main.jsx` unregisters
   wider-scope SWs and redirects to `/app` if booting outside `/pms`.
-- **Standard tab pattern** (IMMaterialRequest, IMTeams): pill tablist
-  (`role="tablist"` div), `.toolbar` div for filters, `.page-content` wrapper
-  for `<DataTableWrapper>`. Dispatch `tablepro:check` in tab switch.
-- **Field pages**: card-based PWA layout using `exec-page`, `history-card`,
-  `today-chip` CSS classes. Large inputs (`inputMode="decimal"`) for easy
-  touch entry.
+- **Standard tab pattern**: pill tablist (`role="tablist"` div), `.toolbar`
+  div for filters, `.page-content` wrapper for `<DataTableWrapper>`. Dispatch
+  `tablepro:check` in tab switch.
+
+## Security / permission guards
+
+- **`_pic_role_or_throw()`**: raises `PermissionError` with descriptive message
+  showing user's actual roles and required roles.
+- **`has_column()` guards**: all optional column references (e.g. `ciag_status`,
+  `sqc_status`, `pat_status`) are guarded before inclusion in SQL to survive
+  sites that haven't run `bench migrate`.
+- **`frappe.parse_json` or-guards**: all `payload = frappe.parse_json(payload)`
+  calls followed by `payload = payload or {}` to handle `None` return.
 
 ## Migrations & deploy
 
 ```sh
-git pull && bench --site <site> migrate
+git pull && bench --site inet migrate
 cd apps/inet_app/frontend && npm run build
 bench restart
 ```
 
 `after_migrate` hook creates roles, ensures material permissions (Stock
-Manager role), ensures `Daily Execution Material` child doctype fields. New
-schema fields land via doctype JSONs.
+Manager role), ensures `Daily Execution Material` child doctype fields,
+ensures `is_return_request` custom field on Material Request doctype.
+New schema fields land via doctype JSONs.
 
 ## Where to look first
 
@@ -294,8 +366,13 @@ schema fields land via doctype JSONs.
 - **DUID balance wrong**: Check whether the SE has `duid`/`to_duid` set
   correctly. Legacy SEs may have the wrong column. Inspect via Frappe Desk
   → Stock Entry → Items child table → DUID / Target DUID fields.
+- **Material Request shows wrong remaining qty**: `get_duid_received_items`
+  subtracts active MR qty from received total. Check `is_return_request` flag
+  is not accidentally included in the subtraction query.
 - **DataTablePro missing on tab**: The page's tab-switch function must
   dispatch `tablepro:check` after the new content mounts.
 - **Add a role**: `setup.py` `_ensure_inet_roles`, `hooks.py` `role_home_page`,
-  `get_logged_user`, AppShell `*Nav`, `App.jsx` route gate.
-- **Performance bug**: see FINDINGS for index recommendations and N+1 hotspots.
+  `get_logged_user`, AppShell navItems arrays, `App.jsx` route gate.
+- **Backend team not seeing Backend nav link**: Check `can_assign_backend = 1`
+  on the IM Master record. AppShell conditionally pushes the nav item at line
+  ~268.

@@ -165,6 +165,15 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         where.append("pd.ms1_applied_date <= %s")
         params.append(pf["to_date"])
 
+    invoice_month_vals = _ensure_list(pf.get("invoice_month"))
+    if invoice_month_vals:
+        ph = ", ".join(["%s"] * len(invoice_month_vals))
+        where.append(
+            f"(DATE_FORMAT(pd.ms1_invoice_month, '%%Y-%%m') IN ({ph})"
+            f" OR DATE_FORMAT(pd.ms2_invoice_month, '%%Y-%%m') IN ({ph}))"
+        )
+        params.extend(invoice_month_vals * 2)
+
     if pf.get("dispatch_status"):
         ds_vals = _ensure_list(pf.get("dispatch_status"))
         ph = ", ".join(["%s"] * len(ds_vals))

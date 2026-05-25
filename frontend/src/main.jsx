@@ -34,9 +34,7 @@ if (import.meta.env.PROD) {
     // hijacking root-level navigation.
     immediate: true,
     onNeedRefresh() {
-      if (window.confirm("A new version is available. Reload now?")) {
-        updateSW(true);
-      }
+      updateSW(true);
     },
     onOfflineReady() {},
     onRegisterError(err) {

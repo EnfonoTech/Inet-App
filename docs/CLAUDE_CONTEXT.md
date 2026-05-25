@@ -36,20 +36,24 @@ Doctypes: `apps/inet_app/inet_app/inet_app/doctype/`
 
 ```
 inet_app/api/command_center.py      # ~10k lines — main pipeline API
-inet_app/api/material_management.py # material request / stock / SE hooks
+inet_app/api/material_management.py # material request / stock / SE hooks; includes return flow
 inet_app/api/pic.py                 # PIC invoicing
+inet_app/api/expense.py             # project expense claims (field → IM approval)
 inet_app/api/project_management.py  # session bootstrap (get_logged_user)
 inet_app/hooks.py                   # role_home_page, fixtures, doc_events
-inet_app/setup.py                   # after_migrate hook
+inet_app/setup.py                   # after_migrate hook (adds is_return_request custom field)
 
-frontend/src/App.jsx                # role-gated route table
+frontend/src/App.jsx                # role-gated route table; all pages are React.lazy chunks
 frontend/src/services/api.js        # all API calls go through here
 frontend/src/components/AppShell.jsx       # sidebar + nav
 frontend/src/components/DataTablePro.jsx   # table chrome (Manage Table etc.)
 frontend/src/components/DataTableWrapper.jsx  # wraps every data table
-frontend/src/pages/im/IMMaterialRequest.jsx   # material request portal page
-frontend/src/pages/field/FieldMyStock.jsx     # field user stock view
+frontend/src/pages/im/IMMaterialRequest.jsx   # material request + returns tabs
+frontend/src/pages/field/FieldMyStock.jsx     # field user stock + return requests
 frontend/src/pages/im/IMTeams.jsx             # IM teams + stock detail
+frontend/src/pages/im/IMBackend.jsx           # backend/subcon team assignment (can_assign_backend)
+frontend/src/pages/im/IMExpense.jsx           # IM expense claim approvals
+frontend/src/pages/field/FieldExpense.jsx     # field team expense submission
 
 inet_app/public/js/stock_entry.js   # Frappe Desk: auto-fill DUID on SE items
 ```
@@ -152,6 +156,34 @@ for same `poid + set_warehouse`.
 Auto-issue is idempotent: checks existing Issue SE via
 `sed.material_request = mr.name` join before creating.
 
+## Material return flow
+
+```
+1. Field user opens FieldMyStock → "Returns" tab
+2. create_material_return_request() — creates Material Request with is_return_request=1
+3. IM opens IMMaterialRequest → "Returns" tab → sees pending return requests
+4. approve_material_return_request(name) — creates Material Transfer SE
+   (s_warehouse=team_wh, t_warehouse=source_wh, duid=team_duid, reversed direction)
+```
+
+Normal `list_material_requests` filters out `is_return_request=1` rows so returns
+don't pollute the forward-request queue.
+`is_return_request` is a custom field added by `setup.py` `after_migrate` hook.
+
+## Expense claim flow
+
+```
+1. Field team lead opens FieldExpense → fills date, remarks, expense lines (type + amount + POIDs)
+2. create_project_expense_claim() → creates ERPNext Expense Claim (draft → submitted)
+   - Each expense_line.poids is a list; amount split equally across selected POIDs
+   - expense_approver = IM's Frappe user; employee = field user's Employee record
+3. IM opens IMExpense → "Pending" tab → approve_expense_claim() or reject_expense_claim(reason)
+4. Admin views all via /expenses (list_all_expense_claims)
+```
+
+Key fields: `Expense Claim Detail.poid` (Link → PO Dispatch, custom field).
+The IM is resolved from the field user's INET Team → IM Master → Frappe User chain.
+
 ---
 
 ## Frontend conventions
@@ -233,7 +265,19 @@ team = frappe.db.get_value("INET Team Member", {"user": frappe.session.user}, "p
 ```python
 roles = set(frappe.get_roles(frappe.session.user))
 if not roles & {"INET IM", "INET Admin", "System Manager", "Administrator"}:
-    frappe.throw("Not permitted", frappe.PermissionError)
+    user_roles = ", ".join(sorted(roles - {"All", "Guest"})) or "none"
+    frappe.throw(
+        f"Not permitted. Your roles: {user_roles}. Required (any one of): INET IM, INET Admin, ...",
+        frappe.PermissionError,
+    )
+```
+
+### Backend: check backend team capability
+```python
+# In command_center.py:
+cap = get_my_backend_capability()  # returns {"can_assign_backend": bool, "im": name}
+# IM Master field: can_assign_backend (Check/Int)
+flag = frappe.db.get_value("IM Master", im_name, "can_assign_backend")
 ```
 
 ### Backend: get source warehouse
@@ -278,6 +322,8 @@ bench restart               # if Python code changes
 
 # Frontend
 cd apps/inet_app/frontend && npm run build
+# Output goes to inet_app/public/portal/assets/
+# Main bundle: index.js (~317 kB); each page is a separate chunk via React.lazy
 
 # Both
 bench --site inet migrate && npm run build && bench restart
@@ -322,6 +368,20 @@ bench --site inet migrate && npm run build && bench restart
     stale Custom Field (Long Text) exists from an old migration, it conflicts
     with the Table field. Fix: delete the Custom Field from Frappe Desk,
     then `bench --site inet clear-cache`.
+
+11. **`IMBackend` is gated by `can_assign_backend`** — the "Backend" nav item
+    in the IM sidebar only appears if `get_my_backend_capability()` returns
+    `can_assign_backend: true`. The flag lives on `IM Master.can_assign_backend`.
+    If an IM can't see the Backend page, check that field in Frappe Desk.
+
+12. **Expense claim `expense_approver`** is the IM's *Frappe User* (email), not
+    the IM Master name. `_get_im_user(im_master_name)` fetches it. If the IM
+    has no linked Frappe User, expense submission will fail with a validation error.
+
+13. **`is_return_request` field** — added by `setup.py` `after_migrate`. On a
+    fresh site run `bench --site inet migrate` to ensure the custom field exists
+    before using the Returns tab. The `list_material_requests` query guards with
+    `has_column("Material Request", "is_return_request")` before filtering.
 
 ---
 

@@ -46,6 +46,8 @@ export default defineConfig({
         ],
       },
       workbox: {
+        clientsClaim: true,
+        skipWaiting: true,
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2,json,webmanifest}"],
         globIgnores: ["**/node_modules/**/*"],
         // Only intercept navigations under /pms/. Without this, navigations
@@ -100,9 +102,10 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        // Stable filenames — no content hash — so pms.html never goes stale
+        // Entry has a stable name (pms.html references it directly).
+        // Chunks get a short hash so browsers/Firefox always fetch updated code.
         entryFileNames: "assets/index.js",
-        chunkFileNames: "assets/[name].js",
+        chunkFileNames: "assets/[name]-[hash:8].js",
         assetFileNames: "assets/[name][extname]",
       },
     },

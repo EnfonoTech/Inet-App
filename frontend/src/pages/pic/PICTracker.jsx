@@ -649,6 +649,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
               amount={ms1Amt}
               invoiced={ms1Inv}
               unbilled={ms1Unb}
+
               fields={fields}
               set={set}
               busy={busy}
@@ -670,6 +671,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
               amount={ms2Amt}
               invoiced={ms2Inv}
               unbilled={ms2Unb}
+
               fields={fields}
               set={set}
               busy={busy}
@@ -781,6 +783,39 @@ const fieldInputStyle = {
 };
 const fieldTextareaStyle = { ...fieldInputStyle, resize: "vertical", minHeight: 60 };
 
+const INV_MONTH_NAMES = ["January","February","March","April","May","June",
+  "July","August","September","October","November","December"];
+
+function fmtMonthLabel(ym) {
+  const [y, m] = ym.split("-");
+  return `${INV_MONTH_NAMES[parseInt(m, 10) - 1]} ${y}`;
+}
+
+function buildMonthOpts(curValue) {
+  const today = new Date();
+  const s = new Set();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
+    s.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const cur = (curValue || "").slice(0, 7);
+  if (cur && /^\d{4}-\d{2}$/.test(cur)) s.add(cur);
+  return Array.from(s).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort().reverse();
+}
+
+function InvoiceMonthSelect({ value, onChange, disabled }) {
+  const cur = (value || "").slice(0, 7);
+  const opts = buildMonthOpts(value);
+  return (
+    <select value={cur} onChange={(e) => onChange(e.target.value ? `${e.target.value}-01` : "")}
+      disabled={disabled}
+      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, background: "#fff" }}>
+      <option value="">— Select month —</option>
+      {opts.map((m) => <option key={m} value={m}>{fmtMonthLabel(m)}</option>)}
+    </select>
+  );
+}
+
 function MilestonePanel({
   tone, title, pctLabel, amount, invoiced, unbilled,
   statusKey, ownerKey, detailKey, appliedKey, invoicedKey,
@@ -831,8 +866,11 @@ function MilestonePanel({
           </span>
         </Field>
         <Field label="Invoicing Month">
-          <input type="month" value={(fields[invoiceMonthKey] || "").slice(0, 7)}
-            onChange={(e) => set(invoiceMonthKey, e.target.value ? `${e.target.value}-01` : "")} disabled={busy} style={fieldInputStyle} />
+          <InvoiceMonthSelect
+            value={fields[invoiceMonthKey] || ""}
+            onChange={(v) => set(invoiceMonthKey, v)}
+            disabled={busy}
+          />
         </Field>
         <Field label="IBUY / INV Date">
           <input type="date" value={fields[ibuyDateKey] || ""} onChange={(e) => set(ibuyDateKey, e.target.value)} disabled={busy} style={fieldInputStyle} />
