@@ -266,12 +266,13 @@ export default function InvoiceTracker() {
               <p>{hasFilters ? "Try adjusting your search or filter criteria." : "No lines have reached the invoicing stage."}</p>
             </div>
           ) : (
-            <table className="data-table">
+            <table className="data-table" data-table-key="invoice-tracker-v2">
               <thead>
                 <tr>
                   <th style={{ width: 32 }}>
                     <input type="checkbox" onChange={() => {}} checked={false} style={{ visibility: "hidden" }} />
                   </th>
+                  <th>Contract</th>
                   <th>POID</th>
                   <th>Customer</th>
                   <th>Project</th>
@@ -299,6 +300,7 @@ export default function InvoiceTracker() {
                       <td onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(r.name)} onChange={() => toggleRow(r.name)} />
                       </td>
+                      <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.name}</td>
                       <td>{r.customer || "—"}</td>
                       <td>{r.project_code || "—"}</td>

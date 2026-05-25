@@ -27,6 +27,7 @@ const PIC_STATUSES = [
 // works with day-to-day. Dynamic doctype fields added via Manage Table aren't
 // included to keep the export deterministic.
 const CSV_COLUMNS = [
+  ["contract_model", "Contract"],
   ["poid", "POID"],
   ["po_no", "PO No"],
   ["dispatch_status", "PO Status"],
@@ -355,12 +356,13 @@ export default function PICTracker() {
               <p>{hasFilters ? "Adjust your filters." : "POIDs appear here when their PO Dispatch is created."}</p>
             </div>
           ) : (
-            <table className="data-table">
+            <table className="data-table" data-table-key="pic-tracker-v2">
               <thead>
                 <tr>
                   <th>
                     <input type="checkbox" checked={rows.length > 0 && rows.every((r) => selected.has(r.po_dispatch))} onChange={toggleAll} />
                   </th>
+                  <th>Contract</th>
                   <th>POID</th>
                   <th>PO No</th>
                   <th>PO Status</th>
@@ -396,6 +398,7 @@ export default function PICTracker() {
                     <td onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(r.po_dispatch)} onChange={() => toggleRow(r.po_dispatch)} />
                     </td>
+                    <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch}</td>
                     <td>{r.po_no || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.dispatch_status || "—"}</td>

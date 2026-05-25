@@ -72,6 +72,8 @@ LEFT JOIN `tabSubcontractor Master` sm ON sm.name = plan.subcontractor
 # (``wd_sub.confirmed``) plus the IM Master / Project Control Center joins
 # used in label projection and search. ~50–80% wall-time drop on PIC
 # Tracker list calls.
+# plan_contract: lightweight subquery (no Daily Execution) to resolve the
+# subcontractor (and its contract_model) via the Rollout Plan team.
 _PIC_FROM_JOIN_LEAN = """
 FROM `tabPO Dispatch` pd
 LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
@@ -84,6 +86,13 @@ LEFT JOIN (
     INNER JOIN `tabWork Done` wd ON wd.execution = de.name
     GROUP BY rp.po_dispatch
 ) wd_sub ON wd_sub.po_dispatch = pd.name
+LEFT JOIN (
+    SELECT rp.po_dispatch, MAX(it.subcontractor) AS subcontractor
+    FROM `tabRollout Plan` rp
+    LEFT JOIN `tabINET Team` it ON it.name = rp.team
+    GROUP BY rp.po_dispatch
+) plan_contract ON plan_contract.po_dispatch = pd.name
+LEFT JOIN `tabSubcontractor Master` sm_sub ON sm_sub.name = plan_contract.subcontractor
 """
 
 
@@ -187,7 +196,8 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             "plan.team_type AS team_type, "
             "sm.subcontractor_name AS subcontractor, "
             "sm.sub_payout_pct AS subcontractor_payout_pct, "
-            "sm.inet_margin_pct AS subcontractor_margin_pct"
+            "sm.inet_margin_pct AS subcontractor_margin_pct, "
+            "sm.contract_model AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN
     else:
@@ -195,7 +205,8 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             "NULL AS team_type, "
             "NULL AS subcontractor, "
             "NULL AS subcontractor_payout_pct, "
-            "NULL AS subcontractor_margin_pct"
+            "NULL AS subcontractor_margin_pct, "
+            "sm_sub.contract_model AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN_LEAN
 
@@ -989,9 +1000,17 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                pd.ms1_payment_received_date, pd.ms2_payment_received_date,
                pd.subcon_pct_ms1, pd.inet_pct_ms1,
                pd.subcon_pct_ms2, pd.inet_pct_ms2,
+               sm_inv.contract_model AS contract_model,
                pd.modified,
                {si_cols}
         FROM `tabPO Dispatch` pd
+        LEFT JOIN (
+            SELECT rp.po_dispatch, MAX(it.subcontractor) AS subcontractor
+            FROM `tabRollout Plan` rp
+            LEFT JOIN `tabINET Team` it ON it.name = rp.team
+            GROUP BY rp.po_dispatch
+        ) plan_inv ON plan_inv.po_dispatch = pd.name
+        LEFT JOIN `tabSubcontractor Master` sm_inv ON sm_inv.name = plan_inv.subcontractor
         LEFT JOIN (
             SELECT rp.po_dispatch AS po_dispatch,
                    MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
