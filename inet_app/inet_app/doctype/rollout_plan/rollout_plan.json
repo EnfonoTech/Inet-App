@@ -24,6 +24,7 @@
   "plan_status",
   "section_teams",
   "teams",
+  "plan_team_members",
   "section_break_ceaq",
   "issue_category",
   "issue_remarks",
@@ -167,6 +168,14 @@
    "fieldtype": "Table",
    "label": "Teams",
    "options": "Rollout Plan Team"
+  },
+  {
+   "collapsible": 1,
+   "description": "Snapshot of team members at plan time. Auto-synced from INET Team members when plan is saved. IM can also edit manually.",
+   "fieldname": "plan_team_members",
+   "fieldtype": "Table",
+   "label": "Plan Team Members",
+   "options": "Rollout Plan Team Member"
   },
   {
    "fieldname": "section_break_ceaq",

@@ -1,0 +1,80 @@
+{
+ "actions": [],
+ "creation": "2026-05-25 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "team",
+  "team_name",
+  "column_break_1",
+  "employee",
+  "employee_name",
+  "designation",
+  "is_team_lead"
+ ],
+ "fields": [
+  {
+   "fieldname": "team",
+   "fieldtype": "Link",
+   "label": "Team",
+   "options": "INET Team",
+   "in_list_view": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "team_name",
+   "fieldtype": "Data",
+   "label": "Team Name",
+   "fetch_from": "team.team_name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee",
+   "in_list_view": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Employee Name",
+   "fetch_from": "employee.employee_name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "designation",
+   "fieldtype": "Link",
+   "label": "Designation",
+   "options": "Designation",
+   "fetch_from": "employee.designation",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_team_lead",
+   "fieldtype": "Check",
+   "label": "Team Lead",
+   "in_list_view": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-25 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Rollout Plan Team Member",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

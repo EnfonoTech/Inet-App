@@ -24,6 +24,8 @@
   "revisit_flag",
   "section_break_yvjh",
   "remarks",
+  "section_team_members",
+  "execution_team_members",
   "material_usage_section",
   "material_usage"
  ],
@@ -149,6 +151,19 @@
   {
    "fieldname": "section_break_yvjh",
    "fieldtype": "Section Break"
+  },
+  {
+   "collapsible": 1,
+   "description": "Team members who worked on this execution. Auto-populated from the plan's team members. IM can add or remove members.",
+   "fieldname": "section_team_members",
+   "fieldtype": "Section Break",
+   "label": "Execution Team Members"
+  },
+  {
+   "fieldname": "execution_team_members",
+   "fieldtype": "Table",
+   "label": "Execution Team Members",
+   "options": "Execution Team Member"
   },
   {
    "fieldname": "material_usage_section",
