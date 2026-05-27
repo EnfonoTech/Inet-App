@@ -4403,7 +4403,7 @@ def generate_work_done(execution_name):
     dispatch = frappe.db.get_value(
         "PO Dispatch",
         dispatch_name,
-        ["item_code", "center_area", "region_type", "project_code", "customer"],
+        ["item_code", "center_area", "region_type", "project_code", "customer", "rate"],
         as_dict=True,
     )
     if not dispatch:
@@ -4413,27 +4413,8 @@ def generate_work_done(execution_name):
     center_area = dispatch.center_area or ""
     team_id = rp.team
 
-    # Determine billing_rate from Customer Item Master
-    is_hard = is_hard_region(dispatch.region_type, center_area)
-    billing_rate = 0.0
-    cim_filters = {"item_code": item_code, "active_flag": 1}
-    if dispatch.customer:
-        cim_filters["customer"] = dispatch.customer
-    cim = frappe.db.get_value(
-        "Customer Item Master",
-        cim_filters,
-        ["standard_rate_sar", "hard_rate_sar"],
-        as_dict=True,
-    )
-    if not cim:
-        cim = frappe.db.get_value(
-            "Customer Item Master",
-            {"item_code": item_code, "active_flag": 1},
-            ["standard_rate_sar", "hard_rate_sar"],
-            as_dict=True,
-        )
-    if cim:
-        billing_rate = flt(cim.hard_rate_sar if is_hard else cim.standard_rate_sar)
+    # Billing rate always comes from PO Dispatch — it is the contracted per-unit rate
+    billing_rate = flt(dispatch.rate or 0)
 
     # Aggregate executed_qty across team Daily Executions — multi-team
     # plans bill on the combined work, not just the trigger DE.
