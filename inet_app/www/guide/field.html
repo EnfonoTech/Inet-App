@@ -1,0 +1,211 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Field Guide — INET OCC{% endblock %}
+
+{% block head_include %}
+<link rel="stylesheet" href="/assets/inet_app/css/guide.css">
+{% endblock %}
+
+{% block page_content %}
+<div class="guide-wrap">
+
+  <div class="guide-page-header">
+    <span class="guide-role-badge">Field Team</span>
+    <h1>Field Guide</h1>
+    <p class="gph-sub">Today's work, on-site execution forms, team stock, expenses, and time logging — optimised for mobile use on site.</p>
+  </div>
+
+  <nav class="guide-role-nav">
+    <a href="/guide">Overview</a>
+    <a href="/guide/pm">PM Guide</a>
+    <a href="/guide/im">IM Guide</a>
+    <a href="/guide/field" class="active">Field Guide</a>
+    <a href="/guide/pic">PIC Guide</a>
+  </nav>
+
+  <div class="g-alert g-alert-info"><span class="g-alert-icon">📱</span><div>The field portal is designed for <strong>mobile use on site</strong>. Pages use a card-based layout optimised for touch and small screens.</div></div>
+
+  <h2>4.1 Today's Work <span class="section-url">/pms/today</span></h2>
+  <p>Your home screen. Shows all work your team has planned for today.</p>
+  <p><strong>Header:</strong> Time-based greeting ("Good morning/afternoon/evening, [your first name]"), today's full date (e.g. "Monday, 26 May 2026"). Refresh button.</p>
+  <p><strong>Summary chips:</strong> Total (plan count) · In Progress (amber dot) · Planned (blue dot) · Done (green dot).</p>
+  <p>Plans are <strong>sorted by urgency:</strong> In Progress first → Planned → Completed.</p>
+
+  <h3>Plan card colours (left border)</h3>
+  <table>
+    <thead><tr><th>Border colour</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Amber</td><td>In Progress / In Execution</td></tr>
+      <tr><td>Blue</td><td>Planned (not started)</td></tr>
+      <tr><td>Green</td><td>Completed</td></tr>
+      <tr><td>Gray</td><td>Cancelled</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Card contents</h3>
+  <ul>
+    <li>Item description (large title), POID (bold) + Plan name (small, muted)</li>
+    <li><strong>IM ✓ badge</strong> (green, top right) — shown if your IM has confirmed this execution</li>
+    <li>Site code + site name, Activity type, Project code, Visit type + your share qty, Access time + period</li>
+    <li><strong>QC Not Required</strong> / <strong>CIAG Not Required</strong> amber badges (when IM unchecked those toggles)</li>
+    <li><strong>IM note callout</strong> — if your IM left a Manager Remark, it appears as a highlighted callout at the bottom of the card</li>
+  </ul>
+  <p><strong>Card footer:</strong> "Tap to execute →" (if not started) or "Continue execution →" (if In Progress). Tap any card to open the Execution Form.</p>
+
+  <hr>
+
+  <h2>4.2 Execute <span class="section-url">/pms/field-execute</span></h2>
+  <p>The main on-site execution form. Opens from Today's Work or directly via URL. Without a plan ID, shows a list of all actionable plans for your team.</p>
+
+  <h3>Timer section</h3>
+  <ul>
+    <li><strong>Start Timer</strong> (play icon) — starts the time log for this plan. Only one timer can run at a time across all your plans.</li>
+    <li><strong>Stop Timer</strong> (stop icon) — stops the running timer and logs the time.</li>
+    <li>If a timer is running on a different plan, a warning shows: "A timer is running on [other plan name]". Stop it here before starting this one.</li>
+  </ul>
+
+  <h3>Plan information header</h3>
+  <p>Shows: Item description, POID, site code, activity type, project, visit type, target qty. <strong>IM Note callout</strong> — Manager Remark shown as an amber/blue callout above the form fields. <strong>Plan Teams Breakdown</strong> — all teams on this plan and their assigned quantities.</p>
+
+  <h3>Form fields</h3>
+  <table>
+    <thead><tr><th>Field</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Execution Status</strong> (required)</td><td>In Progress · Completed · Hold · Cancelled · Postponed</td></tr>
+      <tr><td><strong>Achieved Quantity</strong></td><td>Pre-filled from plan target. Adjust if actual quantity differs.</td></tr>
+      <tr><td><strong>QC Status</strong></td><td>Only shown if QC is required. Options: Pending / Pass / Fail / N/A</td></tr>
+      <tr><td><strong>CIAG Status</strong></td><td>Only shown if CIAG is required. Options: Open / Submitted / Accepted / Rejected</td></tr>
+      <tr><td><strong>GPS Location</strong></td><td>Click <strong>Capture GPS</strong> to read device location ("Lat, Lon (±Xm)"). Or type coordinates manually.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Team Lead Remark (TL Remark)</h3>
+  <ul>
+    <li><strong>Remark picker</strong> (searchable dropdown): click to open saved remark templates. Type to filter. Selected remarks appear as chips; click × to remove. If your text doesn't match any template, tap "+ Add '[text]' as new remark" to save it as a template and pick it simultaneously. Multiple remarks can be combined.</li>
+    <li><strong>Extra free-text textarea</strong> — for anything not covered by templates; appended below picked remarks on save.</li>
+  </ul>
+  <p>Previously saved remarks from this plan pre-fill on load so re-editing doesn't lose prior text.</p>
+
+  <h3>Materials section</h3>
+  <p>Shows all materials transferred to your team warehouse for this POID. For each item: Item name, item code, <strong>Status badge</strong> ("In Warehouse" green or "Pending" amber), Transferred qty, <strong>Used qty input</strong> (editable, max = transferred qty, pre-filled with transferred qty — adjust downward if you used less).</p>
+
+  <h3>Inline Expense section</h3>
+  <p>Log site expenses directly from the execution form without opening the Expense page separately. For each expense line: <strong>Expense Type</strong> (required), <strong>Amount</strong> SAR (required, &gt;0), <strong>Description</strong> (optional), <strong>+ Add</strong> button. Queued lines shown in a table below. Submitted together with the execution form.</p>
+
+  <h3>Photos / Attachments</h3>
+  <ul>
+    <li><strong>Camera button</strong> — opens the device camera or file picker</li>
+    <li>Uploaded photos show as thumbnail previews immediately</li>
+    <li>Each photo has a <strong>Remove</strong> button (×). Upload progress shows pending thumbnail greyed out.</li>
+  </ul>
+
+  <h3>Submit</h3>
+  <p>The <strong>Save</strong> button submits all fields: execution status, achieved qty, QC/CIAG status, GPS, TL remarks, material usage, inline expense lines, and photos.</p>
+  <p>When status is <strong>Completed</strong>, the system automatically creates a Work Done record. After a successful submission: "All Done!" message. Navigate back to Today's Work using the back arrow.</p>
+
+  <hr>
+
+  <h2>4.3 QC / CIAG <span class="section-url">/pms/field-qc-ciag</span></h2>
+  <p>Quality check and Customer Inspection and Acceptance (CIAG) forms — for cases where QC/CIAG needs to be completed independently from the execution form.</p>
+  <ul>
+    <li><strong>QC Status</strong> select (Pass / Fail / N/A) + QC Remark textarea + photo upload</li>
+    <li><strong>CIAG Status</strong> select (Submitted / Accepted / Rejected / Open) + CIAG Remark textarea + photo upload</li>
+    <li><strong>Save &amp; Complete</strong> button per section</li>
+  </ul>
+
+  <hr>
+
+  <h2>4.4 History <span class="section-url">/pms/field-history</span></h2>
+  <p>Read-only log of all previous work completed by your team. <strong>Toolbar:</strong> Date range, Activity Type filter, Status filter. Export Excel. <strong>Columns:</strong> Plan name, POID, Item Description, Site, Project, Visit Type, Plan Date, Status badge, Achieved Qty, Remarks.</p>
+
+  <hr>
+
+  <h2>4.5 My Stock <span class="section-url">/pms/field-my-stock</span></h2>
+  <p>View all materials currently in your team's warehouse and submit material return requests. Stock is updated automatically when your IM approves a transfer — no refresh or confirmation needed.</p>
+
+  <h3>Stock item card layout</h3>
+  <ul>
+    <li><strong>Item Name</strong> (large, bold) + Item code (monospace, small)</li>
+    <li><strong>Quantity</strong> (large, right-aligned) + UOM (e.g. Nos, Meters)</li>
+    <li><strong>Material type badge:</strong> <span class="g-badge g-badge-amber">Huawei</span> (customer-provided from Huawei delivery) · <span class="g-badge g-badge-blue">Company (INET)</span> (INET-owned material)</li>
+    <li><strong>Left border colour:</strong> amber = Huawei · blue = Company (INET)</li>
+    <li>Tap "▼ X DUIDs" to expand and see which delivery codes this stock came from</li>
+  </ul>
+
+  <h3>Returning Materials</h3>
+  <div class="g-steps">
+    <div class="g-step"><div class="g-step-num">1</div><div class="g-step-content"><div class="g-step-title">Tap Return Materials</div><div class="g-step-desc">Button at the top of the stock page. A form opens listing all items currently in your stock.</div></div></div>
+    <div class="g-step"><div class="g-step-num">2</div><div class="g-step-content"><div class="g-step-title">Check items to return</div><div class="g-step-desc">Checking an item pre-fills the full available quantity — reduce it if returning only part. The system will not allow a return quantity greater than your current stock.</div></div></div>
+    <div class="g-step"><div class="g-step-num">3</div><div class="g-step-content"><div class="g-step-title">Enter a Reason (required)</div><div class="g-step-desc">Describe why: unused, damaged, wrong delivery, project cancelled, etc.</div></div></div>
+    <div class="g-step"><div class="g-step-num">4</div><div class="g-step-content"><div class="g-step-title">Tap Submit</div><div class="g-step-desc">Return request sent to your IM for approval. After IM approval, stock moves back to the main warehouse automatically.</div></div></div>
+  </div>
+
+  <h3>Return request statuses</h3>
+  <table>
+    <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><span class="g-badge g-badge-blue">Pending</span></td><td>Submitted, awaiting IM approval</td></tr>
+      <tr><td><span class="g-badge g-badge-green">Approved</span></td><td>IM approved, stock transferred back</td></tr>
+      <tr><td><span class="g-badge g-badge-red">Rejected</span></td><td>IM rejected, stock stays in your warehouse</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>4.6 Expenses <span class="section-url">/pms/field-expense</span></h2>
+  <p>Submit expense claims for project-related costs (fuel, accommodation, meals, tools, etc.).</p>
+  <div class="g-alert g-alert-warning"><span class="g-alert-icon">⚠️</span><div>The <strong>+ New Claim</strong> button is only active if your user account has an Employee record linked. If greyed out, contact your IM.</div></div>
+
+  <h3>Your claims — four tabs</h3>
+  <table>
+    <thead><tr><th>Tab</th><th>Shows</th></tr></thead>
+    <tbody>
+      <tr><td>Pending</td><td>Submitted claims waiting for IM decision (blue border)</td></tr>
+      <tr><td>Unpaid</td><td>Approved but payment not yet made to you (amber border)</td></tr>
+      <tr><td>Paid</td><td>Fully settled claims (green border)</td></tr>
+      <tr><td>All</td><td>Complete claim history</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Creating a New Claim</h3>
+  <div class="g-steps">
+    <div class="g-step"><div class="g-step-num">1</div><div class="g-step-content"><div class="g-step-title">Tap + New Claim</div><div class="g-step-desc">Opens the claim form.</div></div></div>
+    <div class="g-step"><div class="g-step-num">2</div><div class="g-step-content"><div class="g-step-title">Fill the header</div><div class="g-step-desc"><strong>Date</strong> (defaults to today, required) · <strong>Team</strong> (pre-filled, read-only) · <strong>Remarks</strong> (optional overall note).</div></div></div>
+    <div class="g-step"><div class="g-step-num">3</div><div class="g-step-content"><div class="g-step-title">Add expense lines</div><div class="g-step-desc">Tap <strong>+ Add Expense Line</strong> for each cost. Required: Expense Type (Travel, Accommodation, Meals, etc.), Amount SAR (&gt;0), POID. Optional: Description.</div></div></div>
+    <div class="g-step"><div class="g-step-num">4</div><div class="g-step-content"><div class="g-step-title">Single vs Multi-POID mode</div><div class="g-step-desc">Each line defaults to Single POID. Toggle to <strong>Multi-POID</strong> to link the cost to multiple work orders. Live split preview: <em>SAR [amount] ÷ [N] POIDs = SAR [amount each]</em>. Total divided equally across all selected POIDs.</div></div></div>
+    <div class="g-step"><div class="g-step-num">5</div><div class="g-step-content"><div class="g-step-title">Tap Submit Claim</div><div class="g-step-desc">Claim sent to your IM. You cannot edit it after submission. Running total shown as you add lines.</div></div></div>
+  </div>
+
+  <h3>Claim status flow</h3>
+  <div class="g-pipeline">
+    <span class="g-pipeline-step">Submitted</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Pending (IM review)</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Approved</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Unpaid</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Paid</span>
+  </div>
+  <p style="font-size:13px;color:#64748b;margin-top:4px;">Or: Pending → <strong style="color:#ef4444">Rejected</strong> (rejection reason visible to you)</p>
+
+  <hr>
+
+  <h2>4.7 Time Log <span class="section-url">/pms/field-timesheet</span></h2>
+  <p>Record your daily working hours per plan. <strong>Summary card:</strong> Total log entries + total hours for the selected period.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Plan</td><td>Select from your active plans</td></tr>
+      <tr><td>Date</td><td>Defaults to today</td></tr>
+      <tr><td>Start / End Time</td><td>Time picker. Duration calculated automatically.</td></tr>
+      <tr><td>Activity Type</td><td>Dropdown (Execution, Travel, Setup, etc.)</td></tr>
+      <tr><td>Remark</td><td>Optional text</td></tr>
+    </tbody>
+  </table>
+  <p>Tap <strong>Add</strong> to log the entry. Logged entries list shows Date, Start, End, Duration, Activity, Remark, Edit, Delete buttons.</p>
+
+  <div class="g-page-nav">
+    <a href="/guide/im">← IM Guide</a>
+    <a href="/guide/pic">PIC Guide →</a>
+  </div>
+
+</div>
+{% endblock %}

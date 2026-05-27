@@ -1,0 +1,122 @@
+{% extends "templates/web.html" %}
+
+{% block title %}INET OCC User Guide — Overview{% endblock %}
+
+{% block head_include %}
+<link rel="stylesheet" href="/assets/inet_app/css/guide.css">
+{% endblock %}
+
+{% block page_content %}
+<div class="guide-wrap">
+
+  <div class="guide-page-header">
+    <span class="guide-role-badge">User Guide</span>
+    <h1>INET Operations Command Center</h1>
+    <p class="gph-sub">End-to-end telecom rollout management — from PO to invoice — through a single browser portal.</p>
+  </div>
+
+  <nav class="guide-role-nav">
+    <a href="/guide" class="active">Overview</a>
+    <a href="/guide/pm">PM Guide</a>
+    <a href="/guide/im">IM Guide</a>
+    <a href="/guide/field">Field Guide</a>
+    <a href="/guide/pic">PIC Guide</a>
+  </nav>
+
+  <h2>1. Overview</h2>
+  <p>The INET Operations Command Center manages telecom rollout projects from the first purchase order to the final invoice. Every stakeholder — Project Manager, Implementation Manager, Field Team, and PIC — works through the same portal, each seeing only the pages relevant to their role.</p>
+
+  <h3>Work order lifecycle</h3>
+  <div class="g-pipeline">
+    <span class="g-pipeline-step">PO Upload</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Dispatch</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">PO Control</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Rollout Planning</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Rollout Execution</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Work Done</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Invoice</span>
+  </div>
+
+  <h3>Materials lifecycle (parallel)</h3>
+  <div class="g-pipeline">
+    <span class="g-pipeline-step">Huawei Delivery</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Main Warehouse</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Team Warehouse</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">On-site Use</span><span class="g-pipeline-arrow">→</span>
+    <span class="g-pipeline-step">Return if unused</span>
+  </div>
+
+  <hr>
+
+  <h2>1.1 User Roles</h2>
+  <p>When you log in the portal automatically shows the correct layout for your role. You only see pages relevant to you.</p>
+
+  <div class="g-role-grid">
+    <a class="g-role-card g-role-pm" href="/guide/pm">
+      <div class="g-role-icon">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      </div>
+      <h4>Project Manager (PM)</h4>
+      <p>Full access: all dashboards, all teams, all projects, financials, approvals, masters.</p>
+    </a>
+    <a class="g-role-card g-role-im" href="/guide/im">
+      <div class="g-role-icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      </div>
+      <h4>Implementation Manager (IM)</h4>
+      <p>Their own teams, projects, materials, execution, backend assignment, expense approvals.</p>
+    </a>
+    <a class="g-role-card g-role-field" href="/guide/field">
+      <div class="g-role-icon">
+        <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+      </div>
+      <h4>Field Team</h4>
+      <p>Today's assigned work, execution forms, team stock, expense submission.</p>
+    </a>
+    <a class="g-role-card g-role-pic" href="/guide/pic">
+      <div class="g-role-icon">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      </div>
+      <h4>PIC</h4>
+      <p>Milestone billing tracker, invoice pipeline, payment tracking.</p>
+    </a>
+  </div>
+
+  <hr>
+
+  <h2>1.2 Common Controls</h2>
+  <p>These controls appear on all data pages across the portal.</p>
+
+  <table>
+    <thead><tr><th>Control</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Search box</strong></td><td>Filters the table as you type (300 ms debounce). Searches across the most relevant fields shown in the placeholder text.</td></tr>
+      <tr><td><strong>Filter dropdowns</strong></td><td>Multi-select dropdowns for Status, Project, Team, DUID, etc. Click the dropdown, tick one or more options, click away to apply.</td></tr>
+      <tr><td><strong>Clear button</strong></td><td>Resets all active filters. Only appears when at least one filter is set.</td></tr>
+      <tr><td><strong>Row limit selector</strong></td><td>At the bottom of every table — choose 25 / 50 / 100 / All. "All" returns every matching row.</td></tr>
+      <tr><td><strong>Export Excel / Download CSV</strong></td><td>Exports the current filtered and sorted view.</td></tr>
+      <tr><td><strong>Refresh button</strong></td><td>Reloads the page data from the server. List pages do not auto-refresh; click Refresh for the latest state.</td></tr>
+      <tr><td><strong>Manage Table</strong></td><td>Column visibility, order, widths, and per-column sort or filter — saved per user across sessions.</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>What's in Each Guide</h2>
+  <table>
+    <thead><tr><th>Guide</th><th>Sections covered</th></tr></thead>
+    <tbody>
+      <tr><td><a href="/guide/pm"><strong>PM Guide</strong></a></td><td>Command Dashboard, all 6 dashboards, Projects, PO Upload, PO Dump, Dispatch, Planning, Execution Monitor, Work Done, Issues, Backend, Reports, Time Logs, Approvals, Expenses, Overview, Material Requests, Masters</td></tr>
+      <tr><td><a href="/guide/im"><strong>IM Guide</strong></a></td><td>My Dashboard, My Projects, My Teams, PO Control, Rollout Planning, Rollout Execution, Rollout Work Done, Work Done, Issues, Material Management, Backend, Expense Approvals, Reports, Time Logs</td></tr>
+      <tr><td><a href="/guide/field"><strong>Field Guide</strong></a></td><td>Today's Work, Execute (execution form), QC / CIAG, History, My Stock, Expenses, Time Log</td></tr>
+      <tr><td><a href="/guide/pic"><strong>PIC Guide</strong></a></td><td>PIC Dashboard, PIC Tracker, Invoice Tracker, PIC Reports, billing status rules, end-to-end workflow, troubleshooting</td></tr>
+    </tbody>
+  </table>
+
+  <div class="g-page-nav">
+    <span class="g-spacer"></span>
+    <a href="/guide/pm">PM Guide →</a>
+  </div>
+
+</div>
+{% endblock %}

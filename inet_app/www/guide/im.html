@@ -1,0 +1,186 @@
+{% extends "templates/web.html" %}
+
+{% block title %}IM Guide — INET OCC{% endblock %}
+
+{% block head_include %}
+<link rel="stylesheet" href="/assets/inet_app/css/guide.css">
+{% endblock %}
+
+{% block page_content %}
+<div class="guide-wrap">
+
+  <div class="guide-page-header">
+    <span class="guide-role-badge">Implementation Manager</span>
+    <h1>IM Guide</h1>
+    <p class="gph-sub">Manage your own teams, projects, materials, execution, and expense approvals. All data is scoped to you automatically.</p>
+  </div>
+
+  <nav class="guide-role-nav">
+    <a href="/guide">Overview</a>
+    <a href="/guide/pm">PM Guide</a>
+    <a href="/guide/im" class="active">IM Guide</a>
+    <a href="/guide/field">Field Guide</a>
+    <a href="/guide/pic">PIC Guide</a>
+  </nav>
+
+  <h2>3.1 My Dashboard <span class="section-url">/pms/im-dashboard</span></h2>
+  <p>Personal operations overview. <strong>Auto-refreshes every 5 minutes.</strong></p>
+  <h3>KPI tiles (6)</h3>
+  <table>
+    <thead><tr><th>Tile</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>Total Assigned Sites</td><td>All sites dispatched to your teams in the selected period</td></tr>
+      <tr><td>Completed Sites</td><td>Sites with Completed execution status (green)</td></tr>
+      <tr><td>In Progress</td><td>Sites currently in execution (blue)</td></tr>
+      <tr><td>Delayed Sites</td><td>Sites past planned date with no completion (red)</td></tr>
+      <tr><td>Today's Target</td><td>Sites planned for today (indigo)</td></tr>
+      <tr><td>Today Completed</td><td>Sites completed today (green)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Project Progress panel (left 2/3):</strong> Progress bar per project — green ≥70%, amber ≥40%, blue below 40%.</p>
+  <p><strong>Team Performance panel (right 1/3):</strong> Up to 8 teams with sites done count.</p>
+  <p><strong>Site Status table (left 2/3):</strong> Site ID, Location, Project, Status badge, Last Update ("Xm ago"), Issue flag. "View all →" link goes to Rollout Execution.</p>
+  <p><strong>Issues &amp; Escalations panel (right 1/3):</strong> Critical Issues (red dot), Pending Approvals (amber dot), Open Dummy POs (purple dot), QC Fail Needs Action (green dot).</p>
+  <p><strong>Site Map (1/3):</strong> Leaflet interactive map — green=Completed, blue=In Progress, red=Issue/Cancelled, amber=Hold, yellow=Planned. Click a pin for a popup.</p>
+  <p><strong>My Performance panel (1/3):</strong> Monthly Target (sites), Achieved (sites), Performance % with green progress bar.</p>
+
+  <hr>
+
+  <h2>3.2 My Projects <span class="section-url">/pms/im-projects</span></h2>
+  <p><strong>Toolbar:</strong> Text search, Project Status filter, Team filter, Clear. Click a row or "View Details" to open the Project Detail page (five tabs: Overview, PO Lines, Rollout, Execution, Work Done).</p>
+
+  <hr>
+
+  <h2>3.3 My Teams <span class="section-url">/pms/im-teams</span></h2>
+  <p><strong>Table columns:</strong> Team ID, Team Name, Field User (team lead), Warehouse, Active POIDs, Status. A <strong>red dot badge</strong> on the My Teams nav link indicates pending Team Allocation Requests.</p>
+  <h3>Team Detail panel (click a row)</h3>
+  <table>
+    <thead><tr><th>Tab</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td>Members</td><td>Roster of all team members</td></tr>
+      <tr><td>Stock</td><td>Current stock in the team's warehouse broken down by DUID and item</td></tr>
+      <tr><td>Team Allocation Requests</td><td>Incoming requests from other IMs. <strong>Accept</strong> or <strong>Reject</strong> buttons with optional remark.</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Edit team inline:</strong> Click the pencil icon on a row to edit Team Name and other details.</p>
+
+  <hr>
+
+  <h2>3.4 PO Control <span class="section-url">/pms/im-po-intake</span></h2>
+  <p>The first IM step. Lines dispatched to you (auto or manually by the PM) land here before a target month is assigned.</p>
+  <p><strong>Toolbar:</strong> Text search, Mode dropdown (All / Auto / Manual), All Projects, All DUIDs, Clear, Selection count + total SAR, <strong>Dispatch (N)</strong> (blue), <strong>Assign to Backend (N)</strong> (purple, backend-capable IMs only).</p>
+  <p><strong>Table:</strong> Checkbox, POID, Mode badge (Auto=violet, Manual=slate), PO No, Project, Item, Description, Activity Type, Qty, Amount SAR, DUID, Center area, Dispatched On. Click anywhere on a row to toggle its checkbox.</p>
+  <h3>Dispatch modal</h3>
+  <ul>
+    <li><strong>Target month</strong> dropdown — rolling list (current month + next 11), required</li>
+    <li>After success: green toast "Moved N lines to My Dispatches (target month YYYY-MM)"</li>
+  </ul>
+  <h3>Assign to Backend modal (backend-capable IMs only)</h3>
+  <ul>
+    <li>Scrollable list of selected POIDs</li>
+    <li><strong>Backend Team</strong> dropdown (required — lists active teams with category "Backend Team")</li>
+    <li><strong>Note</strong> textarea (optional)</li>
+    <li>Error if selected lines include Closed or Completed POIDs</li>
+  </ul>
+
+  <hr>
+
+  <h2>3.5 Rollout Planning <span class="section-url">/pms/im-dispatch</span></h2>
+  <p>Create rollout plans for dispatched lines (lines with a target month assigned). <strong>Three tabs:</strong> New, In Progress, Completed.</p>
+  <p>The <strong>Create Plans modal</strong> is identical to the PM Planning modal (§2.7): Lead team, Visit type, Additional Teams with qty splitting, Access Details (start/end dates, access time, access period), QC Required / CIAG Required toggles, Remark textarea.</p>
+
+  <hr>
+
+  <h2>3.6 Rollout Execution <span class="section-url">/pms/im-planning</span></h2>
+  <p>Monitor execution of your rollout plans in real time. <strong>Toolbar:</strong> Month filter, Status, Project, Team, DUID, Date range, Clear. Export Excel. Refresh.</p>
+  <p><strong>Manager Remark inline edit:</strong> Click the remark cell to edit directly in the table. The remark is visible to field team on the execution form.</p>
+  <h3>Plan Detail modal (View button)</h3>
+  <ul>
+    <li>Pills: Plan name, POID, Project, Team. Hero stats: Target, Achieved, Achievement %</li>
+    <li>Plan Teams Breakdown — all teams with assigned qty, TL status, achieved qty</li>
+    <li>Visit history — all visits for this POID</li>
+    <li>Attachments section — photos uploaded by field team</li>
+    <li>Remarks: general, manager (editable), team lead</li>
+  </ul>
+
+  <hr>
+
+  <h2>3.7 Rollout Work Done <span class="section-url">/pms/im-execution</span></h2>
+  <p>Review completed executions before finalisation. From the View button Detail Modal you can also <strong>Generate Work Done</strong> for completed plans.</p>
+
+  <hr>
+
+  <h2>3.8 Work Done <span class="section-url">/pms/im-work-done</span></h2>
+  <p>Your finalised Work Done records with billing status from PIC. <strong>Toolbar:</strong> Billing Status filter (Pending / Invoiced / Closed), Team filter, Date range, Clear. Export Excel. Refresh. Billing status is updated automatically by PIC actions — no manual editing needed.</p>
+
+  <hr>
+
+  <h2>3.9 Issues &amp; Risks <span class="section-url">/pms/im-issues-risks</span></h2>
+  <p>Log and manage site-level issues for your teams. Create re-visit plans directly from issue rows — Visit Type pre-set to Re-Visit with an optional Issue Remarks textarea.</p>
+
+  <hr>
+
+  <h2>3.10 Material Management <span class="section-url">/pms/im-material-request</span></h2>
+  <p>Manage the full materials chain for your teams. <strong>Four tabs:</strong></p>
+  <h3>Requests Tab</h3>
+  <p>All active material transfer requests. Click a row to see POID, DUID, Team, Items table. <strong>Approve</strong> button — creates Material Transfer Stock Entry (main warehouse → team warehouse). <strong>Reject</strong> button — enter rejection remark.</p>
+  <h3>DUID Stock Tab</h3>
+  <p>Overview of DUIDs with materials available in main warehouse. Click <strong>Request</strong> on a DUID row to open the Create Transfer Request form:</p>
+  <table>
+    <thead><tr><th>Section</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Huawei Materials</strong> (blue background)</td><td>Auto-populates with items from this DUID's Huawei outbound receipt. Request Qty is editable (reduce from max). Cannot add new items.</td></tr>
+      <tr><td><strong>Company Materials</strong> (green background)</td><td>INET-owned materials. Search box to find items with current stock level shown (green if &gt;0, red if 0). Add items with Qty and UOM.</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Form fields:</strong> POID selector (auto-fills DUID and Team), Team dropdown, Remark (optional). A request can contain Huawei items only, Company items only, or both.</p>
+  <h3>Returns Tab</h3>
+  <p>Incoming return requests from your field teams. Click a row to see items and quantities. <strong>Approve Return</strong> button — creates Stock Entry (team warehouse → main warehouse). <strong>Reject</strong> with a remark.</p>
+  <h3>All Requests Tab</h3>
+  <p>Complete history of all material requests including completed and rejected, with full filter options.</p>
+
+  <hr>
+
+  <h2>3.11 Backend <span class="section-url">/pms/im-backend</span></h2>
+  <div class="g-alert g-alert-warning"><span class="g-alert-icon">⚠️</span><div>Visible only to IMs with backend assignment permission. The "Backend" nav link only appears if your IM Master record has "Can Assign Backend" enabled. Contact your Project Manager if you need this access.</div></div>
+  <p>PO dispatch lines assigned to backend (external partner) teams — direct completion flow without a Rollout Plan or field execution form.</p>
+  <p><strong>Mark Work Done modal:</strong> List of selected POIDs + <strong>Completion Date</strong> (required) + <strong>Remark</strong> (optional). Confirm creates a synthesised Work Done record for each line.</p>
+
+  <hr>
+
+  <h2>3.12 Expense Approvals <span class="section-url">/pms/im-expense</span></h2>
+  <p><strong>Total SAR</strong> of filtered rows shown next to filter controls. <strong>Status badges:</strong> <span class="g-badge g-badge-blue">Pending</span> · <span class="g-badge g-badge-green">Approved</span> · <span class="g-badge g-badge-red">Rejected</span> · <span class="g-badge g-badge-green">Paid</span></p>
+  <h3>Claim Detail panel (click a row)</h3>
+  <ul>
+    <li>Date, Team, Employee name, Total Claimed Amount</li>
+    <li><strong>Expense Lines table:</strong> Expense Type, Description, Amount (SAR), POID(s) linked</li>
+    <li><strong>Approve</strong> button — moves claim to "Unpaid" state on the field user's side</li>
+    <li><strong>Reject</strong> button — enter a rejection reason (required; visible to the field user)</li>
+  </ul>
+
+  <hr>
+
+  <h2>3.13 Reports <span class="section-url">/pms/im-reports</span></h2>
+  <table>
+    <thead><tr><th>Tab</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td>PO Dispatches</td><td>Summary of all your dispatched lines with status</td></tr>
+      <tr><td>Rollout Plans</td><td>All your plans with visit type, teams, dates</td></tr>
+      <tr><td>Executions</td><td>Executions this month — team, site, achievement</td></tr>
+      <tr><td>Work Done</td><td>Work Done records this month with billing status</td></tr>
+      <tr><td>Projects</td><td>Projects table with budget vs achieved</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>3.14 Time Logs <span class="section-url">/pms/im-timesheets</span></h2>
+  <p><strong>Summary cards:</strong> Log lines count (blue) · Total hours (green). <strong>Columns:</strong> ID, User, Team, Rollout (Plan link), Start Time, End Time, Duration (hours), Notes.</p>
+
+  <div class="g-page-nav">
+    <a href="/guide/pm">← PM Guide</a>
+    <a href="/guide/field">Field Guide →</a>
+  </div>
+
+</div>
+{% endblock %}

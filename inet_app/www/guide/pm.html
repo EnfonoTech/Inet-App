@@ -1,0 +1,233 @@
+{% extends "templates/web.html" %}
+
+{% block title %}PM Guide — INET OCC{% endblock %}
+
+{% block head_include %}
+<link rel="stylesheet" href="/assets/inet_app/css/guide.css">
+{% endblock %}
+
+{% block page_content %}
+<div class="guide-wrap">
+
+  <div class="guide-page-header">
+    <span class="guide-role-badge">Project Manager</span>
+    <h1>PM Guide</h1>
+    <p class="gph-sub">Full access to all dashboards, teams, projects, financials, approvals, and master data.</p>
+  </div>
+
+  <nav class="guide-role-nav">
+    <a href="/guide">Overview</a>
+    <a href="/guide/pm" class="active">PM Guide</a>
+    <a href="/guide/im">IM Guide</a>
+    <a href="/guide/field">Field Guide</a>
+    <a href="/guide/pic">PIC Guide</a>
+  </nav>
+
+  <p>The PM role has the full sidebar. The default home page on login is the <strong>Command Dashboard</strong>.</p>
+
+  <h2>2.1 Command Dashboard <span class="section-url">/pms/dashboard</span></h2>
+  <p>Live operations overview — designed for wall displays. <strong>Auto-refreshes every 5 minutes.</strong></p>
+  <h3>KPI tiles (6)</h3>
+  <table>
+    <thead><tr><th>Tile</th><th>What it shows</th></tr></thead>
+    <tbody>
+      <tr><td>Open PO Lines</td><td>Work orders currently in progress (not yet Completed)</td></tr>
+      <tr><td>Open PO Line Value</td><td>Total SAR value of all in-progress work orders</td></tr>
+      <tr><td>Idle Teams</td><td>Teams with no work scheduled today (amber text)</td></tr>
+      <tr><td>Planned Activities</td><td>Work scheduled for today — SAR amount + activity count</td></tr>
+      <tr><td>Closed Activities</td><td>Work completed this period — SAR amount + count (green)</td></tr>
+      <tr><td>ReVisits</td><td>Return visits to sites (amber)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>INET Teams row:</strong> Active teams count, monthly cost, monthly target, target as of today, achieved (green), gap (red if behind, green if ahead).</p>
+  <p><strong>Subcontractor row:</strong> Sub-teams count, target, revenue (green), expense, INET margin, gap.</p>
+  <p><strong>Backend Teams row:</strong> Active backend teams, Pending count (amber), Completed this month (green).</p>
+  <p><strong>Company Financial row:</strong> Company target, Achieved (green), Gap (red/green), Total Cost, Profit/Loss (colour-coded), Coverage %.</p>
+  <p><strong>Colour guide:</strong> Green = on target · Red = at risk · Amber = warning · Blue = neutral</p>
+  <h3>Bottom panels (4 cards)</h3>
+  <table>
+    <thead><tr><th>Panel</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td>Top 5 Teams</td><td>Team name, Target, Achieved (green), Completion % (green ≥80%, amber ≥40%, red &lt;40%)</td></tr>
+      <tr><td>IM Performance</td><td>IM name, Teams count, Revenue (green), Cost, Profit (colour-coded)</td></tr>
+      <tr><td>Team Status</td><td>Bar chart (Active/Idle/Planned/In Progress) + donut chart showing Active %</td></tr>
+      <tr><td>Action Watchlist</td><td>Indicator name, current value, target, status badge</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>2.2 Other Dashboards</h2>
+  <table>
+    <thead><tr><th>Dashboard</th><th>URL</th><th>Focus</th></tr></thead>
+    <tbody>
+      <tr><td>CEO Dashboard</td><td class="gmono">/pms/ceo-dashboard</td><td>Executive summary — Revenue, Net Profit, Active Projects, Pending Invoices, Coverage %.</td></tr>
+      <tr><td>Commercial Dashboard</td><td class="gmono">/pms/commercial-dashboard</td><td>Sales focus — Revenue, Monthly Revenue, Pending Invoices, Revenue Growth %, Active Teams.</td></tr>
+      <tr><td>PM Dashboard</td><td class="gmono">/pms/pm-dashboard</td><td>Project health — Active Projects, On Track, At Risk, Delayed. Budget vs Actual per project.</td></tr>
+      <tr><td>Operations Dashboard</td><td class="gmono">/pms/ops-dashboard</td><td>Operational revenue — Total Revenue, Avg Daily Revenue, Jobs Completed, Open Orders.</td></tr>
+      <tr><td>Financial Dashboard</td><td class="gmono">/pms/financial-dashboard</td><td>Finance/CFO view — Revenue, Cost, Net Profit, Margin %, Outstanding SAR. Monthly P&amp;L chart.</td></tr>
+      <tr><td>IM Dashboard View</td><td class="gmono">/pms/im-dashboard-view</td><td>PM viewing an individual IM's dashboard — same layout as IM Dashboard (§3.1).</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>2.3 Projects <span class="section-url">/pms/projects</span></h2>
+  <p><strong>Table columns:</strong> Project Code, Project Name, Status badge, Customer, IM, Budget (SAR), Unloaded, Dispatched, Planned, Executed, Billed, Actions.</p>
+  <p><strong>Status badge colours:</strong> Active=green, On Hold=amber, At Risk=red, Completed=blue.</p>
+  <p><strong>+ Create Project</strong> modal: Project Code (required), Status, Project Name (required), Customer, Implementation Manager, Center/Area, Project Domain, Huawei IM, Budget Amount (SAR).</p>
+  <h3>Project Detail page <span class="section-url">/pms/projects/:projectCode</span></h3>
+  <table>
+    <thead><tr><th>Tab</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td>Overview</td><td>Status, PM, Customer, budget, financials, expense summary. Edit button opens the project form pre-filled.</td></tr>
+      <tr><td>PO Lines</td><td>All PO Dispatch records: POID, Item Code, Qty, Rate, Line Amount, Status.</td></tr>
+      <tr><td>Rollout</td><td>All Rollout Plans grouped by DUID with sub-tabs: PO Lines, Planned Activity, Additional Activities, Expenses.</td></tr>
+      <tr><td>Execution</td><td>Execution records: Plan name, Team, Visit Type, Start Date, Achieved, Execution Status.</td></tr>
+      <tr><td>Work Done</td><td>Billing records: Team, Item, Qty, Amount, Billing Status.</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>2.4 PO Upload <span class="section-url">/pms/po-upload</span></h2>
+  <p>Two modes: <strong>Standard Upload</strong> (current POs) and <strong>Archive Upload</strong> (historical records).</p>
+  <h3>Standard Upload — three-step wizard</h3>
+  <div class="g-steps">
+    <div class="g-step"><div class="g-step-num">1</div><div class="g-step-content"><div class="g-step-title">Upload</div><div class="g-step-desc">Select Customer (required), drop the .xlsx file onto the upload area. The system validates automatically and moves to Review.</div></div></div>
+    <div class="g-step"><div class="g-step-num">2</div><div class="g-step-content"><div class="g-step-title">Review</div><div class="g-step-desc">Summary chips: Valid rows (green), Error rows (red), Total rows (amber), New products (warning), Missing projects (error). Click <strong>Confirm Import</strong> (disabled if any error rows exist).</div></div></div>
+    <div class="g-step"><div class="g-step-num">3</div><div class="g-step-content"><div class="g-step-title">Success</div><div class="g-step-desc">Green banner showing Lines Imported, Duplicates Skipped, New POs, Appended POs. Upload Record table with search and status filter.</div></div></div>
+  </div>
+  <p><strong>Archive Upload:</strong> Upload the Master Tracker .xlsb file. Preview shows CLOSED (green), CANCELLED (red), OPEN (gray, skipped). Click <strong>Start archive import</strong> — runs in background. Job status panel shows progress.</p>
+  <div class="g-alert g-alert-info"><span class="g-alert-icon">💡</span><div>Run Standard Upload first for the current month, then Archive imports for prior months in chronological order.</div></div>
+
+  <hr>
+
+  <h2>2.5 PO Dump <span class="section-url">/pms/po-dump</span></h2>
+  <p>Full export of all PO line data. <strong>Filters:</strong> From/To date, Status checkboxes (OPEN/CLOSED/CANCELLED — update instantly), text search. Status cells colour-coded: OPEN=blue, CLOSED=gray, CANCELLED=red. Download CSV button.</p>
+
+  <hr>
+
+  <h2>2.6 Dispatch <span class="section-url">/pms/dispatch</span></h2>
+  <p><strong>Three tabs:</strong> Pending Dispatch (New lines), Dispatched, All Lines.</p>
+  <p><strong>Toolbar:</strong> Text search (POID, PO No, Item, Project, DUID), All Projects, All IMs, All DUIDs, Date range, Clear, <strong>Dispatch Selected (N)</strong> button.</p>
+  <p><strong>Dispatched / All tabs</strong> show additional columns: Mode badge (Auto=violet, Manual=slate), IM, Target Month. Auto-dispatched rows have a subtle violet background.</p>
+  <h3>Dispatch Modal</h3>
+  <ul>
+    <li><strong>Assign IM</strong> dropdown (required)</li>
+    <li><strong>Planning Mode</strong> dropdown — Plan / Direct (required)</li>
+    <li>Summary info box: selected line count → IM name → Mode</li>
+  </ul>
+  <p><strong>Convert to Manual button</strong> (when Auto-dispatched lines are selected): converts selected Auto lines to Manual with optional Re-assign IM.</p>
+
+  <hr>
+
+  <h2>2.7 Planning <span class="section-url">/pms/planning</span></h2>
+  <p><strong>Scope toggle:</strong> "Unplanned" (default) · "All POIDs (re-plan)" for adding additional visits.</p>
+  <h3>Create Plans modal</h3>
+  <ul>
+    <li><strong>Lead team</strong> dropdown (required)</li>
+    <li><strong>Visit type:</strong> Execution / Re-Visit / Extra Visit</li>
+    <li><strong>Additional Teams</strong> (optional) — "+ Add team" to split work with Qty input. Summary shows Total qty · Assigned to extras · Remaining for lead (red if over-allocated).</li>
+    <li><strong>Access Details:</strong> Planned start date (required), Planned end date (required, ≥ start), Access time, Access period (Not set / Day / Night)</li>
+    <li><strong>Workflow toggles:</strong> QC Required (checked by default), CIAG Required (checked by default)</li>
+    <li><strong>Remark</strong> textarea — visible to field team and IM</li>
+  </ul>
+  <table>
+    <thead><tr><th>Visit Type</th><th>Revenue Multiplier</th><th>When to use</th></tr></thead>
+    <tbody>
+      <tr><td>Execution (Work Done)</td><td>1.0×</td><td>Standard first visit</td></tr>
+      <tr><td>Re-Visit</td><td>0.5×</td><td>Return to site for rework</td></tr>
+      <tr><td>Extra Visit</td><td>1.5×</td><td>Additional mobilisation required</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>2.8 Execution Monitor <span class="section-url">/pms/execution</span></h2>
+  <p>Read-only live monitor of all execution activity across all teams. <strong>27-column table</strong> including: Plan, POID, Dummy POID, Item Code, Description, Activity Type, Project, DUID, Center area, Region, Team, IM, Plan Date, Visit Type, Visit #, Target, Achieved (colour-coded: green ≥80%, amber ≥40%, red &lt;40%), Plan Status, TL Status (<strong>clickable badge</strong>), Exec Status, QC, CIAG, Issue Category (<strong>clickable button</strong>), General/Manager/Team Lead Remarks (inline edit), Open (View button).</p>
+
+  <hr>
+
+  <h2>2.9 Work Done <span class="section-url">/pms/work-done</span></h2>
+  <p><strong>Summary cards:</strong> Executed Qty (total) · Revenue (SAR total).</p>
+  <p><strong>Table columns:</strong> POID, Item Code, Description, Activity Type, Project, DUID, Team, Executed Qty, Revenue, Billing Status badge, General Remark (inline edit), Submission Status (clickable), Open (View button).</p>
+  <table>
+    <thead><tr><th>Billing Status</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><span class="g-badge g-badge-amber">Pending</span></td><td>Work complete, billing not yet started or still in progress</td></tr>
+      <tr><td><span class="g-badge g-badge-green">Invoiced</span></td><td>Commercial invoice submitted to customer</td></tr>
+      <tr><td><span class="g-badge g-badge-green">Closed</span></td><td>Payment received, milestone fully closed</td></tr>
+    </tbody>
+  </table>
+  <p>Billing status is set <strong>automatically</strong> by PIC actions — no manual editing needed here.</p>
+
+  <hr>
+
+  <h2>2.10 Issues &amp; Risks <span class="section-url">/pms/issues-risks</span></h2>
+  <p>Track and manage execution issues across all teams. Full toolbar with Issue Category, Exec Status, TL Status, QC Status, CIAG Status, Projects, Teams, DUIDs, Date range filters. Selection + "Create Plans (N)" button — Visit Type pre-set to "Re-Visit".</p>
+
+  <hr>
+
+  <h2>2.11 Backend <span class="section-url">/pms/backend</span></h2>
+  <p>Manages work assigned to backend teams. <strong>Two tabs:</strong> Pending · Work Done. Selection + <strong>Mark Work Done</strong> button — enter Completion Date (required) + Remark. Creates a synthesised Work Done record for each selected line.</p>
+
+  <hr>
+
+  <h2>2.12 Reports <span class="section-url">/pms/reports</span></h2>
+  <table>
+    <thead><tr><th>Tab</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td>Project Status Summary</td><td>All projects with status, budget, and actuals</td></tr>
+      <tr><td>Budget vs Actual</td><td>Per-project cost comparison table</td></tr>
+      <tr><td>Team Utilization</td><td>Team assignments and utilisation percentage</td></tr>
+      <tr><td>Daily Work Progress</td><td>Progress by team and date</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>2.13 Time Logs <span class="section-url">/pms/timesheets</span></h2>
+  <p><strong>Summary cards:</strong> Log lines (blue) · Total hours (green). <strong>Toolbar:</strong> Text search (user, plan, team, project), Team ID filter, Date range, Clear. Export Excel. <strong>Columns:</strong> ID, User, Team, Rollout (Plan link), Start Time, End Time, Duration (hours), Notes.</p>
+
+  <hr>
+
+  <h2>2.14 Team Allocation Approvals <span class="section-url">/pms/approvals</span></h2>
+  <p>Review and approve or reject Team Allocation Requests from IMs. A <strong>red dot badge</strong> on the Approvals nav link shows pending count. <strong>Two tabs:</strong> Awaiting Approval · History. Decision modal shows full request details with optional Remark textarea, <strong>Approve</strong> and <strong>Reject</strong> buttons.</p>
+
+  <hr>
+
+  <h2>2.15 Expenses <span class="section-url">/pms/expenses</span></h2>
+  <p>View all expense claims submitted by field teams across all IMs and teams. Same interface as IM Expense Approvals (§3.12) but unscoped — shows everything. <strong>Total SAR</strong> calculated across filtered rows shown in the toolbar.</p>
+
+  <hr>
+
+  <h2>2.16 Operations Overview <span class="section-url">/pms/overview</span></h2>
+  <table>
+    <thead><tr><th>Tab</th><th>What it shows</th></tr></thead>
+    <tbody>
+      <tr><td>DUID / Site</td><td>Enter a DUID or site code to see all PO lines, rollout plans, execution records, and expense data for that site.</td></tr>
+      <tr><td>PO</td><td>Search by PO number to see all lines and dispatch status.</td></tr>
+      <tr><td>Acceptance</td><td>Acceptance-stage pipeline view showing all lines at acceptance milestone.</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>2.17 Material Requests <span class="section-url">/pms/im-material-request</span></h2>
+  <p>PM view of all material transfer requests across all IMs. Identical to the IM Material Management page (§3.10) but unscoped — useful for monitoring that transfers are happening on schedule.</p>
+
+  <hr>
+
+  <h2>2.18 Masters <span class="section-url">/pms/masters</span></h2>
+  <p>Reference data management. Card grid with 12+ master types, each with: icon, description, live record count badge, expandable preview table, <strong>+ New</strong> button (opens Frappe Desk form).</p>
+  <p><strong>Master types:</strong> Area, INET Team, IM Master, Project Domain, Huawei IM, Subcontractor, Customer Item, Activity Cost, Item Catalog, Project, Customer, Visit Multiplier, Subcontractor Rates, Execution Category.</p>
+  <p><strong>Deep link:</strong> <code>/pms/masters?expand=&lt;DocType Name&gt;</code> opens a specific card already expanded.</p>
+
+  <div class="g-page-nav">
+    <a href="/guide">← Overview</a>
+    <a href="/guide/im">IM Guide →</a>
+  </div>
+
+</div>
+{% endblock %}

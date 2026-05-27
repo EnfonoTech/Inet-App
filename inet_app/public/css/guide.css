@@ -1,0 +1,384 @@
+/* INET OCC User Guide — Frappe-integrated stylesheet */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+/* ── Variables scoped under .guide-wrap to avoid Bootstrap conflicts ── */
+.guide-wrap {
+  --gblue: #3b82f6;
+  --gblue-bg: #eff6ff;
+  --gblue-border: #bfdbfe;
+  --gblue-dark: #1e40af;
+  --ggreen: #10b981;
+  --ggreen-bg: #ecfdf5;
+  --ggreen-border: #a7f3d0;
+  --gred: #ef4444;
+  --gred-bg: #fef2f2;
+  --gred-border: #fecaca;
+  --gamber: #f59e0b;
+  --gamber-bg: #fffbeb;
+  --gamber-border: #fde68a;
+  --gpurple: #8b5cf6;
+  --gpurple-bg: #f5f3ff;
+  --gpurple-border: #ddd6fe;
+  --gborder: #e2e8f0;
+  --gborder-light: #f1f5f9;
+  --gtext: #1e293b;
+  --gtext-secondary: #64748b;
+  --gtext-muted: #94a3b8;
+  --gbg: #f6f8fb;
+  --gbg-white: #fff;
+  --gshadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --gshadow: 0 4px 12px rgba(0,0,0,0.08);
+  --gradius: 10px;
+  --gradius-lg: 14px;
+
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 16px 64px;
+  font-family: 'DM Sans', -apple-system, system-ui, sans-serif;
+  line-height: 1.7;
+  font-size: 15px;
+  color: var(--gtext);
+}
+
+/* ── PAGE HEADER ───────────────────────────────── */
+.guide-page-header {
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 52%, #6366f1 100%);
+  padding: 44px 40px 36px;
+  border-radius: var(--gradius-lg);
+  margin: 20px 0 0;
+  position: relative;
+  overflow: hidden;
+}
+.guide-page-header::before {
+  content: '';
+  position: absolute;
+  top: -40%; right: -15%;
+  width: 380px; height: 380px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  pointer-events: none;
+}
+.guide-role-badge {
+  display: inline-block;
+  padding: 3px 12px;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.85);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  position: relative;
+}
+.guide-page-header h1 {
+  font-size: 30px;
+  font-weight: 900;
+  color: #fff;
+  letter-spacing: -0.3px;
+  margin: 0 0 8px;
+  position: relative;
+}
+.guide-page-header .gph-sub {
+  color: rgba(255,255,255,0.72);
+  font-size: 15px;
+  margin: 0;
+  position: relative;
+}
+
+/* ── ROLE NAV TABS ─────────────────────────────── */
+.guide-role-nav {
+  display: flex;
+  border-bottom: 2px solid var(--gborder);
+  margin: 24px 0 32px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.guide-role-nav::-webkit-scrollbar { display: none; }
+.guide-role-nav a {
+  padding: 10px 18px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--gtext-secondary);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  white-space: nowrap;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.guide-role-nav a:hover { color: var(--gtext); text-decoration: none; }
+.guide-role-nav a.active { color: var(--gblue); border-bottom-color: var(--gblue); font-weight: 700; }
+
+/* ── TYPOGRAPHY ────────────────────────────────── */
+.guide-wrap h2 {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  margin: 40px 0 10px;
+  color: var(--gtext);
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.guide-wrap h2:first-of-type { margin-top: 0; }
+.guide-wrap h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 24px 0 9px;
+  color: var(--gtext);
+}
+.guide-wrap h4 {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gtext-secondary);
+  margin: 18px 0 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: none;
+}
+.guide-wrap p { margin-bottom: 10px; color: var(--gtext-secondary); }
+.guide-wrap strong { color: var(--gtext); }
+.guide-wrap ul, .guide-wrap ol { padding-left: 20px; margin: 8px 0 12px; color: var(--gtext-secondary); }
+.guide-wrap li { margin: 4px 0; }
+.guide-wrap li strong { color: var(--gtext); }
+.guide-wrap hr { border: none; border-top: 1px solid var(--gborder); margin: 36px 0; }
+
+.section-url {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--gblue);
+  background: var(--gblue-bg);
+  border: 1px solid var(--gblue-border);
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-left: 8px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.gmono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gblue-dark);
+}
+
+/* ── TABLE ─────────────────────────────────────── */
+.guide-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 13px;
+  background: var(--gbg-white);
+  border-radius: var(--gradius);
+  overflow: hidden;
+  box-shadow: var(--gshadow-sm);
+  border: 1px solid var(--gborder);
+}
+.guide-wrap th {
+  text-align: left;
+  color: var(--gtext-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 11px 14px;
+  border-bottom: 2px solid var(--gborder);
+  font-weight: 700;
+  background: var(--gbg);
+}
+.guide-wrap td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--gborder-light);
+  color: var(--gtext-secondary);
+  vertical-align: top;
+}
+.guide-wrap tr:last-child td { border-bottom: none; }
+.guide-wrap tr:hover td { background: #f8fafc; }
+
+/* ── PIPELINE ──────────────────────────────────── */
+.guide-wrap .g-pipeline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 18px 0;
+}
+.g-pipeline-step {
+  background: var(--gbg-white);
+  border: 1px solid var(--gborder);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gblue-dark);
+  box-shadow: var(--gshadow-sm);
+  white-space: nowrap;
+}
+.g-pipeline-arrow { color: var(--gtext-muted); font-size: 14px; padding: 0 2px; }
+
+/* ── ROLE GRID ─────────────────────────────────── */
+.g-role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin: 18px 0;
+}
+.g-role-card {
+  background: var(--gbg-white);
+  border: 1px solid var(--gborder);
+  border-radius: var(--gradius-lg);
+  padding: 20px 16px;
+  text-align: center;
+  box-shadow: var(--gshadow-sm);
+  transition: box-shadow 0.15s, transform 0.15s;
+  text-decoration: none;
+  display: block;
+}
+.g-role-card:hover { box-shadow: var(--gshadow); transform: translateY(-2px); text-decoration: none; }
+.g-role-icon {
+  width: 46px; height: 46px;
+  border-radius: 12px;
+  margin: 0 auto 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.g-role-icon svg { width: 22px; height: 22px; }
+.g-role-pm .g-role-icon { background: var(--gblue-bg); border: 1px solid var(--gblue-border); }
+.g-role-pm .g-role-icon svg { stroke: var(--gblue); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.g-role-im .g-role-icon { background: var(--ggreen-bg); border: 1px solid var(--ggreen-border); }
+.g-role-im .g-role-icon svg { stroke: var(--ggreen); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.g-role-field .g-role-icon { background: var(--gamber-bg); border: 1px solid var(--gamber-border); }
+.g-role-field .g-role-icon svg { stroke: var(--gamber); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.g-role-pic .g-role-icon { background: var(--gpurple-bg); border: 1px solid var(--gpurple-border); }
+.g-role-pic .g-role-icon svg { stroke: var(--gpurple); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.g-role-card h4 { color: var(--gtext); margin: 0 0 4px; font-size: 14px; text-transform: none; letter-spacing: 0; font-weight: 700; border: none; }
+.g-role-card p { font-size: 12px; color: var(--gtext-muted); margin: 0; }
+
+/* ── STEPS ─────────────────────────────────────── */
+.g-steps { margin: 18px 0; }
+.g-step {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 9px;
+  padding: 15px 18px;
+  background: var(--gbg-white);
+  border: 1px solid var(--gborder);
+  border-radius: var(--gradius);
+  box-shadow: var(--gshadow-sm);
+  transition: box-shadow 0.15s;
+}
+.g-step:hover { box-shadow: var(--gshadow); }
+.g-step-num {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--gblue-bg);
+  border: 2px solid var(--gblue-border);
+  color: var(--gblue);
+  font-size: 12px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.g-step-content { flex: 1; }
+.g-step-title { color: var(--gtext); font-weight: 700; margin-bottom: 2px; font-size: 14px; }
+.g-step-desc { font-size: 13px; color: var(--gtext-secondary); margin: 0; }
+
+/* ── ALERT ─────────────────────────────────────── */
+.g-alert {
+  border-radius: var(--gradius);
+  padding: 12px 16px;
+  margin: 14px 0;
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.g-alert-info { background: var(--gblue-bg); border: 1px solid var(--gblue-border); color: var(--gblue-dark); }
+.g-alert-warning { background: var(--gamber-bg); border: 1px solid var(--gamber-border); color: #92400e; }
+.g-alert-success { background: var(--ggreen-bg); border: 1px solid var(--ggreen-border); color: #065f46; }
+.g-alert-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+
+/* ── BADGES ────────────────────────────────────── */
+.g-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.g-badge-blue { background: var(--gblue-bg); color: var(--gblue); border: 1px solid var(--gblue-border); }
+.g-badge-green { background: var(--ggreen-bg); color: var(--ggreen); border: 1px solid var(--ggreen-border); }
+.g-badge-amber { background: var(--gamber-bg); color: #92400e; border: 1px solid var(--gamber-border); }
+.g-badge-red { background: var(--gred-bg); color: var(--gred); border: 1px solid var(--gred-border); }
+.g-badge-purple { background: var(--gpurple-bg); color: var(--gpurple); border: 1px solid var(--gpurple-border); }
+
+/* ── WORKFLOW ──────────────────────────────────── */
+.g-workflow {
+  background: var(--gbg-white);
+  border: 1px solid var(--gborder);
+  border-radius: var(--gradius-lg);
+  padding: 22px 26px;
+  margin: 18px 0;
+  box-shadow: var(--gshadow-sm);
+}
+.g-workflow-row { display: flex; align-items: flex-start; margin: 5px 0; font-size: 14px; }
+.g-workflow-num {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--gblue-bg); border: 2px solid var(--gblue-border);
+  color: var(--gblue); font-size: 11px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  margin-right: 12px; flex-shrink: 0; margin-top: 2px;
+}
+.g-workflow-text { color: var(--gtext-secondary); flex: 1; }
+.g-workflow-text strong { color: var(--gtext); }
+.g-workflow-connector { width: 24px; display: flex; justify-content: center; margin: 1px 0; color: var(--gtext-muted); font-size: 12px; }
+
+/* ── TROUBLESHOOTING ───────────────────────────── */
+.g-trouble-item {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--gborder-light);
+  font-size: 13px;
+}
+.g-trouble-item:last-child { border-bottom: none; }
+.g-trouble-issue { color: var(--gred); font-weight: 600; }
+.g-trouble-fix { color: var(--gtext-secondary); }
+
+/* ── PAGE NAV ──────────────────────────────────── */
+.g-page-nav {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 44px;
+  padding-top: 24px;
+  border-top: 1px solid var(--gborder);
+  gap: 12px;
+}
+.g-page-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: var(--gbg-white);
+  border: 1px solid var(--gborder);
+  border-radius: var(--gradius);
+  text-decoration: none;
+  color: var(--gtext);
+  font-weight: 600;
+  font-size: 13px;
+  box-shadow: var(--gshadow-sm);
+  transition: all 0.15s;
+}
+.g-page-nav a:hover { border-color: var(--gblue-border); color: var(--gblue); box-shadow: var(--gshadow); text-decoration: none; }
+.g-spacer { flex: 1; }
+
+/* ── RESPONSIVE ────────────────────────────────── */
+@media (max-width: 680px) {
+  .guide-page-header { padding: 32px 22px 28px; }
+  .guide-page-header h1 { font-size: 22px; }
+  .guide-wrap h2 { font-size: 18px; }
+  .g-role-grid { grid-template-columns: 1fr; }
+  .g-trouble-item { grid-template-columns: 1fr; gap: 4px; }
+}

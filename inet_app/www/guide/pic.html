@@ -1,0 +1,185 @@
+{% extends "templates/web.html" %}
+
+{% block title %}PIC Guide — INET OCC{% endblock %}
+
+{% block head_include %}
+<link rel="stylesheet" href="/assets/inet_app/css/guide.css">
+{% endblock %}
+
+{% block page_content %}
+<div class="guide-wrap">
+
+  <div class="guide-page-header">
+    <span class="guide-role-badge">Project Invoice Controller</span>
+    <h1>PIC Guide</h1>
+    <p class="gph-sub">Manage the billing pipeline from completed work to payment received. Every PO line has two milestones tracked independently: MS1 and MS2.</p>
+  </div>
+
+  <nav class="guide-role-nav">
+    <a href="/guide">Overview</a>
+    <a href="/guide/pm">PM Guide</a>
+    <a href="/guide/im">IM Guide</a>
+    <a href="/guide/field">Field Guide</a>
+    <a href="/guide/pic" class="active">PIC Guide</a>
+  </nav>
+
+  <h2>5.1 PIC Dashboard <span class="section-url">/pms/pic-dashboard</span></h2>
+  <p>Top-level financial view of the entire invoicing pipeline. <strong>Auto-refreshes every 5 minutes.</strong> Admin users see a <strong>role switcher</strong> to view a specific PIC's data.</p>
+  <h3>Pipeline bucket cards</h3>
+  <table>
+    <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Work Not Done</td><td>Site not yet completed by field team</td></tr>
+      <tr><td>Under Process to Apply</td><td>Preparing submission documentation</td></tr>
+      <tr><td>Under I-BUY</td><td>Submitted into Huawei I-BUY approval system</td></tr>
+      <tr><td>Under ISDP</td><td>Submitted into ISDP approval system</td></tr>
+      <tr><td>I-BUY Rejected</td><td>Returned from I-BUY — needs correction and resubmission</td></tr>
+      <tr><td>ISDP Rejected</td><td>Returned from ISDP — needs correction and resubmission</td></tr>
+      <tr><td>Ready for Invoice</td><td>Approved by systems — ready to raise commercial invoice</td></tr>
+      <tr><td>Commercial Invoice Submitted</td><td>Invoice raised and sent to customer</td></tr>
+      <tr><td>Commercial Invoice Closed</td><td>Payment received; milestone fully closed</td></tr>
+      <tr><td>PO Need to Cancel</td><td>Line flagged for cancellation review</td></tr>
+      <tr><td>PO Line Canceled</td><td>Line has been formally cancelled</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Other panels:</strong> Monthly revenue trend (stacked bar chart), INET vs Subcontracted split (donut chart), Pending I-BUY queue (oldest first), Pending ISDP queue, KPI summary (Total pipeline SAR · Closed SAR · Cancelled SAR · Total line count).</p>
+
+  <hr>
+
+  <h2>5.2 PIC Tracker <span class="section-url">/pms/pic-tracker</span></h2>
+  <p>Your main daily working page. Every active PO line is here. Filter, edit, and bulk-update billing statuses.</p>
+  <p><strong>Toolbar:</strong> Text search, PIC Status MS1 (multi-select), PIC Status MS2 (multi-select), All Projects, All DUIDs, Clear, Refresh, <strong>Download CSV</strong>, row limit selector.</p>
+  <p><strong>Totals row</strong> at the bottom of the table sums all monetary columns over the current loaded rows.</p>
+
+  <h3>Status pill colour coding</h3>
+  <table>
+    <thead><tr><th>Colour</th><th>Statuses</th></tr></thead>
+    <tbody>
+      <tr><td><span class="g-badge g-badge-blue">Blue</span></td><td>Ready for Invoice</td></tr>
+      <tr><td><span class="g-badge g-badge-purple">Purple</span></td><td>Under I-BUY</td></tr>
+      <tr><td><span class="g-badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd;">Dark purple</span></td><td>Under ISDP</td></tr>
+      <tr><td><span class="g-badge g-badge-amber">Amber</span></td><td>Under Process to Apply / Pending</td></tr>
+      <tr><td><span class="g-badge g-badge-red">Red</span></td><td>Rejected / Cancelled</td></tr>
+      <tr><td><span class="g-badge g-badge-green">Green</span></td><td>Invoice Submitted / Closed / Accepted</td></tr>
+    </tbody>
+  </table>
+
+  <div class="g-alert g-alert-info"><span class="g-alert-icon">ℹ️</span><div><strong>Auto-status rule:</strong> Lines with no status manually set show "Under Process to Apply" when site work is done, or "Work Not Done" when it hasn't started. Once you set a status it is stored. To return to the automatic default, clear the field in the edit panel.</div></div>
+
+  <h3>Edit a row — single-line editing</h3>
+  <p>Click anywhere on a row to open the <strong>edit popover</strong>. Three tabs:</p>
+  <table>
+    <thead><tr><th>Tab</th><th>Fields</th></tr></thead>
+    <tbody>
+      <tr><td><strong>MS1</strong></td><td>PIC Status (MS1) · I-BUY/ISDP Owner (free text) · Detail Remarks · MS1 Applied Date (validated: cannot be in the future) · MS1 iBuy Invoice Date (validated) · MS1 Invoice Month (month selector) · MS1 Payment Received Date (validated)</td></tr>
+      <tr><td><strong>MS2</strong></td><td>Same fields as MS1 but for the MS2 milestone</td></tr>
+      <tr><td><strong>Acceptance</strong></td><td>SQC Status dropdown · PAT Status dropdown</td></tr>
+    </tbody>
+  </table>
+  <p>Save / Cancel buttons. Validation errors shown inline.</p>
+
+  <h3>Bulk Update</h3>
+  <p>Select multiple rows → click <strong>Bulk Update (N)</strong>. Modal: <strong>Milestone</strong> (MS1 or MS2 radio), <strong>Status</strong> dropdown, <strong>Remark</strong> (optional). Confirm updates all selected POIDs at once.</p>
+
+  <h3>Download CSV</h3>
+  <p>Exports all currently loaded rows as <code>pic-tracker-YYYY-MM-DD.csv</code>. Date fields trimmed to YYYY-MM-DD for spreadsheet compatibility.</p>
+
+  <hr>
+
+  <h2>5.3 Invoice Tracker <span class="section-url">/pms/pic-invoice-tracker</span></h2>
+  <p>Focused view for lines at "Ready for Invoice" or beyond. Use this to create invoices and close milestones.</p>
+  <p><strong>KPI pills</strong> (update with filters): MS1 Total · MS1 Invoiced · MS2 Total · MS2 Invoiced (SAR values across current view).</p>
+  <table>
+    <thead><tr><th>Action</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Create Sales Invoice</strong></td><td>Detects whether to invoice MS1 or MS2 for each selected line. Sets correct amounts and line references automatically. Creates Sales Invoice documents in ERPNext.</td></tr>
+      <tr><td><strong>Mark Submitted</strong></td><td>Bulk-advance selected lines to "Commercial Invoice Submitted"</td></tr>
+      <tr><td><strong>Mark Closed</strong></td><td>Bulk-advance selected lines to "Commercial Invoice Closed"</td></tr>
+    </tbody>
+  </table>
+  <div class="g-alert g-alert-success"><span class="g-alert-icon">✅</span><div><strong>Automatic status updates:</strong> When a Sales Invoice is <em>submitted</em> in ERPNext, the linked PO line automatically advances to "Commercial Invoice Submitted" and Work Done billing status becomes "Invoiced". No manual update required.</div></div>
+
+  <hr>
+
+  <h2>5.4 PIC Reports <span class="section-url">/pms/pic-reports</span></h2>
+  <table>
+    <thead><tr><th>Report</th><th>What it answers</th></tr></thead>
+    <tbody>
+      <tr><td>Acceptance Aging</td><td>Which acceptances have been pending the longest (sorted by age)</td></tr>
+      <tr><td>Submission vs Approval</td><td>How long approval takes after submission per project</td></tr>
+      <tr><td>Monthly Invoicing</td><td>Month-by-month invoiced amounts (trend chart + table)</td></tr>
+      <tr><td>INET vs Subcontracted</td><td>Revenue split between own teams and external partners</td></tr>
+      <tr><td>Pending by Owner</td><td>Which lines are waiting on which person and for how long</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>5.5 How PIC Status Drives Work Done Billing</h2>
+  <table>
+    <thead><tr><th>PIC action</th><th>Work Done billing shows</th></tr></thead>
+    <tbody>
+      <tr><td>Any status up to "Ready for Invoice"</td><td><span class="g-badge g-badge-amber">Pending</span></td></tr>
+      <tr><td>"Commercial Invoice Submitted"</td><td><span class="g-badge g-badge-green">Invoiced</span></td></tr>
+      <tr><td>"Commercial Invoice Closed" (all milestones resolved)</td><td><span class="g-badge g-badge-green">Closed</span></td></tr>
+    </tbody>
+  </table>
+  <p>No manual update is needed on the Work Done side.</p>
+
+  <hr>
+
+  <h2>6. End-to-End Workflow Example</h2>
+  <div class="g-workflow">
+    <div class="g-workflow-row"><div class="g-workflow-num">1</div><div class="g-workflow-text"><strong>PM uploads PO file</strong> → Work order lines appear in the system.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">2</div><div class="g-workflow-text"><strong>PM dispatches</strong> → Lines assigned to IMs with a target month (Auto or Manual mode).</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">3</div><div class="g-workflow-text"><strong>IM opens PO Control</strong> → Reviews incoming lines, assigns target month → lines move to Rollout Planning.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">4</div><div class="g-workflow-text"><strong>IM creates rollout plan</strong> → Visit date, lead team, additional teams, QC/CIAG toggles, access time set. Field team sees the work in Today's Work on the plan date.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">5</div><div class="g-workflow-text"><strong>IM receipts Huawei delivery</strong> → Creates Material Receipt Stock Entry from Huawei Outbound Plan.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">6</div><div class="g-workflow-text"><strong>IM creates material transfer request</strong> → DUID Stock tab → fills Huawei and/or Company materials → submits → approves → stock moves to team warehouse.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">7</div><div class="g-workflow-text"><strong>Field team executes on site</strong> → Opens Today's Work → taps plan card → starts timer → sets status to In Progress → fills achieved qty, materials used, QC/CIAG, GPS, photo, TL remarks → submits.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">8</div><div class="g-workflow-text"><strong>Work Done created automatically</strong> when status is Completed → Revenue, cost, and margin calculated.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">9</div><div class="g-workflow-text"><strong>PIC tracks billing</strong> → PIC Tracker → edits each line: MS1 Applied Date → I-BUY Owner → advances status: Under Process → Under I-BUY → Under ISDP → Ready for Invoice.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">10</div><div class="g-workflow-text"><strong>PIC creates Sales Invoice</strong> → Invoice Tracker → select ready lines → Create Sales Invoice → one click generates the invoice.</div></div>
+    <div class="g-workflow-connector">↓</div>
+    <div class="g-workflow-row"><div class="g-workflow-num">11</div><div class="g-workflow-text"><strong>Invoice closed</strong> → Payment received → PIC marks "Commercial Invoice Closed". Work Done shows Closed. Dashboards reflect final numbers within 5 minutes.</div></div>
+  </div>
+
+  <hr>
+
+  <h2>7. Common Questions &amp; Troubleshooting</h2>
+
+  <div class="g-trouble-item"><div class="g-trouble-issue">Dashboard shows stale data</div><div class="g-trouble-fix">Press <strong>Ctrl+Shift+R</strong> (Windows) or <strong>Cmd+Shift+R</strong> (Mac) to force a full page reload. Dashboards auto-refresh every 5 minutes.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">I can't see my teams or projects</div><div class="g-trouble-fix">Contact your system administrator to verify your user account, IM Master record, and team links.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">PO Upload row shows an error</div><div class="g-trouble-fix">Verify the item code and project code exist in the Masters; contact your PM if unsure.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Work Done billing status stuck on Pending</div><div class="g-trouble-fix">The PIC team updates this as they process milestones — no action needed from your side.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Material Request button not showing for a DUID</div><div class="g-trouble-fix">All received items for that DUID have already been requested; remaining quantity is zero.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">IM dashboard empty or showing wrong data</div><div class="g-trouble-fix">Contact your administrator to link your user account to your IM Master record and assign teams.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Backend nav link not showing in IM sidebar</div><div class="g-trouble-fix">Your IM Master record needs "Can Assign Backend" enabled. Contact your Project Manager.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Invoice Tracker "Create Sales Invoice" fails</div><div class="g-trouble-fix">Check that the Customer and Item Code are set on the PO line. Verify the item has a valid billing rate in Customer Item Master.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Return request submitted but stock hasn't moved</div><div class="g-trouble-fix">The IM needs to approve the return from the Returns tab in Material Requests.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Expense claim stuck on Pending</div><div class="g-trouble-fix">Your IM reviews claims from the Expense Approvals page. Follow up with them directly.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">+ New Claim button is greyed out</div><div class="g-trouble-fix">Your user account must be linked to an Employee record. Contact your IM or administrator.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Expense claim not in IM's Approvals list</div><div class="g-trouble-fix">The claim routes to the IM assigned to your team. Verify your team has a correct IM assigned.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Team Allocation dot on IM sidebar</div><div class="g-trouble-fix">You have pending Team Allocation Requests — open My Teams to review and Accept or Reject.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Billing status shows Invoiced but I submitted a Draft invoice</div><div class="g-trouble-fix">Only <strong>Submitted</strong> (not Draft) Sales Invoices trigger the automatic status update. Submit the invoice in ERPNext first.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">GPS fails to capture</div><div class="g-trouble-fix">Check that your browser has location permission. On mobile, ensure Location Services is enabled for the browser. The form allows manual coordinate entry as a fallback.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">TL Remark templates not appearing</div><div class="g-trouble-fix">Templates are saved per-user. Type a remark in the picker and tap "+ Add" to create your first template.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">Plan shows "QC Not Required" / "CIAG Not Required"</div><div class="g-trouble-fix">The PM or IM unchecked those workflow toggles when creating the plan. You do not need to fill QC/CIAG status for that plan.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">"No materials assigned for this POID yet" in execution form</div><div class="g-trouble-fix">The IM has not yet approved a material transfer request for this work order. Contact your IM.</div></div>
+
+  <div class="g-page-nav">
+    <a href="/guide/field">← Field Guide</a>
+    <a href="/guide">Back to Overview →</a>
+  </div>
+
+</div>
+{% endblock %}
