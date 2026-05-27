@@ -251,7 +251,7 @@ export default function CommandDashboard() {
   const workingDaysElapsed = countWorkingDays(_monthStart, _todayStr);
   const inetTargetToday    = Math.round(inetMonthlyTarget * (workingDaysElapsed / 26));
   const inetAchieved       = inet.inet_achieved || 0;
-  const inetGapToday       = inetTargetToday - inetAchieved;
+  const inetGapToday       = inetAchieved - inetTargetToday;
 
   return (
     <div className="dashboard">
@@ -290,7 +290,7 @@ export default function CommandDashboard() {
         <KPICard label="Monthly Target" value={inetMonthlyTarget} />
         <KPICard label="Target as of Today" value={inetTargetToday} />
         <KPICard label="Achieved as of Today" value={inetAchieved} colorClass="text-green" />
-        <KPICard label="Gap as of Today" value={inetGapToday} colorClass={inetGapToday > 0 ? "text-red" : "text-green"} />
+        <KPICard label="Gap as of Today" value={inetGapToday} colorClass={inetGapToday < 0 ? "text-red" : "text-green"} />
       </div>
 
       {/* ── Row 3: Subcontractor Performance ───────────────── */}
