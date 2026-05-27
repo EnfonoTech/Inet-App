@@ -319,11 +319,28 @@ def dashboard_charts():
         order_by="modified desc",
         limit_page_length=50,
     )
+    top_projects = frappe.db.sql(
+        """
+        SELECT
+            pd.project_code,
+            COUNT(*) AS total,
+            SUM(CASE WHEN pd.dispatch_status IN ('Completed', 'Closed') THEN 1 ELSE 0 END) AS completed
+        FROM `tabPO Dispatch` pd
+        WHERE pd.project_code IS NOT NULL AND pd.project_code != ''
+        GROUP BY pd.project_code
+        ORDER BY total DESC
+        LIMIT 10
+        """,
+        as_dict=True,
+    )
+    for p in top_projects:
+        p["completion_pct"] = round((p["completed"] / p["total"]) * 100) if p["total"] else 0
     return {
         "projects_by_status": project_status,
         "budget_vs_actual": budget_vs_actual,
         "project_distribution_by_domain": domain_distribution,
         "completion_timeline": completion_timeline,
+        "top_projects": top_projects,
     }
 
 

@@ -22,16 +22,10 @@
   "budget_amount",
   "actual_cost",
   "completion_percentage",
-  "section_project_tasks",
-  "project_tasks",
   "section_project_materials",
   "project_materials",
-  "section_project_teams",
-  "project_teams",
   "section_project_documents",
-  "project_documents",
-  "section_kpi_slab_master",
-  "kpi_slab_master"
+  "project_documents"
  ],
  "fields": [
   {
@@ -143,17 +137,6 @@
    "label": "Completion Percentage"
   },
   {
-   "fieldname": "section_project_tasks",
-   "fieldtype": "Section Break",
-   "label": "Project Tasks"
-  },
-  {
-   "fieldname": "project_tasks",
-   "fieldtype": "Table",
-   "label": "Project Tasks",
-   "options": "Project Control Center Task"
-  },
-  {
    "fieldname": "section_project_materials",
    "fieldtype": "Section Break",
    "label": "Project Materials"
@@ -165,17 +148,6 @@
    "options": "Project Control Center Material"
   },
   {
-   "fieldname": "section_project_teams",
-   "fieldtype": "Section Break",
-   "label": "Project Teams"
-  },
-  {
-   "fieldname": "project_teams",
-   "fieldtype": "Table",
-   "label": "Project Teams",
-   "options": "Project Control Center Team"
-  },
-  {
    "fieldname": "section_project_documents",
    "fieldtype": "Section Break",
    "label": "Project Documents"
@@ -185,17 +157,6 @@
    "fieldtype": "Table",
    "label": "Project Documents",
    "options": "Project Control Center Document"
-  },
-  {
-   "fieldname": "section_kpi_slab_master",
-   "fieldtype": "Section Break",
-   "label": "KPI Slab Master"
-  },
-  {
-   "fieldname": "kpi_slab_master",
-   "fieldtype": "Table",
-   "label": "KPI Slab Master",
-   "options": "Project KPI Slab"
   },
   {
    "fieldname": "column_break_mmrq",

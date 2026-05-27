@@ -48,10 +48,11 @@ export default function PMDashboard() {
     c: p.actual_cost > p.budget_amount ? "red" : "green",
   }));
 
-  const milestoneData = (charts?.completion_timeline || []).slice(0, 5).map((p) => ({
-    m: p.project_code || "—",
-    p: p.project_code || "",
-    d: p.completion_percentage ? `${Math.round(p.completion_percentage)}%` : "—",
+  const topProjects = (charts?.top_projects || []).slice(0, 5).map((p) => ({
+    code: p.project_code || "—",
+    total: p.total || 0,
+    completed: p.completed || 0,
+    pct: p.completion_pct || 0,
   }));
 
   return (
@@ -102,8 +103,15 @@ export default function PMDashboard() {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
           <div className="nd-panel"><div className="nd-panel-header"><h3>Top Projects</h3></div><div className="nd-panel-body">
-            <table className="nd-table compact"><thead><tr><th>Project</th><th>Completion</th></tr></thead><tbody>
-              {milestoneData.map((m) => (<tr key={m.m}><td>{m.m}</td><td><span className="nd-badge amber">{m.d}</span></td></tr>))}
+            <table className="nd-table compact"><thead><tr><th>Project</th><th style={{ textAlign: "right" }}>Done</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>%</th></tr></thead><tbody>
+              {topProjects.length ? topProjects.map((p) => (
+                <tr key={p.code}>
+                  <td><strong>{p.code}</strong></td>
+                  <td style={{ textAlign: "right" }}>{p.completed}</td>
+                  <td style={{ textAlign: "right" }}>{p.total}</td>
+                  <td style={{ textAlign: "right" }}><span className={"nd-badge " + (p.pct >= 50 ? "green" : "amber")}>{p.pct}%</span></td>
+                </tr>
+              )) : <tr><td colSpan={4} style={{ textAlign: "center", color: "#94a3b8" }}>No data</td></tr>}
             </tbody></table>
           </div></div>
           <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Project Domain Distribution</h3></div><div className="nd-panel-body">

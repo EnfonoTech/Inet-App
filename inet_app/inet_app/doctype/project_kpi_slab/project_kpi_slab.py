@@ -1,5 +1,0 @@
-from frappe.model.document import Document
-
-
-class ProjectKPISlab(Document):
-    pass

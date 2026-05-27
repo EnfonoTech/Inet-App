@@ -9,16 +9,18 @@ const C = { blue: "#1565C0", green: "#2E7D32", amber: "#F57C00", red: "#C62828" 
 export default function CEODashboard() {
   const [data, setData] = useState(null);
   const [projKpis, setProjKpis] = useState(null);
+  const [picKpi, setPicKpi] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [cmd, pk] = await Promise.all([
+        const [cmd, pk, pic] = await Promise.all([
           pmApi.getCommandDashboard({ from_date: "", to_date: "" }),
           pmApi.projectKpis().catch(() => null),
+          pmApi.getPicDashboard(null, null, "").catch(() => null),
         ]);
-        if (!cancelled) { setData(cmd); setProjKpis(pk); }
+        if (!cancelled) { setData(cmd); setProjKpis(pk); setPicKpi(pic?.kpi || null); }
       } catch { if (!cancelled) setData(null); }
     })();
     return () => { cancelled = true; };
@@ -31,7 +33,7 @@ export default function CEODashboard() {
   const totalRevenue = company.total_achieved ?? 0;
   const netProfit = company.profit_loss ?? 0;
   const activeProjects = projKpis?.active_projects ?? 0;
-  const pendingInv = (data.picKpi?.unbilled_ms1 || 0) + (data.picKpi?.unbilled_ms2 || 0);
+  const pendingInv = (picKpi?.unbilled_ms1 || 0) + (picKpi?.unbilled_ms2 || 0);
   const coveragePct = Number(company.coverage_pct ?? 0).toFixed(1);
 
   const revTrend = (im_performance || []).slice(0, 4).map((im, i) => ({
@@ -89,12 +91,14 @@ export default function CEODashboard() {
           <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Financial Overview</h3></div>
             <div className="nd-panel-body">
               <div className="nd-donut-row">
-                <div style={{ position: "relative", width: 90, height: 55, flexShrink: 0, overflow: "hidden" }}>
-                  <div style={{ position: "absolute", bottom: 0, width: 90, height: 90 }}>
-                    <ResponsiveContainer><PieChart><Pie data={[{ v: totalRevenue }, { v: Math.max((company.company_target || totalRevenue) - totalRevenue, 0) }]} dataKey="v" innerRadius={28} outerRadius={42} startAngle={180} endAngle={0}><Cell fill={C.green} /><Cell fill="#e2e8f0" /></Pie></PieChart></ResponsiveContainer>
-                  </div>
+                <div style={{ position: "relative", width: 90, height: 90, flexShrink: 0 }}>
+                  <ResponsiveContainer><PieChart><Pie data={[{ v: Number(coveragePct) || 0 }, { v: Math.max(100 - (Number(coveragePct) || 0), 0) }]} dataKey="v" innerRadius={28} outerRadius={40} startAngle={90} endAngle={-270}><Cell fill={C.green} /><Cell fill="#e2e8f0" /></Pie></PieChart></ResponsiveContainer>
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.green }}>{coveragePct}%</div>
                 </div>
-                <div><div style={{ fontSize: 16, fontWeight: 700 }}>SAR {fmt.format(totalRevenue)}</div><div style={{ fontSize: 11, color: "#64748b" }}>Target: SAR {fmt.format(company.company_target || 0)}</div></div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>SAR {fmt.format(totalRevenue)}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>Target: SAR {fmt.format(company.company_target || 0)}</div>
+                </div>
               </div>
             </div></div>
         </div>
@@ -132,7 +136,7 @@ export default function CEODashboard() {
         </div></div>
         <div className="nd-panel"><div className="nd-panel-header"><h3>Issues & Alerts</h3></div><div className="nd-panel-body">
           {alerts.length ? alerts.map((i) => (
-            <div key={i.l} className="nd-metric" style={{ justifyContent: "space-between" }}><div className="nd-metric-info"><span style={{ fontSize: 12 }}>{i.l}</span><span className={"nd-badge " + i.c} style={{ marginLeft: 8 }}>{i.n}</span></div><button className="nd-btn primary" style={{ fontSize: 11, padding: "2px 8px" }}>Review</button></div>
+            <div key={i.l} className="nd-metric"><div className="nd-metric-info"><span style={{ fontSize: 12 }}>{i.l}</span><span className={"nd-badge " + i.c} style={{ marginLeft: 8 }}>{i.n}</span></div></div>
           )) : <div style={{ fontSize: 12, color: "#94a3b8", textAlign: "center", padding: 12 }}>No active alerts</div>}
         </div></div>
       </div>

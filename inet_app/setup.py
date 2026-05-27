@@ -2,8 +2,6 @@ import frappe
 
 
 def after_migrate():
-    # Ensure child table doctype remains available for Project Control Center.
-    frappe.reload_doc("inet_app", "doctype", "project_kpi_slab")
     # Multi-team plan support — child table on Rollout Plan.
     try:
         frappe.reload_doc("inet_app", "doctype", "rollout_plan_team")

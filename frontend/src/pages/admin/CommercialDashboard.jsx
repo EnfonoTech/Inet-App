@@ -6,15 +6,31 @@ import { pmApi } from "../../services/api";
 const fmt = new Intl.NumberFormat("en-US");
 const C = { blue: "#1565C0", green: "#2E7D32", amber: "#F57C00", coral: "#e53935", teal: "#00695c", gray: "#64748b" };
 
+function lastMonthRange() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const end   = new Date(now.getFullYear(), now.getMonth(), 0);
+  const iso   = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: iso(start), to: iso(end) };
+}
+
 export default function CommercialDashboard() {
   const [data, setData] = useState(null);
+  const [lastMonthRevenue, setLastMonthRevenue] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
+    const { from, to } = lastMonthRange();
     (async () => {
       try {
-        const cmd = await pmApi.getCommandDashboard({ from_date: "", to_date: "" });
-        if (!cancelled) setData(cmd);
+        const [cmd, prev] = await Promise.all([
+          pmApi.getCommandDashboard({ from_date: "", to_date: "" }),
+          pmApi.getCommandDashboard({ from_date: from, to_date: to }).catch(() => null),
+        ]);
+        if (!cancelled) {
+          setData(cmd);
+          setLastMonthRevenue(prev?.company?.total_achieved ?? null);
+        }
       } catch { if (!cancelled) setData(null); }
     })();
     return () => { cancelled = true; };
@@ -24,15 +40,12 @@ export default function CommercialDashboard() {
 
   const { company = {}, operational = {}, subcon = {}, inet = {}, im_performance = [], top_teams = [] } = data;
   const totalRevenue = company.total_achieved ?? 0;
-  const monthlyRevenue = totalRevenue > 0 ? Math.round(totalRevenue / 4) : 0; // approximate monthly
   const pendingInv = (operational.total_open_po_line_value ?? operational.total_open_po ?? 0);
 
   const revBreakdown = [
-    { n: "INET", v: Math.round((inet.inet_achieved || 0) / 1000000) || 45, c: C.blue },
-    { n: "Subcon", v: Math.round((subcon.sub_revenue || 0) / 1000000) || 30, c: C.amber },
-    { n: "Backend", v: Math.round((data.backend?.completed_mtd || 0) * 100) || 20, c: C.coral },
-    { n: "Other", v: 5, c: C.green },
-  ];
+    { n: "INET", v: inet.inet_achieved || 0, c: C.blue },
+    { n: "Subcon", v: subcon.sub_revenue || 0, c: C.amber },
+  ].filter((d) => d.v > 0);
 
   const topDeals = (top_teams || []).slice(0, 4).map((t) => ({
     cu: t.team_name || t.team || "—",
@@ -42,7 +55,9 @@ export default function CommercialDashboard() {
     c: t.achieved >= t.target ? "gray" : "teal",
   }));
 
-  const revenueGrowth = company.company_target > 0 ? Math.round((totalRevenue / company.company_target) * 100) : 0;
+  const revenueGrowth = lastMonthRevenue > 0
+    ? Math.round(((totalRevenue - lastMonthRevenue) / lastMonthRevenue) * 100)
+    : null;
 
   return (
     <div className="nd-dashboard">
@@ -54,9 +69,9 @@ export default function CommercialDashboard() {
       <div className="nd-kpi-row">
         {[
           { l: "Total Revenue", v: `SAR ${fmt.format(totalRevenue)}` },
-          { l: "Monthly Revenue", v: `SAR ${fmt.format(monthlyRevenue)}` },
+          { l: "Last Month Revenue", v: lastMonthRevenue !== null ? `SAR ${fmt.format(lastMonthRevenue)}` : "—" },
           { l: "Pending Invoices", v: `SAR ${fmt.format(pendingInv)}`, cl: C.amber },
-          { l: "Revenue Growth", v: `${revenueGrowth}%` },
+          { l: "Revenue Growth", v: revenueGrowth !== null ? `${revenueGrowth > 0 ? "+" : ""}${revenueGrowth}%` : "—", cl: revenueGrowth === null ? undefined : revenueGrowth >= 0 ? C.green : C.coral },
           { l: "Active Teams", v: inet.active_inet_teams || 0 },
         ].map((k) => (
           <div className="nd-kpi-card" key={k.l}><div className="nd-kpi-label">{k.l}</div><div className="nd-kpi-value" style={k.cl ? { color: k.cl } : {}}>{k.v}</div></div>
@@ -65,7 +80,7 @@ export default function CommercialDashboard() {
 
       <div className="nd-grid col2">
         <div className="nd-panel"><div className="nd-panel-header"><h3>Revenue Breakdown</h3></div><div className="nd-panel-body">
-          <div className="nd-chart-h170"><ResponsiveContainer><PieChart><Pie data={revBreakdown} dataKey="v" innerRadius={50} outerRadius={75} paddingAngle={2}>{revBreakdown.map((d) => <Cell key={d.n} fill={d.c} />)}</Pie><Legend /></PieChart></ResponsiveContainer></div>
+          <div className="nd-chart-h170"><ResponsiveContainer><PieChart><Pie data={revBreakdown} dataKey="v" nameKey="n" innerRadius={50} outerRadius={75} paddingAngle={2}>{revBreakdown.map((d) => <Cell key={d.n} fill={d.c} />)}</Pie><Tooltip formatter={(v) => `SAR ${fmt.format(v)}`} /><Legend /></PieChart></ResponsiveContainer></div>
         </div></div>
         <div className="nd-panel"><div className="nd-panel-header"><h3>Revenue Trend</h3></div><div className="nd-panel-body">
           <div className="nd-chart-h170"><ResponsiveContainer><BarChart data={(im_performance || []).slice(0, 6).map((im) => ({ n: im.im || "—", v: (im.revenue || 0) / 1000000 }))}><CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" /><XAxis dataKey="n" tick={{ fontSize: 10 }} /><Tooltip formatter={(v) => `SAR ${v}M`} /><Bar dataKey="v" fill={C.green} radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></div>
@@ -84,7 +99,7 @@ export default function CommercialDashboard() {
           </tbody></table>
         </div></div>
         <div className="nd-panel"><div className="nd-panel-header"><h3>Quick Stats</h3></div><div className="nd-panel-body">
-          <div style={{ marginBottom: 8 }}><div className="nd-row-xs"><span style={{ fontSize: 11 }}>Revenue vs Target</span><span style={{ fontWeight: 700, fontSize: 12 }}>{revenueGrowth}%</span></div><div className="nd-progress"><div className="nd-progress-bar blue" style={{ width: revenueGrowth + "%" }} /></div></div>
+          <div style={{ marginBottom: 8 }}><div className="nd-row-xs"><span style={{ fontSize: 11 }}>Revenue vs Target</span><span style={{ fontWeight: 700, fontSize: 12 }}>{company.coverage_pct > 0 ? Math.round(company.coverage_pct) : 0}%</span></div><div className="nd-progress"><div className="nd-progress-bar blue" style={{ width: Math.min(company.coverage_pct || 0, 100) + "%" }} /></div></div>
           <div className="nd-metric"><div className="nd-metric-icon" style={{ background: "#e8f5e9" }}>{inet.active_inet_teams || 0}</div><div className="nd-metric-info"><div style={{ fontSize: 11 }}>Active INET Teams</div><div style={{ fontSize: 13, fontWeight: 600 }}>{subcon.active_sub_teams || 0} Subcon</div></div></div>
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Cost Breakdown</div>

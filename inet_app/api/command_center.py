@@ -5,6 +5,7 @@ for inet_app (Frappe 15)
 
 import calendar
 import csv
+from datetime import date
 import json
 import os
 import re
@@ -5972,16 +5973,15 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
 
     inet_monthly_cost = sum(flt(t.daily_cost) * 26 for t in inet_teams)
 
-    # Monthly target from Project Control Center
-    pcc_targets = frappe.db.sql(
-        "SELECT COALESCE(SUM(monthly_target), 0) AS total FROM `tabProject Control Center` WHERE active_flag = 'Yes'",
-        as_dict=True,
-    )
-    inet_monthly_target = flt(pcc_targets[0].total if pcc_targets else 0)
+    # Monthly target = cost × 1.25 (25% margin), consistent with Command Dashboard frontend
+    inet_monthly_target = round(inet_monthly_cost * 1.25)
 
-    inet_target_today = (
-        (inet_monthly_target * day_of_month) / days_in_month if days_in_month else 0.0
+    # Pro-rate by working days elapsed (excl. Fridays) out of 26 working days per month
+    _working_days_elapsed = sum(
+        1 for i in range(day_of_month)
+        if (date(today.year, today.month, i + 1)).weekday() != 4  # 4 = Friday
     )
+    inet_target_today = round(inet_monthly_target * (_working_days_elapsed / 26))
 
     # Achieved as of today: sum PO Dispatch line_amount for INET teams (excl. backend)
     # Always uses current month 1st → today, independent of the date range filter
