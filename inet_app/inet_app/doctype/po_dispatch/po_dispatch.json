@@ -53,6 +53,7 @@
   "sqc_status",
   "pat_status",
   "im_rejection_remark",
+  "pic_rejection_remark",
   "payment_terms",
   "ms1_pct",
   "ms2_pct",
@@ -366,6 +367,11 @@
    "fieldname": "im_rejection_remark",
    "fieldtype": "Small Text",
    "label": "IM's Remarks on Rejection"
+  },
+  {
+   "fieldname": "pic_rejection_remark",
+   "fieldtype": "Small Text",
+   "label": "PIC Rejection Remark"
   },
   {
    "description": "Copied from PO Intake Line on upsert. Drives the MS1/MS2 percentage parser.",

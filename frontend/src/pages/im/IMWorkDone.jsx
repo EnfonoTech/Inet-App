@@ -86,25 +86,56 @@ export default function IMWorkDone() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [selectedRow, setSelectedRow] = useState(null);
   const [submissionFor, setSubmissionFor] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
-  const [submissionPick, setSubmissionPick] = useState("Ready for Confirmation");
+  const [submissionPick, setSubmissionPick] = useState("");
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const [submissionErr, setSubmissionErr] = useState(null);
   const [submissionWarn, setSubmissionWarn] = useState(null);
+  const [attachFiles, setAttachFiles] = useState([]);
+  const [existingAttachments, setExistingAttachments] = useState([]);
+  const [attachLoading, setAttachLoading] = useState(false);
+  const [detailAttachments, setDetailAttachments] = useState([]);
+  const [detailAttachLoading, setDetailAttachLoading] = useState(false);
+
+  function openSubmissionModal(r) {
+    setSubmissionErr(null);
+    setSubmissionPick(r.submission_status || "");
+    setAttachFiles([]);
+    setExistingAttachments([]);
+    setSubmissionFor(r);
+    const po_dispatch = r.po_dispatch || r.poid;
+    if (po_dispatch) {
+      setAttachLoading(true);
+      pmApi.getPoDispatchImAttachments(po_dispatch)
+        .then((files) => setExistingAttachments(Array.isArray(files) ? files : []))
+        .catch(() => {})
+        .finally(() => setAttachLoading(false));
+    }
+  }
 
   async function submitSubmission() {
     if (!submissionFor) return;
+    const needsAttach = submissionPick === "Confirmation Done";
+    if (needsAttach && existingAttachments.length === 0 && attachFiles.length === 0) {
+      setSubmissionErr("At least one attachment is required when setting Confirmation Done.");
+      return;
+    }
     setSubmissionBusy(true);
     setSubmissionErr(null);
     try {
+      const docname = submissionFor.is_subcon ? (submissionFor.po_dispatch || submissionFor.poid) : submissionFor.name;
+      const po_dispatch = submissionFor.po_dispatch || submissionFor.poid;
+      if (!docname) throw new Error("Missing document reference");
+      if (!po_dispatch) throw new Error("Missing PO Dispatch reference");
+      for (const file of attachFiles) {
+        await pmApi.uploadImAttachment(po_dispatch, file);
+      }
       let res;
       if (submissionFor.is_subcon) {
-        const dispatch = submissionFor.po_dispatch || submissionFor.poid;
-        if (!dispatch) throw new Error("Missing PO Dispatch reference for sub-contract row");
-        res = await pmApi.updateSubconSubmission(dispatch, submissionPick);
+        res = await pmApi.updateSubconSubmission(docname, submissionPick);
       } else {
-        if (!submissionFor.name) throw new Error("Missing Work Done name");
         res = await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick);
       }
       setSubmissionFor(null);
@@ -146,6 +177,17 @@ export default function IMWorkDone() {
     })();
     return () => { cancelled = true; };
   }, [imName, rowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
+
+  useEffect(() => {
+    if (!detailRow) { setDetailAttachments([]); return; }
+    const po_dispatch = detailRow.po_dispatch || detailRow.poid;
+    if (!po_dispatch) return;
+    setDetailAttachLoading(true);
+    pmApi.getPoDispatchImAttachments(po_dispatch)
+      .then((files) => setDetailAttachments(Array.isArray(files) ? files : []))
+      .catch(() => {})
+      .finally(() => setDetailAttachLoading(false));
+  }, [detailRow]);
 
   const filteredRows = useMemo(() => rows.filter((r) => {
     if (submissionFilter.length) {
@@ -220,6 +262,21 @@ export default function IMWorkDone() {
             Clear
           </button>
         )}
+        <div className="toolbar-actions">
+          {selectedRow && (
+            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+              {selectedRow.poid || selectedRow.po_dispatch} selected
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={!selectedRow}
+            onClick={() => openSubmissionModal(selectedRow)}
+          >
+            Update Submission
+          </button>
+        </div>
       </div>
       <div className="page-content">
         <DataTableWrapper>
@@ -228,9 +285,17 @@ export default function IMWorkDone() {
           ) : filteredRows.length === 0 ? (
             <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No work done rows"}</h3></div>
           ) : (
-            <table className="data-table">
+            <table className="data-table" data-table-key="im-workdone-v1">
               <thead>
                 <tr>
+                  <th style={{ width: 36 }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedRow != null}
+                      onChange={() => setSelectedRow(null)}
+                      title="Clear selection"
+                    />
+                  </th>
                   <th>Project Code</th>
                   <th>Project Name</th>
                   <th>POID</th>
@@ -261,7 +326,19 @@ export default function IMWorkDone() {
               </thead>
               <tbody>
                 {filteredRows.map((r) => (
-                  <tr key={r.name}>
+                  <tr
+                    key={r.name}
+                    className={selectedRow?.name === r.name ? "row-selected" : ""}
+                    onClick={() => setSelectedRow((prev) => prev?.name === r.name ? null : r)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td style={{ width: 36, padding: "6px 4px", textAlign: "center", boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedRow?.name === r.name}
+                        onChange={() => setSelectedRow((prev) => prev?.name === r.name ? null : r)}
+                      />
+                    </td>
                     <td>{r.project_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.project_name || ""}>{r.project_name || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch || "—"}</td>
@@ -281,26 +358,13 @@ export default function IMWorkDone() {
                     <td><StatusPill value={r.ciag_status} /></td>
                     <td><StatusPill value={r.qc_status} /></td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.execution_remarks || ""}>{r.execution_remarks || "—"}</td>
-                    <td><RemarksCell value={r.general_remark} tone="general" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.general_remark = v; }} /></td>
-                    <td><RemarksCell value={r.manager_remark} tone="manager" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.manager_remark = v; }} /></td>
-                    <td><RemarksCell value={r.team_lead_remark} tone="team_lead" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.team_lead_remark = v; }} /></td>
+                    <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.general_remark} tone="general" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.general_remark = v; }} /></td>
+                    <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.manager_remark} tone="manager" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.manager_remark = v; }} /></td>
+                    <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.team_lead_remark} tone="team_lead" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.team_lead_remark = v; }} /></td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.revenue_sar || 0)}</td>
                     <td title={r.pic_status ? `PIC status: ${r.pic_status}` : ""}><StatusPill value={r.billing_status} /></td>
-                    <td>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSubmissionErr(null);
-                          setSubmissionPick(r.submission_status || "");
-                          setSubmissionFor(r);
-                        }}
-                        style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
-                        title="Click to set submission status"
-                      >
-                        <StatusPill value={r.submission_status} />
-                      </button>
-                    </td>
-                    <td>
+                    <td><StatusPill value={r.submission_status} /></td>
+                    <td onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
                         className="btn-secondary"
@@ -341,6 +405,11 @@ export default function IMWorkDone() {
               <div><strong>Lead Team:</strong> {detailRow.team_name || detailRow.team || "—"}</div>
               <div><strong>Revenue:</strong> {fmt.format(detailRow.revenue_sar || 0)}</div>
             </div>
+            {detailRow.pic_rejection_remark && (
+              <div style={{ margin: "8px 0 12px", padding: "10px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, color: "#991b1b", fontSize: "0.85rem" }}>
+                <strong>PIC Rejected:</strong> {detailRow.pic_rejection_remark}
+              </div>
+            )}
             <IMNoteCallout note={detailRow.manager_remark} />
             <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
             <DispatchVisitHistory
@@ -348,6 +417,32 @@ export default function IMWorkDone() {
               rolloutPlan={detailRow.rollout_plan}
               currentPlanName={detailRow.rollout_plan}
             />
+            {detailAttachLoading ? (
+              <div style={{ color: "#94a3b8", fontSize: "0.82rem", padding: "8px 0" }}>Loading attachments…</div>
+            ) : detailAttachments.length > 0 ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                  IM Documents ({detailAttachments.length})
+                </div>
+                <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px" }}>
+                  {detailAttachments.map((f) => (
+                    <div key={f.name} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", fontSize: "0.82rem" }}>
+                      <span style={{ color: "#64748b" }}>📎</span>
+                      <a href={f.file_url} target="_blank" rel="noopener noreferrer" style={{ color: "#1d4ed8", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 460 }}>
+                        {f.file_name}
+                      </a>
+                      {f.file_size ? (
+                        <span style={{ color: "#94a3b8", fontSize: "0.72rem", flexShrink: 0 }}>
+                          {f.file_size < 1024 * 1024
+                            ? `${Math.round(f.file_size / 1024)} KB`
+                            : `${(f.file_size / (1024 * 1024)).toFixed(1)} MB`}
+                        </span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}
@@ -361,26 +456,107 @@ export default function IMWorkDone() {
 
       {submissionFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSubmissionFor(null)}>
-          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
-            <h4 style={{ margin: "0 0 12px" }}>
-              Submission status: {submissionFor.is_subcon
-                ? (submissionFor.poid || submissionFor.po_dispatch)
-                : submissionFor.name}
-              {submissionFor.is_subcon && (
-                <span style={{ marginLeft: 8, fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, background: "rgba(167,139,250,0.15)", color: "#7c3aed", fontWeight: 700 }}>Backend</span>
-              )}
-            </h4>
+          <div style={{ width: "min(560px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, maxHeight: "90dvh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+              <h4 style={{ margin: 0, fontSize: "0.95rem" }}>
+                Submission Status
+                <span style={{ marginLeft: 8, fontFamily: "monospace", color: "#64748b", fontWeight: 500, fontSize: "0.82rem" }}>
+                  {submissionFor.poid || submissionFor.po_dispatch || submissionFor.name}
+                </span>
+                {submissionFor.is_subcon && (
+                  <span style={{ marginLeft: 8, fontSize: "0.68rem", padding: "2px 8px", borderRadius: 999, background: "rgba(167,139,250,0.15)", color: "#7c3aed", fontWeight: 700 }}>Backend</span>
+                )}
+              </h4>
+              <button type="button" onClick={() => setSubmissionFor(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+
             {submissionErr && <div className="notice error" style={{ marginBottom: 10 }}>{submissionErr}</div>}
-            <div className="form-group" style={{ marginBottom: 12 }}>
-              <label>Status</label>
-              <select value={submissionPick} onChange={(e) => setSubmissionPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
+
+            {submissionFor?.pic_rejection_remark && (
+              <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, color: "#991b1b", fontSize: "0.85rem" }}>
+                <strong>PIC Rejected:</strong> {submissionFor.pic_rejection_remark}
+              </div>
+            )}
+
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>Status</label>
+              <select value={submissionPick} onChange={(e) => setSubmissionPick(e.target.value)} style={{ padding: 8, width: "100%", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.9rem" }}>
                 <option value="">— Not set —</option>
                 <option value="Ready for Confirmation">Ready for Confirmation</option>
                 <option value="Confirmation Done">Confirmation Done</option>
               </select>
             </div>
-            <button className="btn-primary" disabled={submissionBusy} onClick={submitSubmission}>{submissionBusy ? "…" : "Save"}</button>
-            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setSubmissionFor(null)}>Cancel</button>
+
+            <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                  Attachments
+                  {submissionPick === "Confirmation Done" && (
+                    <span style={{ fontSize: "0.7rem", color: "#ef4444", fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>* required</span>
+                  )}
+                  <span style={{ fontSize: "0.7rem", color: "#64748b", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>— saved to PO Dispatch</span>
+                </div>
+
+                {attachLoading ? (
+                  <div style={{ color: "#94a3b8", fontSize: "0.82rem", padding: "6px 0" }}>Loading…</div>
+                ) : existingAttachments.length > 0 ? (
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
+                    <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#64748b", marginBottom: 4 }}>EXISTING ({existingAttachments.length})</div>
+                    {existingAttachments.map((f) => (
+                      <div key={f.name} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", fontSize: "0.82rem" }}>
+                        <span style={{ color: "#64748b" }}>📎</span>
+                        <a href={f.file_url} target="_blank" rel="noopener noreferrer" style={{ color: "#1d4ed8", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 360 }}>
+                          {f.file_name}
+                        </a>
+                        {f.file_size ? (
+                          <span style={{ color: "#94a3b8", fontSize: "0.72rem", flexShrink: 0 }}>
+                            {f.file_size < 1024 * 1024
+                              ? `${Math.round(f.file_size / 1024)} KB`
+                              : `${(f.file_size / (1024 * 1024)).toFixed(1)} MB`}
+                          </span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                <label style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  gap: 6, padding: "12px 16px", border: "2px dashed #cbd5e1", borderRadius: 8,
+                  cursor: "pointer", background: "#f8fafc", color: "#64748b", fontSize: "0.82rem",
+                }}>
+                  <span style={{ fontSize: "1.3rem" }}>📁</span>
+                  <span>Click to attach files (PDF, Excel, email, images, any type)</span>
+                  {attachFiles.length > 0 && (
+                    <span style={{ color: "#047857", fontWeight: 600 }}>{attachFiles.length} file{attachFiles.length !== 1 ? "s" : ""} selected</span>
+                  )}
+                  <input
+                    type="file"
+                    multiple
+                    style={{ display: "none" }}
+                    onChange={(e) => setAttachFiles(Array.from(e.target.files))}
+                  />
+                </label>
+
+                {attachFiles.length > 0 && (
+                  <div style={{ marginTop: 6, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: "6px 10px" }}>
+                    {attachFiles.map((f, i) => (
+                      <div key={i} style={{ fontSize: "0.8rem", color: "#14532d", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>📄</span> {f.name}
+                        <span style={{ color: "#16a34a", fontSize: "0.72rem" }}>
+                          {f.size < 1024 * 1024
+                            ? `${Math.round(f.size / 1024)} KB`
+                            : `${(f.size / (1024 * 1024)).toFixed(1)} MB`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="btn-secondary" onClick={() => setSubmissionFor(null)}>Cancel</button>
+              <button className="btn-primary" disabled={submissionBusy} onClick={submitSubmission}>{submissionBusy ? "Saving…" : "Save"}</button>
+            </div>
           </div>
         </div>
       )}

@@ -1382,3 +1382,88 @@ def on_sales_invoice_submit(doc, method):
         wd_names = frappe.db.get_all("Work Done", {"system_id": pd_name}, pluck="name")
         for wd_name in wd_names:
             frappe.db.set_value("Work Done", wd_name, "billing_status", "Invoiced")
+
+
+@frappe.whitelist()
+def get_work_done_attachments_for_dispatch(po_dispatch):
+    """Return Frappe File attachments from all Work Done docs for a PO Dispatch."""
+    po_dispatch = (po_dispatch or "").strip()
+    if not po_dispatch:
+        return []
+    wd_names = frappe.db.get_all("Work Done", {"system_id": po_dispatch}, pluck="name")
+    if not wd_names:
+        return []
+    return frappe.db.get_all(
+        "File",
+        filters={"attached_to_doctype": "Work Done", "attached_to_name": ["in", wd_names]},
+        fields=["name", "file_name", "file_url", "file_size", "is_private", "creation"],
+        order_by="creation asc",
+    )
+
+
+@frappe.whitelist()
+def reject_pic_line(po_dispatch, remark):
+    """PIC rejects a confirmed Work Done line. Sets pic_status='Work Not Done',
+    saves rejection remark on PO Dispatch, and marks related Work Done docs as
+    'PIC Rejected'. Row disappears from PIC tracker until IM resubmits."""
+    _pic_role_or_throw()
+    po_dispatch = (po_dispatch or "").strip()
+    remark = (remark or "").strip()
+    if not po_dispatch:
+        frappe.throw("po_dispatch is required")
+    if not remark:
+        frappe.throw("Rejection remark is required")
+    if not frappe.db.exists("PO Dispatch", po_dispatch):
+        frappe.throw(f"PO Dispatch not found: {po_dispatch}")
+
+    wd_docs = frappe.get_all(
+        "Work Done",
+        filters={"system_id": po_dispatch, "submission_status": "Confirmation Done"},
+        fields=["name"],
+    )
+    for wd in wd_docs:
+        frappe.db.set_value("Work Done", wd.name, "submission_status", "PIC Rejected", update_modified=True)
+
+    update_vals = {"pic_status": "Work Not Done"}
+    if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
+        update_vals["pic_rejection_remark"] = remark
+    frappe.db.set_value("PO Dispatch", po_dispatch, update_vals, update_modified=False)
+    frappe.db.commit()
+    return {"status": "ok", "rejected_work_done": [wd.name for wd in wd_docs]}
+
+
+@frappe.whitelist()
+def get_po_dispatch_im_attachments(po_dispatch):
+    """Return IM file attachments for a PO Dispatch (uploaded by IM)."""
+    po_dispatch = (po_dispatch or "").strip()
+    if not po_dispatch:
+        return []
+    return frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": "PO Dispatch",
+            "attached_to_name": po_dispatch,
+            "attached_to_field": "im_attachment",
+        },
+        fields=["name", "file_name", "file_url", "file_size", "creation"],
+        order_by="creation desc",
+    )
+
+
+@frappe.whitelist()
+def get_po_dispatch_pic_attachments(po_dispatch):
+    """Return PIC file attachments for a PO Dispatch (uploaded by PIC)."""
+    _pic_role_or_throw()
+    po_dispatch = (po_dispatch or "").strip()
+    if not po_dispatch:
+        return []
+    return frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": "PO Dispatch",
+            "attached_to_name": po_dispatch,
+            "attached_to_field": "pic_attachment",
+        },
+        fields=["name", "file_name", "file_url", "file_size", "creation"],
+        order_by="creation desc",
+    )

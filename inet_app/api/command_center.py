@@ -5178,6 +5178,8 @@ def list_work_done_rows(filters=None, limit=500):
             pd_fields_wd.append("pic_status")
         if frappe.db.has_column("PO Dispatch", "subcon_submission_status"):
             pd_fields_wd.append("subcon_submission_status")
+        if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
+            pd_fields_wd.append("pic_rejection_remark")
         pd_rows = frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", all_dispatch_names]},
@@ -5279,6 +5281,7 @@ def list_work_done_rows(filters=None, limit=500):
                 "general_remark": pd.get("general_remark") if pd else None,
                 "manager_remark": pd.get("manager_remark") if pd else None,
                 "team_lead_remark": pd.get("team_lead_remark") if pd else None,
+                "pic_rejection_remark": pd.get("pic_rejection_remark") if pd else None,
                 "original_dummy_poid": (
                     (pd.get("original_dummy_poid") or "").strip()
                     if pd and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
@@ -5503,28 +5506,61 @@ def update_work_done_submission(name, submission_status):
         frappe.throw(f"Work Done not found: {name}")
     frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
 
+    # Resolve PO Dispatch via rollout-plan chain; fall back to Work Done.system_id
+    chain_row = frappe.db.sql(
+        """
+        SELECT rp.po_dispatch
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        WHERE wd.name = %s
+        LIMIT 1
+        """,
+        name, as_dict=True,
+    )
+    po_dispatch = (
+        (chain_row[0].get("po_dispatch") if chain_row else None)
+        or frappe.db.get_value("Work Done", name, "system_id")
+    )
+
     pic_warning = None
-    if status != "Confirmation Done":
-        # IM is un-confirming — clear pic_status if nothing has been processed yet
-        row = frappe.db.sql(
-            """
-            SELECT rp.po_dispatch
-            FROM `tabWork Done` wd
-            JOIN `tabDaily Execution` de ON de.name = wd.execution
-            JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-            WHERE wd.name = %s
-            LIMIT 1
-            """,
-            name, as_dict=True,
-        )
-        if row and row[0].get("po_dispatch"):
-            pic_warning = _revert_pic_status_if_safe(row[0]["po_dispatch"])
+    if po_dispatch:
+        if status == "Confirmation Done":
+            current_pic = frappe.db.get_value("PO Dispatch", po_dispatch, "pic_status") or ""
+            if current_pic in {"", "Work Not Done"}:
+                # Bug fix: physically write status so PIC tracker sees the correct value
+                frappe.db.set_value(
+                    "PO Dispatch", po_dispatch, "pic_status", "Under Process to Apply",
+                    update_modified=False,
+                )
+            if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
+                frappe.db.set_value(
+                    "PO Dispatch", po_dispatch, "pic_rejection_remark", "",
+                    update_modified=False,
+                )
+        else:
+            # IM is un-confirming — clear pic_status if nothing has been processed yet
+            pic_warning = _revert_pic_status_if_safe(po_dispatch)
 
     frappe.db.commit()
     result = {"name": name, "submission_status": status}
     if pic_warning:
         result["pic_warning"] = pic_warning
     return result
+
+
+@frappe.whitelist()
+def get_work_done_attachments(name):
+    """Return Frappe File records attached to a Work Done document."""
+    name = (name or "").strip()
+    if not name or not frappe.db.exists("Work Done", name):
+        return []
+    return frappe.db.get_all(
+        "File",
+        filters={"attached_to_doctype": "Work Done", "attached_to_name": name},
+        fields=["name", "file_name", "file_url", "file_size", "is_private", "creation"],
+        order_by="creation asc",
+    )
 
 
 @frappe.whitelist()

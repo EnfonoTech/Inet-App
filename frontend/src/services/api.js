@@ -400,6 +400,44 @@ export const pmApi = {
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
   updateWorkDoneSubmission: (name, submission_status) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status }),
   updateSubconSubmission: (po_dispatch, submission_status) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status }),
+  getWorkDoneAttachments: (name) => call("inet_app.api.command_center.get_work_done_attachments", { name }),
+  getWorkDoneAttachmentsByDispatch: (po_dispatch) => call("inet_app.api.pic.get_work_done_attachments_for_dispatch", { po_dispatch }),
+  getDocAttachments: (doctype, docname) => call("frappe.client.get_list", {
+    doctype: "File",
+    filters: [["attached_to_doctype", "=", doctype], ["attached_to_name", "=", docname]],
+    fields: ["name", "file_name", "file_url", "file_size", "is_private", "creation"],
+    limit_page_length: 100,
+    order_by: "creation asc",
+  }),
+  deleteAttachment: (fileName) => call("frappe.client.delete", { doctype: "File", name: fileName }),
+  uploadDocAttachment: async (doctype, docname, file, attachedToField = "") => {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    fd.append("is_private", "0");
+    fd.append("doctype", doctype);
+    fd.append("docname", docname);
+    fd.append("folder", "Home/Attachments");
+    if (attachedToField) fd.append("fieldname", attachedToField);
+    const res = await fetch("/api/method/upload_file", {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-Frappe-CSRF-Token": getCsrf() },
+      body: fd,
+    });
+    const json = await res.json();
+    if (!res.ok || json.exc) throw new Error(json.message || "Upload failed");
+    return json.message;
+  },
+  uploadImAttachment: (po_dispatch, file) =>
+    pmApi.uploadDocAttachment("PO Dispatch", po_dispatch, file, "im_attachment"),
+  uploadPicAttachment: (po_dispatch, file) =>
+    pmApi.uploadDocAttachment("PO Dispatch", po_dispatch, file, "pic_attachment"),
+  getPoDispatchImAttachments: (po_dispatch) =>
+    call("inet_app.api.pic.get_po_dispatch_im_attachments", { po_dispatch }),
+  getPoDispatchPicAttachments: (po_dispatch) =>
+    call("inet_app.api.pic.get_po_dispatch_pic_attachments", { po_dispatch }),
+  rejectPicLine: (po_dispatch, remark) =>
+    call("inet_app.api.pic.reject_pic_line", { po_dispatch, remark }),
   getDistinctFieldValues: (doctype, fields) =>
     callCached(
       "inet_app.api.command_center.get_distinct_field_values",

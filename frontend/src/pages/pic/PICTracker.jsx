@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
@@ -7,6 +7,7 @@ import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import { useAuth } from "../../context/AuthContext";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -119,6 +120,12 @@ export default function PICTracker() {
   const [selected, setSelected] = useState(new Set());
   const [toastMsg, setToastMsg] = useState(null);
 
+  // Reject modal state (operates on current selection)
+  const [showReject, setShowReject] = useState(false);
+  const [rejectRemark, setRejectRemark] = useState("");
+  const [rejectBusy, setRejectBusy] = useState(false);
+  const [rejectErr, setRejectErr] = useState(null);
+
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [picFilter, setPicFilter] = useState([]);
@@ -210,8 +217,8 @@ export default function PICTracker() {
     setSelected(all ? new Set() : new Set(rows.map((r) => r.po_dispatch)));
   }
 
-  function openEdit(row) {
-    setEditFor(row);
+  function openEdit(row, initialTab) {
+    setEditFor({ ...row, _initialTab: initialTab || null });
     setEditFields({
       pic_status: row.pic_status_stored || row.pic_status_effective || "",
       pic_status_ms2: row.pic_status_ms2 || "",
@@ -271,6 +278,28 @@ export default function PICTracker() {
       setEditErr(err.message || "Save failed");
     } finally {
       setEditBusy(false);
+    }
+  }
+
+  async function submitReject() {
+    if (!selected.size) return;
+    if (!rejectRemark.trim()) { setRejectErr("Rejection remark is required."); return; }
+    const dispatches = Array.from(selected);
+    setRejectBusy(true);
+    setRejectErr(null);
+    try {
+      for (const po_dispatch of dispatches) {
+        await pmApi.rejectPicLine(po_dispatch, rejectRemark.trim());
+      }
+      setShowReject(false);
+      setSelected(new Set());
+      setToastMsg(`Rejected ${dispatches.length} POID${dispatches.length !== 1 ? "s" : ""}.`);
+      setTimeout(() => setToastMsg(null), 4500);
+      await load();
+    } catch (err) {
+      setRejectErr(err.message || "Rejection failed");
+    } finally {
+      setRejectBusy(false);
     }
   }
 
@@ -349,6 +378,14 @@ export default function PICTracker() {
           )}
           <button
             type="button"
+            disabled={selected.size === 0}
+            onClick={() => { setRejectErr(null); setRejectRemark(""); setShowReject(true); }}
+            style={{ padding: "6px 14px", background: selected.size > 0 ? "#dc2626" : "#f1f5f9", color: selected.size > 0 ? "#fff" : "#94a3b8", border: "none", borderRadius: 6, fontWeight: 600, cursor: selected.size > 0 ? "pointer" : "default", fontSize: "0.88rem" }}
+          >
+            Reject ({selected.size})
+          </button>
+          <button
+            type="button"
             className="btn-primary"
             disabled={selected.size === 0}
             onClick={() => { setBulkErr(null); setShowBulk(true); }}
@@ -378,7 +415,7 @@ export default function PICTracker() {
             <table className="data-table" data-table-key="pic-tracker-v2">
               <thead>
                 <tr>
-                  <th>
+                  <th style={{ width: 36 }}>
                     <input type="checkbox" checked={rows.length > 0 && rows.every((r) => selected.has(r.po_dispatch))} onChange={toggleAll} />
                   </th>
                   <th>Contract</th>
@@ -413,7 +450,9 @@ export default function PICTracker() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.po_dispatch}
-                      className={selected.has(r.po_dispatch) ? "row-selected" : ""}>
+                      className={selected.has(r.po_dispatch) ? "row-selected" : ""}
+                      onClick={() => toggleRow(r.po_dispatch)}
+                      style={{ cursor: "pointer" }}>
                     <td onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(r.po_dispatch)} onChange={() => toggleRow(r.po_dispatch)} />
                     </td>
@@ -443,9 +482,17 @@ export default function PICTracker() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmtInt.format(r.ms2_pct)}%` : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms2_invoiced || 0)}</td>
-                    <td>
+                    <td style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                       <button type="button" className="btn-secondary" style={{ padding: "3px 10px", fontSize: "0.78rem" }} onClick={() => openEdit(r)}>
                         Edit
+                      </button>
+                      <button
+                        type="button"
+                        style={{ marginLeft: 5, padding: "3px 8px", fontSize: "0.78rem", border: "1px solid #cbd5e1", borderRadius: 5, background: "#f8fafc", cursor: "pointer", color: "#475569" }}
+                        title="View attachments"
+                        onClick={() => openEdit(r, "ATT")}
+                      >
+                        📎
                       </button>
                     </td>
                   </tr>
@@ -517,7 +564,45 @@ export default function PICTracker() {
           onSave={submitEdit}
           busy={editBusy}
           err={editErr}
+          initialTab={editFor._initialTab}
         />
+      )}
+
+      {showReject && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={rejectBusy ? undefined : () => setShowReject(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(460px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem", color: "#991b1b" }}>
+                Reject Work Done
+                <span style={{ marginLeft: 8, fontSize: "0.82rem", color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span>
+              </h3>
+              <button type="button" onClick={() => setShowReject(false)} disabled={rejectBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>
+                Rejection Remark <span style={{ color: "#ef4444" }}>*</span>
+              </label>
+              <textarea
+                value={rejectRemark}
+                onChange={(e) => setRejectRemark(e.target.value)}
+                disabled={rejectBusy}
+                rows={4}
+                placeholder="Describe why this Work Done is being rejected…"
+                style={{ width: "100%", padding: 8, border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.88rem", resize: "vertical", boxSizing: "border-box" }}
+              />
+            </div>
+            {rejectErr && <div className="notice error" style={{ marginBottom: 10 }}>{rejectErr}</div>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="btn-secondary" onClick={() => setShowReject(false)} disabled={rejectBusy}>Cancel</button>
+              <button type="button" onClick={submitReject} disabled={rejectBusy}
+                style={{ padding: "6px 18px", background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: rejectBusy ? "default" : "pointer", fontSize: "0.9rem" }}>
+                {rejectBusy ? "Submitting…" : `Reject ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showBulk && (
@@ -561,9 +646,52 @@ export default function PICTracker() {
   );
 }
 
-function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
-  const [tab, setTab] = useState("MS1");
+function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initialTab }) {
+  const { role } = useAuth();
+  const [tab, setTab] = useState(initialTab || "MS1");
+  const [imAttachments, setImAttachments] = useState(null);
+  const [imAttachLoading, setImAttachLoading] = useState(false);
+  const [picAttachments, setPicAttachments] = useState(null);
+  const [picAttachLoading, setPicAttachLoading] = useState(false);
+  const [picUploadFile, setPicUploadFile] = useState(null);
+  const [picUploadBusy, setPicUploadBusy] = useState(false);
+  const [picUploadErr, setPicUploadErr] = useState(null);
+  const picFileRef = useRef(null);
   const set = (k, v) => setFields((f) => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    if (tab !== "ATT") return;
+    if (imAttachments === null && !imAttachLoading) {
+      setImAttachLoading(true);
+      pmApi.getPoDispatchImAttachments(row.po_dispatch)
+        .then((files) => setImAttachments(Array.isArray(files) ? files : []))
+        .catch(() => setImAttachments([]))
+        .finally(() => setImAttachLoading(false));
+    }
+    if (role === "pic" && picAttachments === null && !picAttachLoading) {
+      setPicAttachLoading(true);
+      pmApi.getPoDispatchPicAttachments(row.po_dispatch)
+        .then((files) => setPicAttachments(Array.isArray(files) ? files : []))
+        .catch(() => setPicAttachments([]))
+        .finally(() => setPicAttachLoading(false));
+    }
+  }, [tab, imAttachments, imAttachLoading, picAttachments, picAttachLoading, row.po_dispatch, role]);
+
+  async function uploadPicFile(file) {
+    if (!file) return;
+    setPicUploadBusy(true);
+    setPicUploadErr(null);
+    try {
+      await pmApi.uploadPicAttachment(row.po_dispatch, file);
+      setPicUploadFile(null);
+      if (picFileRef.current) picFileRef.current.value = "";
+      setPicAttachments(null);
+    } catch (e) {
+      setPicUploadErr(e.message || "Upload failed");
+    } finally {
+      setPicUploadBusy(false);
+    }
+  }
 
   const ms1Status = fields.pic_status || row.pic_status_effective || "Work Not Done";
   const ms2Status = fields.pic_status_ms2 || "";
@@ -628,6 +756,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
             <HeroChip label="PIC MS1" value={ms1Status} active={tab === "MS1"} onClick={() => setTab("MS1")} />
             <HeroChip label="PIC MS2" value={ms2Status || "—"} active={tab === "MS2"} onClick={() => setTab("MS2")} disabled={ms2Pct <= 0 && !ms2Status} />
             <HeroChip label="Acceptance" value={`${row.sqc_status || "SQC ?"} · ${row.pat_status || "PAT ?"}`} active={tab === "ACC"} onClick={() => setTab("ACC")} />
+            <HeroChip label="📎" value="Attachments" active={tab === "ATT"} onClick={() => setTab("ATT")} />
           </div>
         </div>
 
@@ -676,6 +805,86 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err }) {
               set={set}
               busy={busy}
             />
+          )}
+          {tab === "ATT" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Card title="IM Documents">
+                <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: 10 }}>
+                  Files uploaded by the IM for this POID.
+                </div>
+                {imAttachLoading ? (
+                  <div style={{ color: "#94a3b8", textAlign: "center", padding: "12px 0" }}>Loading…</div>
+                ) : !imAttachments || imAttachments.length === 0 ? (
+                  <div style={{ color: "#94a3b8", textAlign: "center", padding: "12px 0", fontSize: "0.85rem" }}>No IM documents found.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                    {imAttachments.map((f) => (
+                      <a key={f.name} href={f.file_url} target="_blank" rel="noopener noreferrer"
+                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 7, textDecoration: "none" }}>
+                        <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>📎</span>
+                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.85rem", color: "#1d4ed8" }}>{f.file_name}</span>
+                        {f.file_size ? (
+                          <span style={{ fontSize: "0.72rem", color: "#94a3b8", flexShrink: 0 }}>
+                            {f.file_size < 1024 * 1024 ? `${Math.round(f.file_size / 1024)} KB` : `${(f.file_size / (1024 * 1024)).toFixed(1)} MB`}
+                          </span>
+                        ) : null}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              {role === "pic" && (
+                <Card title="PIC Documents">
+                  <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: 10 }}>
+                    Files uploaded by PIC for this POID.
+                  </div>
+                  <label style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                    gap: 6, padding: "12px 16px", border: "2px dashed #cbd5e1", borderRadius: 8,
+                    cursor: "pointer", background: "#f8fafc", color: "#64748b", fontSize: "0.82rem", marginBottom: 8,
+                  }}>
+                    <span style={{ fontSize: "1.3rem" }}>📁</span>
+                    <span>{picUploadFile ? picUploadFile.name : "Click to select a file to upload"}</span>
+                    <input
+                      ref={picFileRef}
+                      type="file"
+                      style={{ display: "none" }}
+                      onChange={(e) => { setPicUploadFile(e.target.files[0] || null); setPicUploadErr(null); }}
+                    />
+                  </label>
+                  {picUploadFile && (
+                    <div style={{ marginBottom: 8 }}>
+                      {picUploadErr && <div className="notice error" style={{ marginBottom: 6 }}>{picUploadErr}</div>}
+                      <button type="button" onClick={() => uploadPicFile(picUploadFile)} disabled={picUploadBusy}
+                        style={{ width: "100%", padding: "6px 12px", background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: picUploadBusy ? "default" : "pointer", fontSize: "0.88rem" }}>
+                        {picUploadBusy ? "Uploading…" : "Upload"}
+                      </button>
+                    </div>
+                  )}
+                  {picAttachLoading ? (
+                    <div style={{ color: "#94a3b8", textAlign: "center", padding: "10px 0" }}>Loading…</div>
+                  ) : !picAttachments || picAttachments.length === 0 ? (
+                    <div style={{ color: "#94a3b8", textAlign: "center", padding: "10px 0", fontSize: "0.85rem" }}>No PIC documents yet.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                      {picAttachments.map((f) => (
+                        <a key={f.name} href={f.file_url} target="_blank" rel="noopener noreferrer"
+                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 7, textDecoration: "none" }}>
+                          <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>📎</span>
+                          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.85rem", color: "#1d4ed8" }}>{f.file_name}</span>
+                          {f.file_size ? (
+                            <span style={{ fontSize: "0.72rem", color: "#94a3b8", flexShrink: 0 }}>
+                              {f.file_size < 1024 * 1024 ? `${Math.round(f.file_size / 1024)} KB` : `${(f.file_size / (1024 * 1024)).toFixed(1)} MB`}
+                            </span>
+                          ) : null}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              )}
+            </div>
           )}
           {tab === "ACC" && (
             <Card title="Acceptance Gates">
