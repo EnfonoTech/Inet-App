@@ -192,7 +192,7 @@ export default function SearchableSelect({
           fontSize: 13,
           background: disabled ? "var(--bg, #f8fafc)" : "var(--bg-white, #fff)",
           cursor: disabled ? "not-allowed" : "pointer",
-          display: "flex",
+          display: "inline-flex",
           alignItems: "center",
           minWidth: minWidth != null ? minWidth : 0,
           transition: "border-color 0.15s, box-shadow 0.15s",

@@ -628,6 +628,12 @@
   border-radius: 6px !important;
   min-height: 30px;
 }
+/* The label span inside the trigger has 9px top/bottom padding (for form usage).
+ * Zero it out in toolbar so the outer 5px trigger padding controls height instead. */
+.toolbar .searchable-select-trigger > span:first-child {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
 .toolbar input[type="search"],
 .toolbar input[type="text"] {
   min-width: 0 !important;

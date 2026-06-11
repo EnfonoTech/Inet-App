@@ -4710,6 +4710,15 @@ def list_execution_monitor_rows(filters=None, limit=500):
         if c:
             wheres.append(c)
             params.extend(p)
+    im_vals_em = _ensure_list(filters.get("im"))
+    if im_vals_em:
+        ph_em = ", ".join(["%s"] * len(im_vals_em))
+        if frappe.db.has_column("Rollout Plan", "im"):
+            wheres.append(f"(IFNULL(pd.im,'') IN ({ph_em}) OR IFNULL(rp.im,'') IN ({ph_em}))")
+            params.extend(im_vals_em + im_vals_em)
+        else:
+            wheres.append(f"IFNULL(pd.im,'') IN ({ph_em})")
+            params.extend(im_vals_em)
     if filters.get("from_date") and filters.get("to_date"):
         wheres.append("rp.plan_date BETWEEN %s AND %s")
         params.extend([filters["from_date"], filters["to_date"]])
@@ -5719,6 +5728,16 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         if c:
             wheres.append(c)
             params.extend(p)
+    # Portal IM filter (multi-select) — overrides the single-string im arg
+    pf_im_vals = _ensure_list(pf_ir.get("im"))
+    if pf_im_vals and not im_filter_value:
+        ph_ir = ", ".join(["%s"] * len(pf_im_vals))
+        if frappe.db.has_column("Rollout Plan", "im"):
+            wheres.append(f"(IFNULL(pd.im,'') IN ({ph_ir}) OR IFNULL(rp.im,'') IN ({ph_ir}))")
+            params.extend(pf_im_vals + pf_im_vals)
+        else:
+            wheres.append(f"IFNULL(pd.im,'') IN ({ph_ir})")
+            params.extend(pf_im_vals)
 
     like_pat = _sql_like_pattern(search or "")
     if like_pat:

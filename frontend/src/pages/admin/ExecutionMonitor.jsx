@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
@@ -144,6 +144,7 @@ export default function ExecutionMonitor() {
   const [planStatusFilter, setPlanStatusFilter] = useState(["Planned", "In Execution", "Completed", "Planning with Issue"]);
   const [executionStatusFilter, setExecutionStatusFilter] = useState([]);
   const [visitFilter, setVisitFilter] = useState([]);
+  const [imFilter, setImFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
@@ -205,6 +206,7 @@ export default function ExecutionMonitor() {
         if (planStatusFilter.length) filters.status = planStatusFilter;
         if (executionStatusFilter.length) filters.execution_status = executionStatusFilter;
         if (visitFilter.length) filters.visit_type = visitFilter;
+        if (imFilter.length) filters.im = imFilter;
         if (teamFilter.length) filters.team = teamFilter;
         if (projectFilter.length) filters.project_code = projectFilter;
         if (duidFilter.length) filters.site_code = duidFilter;
@@ -231,7 +233,7 @@ export default function ExecutionMonitor() {
         intervalRef.current = null;
       }
     };
-  }, [rowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [rowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey]);
 
   function formatTime(d) {
     if (!d) return "";
@@ -246,12 +248,24 @@ export default function ExecutionMonitor() {
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
   // Preserve { id, label } shape so existing JSX doesn't need to change
-  const teamOptions = (teamOpts.team_id || []).map((tid) => {
-    const hit = rows.find((r) => r.team === tid);
-    return { id: tid, label: hit?.team_name || tid };
-  });
+  const [knownImOptions, setKnownImOptions] = useState([]);
+  const [teamNameMap, setTeamNameMap] = useState({});
+  useEffect(() => {
+    if (!rows.length) return;
+    setKnownImOptions((prev) => {
+      const seen = new Map(prev.map((o) => [o.id, o.label]));
+      for (const r of rows) { if (r.im) seen.set(r.im, r.im_full_name || r.im); }
+      return Array.from(seen.entries()).map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+    });
+    setTeamNameMap((prev) => {
+      const next = { ...prev };
+      for (const r of rows) { if (r.team && r.team_name) next[r.team] = r.team_name; }
+      return next;
+    });
+  }, [rows]);
+  const teamOptions = (teamOpts.team_id || []).map((tid) => ({ id: tid, label: teamNameMap[tid] || tid }));
 
-  const hasFilters = !!(searchDebounced || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || imFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   return (
     <div>
@@ -291,6 +305,7 @@ export default function ExecutionMonitor() {
         <SearchableSelect multi value={executionStatusFilter} onChange={setExecutionStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Exec Status" minWidth={150} />
         <SearchableSelect multi value={visitFilter} onChange={setVisitFilter} options={visitTypes} placeholder="All Visit Types" minWidth={160} />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect multi value={imFilter} onChange={setImFilter} options={knownImOptions} placeholder="All IMs" minWidth={150} />
         <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="All Teams" minWidth={150} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
@@ -303,6 +318,7 @@ export default function ExecutionMonitor() {
               setPlanStatusFilter([]);
               setExecutionStatusFilter([]);
               setVisitFilter([]);
+              setImFilter([]);
               setProjectFilter([]);
               setTeamFilter([]);
               setDuidFilter([]);

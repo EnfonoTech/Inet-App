@@ -78,6 +78,7 @@ export default function IssuesRisks() {
   const [qcFilter, setQcFilter] = useState([]);
   const [ciagFilter, setCiagFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
+  const [imFilter, setImFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
@@ -107,6 +108,7 @@ export default function IssuesRisks() {
       try {
         const portal = {};
         if (projectFilter.length) portal.project_code = projectFilter;
+        if (imFilter.length) portal.im = imFilter;
         if (teamFilter.length) portal.team = teamFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
         const portalArg = Object.keys(portal).length ? portal : undefined;
@@ -119,7 +121,7 @@ export default function IssuesRisks() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, projectFilter, teamFilter, duidFilter, refreshKey]);
+  }, [rowLimit, searchDebounced, projectFilter, imFilter, teamFilter, duidFilter, refreshKey]);
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
@@ -139,12 +141,27 @@ export default function IssuesRisks() {
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const teamEntries = useMemo(() => {
-    const m = new Map();
-    rows.forEach((r) => { if (r.team) m.set(r.team, r.team_name || r.team); });
-    return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
+  const [knownImOptions, setKnownImOptions] = useState([]);
+  const [knownTeamOptions, setKnownTeamOptions] = useState([]);
+  useEffect(() => {
+    if (!rows.length) return;
+    setKnownImOptions((prev) => {
+      const seen = new Map(prev.map((o) => [o.id, o.label]));
+      for (const r of rows) { if (r.im) seen.set(r.im, r.im_full_name || r.im); }
+      return Array.from(seen.entries()).map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+    });
+    setKnownTeamOptions((prev) => {
+      const seen = new Map(prev.map((o) => [o.id, o.label]));
+      for (const r of rows) {
+        if (r.team) {
+          const name = r.team_name || r.team;
+          if (!seen.has(r.team) || (r.team_name && seen.get(r.team) === r.team)) seen.set(r.team, name);
+        }
+      }
+      return Array.from(seen.entries()).map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+    });
   }, [rows]);
-  const hasFilters = !!(search || issueCatFilter.length || execStatusFilter.length || tlStatusFilter.length || qcFilter.length || ciagFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(search || issueCatFilter.length || execStatusFilter.length || tlStatusFilter.length || qcFilter.length || ciagFilter.length || projectFilter.length || imFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   useEffect(() => {
     if (!showModal) return;
@@ -245,14 +262,15 @@ export default function IssuesRisks() {
         <SearchableSelect multi value={issueCatFilter} onChange={setIssueCatFilter} options={ISSUE_CATEGORY_OPTIONS} placeholder="All Categories" minWidth={160} />
         <SearchableSelect multi value={execStatusFilter} onChange={setExecStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Exec Status" minWidth={150} />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-        <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
+        <SearchableSelect multi value={imFilter} onChange={setImFilter} options={knownImOptions} placeholder="All IMs" minWidth={150} />
+        <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={knownTeamOptions} placeholder="All Teams" minWidth={150} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setIssueCatFilter([]); setExecStatusFilter([]); setTlStatusFilter([]); setQcFilter([]); setCiagFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setIssueCatFilter([]); setExecStatusFilter([]); setTlStatusFilter([]); setQcFilter([]); setCiagFilter([]); setProjectFilter([]); setImFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
@@ -107,6 +107,7 @@ export default function WorkDone() {
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [billingFilter, setBillingFilter] = useState([]);
+  const [imFilter, setImFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
@@ -118,12 +119,42 @@ export default function WorkDone() {
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const [submissionErr, setSubmissionErr] = useState(null);
   const [submissionWarn, setSubmissionWarn] = useState(null);
+  const [attachFiles, setAttachFiles] = useState([]);
+  const [existingAttachments, setExistingAttachments] = useState([]);
+  const [attachLoading, setAttachLoading] = useState(false);
+
+  function openSubmissionModal(r) {
+    setSubmissionErr(null);
+    setSubmissionPick(r.submission_status || "");
+    setAttachFiles([]);
+    setExistingAttachments([]);
+    setSubmissionFor(r);
+    const po_dispatch = r.po_dispatch || r.poid;
+    if (po_dispatch) {
+      setAttachLoading(true);
+      pmApi.getPoDispatchImAttachments(po_dispatch)
+        .then((files) => setExistingAttachments(Array.isArray(files) ? files : []))
+        .catch(() => {})
+        .finally(() => setAttachLoading(false));
+    }
+  }
 
   async function submitSubmission() {
     if (!submissionFor) return;
+    const needsAttach = submissionPick === "Confirmation Done";
+    if (needsAttach && existingAttachments.length === 0 && attachFiles.length === 0) {
+      setSubmissionErr("At least one attachment is required when setting Confirmation Done.");
+      return;
+    }
     setSubmissionBusy(true);
     setSubmissionErr(null);
     try {
+      const po_dispatch = submissionFor.po_dispatch || submissionFor.poid;
+      if (po_dispatch) {
+        for (const file of attachFiles) {
+          await pmApi.uploadImAttachment(po_dispatch, file);
+        }
+      }
       let res;
       if (submissionFor.is_subcon) {
         const dispatch = submissionFor.po_dispatch || submissionFor.poid;
@@ -157,6 +188,7 @@ export default function WorkDone() {
       try {
         const filters = {};
         if (billingFilter.length) filters.billing_status = billingFilter;
+        if (imFilter.length) filters.im = imFilter;
         if (teamFilter.length) filters.team = teamFilter;
         if (projectFilter.length) filters.project_code = projectFilter;
         if (duidFilter.length) filters.site_code = duidFilter;
@@ -173,9 +205,9 @@ export default function WorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, billingFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
 
-  const hasFilters = !!(searchDebounced || billingFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || billingFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const { options: teamOpts } = useFilterOptions("INET Team", ["team_id"]);
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
@@ -185,6 +217,15 @@ export default function WorkDone() {
   });
   const projects = dispOpts.project_code || [];
   const duids = dispOpts.site_code || [];
+  const [knownImOptions, setKnownImOptions] = useState([]);
+  useEffect(() => {
+    if (!rows.length) return;
+    setKnownImOptions((prev) => {
+      const seen = new Map(prev.map((o) => [o.id, o.label]));
+      for (const r of rows) { if (r.im) seen.set(r.im, r.im_full_name || r.im); }
+      return Array.from(seen.entries()).map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+    });
+  }, [rows]);
 
   const totals = rows.reduce(
     (acc, r) => ({
@@ -231,6 +272,14 @@ export default function WorkDone() {
         />
         <SearchableSelect
           multi
+          value={imFilter}
+          onChange={setImFilter}
+          options={knownImOptions}
+          placeholder="All IMs"
+          minWidth={150}
+        />
+        <SearchableSelect
+          multi
           value={teamFilter}
           onChange={setTeamFilter}
           options={teams}
@@ -258,7 +307,7 @@ export default function WorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -343,12 +392,7 @@ export default function WorkDone() {
                       <td>
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSubmissionErr(null);
-                            setSubmissionPick(row.submission_status || "");
-                            setSubmissionFor(row);
-                          }}
+                          onClick={(e) => { e.stopPropagation(); openSubmissionModal(row); }}
                           style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
                           title="Click to change submission status"
                         >
@@ -410,26 +454,92 @@ export default function WorkDone() {
 
       {submissionFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSubmissionFor(null)}>
-          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
-            <h4 style={{ margin: "0 0 12px" }}>
-              Submission status: {submissionFor.is_subcon
-                ? (submissionFor.poid || submissionFor.po_dispatch)
-                : submissionFor.name}
-              {submissionFor.is_subcon && (
-                <span style={{ marginLeft: 8, fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, background: "rgba(167,139,250,0.15)", color: "#7c3aed", fontWeight: 700 }}>Backend</span>
-              )}
-            </h4>
+          <div style={{ width: "min(560px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, maxHeight: "90dvh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+              <h4 style={{ margin: 0, fontSize: "0.95rem" }}>
+                Submission Status
+                <span style={{ marginLeft: 8, fontFamily: "monospace", color: "#64748b", fontWeight: 500, fontSize: "0.82rem" }}>
+                  {submissionFor.poid || submissionFor.po_dispatch || submissionFor.name}
+                </span>
+                {submissionFor.is_subcon && (
+                  <span style={{ marginLeft: 8, fontSize: "0.68rem", padding: "2px 8px", borderRadius: 999, background: "rgba(167,139,250,0.15)", color: "#7c3aed", fontWeight: 700 }}>Backend</span>
+                )}
+              </h4>
+              <button type="button" onClick={() => setSubmissionFor(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+
             {submissionErr && <div className="notice error" style={{ marginBottom: 10 }}>{submissionErr}</div>}
-            <div className="form-group" style={{ marginBottom: 12 }}>
-              <label>Status</label>
-              <select value={submissionPick} onChange={(e) => setSubmissionPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
+
+            {submissionFor?.pic_rejection_remark && (
+              <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, color: "#991b1b", fontSize: "0.85rem" }}>
+                <strong>PIC Rejected:</strong> {submissionFor.pic_rejection_remark}
+              </div>
+            )}
+
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>Status</label>
+              <select value={submissionPick} onChange={(e) => setSubmissionPick(e.target.value)} style={{ padding: 8, width: "100%", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.9rem" }}>
                 <option value="">— Not set —</option>
                 <option value="Ready for Confirmation">Ready for Confirmation</option>
                 <option value="Confirmation Done">Confirmation Done</option>
               </select>
             </div>
-            <button className="btn-primary" disabled={submissionBusy} onClick={submitSubmission}>{submissionBusy ? "…" : "Save"}</button>
-            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setSubmissionFor(null)}>Cancel</button>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                Attachments
+                {submissionPick === "Confirmation Done" && (
+                  <span style={{ fontSize: "0.7rem", color: "#ef4444", fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>* required</span>
+                )}
+                <span style={{ fontSize: "0.7rem", color: "#64748b", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>— saved to PO Dispatch</span>
+              </div>
+
+              {attachLoading ? (
+                <div style={{ color: "#94a3b8", fontSize: "0.82rem", padding: "6px 0" }}>Loading…</div>
+              ) : existingAttachments.length > 0 ? (
+                <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
+                  <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#64748b", marginBottom: 4 }}>EXISTING ({existingAttachments.length})</div>
+                  {existingAttachments.map((f) => (
+                    <div key={f.name} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", fontSize: "0.82rem" }}>
+                      <span style={{ color: "#64748b" }}>📎</span>
+                      <a href={f.file_url} target="_blank" rel="noopener noreferrer" style={{ color: "#1d4ed8", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 360 }}>
+                        {f.file_name}
+                      </a>
+                      {f.file_size ? (
+                        <span style={{ color: "#94a3b8", fontSize: "0.72rem", flexShrink: 0 }}>
+                          {f.file_size < 1024 * 1024
+                            ? `${Math.round(f.file_size / 1024)} KB`
+                            : `${(f.file_size / (1024 * 1024)).toFixed(1)} MB`}
+                        </span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              <label style={{
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                gap: 6, padding: "12px 16px", border: "2px dashed #cbd5e1", borderRadius: 8,
+                cursor: "pointer", background: "#f8fafc", color: "#64748b", fontSize: "0.82rem",
+              }}>
+                <span style={{ fontSize: "1.3rem" }}>📁</span>
+                <span>Click to attach files (PDF, Excel, email, images, any type)</span>
+                {attachFiles.length > 0 && (
+                  <span style={{ color: "#047857", fontWeight: 600 }}>{attachFiles.length} file{attachFiles.length !== 1 ? "s" : ""} selected</span>
+                )}
+                <input
+                  type="file"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={(e) => setAttachFiles(Array.from(e.target.files))}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn-primary" disabled={submissionBusy} onClick={submitSubmission}>{submissionBusy ? "Saving…" : "Save"}</button>
+              <button type="button" className="btn-secondary" onClick={() => setSubmissionFor(null)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
