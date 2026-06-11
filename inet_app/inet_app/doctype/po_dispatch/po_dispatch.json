@@ -62,7 +62,7 @@
   "remaining_milestone_pct",
   "column_break_pic1",
   "pic_status",
-  "isdp_ibuy_owner",
+  "isdp_owner",
   "pic_detail_remark",
   "ms1_applied_date",
   "ms1_invoiced",
@@ -74,7 +74,7 @@
   "ms1_payment_received_date",
   "column_break_pic2",
   "pic_status_ms2",
-  "isdp_owner_ms2",
+  "ibuy_owner",
   "pic_detail_remark_ms2",
   "ms2_applied_date",
   "ms2_invoiced",
@@ -429,9 +429,10 @@
    "options": "\nWork Not Done\nUnder Process to Apply\nUnder I-BUY\nUnder ISDP\nI-BUY Rejected\nISDP Rejected\nReady for Invoice\nCommercial Invoice Submitted\nCommercial Invoice Closed\nPO Need to Cancel\nPO Line Canceled"
   },
   {
-   "fieldname": "isdp_ibuy_owner",
-   "fieldtype": "Data",
-   "label": "ISDP / I-Buy Owner (MS1)"
+   "fieldname": "isdp_owner",
+   "fieldtype": "Link",
+   "label": "ISDP Owner",
+   "options": "ISDP Owner"
   },
   {
    "fieldname": "pic_detail_remark",
@@ -497,9 +498,10 @@
    "options": "\nWork Not Done\nUnder Process to Apply\nUnder I-BUY\nUnder ISDP\nI-BUY Rejected\nISDP Rejected\nReady for Invoice\nCommercial Invoice Submitted\nCommercial Invoice Closed\nPO Need to Cancel\nPO Line Canceled"
   },
   {
-   "fieldname": "isdp_owner_ms2",
-   "fieldtype": "Data",
-   "label": "ISDP / I-Buy Owner (MS2)"
+   "fieldname": "ibuy_owner",
+   "fieldtype": "Link",
+   "label": "iBuy Owner",
+   "options": "IBuy Owner"
   },
   {
    "fieldname": "pic_detail_remark_ms2",

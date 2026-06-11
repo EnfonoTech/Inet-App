@@ -199,7 +199,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             " IFNULL(pd.project_domain,''),"
             " IFNULL(pd.site_code,''), IFNULL(pd.site_name,''),"
             " IFNULL(pd.center_area,''), IFNULL(imm.full_name,''),"
-            " IFNULL(pd.isdp_ibuy_owner,''), IFNULL(pd.isdp_owner_ms2,''),"
+            " IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''),"
             " IFNULL(pd.payment_terms,''))",
             search,
         )
@@ -256,7 +256,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       ({_PIC_INITIAL_RULE_SQL.strip()}) AS pic_status_effective,
       pd.pic_status AS pic_status_stored,
       pd.pic_status_ms2,
-      pd.isdp_ibuy_owner, pd.isdp_owner_ms2,
+      pd.isdp_owner, pd.ibuy_owner,
       pd.pic_detail_remark, pd.pic_detail_remark_ms2,
       pd.ms1_pct, pd.ms2_pct,
       pd.ms1_amount, pd.ms2_amount,
@@ -283,11 +283,11 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
 # allowlist is silently ignored to keep the IM/admin-owned columns safe.
 _PIC_WRITABLE = (
     # MS1
-    "pic_status", "isdp_ibuy_owner", "pic_detail_remark", "ms1_applied_date",
+    "pic_status", "isdp_owner", "ibuy_owner", "pic_detail_remark", "ms1_applied_date",
     "subcon_pct_ms1", "inet_pct_ms1",
     "ms1_invoice_month", "ms1_ibuy_inv_date", "ms1_payment_received_date",
     # MS2
-    "pic_status_ms2", "isdp_owner_ms2", "pic_detail_remark_ms2", "ms2_applied_date",
+    "pic_status_ms2", "pic_detail_remark_ms2", "ms2_applied_date",
     "subcon_pct_ms2", "inet_pct_ms2",
     "ms2_invoice_month", "ms2_ibuy_inv_date", "ms2_payment_received_date",
     # Common
@@ -586,16 +586,16 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     # ── Pending approvals by I-Buy / ISDP owner — date scopes the rows.
     pending_ibuy = frappe.db.sql(
         f"""
-        SELECT pd.isdp_ibuy_owner AS owner,
+        SELECT pd.ibuy_owner AS owner,
                COUNT(*) AS line_count,
                COALESCE(SUM(pd.ms1_amount), 0) AS amount_ms1,
                COALESCE(SUM(pd.ms2_amount), 0) AS amount_ms2
         {_PIC_FROM_JOIN}
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
-          AND IFNULL(pd.isdp_ibuy_owner,'') != ''
+          AND IFNULL(pd.ibuy_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under I-BUY'
           {applied_clause}
-        GROUP BY pd.isdp_ibuy_owner
+        GROUP BY pd.ibuy_owner
         ORDER BY line_count DESC
         LIMIT 50
         """,
@@ -604,16 +604,16 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     )
     pending_isdp = frappe.db.sql(
         f"""
-        SELECT pd.isdp_ibuy_owner AS owner,
+        SELECT pd.isdp_owner AS owner,
                COUNT(*) AS line_count,
                COALESCE(SUM(pd.ms1_amount), 0) AS amount_ms1,
                COALESCE(SUM(pd.ms2_amount), 0) AS amount_ms2
         {_PIC_FROM_JOIN}
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
-          AND IFNULL(pd.isdp_ibuy_owner,'') != ''
+          AND IFNULL(pd.isdp_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under ISDP'
           {applied_clause}
-        GROUP BY pd.isdp_ibuy_owner
+        GROUP BY pd.isdp_owner
         ORDER BY line_count DESC
         LIMIT 50
         """,
@@ -809,7 +809,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
         owner_clause = ""
         owner_params = []
         if owner:
-            owner_clause = " AND pd.isdp_ibuy_owner = %s"
+            owner_clause = " AND pd.isdp_owner = %s"
             owner_params = [owner]
         return {
             "kind": kind,
@@ -819,7 +819,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                 {"key": "project_code", "label": "Project"},
                 {"key": "site_code", "label": "DUID"},
                 {"key": "pic_status", "label": "PIC Status"},
-                {"key": "isdp_ibuy_owner", "label": "Owner"},
+                {"key": "isdp_owner", "label": "ISDP Owner"},
                 {"key": "ms1_applied_date", "label": "Applied"},
                 {"key": "days_since_applied", "label": "Days Aging", "numeric": True},
                 {"key": "ms1_amount", "label": "MS1 Amount", "numeric": True, "money": True},
@@ -829,7 +829,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                 SELECT pd.poid AS poid,
                        pd.po_no, pd.project_code, pd.site_code,
                        pd.pic_status,
-                       pd.isdp_ibuy_owner,
+                       pd.isdp_owner,
                        pd.ms1_applied_date,
                        DATEDIFF(CURDATE(), pd.ms1_applied_date) AS days_since_applied,
                        pd.ms1_amount
@@ -903,7 +903,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                 {"key": "project_code", "label": "Project"},
                 {"key": "site_code", "label": "DUID"},
                 {"key": "pic_status", "label": "Rejected At"},
-                {"key": "isdp_ibuy_owner", "label": "Owner"},
+                {"key": "isdp_owner", "label": "ISDP Owner"},
                 {"key": "im_rejection_remark", "label": "IM Rejection Remark"},
                 {"key": "pic_detail_remark", "label": "PIC Note"},
                 {"key": "ms1_amount", "label": "MS1 Amount", "numeric": True, "money": True},
@@ -912,7 +912,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                 f"""
                 SELECT pd.poid, pd.po_no, pd.project_code, pd.site_code,
                        pd.pic_status,
-                       pd.isdp_ibuy_owner,
+                       pd.isdp_owner,
                        pd.im_rejection_remark,
                        pd.pic_detail_remark,
                        pd.ms1_amount
@@ -981,7 +981,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
             "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''),"
             " IFNULL(pd.item_code,''), IFNULL(pd.project_code,''),"
             " IFNULL(pd.site_code,''), IFNULL(pd.customer,''),"
-            " IFNULL(pd.pic_status,''), IFNULL(pd.isdp_ibuy_owner,''))"
+            " IFNULL(pd.pic_status,''), IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''))"
         )
         clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "")
         if clause:
@@ -1006,7 +1006,8 @@ def list_invoice_tracker_rows(filters=None, limit=500):
     where_str = " AND ".join(wheres)
     _sqc2 = _po_dispatch_col_expr("sqc_status")
     _pat2 = _po_dispatch_col_expr("pat_status")
-    _isdp2 = _po_dispatch_col_expr("isdp_ibuy_owner")
+    _isdp2 = _po_dispatch_col_expr("isdp_owner")
+    _ibuy2 = _po_dispatch_col_expr("ibuy_owner")
     rows = frappe.db.sql(
         f"""
         SELECT pd.name, pd.poid, pd.po_no, pd.project_code, pd.customer,
@@ -1018,7 +1019,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                pd.remaining_milestone_pct,
                pd.ms1_applied_date, pd.ms1_invoice_month, pd.ms1_ibuy_inv_date,
                pd.ms2_applied_date, pd.ms2_invoice_month, pd.ms2_ibuy_inv_date,
-               {_sqc2}, {_pat2}, {_isdp2},
+               {_sqc2}, {_pat2}, {_isdp2}, {_ibuy2},
                pd.payment_terms, pd.tax_rate,
                pd.ms1_payment_received_date, pd.ms2_payment_received_date,
                pd.subcon_pct_ms1, pd.inet_pct_ms1,

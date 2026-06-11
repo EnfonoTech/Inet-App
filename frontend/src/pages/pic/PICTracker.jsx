@@ -47,7 +47,8 @@ const CSV_COLUMNS = [
   ["sqc_status", "SQC Status"],
   ["pat_status", "PAT Status"],
   ["pic_status_effective", "PIC Status (MS1)"],
-  ["isdp_ibuy_owner", "I-BUY/ISDP Owner"],
+  ["isdp_owner", "ISDP Owner"],
+  ["ibuy_owner", "iBuy Owner"],
   ["pic_detail_remark", "Detail Remarks (MS1)"],
   ["ms1_applied_date", "Applied Date (MS1)"],
   ["ms1_pct", "MS1 %"],
@@ -58,7 +59,6 @@ const CSV_COLUMNS = [
   ["ms1_ibuy_inv_date", "MS1 IBUY/INV Date"],
   ["ms1_payment_received_date", "MS1 Payment Received"],
   ["pic_status_ms2", "PIC Status (MS2)"],
-  ["isdp_owner_ms2", "I-BUY/ISDP Owner (MS2)"],
   ["pic_detail_remark_ms2", "Detail Remarks (MS2)"],
   ["ms2_applied_date", "Applied Date (MS2)"],
   ["ms2_pct", "MS2 %"],
@@ -222,8 +222,8 @@ export default function PICTracker() {
     setEditFields({
       pic_status: row.pic_status_stored || row.pic_status_effective || "",
       pic_status_ms2: row.pic_status_ms2 || "",
-      isdp_ibuy_owner: row.isdp_ibuy_owner || "",
-      isdp_owner_ms2: row.isdp_owner_ms2 || "",
+      isdp_owner: row.isdp_owner || "",
+      ibuy_owner: row.ibuy_owner || "",
       pic_detail_remark: row.pic_detail_remark || "",
       pic_detail_remark_ms2: row.pic_detail_remark_ms2 || "",
       ms1_applied_date: row.ms1_applied_date || "",
@@ -433,7 +433,8 @@ export default function PICTracker() {
                   <th>Tax Rate</th>
                   <th>Payment Terms</th>
                   <th>PIC Status (MS1)</th>
-                  <th>I-BUY/ISDP Owner</th>
+                  <th>ISDP Owner</th>
+                  <th>iBuy Owner</th>
                   <th>Applied Date (MS1)</th>
                   <th style={{ textAlign: "right" }}>MS1 %</th>
                   <th style={{ textAlign: "right" }}>MS1 Amt</th>
@@ -471,7 +472,8 @@ export default function PICTracker() {
                     <td style={{ fontSize: "0.78rem" }}>{r.tax_rate || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.payment_terms || ""}>{r.payment_terms || "—"}</td>
                     <td><StatusPill value={r.pic_status_effective} /></td>
-                    <td style={{ fontSize: "0.78rem", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.isdp_ibuy_owner || ""}>{r.isdp_ibuy_owner || "—"}</td>
+                    <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.isdp_owner || ""}>{r.isdp_owner || "—"}</td>
+                    <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.ibuy_owner || ""}>{r.ibuy_owner || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms1_applied_date ? String(r.ms1_applied_date).slice(0, 10) : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmtInt.format(r.ms1_pct)}%` : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
@@ -522,13 +524,14 @@ export default function PICTracker() {
                   {/* 12 Line Amount */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.line_amount)}</td>
                   {/* 13 Tax · 14 Payment Terms · 15 PIC MS1 ·
-                      16 ISDP Owner · 17 Applied MS1 */}
+                      16 ISDP Owner · 17 iBuy Owner · 18 Applied MS1 */}
                   <td></td>
                   <td></td>
                   <td></td>
                   <td></td>
                   <td></td>
-                  {/* 18 MS1 % (no total) · 19-21 MS1 Amt / Invoiced / Unbilled */}
+                  <td></td>
+                  {/* 19 MS1 % (no total) · 20-22 MS1 Amt / Invoiced / Unbilled */}
                   <td></td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms1_invoiced)}</td>
@@ -656,8 +659,36 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
   const [picUploadFile, setPicUploadFile] = useState(null);
   const [picUploadBusy, setPicUploadBusy] = useState(false);
   const [picUploadErr, setPicUploadErr] = useState(null);
+  const [isdpOptions, setIsdpOptions] = useState([]);
+  const [ibuyOptions, setIbuyOptions] = useState([]);
+  const [quickBusy, setQuickBusy] = useState(false);
   const picFileRef = useRef(null);
   const set = (k, v) => setFields((f) => ({ ...f, [k]: v }));
+
+  const reloadIsdp = () => pmApi.listISDPOwners().then((rows) => setIsdpOptions((rows || []).map((r) => ({ id: r.name, label: r.owner_name }))));
+  const reloadIbuy = () => pmApi.listIBuyOwners().then((rows) => setIbuyOptions((rows || []).map((r) => ({ id: r.name, label: r.owner_name }))));
+
+  useEffect(() => { reloadIsdp(); reloadIbuy(); }, []);
+
+  async function createIsdp(name) {
+    setQuickBusy(true);
+    try {
+      const doc = await pmApi.createISDPOwner(name);
+      await reloadIsdp();
+      set("isdp_owner", doc.name || name);
+    } catch (e) { alert(e.message || "Failed to create ISDP Owner"); }
+    finally { setQuickBusy(false); }
+  }
+
+  async function createIbuy(name) {
+    setQuickBusy(true);
+    try {
+      const doc = await pmApi.createIBuyOwner(name);
+      await reloadIbuy();
+      set("ibuy_owner", doc.name || name);
+    } catch (e) { alert(e.message || "Failed to create iBuy Owner"); }
+    finally { setQuickBusy(false); }
+  }
 
   useEffect(() => {
     if (tab !== "ATT") return;
@@ -762,12 +793,26 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
 
         {/* Body — single tab visible at a time, keeps the form short and focused. */}
         <div style={{ flex: 1, overflowY: "auto", padding: "16px 22px" }}>
+
+          {/* Shared owner row — always visible across all tabs */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16, background: "#fff", borderRadius: 10, padding: "14px 16px", border: "1px solid #e2e8f0" }}>
+            {/* ISDP Owner */}
+            <div>
+              <div style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b", marginBottom: 5 }}>ISDP Owner</div>
+              <SearchableSelect value={fields.isdp_owner || ""} onChange={(v) => set("isdp_owner", v)} options={isdpOptions} placeholder="— select —" disabled={busy || quickBusy} style={{ width: "100%" }} triggerStyle={{ width: "100%", minWidth: "unset", boxSizing: "border-box" }} onCreateNew={createIsdp} />
+            </div>
+            {/* iBuy Owner */}
+            <div>
+              <div style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b", marginBottom: 5 }}>iBuy Owner</div>
+              <SearchableSelect value={fields.ibuy_owner || ""} onChange={(v) => set("ibuy_owner", v)} options={ibuyOptions} placeholder="— select —" disabled={busy || quickBusy} style={{ width: "100%" }} triggerStyle={{ width: "100%", minWidth: "unset", boxSizing: "border-box" }} onCreateNew={createIbuy} />
+            </div>
+          </div>
+
           {tab === "MS1" && (
             <MilestonePanel
               tone="blue"
               title="MS1 — 1st Payment"
               statusKey="pic_status"
-              ownerKey="isdp_ibuy_owner"
               detailKey="pic_detail_remark"
               appliedKey="ms1_applied_date"
               invoicedKey="ms1_invoiced"
@@ -789,7 +834,6 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
               tone="violet"
               title="MS2 — 2nd Payment"
               statusKey="pic_status_ms2"
-              ownerKey="isdp_owner_ms2"
               detailKey="pic_detail_remark_ms2"
               appliedKey="ms2_applied_date"
               invoicedKey="ms2_invoiced"
@@ -1027,7 +1071,7 @@ function InvoiceMonthSelect({ value, onChange, disabled }) {
 
 function MilestonePanel({
   tone, title, pctLabel, amount, invoiced, unbilled,
-  statusKey, ownerKey, detailKey, appliedKey, invoicedKey,
+  statusKey, detailKey, appliedKey, invoicedKey,
   invoiceMonthKey, ibuyDateKey, receivedKey,
   fields, set, busy,
 }) {
@@ -1055,10 +1099,6 @@ function MilestonePanel({
             <option value="">—</option>
             {PIC_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-        </Field>
-        <Field label="ISDP / I-Buy Owner">
-          <input type="text" value={fields[ownerKey] || ""} onChange={(e) => set(ownerKey, e.target.value)} disabled={busy}
-            placeholder="Huawei owner name" style={fieldInputStyle} />
         </Field>
         <div style={{ gridColumn: "1 / -1" }}>
           <Field label="Detail Remarks / Dependency">

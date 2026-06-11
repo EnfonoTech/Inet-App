@@ -73,9 +73,9 @@ export default function PICReports() {
   const showProject = meta.filters.includes("project");
   const showOwner = meta.filters.includes("owner");
 
-  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "isdp_ibuy_owner"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "isdp_owner"]);
   const projectOptions = dispOpts.project_code || [];
-  const ownerOptions = dispOpts.isdp_ibuy_owner || [];
+  const ownerOptions = dispOpts.isdp_owner || [];
 
   async function load() {
     setLoading(true);

@@ -13,6 +13,8 @@
   "huawei_im",
   "division",
   "implementation_manager",
+  "isdp_owner",
+  "ibuy_owner",
   "column_break_mmrq",
   "center_area",
   "region_type",
@@ -80,6 +82,18 @@
    "in_list_view": 1,
    "label": "Implementation Manager",
    "options": "IM Master"
+  },
+  {
+   "fieldname": "isdp_owner",
+   "fieldtype": "Link",
+   "label": "ISDP Owner",
+   "options": "ISDP Owner"
+  },
+  {
+   "fieldname": "ibuy_owner",
+   "fieldtype": "Link",
+   "label": "iBuy Owner",
+   "options": "IBuy Owner"
   },
   {
    "fieldname": "center_area",

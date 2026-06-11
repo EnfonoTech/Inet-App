@@ -574,6 +574,10 @@ export const pmApi = {
   listRolloutPlans:  (filters) => call("frappe.client.get_list", { doctype: "Rollout Plan", filters: filters || {}, fields: ["*"], order_by: "plan_date desc", limit_page_length: 100 }),
   listProjectDomains:(filters) => call("frappe.client.get_list", { doctype: "Project Domain", filters: filters || { status: "Active" }, fields: ["name", "domain_name", "status"], order_by: "domain_name asc", limit_page_length: 100 }),
   listHuaweiIMs:     (filters) => call("frappe.client.get_list", { doctype: "Huawei IM", filters: filters || { status: "Active" }, fields: ["name", "full_name", "email", "phone"], order_by: "full_name asc", limit_page_length: 100 }),
+  listISDPOwners:    () => call("frappe.client.get_list", { doctype: "ISDP Owner", filters: { status: "Active" }, fields: ["name", "owner_name"], order_by: "owner_name asc", limit_page_length: 200 }),
+  listIBuyOwners:    () => call("frappe.client.get_list", { doctype: "IBuy Owner", filters: { status: "Active" }, fields: ["name", "owner_name"], order_by: "owner_name asc", limit_page_length: 200 }),
+  createISDPOwner:   (owner_name) => call("frappe.client.insert", { doc: { doctype: "ISDP Owner", owner_name, status: "Active" } }),
+  createIBuyOwner:   (owner_name) => call("frappe.client.insert", { doc: { doctype: "IBuy Owner", owner_name, status: "Active" } }),
 
   // ── Role Detection helpers ─────────────────────────────────
   getUserRoles:      (user)    => call("frappe.client.get_list", { doctype: "Has Role", filters: { parent: user, role: "System Manager" }, fields: ["role"], limit_page_length: 1 }),

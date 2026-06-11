@@ -24,6 +24,7 @@ export default function SearchableSelect({
   disabled = false,
   multi = false,
   onSearch,
+  onCreateNew,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -176,70 +177,88 @@ export default function SearchableSelect({
 
   return (
     <div ref={wrapRef} className="searchable-select-wrap" style={{ position: "relative", display: "inline-block", ...style }}>
-      <button
-        type="button"
+      <div
         className="searchable-select-trigger"
-        disabled={disabled}
+        role="button"
+        tabIndex={disabled ? -1 : 0}
         onClick={() => !disabled && setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); !disabled && setOpen((v) => !v); } }}
         style={{
-          padding: "5px 22px 5px 10px",
-          borderRadius: 6,
-          border: "1px solid #e2e8f0",
-          fontSize: "0.8rem",
-          background: disabled ? "#f1f5f9" : "#fff",
-          color: hasSelection ? "var(--text, #1e293b)" : "#94a3b8",
+          width: "100%",
+          padding: "0",
+          borderRadius: "var(--radius-sm, 6px)",
+          border: `1px solid ${open ? "var(--blue, #3b82f6)" : "var(--border, #e2e8f0)"}`,
+          boxShadow: open ? "0 0 0 3px rgba(59,130,246,0.12)" : "none",
+          fontSize: 13,
+          background: disabled ? "var(--bg, #f8fafc)" : "var(--bg-white, #fff)",
           cursor: disabled ? "not-allowed" : "pointer",
-          minWidth: minWidth || 120,
-          textAlign: "left",
-          position: "relative",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          fontWeight: hasSelection ? 600 : 500,
+          display: "flex",
+          alignItems: "center",
+          minWidth: minWidth != null ? minWidth : 0,
+          transition: "border-color 0.15s, box-shadow 0.15s",
+          boxSizing: "border-box",
+          userSelect: "none",
           ...triggerStyle,
         }}
       >
-        {hasSelection ? currentLabel : placeholder}
-        <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", fontSize: "0.7rem", pointerEvents: "none" }}>
+        <span style={{
+          flex: 1,
+          padding: "9px 8px 9px 12px",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: hasSelection ? "var(--text, #1e293b)" : "var(--text-muted, #94a3b8)",
+          fontWeight: hasSelection ? 500 : 400,
+          lineHeight: "1.4",
+        }}>
+          {hasSelection ? currentLabel : placeholder}
+        </span>
+        {hasSelection && !disabled && (
+          <span
+            role="button"
+            tabIndex={0}
+            title="Clear"
+            onClick={(e) => { e.stopPropagation(); clearAll(); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); clearAll(); } }}
+            style={{
+              flexShrink: 0,
+              padding: "0 6px",
+              color: "var(--text-muted, #94a3b8)",
+              fontSize: "0.72rem",
+              lineHeight: 1,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            ✕
+          </span>
+        )}
+        <span style={{
+          flexShrink: 0,
+          padding: "0 10px 0 4px",
+          color: "var(--text-muted, #94a3b8)",
+          fontSize: "0.65rem",
+          pointerEvents: "none",
+          display: "flex",
+          alignItems: "center",
+        }}>
           {open ? "▲" : "▾"}
         </span>
-      </button>
-
-      {hasSelection && !disabled && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); clearAll(); }}
-          title="Clear"
-          style={{
-            position: "absolute",
-            right: 22,
-            top: "50%",
-            transform: "translateY(-50%)",
-            border: 0,
-            background: "transparent",
-            color: "#94a3b8",
-            fontSize: "0.72rem",
-            cursor: "pointer",
-            padding: 0,
-            lineHeight: 1,
-          }}
-        >
-          ✕
-        </button>
-      )}
+      </div>
 
       {open && (
         <div style={{
           position: "absolute",
           top: "calc(100% + 4px)",
           left: 0,
+          right: 0,
           zIndex: 50,
           background: "white",
           border: "1px solid #e2e8f0",
           borderRadius: 8,
           boxShadow: "0 10px 25px rgba(15,23,42,0.15)",
-          minWidth: Math.max(minWidth || 220, 220),
-          maxWidth: 360,
+          minWidth: Math.max(minWidth != null ? minWidth : 0, 180),
           overflow: "hidden",
           ...panelStyle,
         }}>
@@ -314,9 +333,30 @@ export default function SearchableSelect({
               </div>
             )}
             {filtered.length === 0 ? (
-              <div style={{ padding: "12px", fontSize: "0.82rem", color: "#94a3b8", textAlign: "center" }}>
-                No matches
-              </div>
+              <>
+                <div style={{ padding: "12px", fontSize: "0.82rem", color: "#94a3b8", textAlign: "center" }}>
+                  No matches
+                </div>
+                {onCreateNew && query.trim() && (
+                  <div
+                    onClick={() => { onCreateNew(query.trim()); setOpen(false); }}
+                    style={{
+                      padding: "8px 12px",
+                      fontSize: "0.84rem",
+                      cursor: "pointer",
+                      borderTop: "1px solid #f1f5f9",
+                      color: "#2563eb",
+                      fontWeight: 600,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ fontSize: "1rem", lineHeight: 1 }}>+</span>
+                    Create &ldquo;{query.trim()}&rdquo;
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 {visible.map((o, idx) => {

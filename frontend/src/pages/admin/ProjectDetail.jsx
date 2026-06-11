@@ -349,10 +349,14 @@ function EditOverview({ project, onSave, onCancel }) {
     budget_amount: project.budget_amount || "",
     project_status: project.project_status || "Active",
     monthly_target: project.monthly_target || "",
+    isdp_owner: project.isdp_owner || "",
+    ibuy_owner: project.ibuy_owner || "",
   });
   const [ims, setIms] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [domains, setDomains] = useState([]);
+  const [isdpOwners, setIsdpOwners] = useState([]);
+  const [ibuyOwners, setIbuyOwners] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -362,6 +366,8 @@ function EditOverview({ project, onSave, onCancel }) {
     }).catch(() => {});
     pmApi.listCustomers({ limit: 200 }).then(res => setCustomers(res || [])).catch(() => {});
     pmApi.listProjectDomains().then(res => setDomains(res || [])).catch(() => {});
+    pmApi.listISDPOwners().then(res => setIsdpOwners(res || [])).catch(() => {});
+    pmApi.listIBuyOwners().then(res => setIbuyOwners(res || [])).catch(() => {});
   }, []);
 
   const inputStyle = {
@@ -387,6 +393,8 @@ function EditOverview({ project, onSave, onCancel }) {
         budget_amount: form.budget_amount ? parseFloat(form.budget_amount) : undefined,
         project_status: form.project_status,
         monthly_target: form.monthly_target ? parseFloat(form.monthly_target) : undefined,
+        isdp_owner: form.isdp_owner || undefined,
+        ibuy_owner: form.ibuy_owner || undefined,
       });
       onSave();
     } catch (err) {
@@ -417,24 +425,6 @@ function EditOverview({ project, onSave, onCancel }) {
             />
           </div>
           <div>
-            <label style={labelStyle}>Implementation Manager</label>
-            <SearchableSelect
-              value={form.implementation_manager}
-              onChange={(v) => setField("implementation_manager", v)}
-              options={ims.map(im => ({ id: im.name, label: `${im.full_name}${im.email ? ` (${im.email})` : ""}` }))}
-              placeholder="-- Select --"
-              style={{ width: "100%" }}
-              minWidth={0}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>Center / Area</label>
-            <input style={inputStyle} value={form.center_area} onChange={e => setField("center_area", e.target.value)} />
-            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-              Region type (saved with project): <strong>{regionTypePreviewFromText(form.center_area)}</strong>
-            </div>
-          </div>
-          <div>
             <label style={labelStyle}>Domain</label>
             <SearchableSelect
               value={form.project_domain}
@@ -452,12 +442,11 @@ function EditOverview({ project, onSave, onCancel }) {
             />
           </div>
           <div>
-            <label style={labelStyle}>Budget Amount (SAR)</label>
-            <input style={inputStyle} type="number" min="0" step="0.01" value={form.budget_amount} onChange={e => setField("budget_amount", e.target.value)} />
-          </div>
-          <div>
-            <label style={labelStyle}>Monthly Target (SAR)</label>
-            <input style={inputStyle} type="number" min="0" step="0.01" value={form.monthly_target} onChange={e => setField("monthly_target", e.target.value)} />
+            <label style={labelStyle}>Center / Area</label>
+            <input style={inputStyle} value={form.center_area} onChange={e => setField("center_area", e.target.value)} />
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 5 }}>
+              Region type: <strong>{regionTypePreviewFromText(form.center_area)}</strong>
+            </div>
           </div>
           <div>
             <label style={labelStyle}>Status</label>
@@ -467,6 +456,63 @@ function EditOverview({ project, onSave, onCancel }) {
               <option value="At Risk">At Risk</option>
               <option value="Completed">Completed</option>
             </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Implementation Manager</label>
+            <SearchableSelect
+              value={form.implementation_manager}
+              onChange={(v) => setField("implementation_manager", v)}
+              options={ims.map(im => ({ id: im.name, label: `${im.full_name}${im.email ? ` (${im.email})` : ""}` }))}
+              placeholder="-- Select --"
+              style={{ width: "100%" }}
+              minWidth={0}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Budget Amount (SAR)</label>
+            <input style={inputStyle} type="number" min="0" step="0.01" value={form.budget_amount} onChange={e => setField("budget_amount", e.target.value)} />
+          </div>
+          <div>
+            <label style={labelStyle}>Monthly Target (SAR)</label>
+            <input style={inputStyle} type="number" min="0" step="0.01" value={form.monthly_target} onChange={e => setField("monthly_target", e.target.value)} />
+          </div>
+          <div>
+            <label style={labelStyle}>ISDP Owner</label>
+            <SearchableSelect
+              value={form.isdp_owner}
+              onChange={(v) => setField("isdp_owner", v)}
+              options={isdpOwners.map(o => ({ id: o.name, label: o.owner_name }))}
+              placeholder="-- Select --"
+              style={{ width: "100%" }}
+              minWidth={0}
+              onCreateNew={async (name) => {
+                try {
+                  await pmApi.createISDPOwner(name);
+                  const res = await pmApi.listISDPOwners();
+                  setIsdpOwners(res || []);
+                  setField("isdp_owner", name);
+                } catch (err) { alert(err.message || "Failed to create"); }
+              }}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>iBuy Owner</label>
+            <SearchableSelect
+              value={form.ibuy_owner}
+              onChange={(v) => setField("ibuy_owner", v)}
+              options={ibuyOwners.map(o => ({ id: o.name, label: o.owner_name }))}
+              placeholder="-- Select --"
+              style={{ width: "100%" }}
+              minWidth={0}
+              onCreateNew={async (name) => {
+                try {
+                  await pmApi.createIBuyOwner(name);
+                  const res = await pmApi.listIBuyOwners();
+                  setIbuyOwners(res || []);
+                  setField("ibuy_owner", name);
+                } catch (err) { alert(err.message || "Failed to create"); }
+              }}
+            />
           </div>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
@@ -638,23 +684,85 @@ export default function ProjectDetail() {
             onCancel={() => setEditing(false)}
           />
         ) : (
-          <div>
-            <DetailGrid items={[
-              ["Project Code", project.project_code],
-              ["Project Name", project.project_name],
-              ["Domain", project.project_domain],
-              ["Customer", project.customer],
-              ["Huawei IM", project.huawei_im],
-              ["Implementation Manager", project.implementation_manager],
-              ["Center / Area", project.center_area],
-              ["Region type", project.region_type || regionTypePreviewFromText(project.center_area)],
-              ["Active", project.active_flag ? "Yes" : "No"],
-              ["Budget Amount", project.budget_amount ? `SAR ${fmt.format(project.budget_amount)}` : null],
-              ["Monthly Target", project.monthly_target ? `SAR ${fmt.format(project.monthly_target)}` : null],
-              ["Actual Cost", project.actual_cost ? `SAR ${fmt.format(project.actual_cost)}` : null],
-              ["Completion", project.completion_percentage != null ? `${project.completion_percentage}%` : null],
-              ["Status", project.project_status],
-            ]} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Project Info section */}
+            <div style={{ background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
+              <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--bg)", display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ color: "var(--blue)", flexShrink: 0 }}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                <span style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)" }}>Project Info</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+                {[
+                  ["Project Code", <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>{project.project_code}</span>],
+                  ["Project Name", project.project_name],
+                  ["Customer", project.customer],
+                  ["Domain", project.project_domain],
+                  ["Center / Area", project.center_area],
+                  ["Region Type", project.region_type || regionTypePreviewFromText(project.center_area)],
+                  ["Status", <Badge value={project.project_status} />],
+                  ["Active", project.active_flag ? "Yes" : "No"],
+                ].map(([label, value], i, arr) => (
+                  <div key={label} style={{
+                    padding: "14px 20px",
+                    borderBottom: i < arr.length - 2 ? "1px solid var(--border)" : "none",
+                    borderRight: i % 2 === 0 ? "1px solid var(--border)" : "none",
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)", marginBottom: 5 }}>{label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{value || "—"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Team & Owners section */}
+            <div style={{ background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
+              <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--bg)", display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ color: "var(--blue)", flexShrink: 0 }}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                <span style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)" }}>Team & Owners</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+                {[
+                  ["Implementation Manager", project.implementation_manager],
+                  ["Huawei IM", project.huawei_im],
+                  ["ISDP Owner", project.isdp_owner],
+                  ["iBuy Owner", project.ibuy_owner],
+                ].map(([label, value], i, arr) => (
+                  <div key={label} style={{
+                    padding: "14px 20px",
+                    borderBottom: i < arr.length - 2 ? "1px solid var(--border)" : "none",
+                    borderRight: i % 2 === 0 ? "1px solid var(--border)" : "none",
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)", marginBottom: 5 }}>{label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: value ? "var(--text)" : "var(--text-muted)" }}>{value || "—"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Financials section */}
+            <div style={{ background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
+              <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--bg)", display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ color: "var(--blue)", flexShrink: 0 }}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+                <span style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)" }}>Financials</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+                {[
+                  ["Budget Amount", project.budget_amount ? `SAR ${fmt.format(project.budget_amount)}` : null],
+                  ["Monthly Target", project.monthly_target ? `SAR ${fmt.format(project.monthly_target)}` : null],
+                  ["Actual Cost", project.actual_cost ? `SAR ${fmt.format(project.actual_cost)}` : null],
+                  ["Completion", project.completion_percentage != null ? `${project.completion_percentage}%` : null],
+                ].map(([label, value], i, arr) => (
+                  <div key={label} style={{
+                    padding: "14px 20px",
+                    borderBottom: i < arr.length - 2 ? "1px solid var(--border)" : "none",
+                    borderRight: i % 2 === 0 ? "1px solid var(--border)" : "none",
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)", marginBottom: 5 }}>{label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", fontFamily: value && value.startsWith("SAR") ? "'JetBrains Mono', monospace" : "inherit" }}>{value || "—"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )
       )}

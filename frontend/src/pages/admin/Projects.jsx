@@ -39,6 +39,8 @@ const INITIAL_FORM = {
   project_domain: "",
   budget_amount: "",
   project_status: "Active",
+  isdp_owner: "",
+  ibuy_owner: "",
 };
 
 function CreateProjectModal({ open, onClose, onCreated }) {
@@ -47,6 +49,8 @@ function CreateProjectModal({ open, onClose, onCreated }) {
   const [ims, setIms] = useState([]);
   const [domains, setDomains] = useState([]);
   const [huaweiIms, setHuaweiIms] = useState([]);
+  const [isdpOwners, setIsdpOwners] = useState([]);
+  const [ibuyOwners, setIbuyOwners] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -58,6 +62,8 @@ function CreateProjectModal({ open, onClose, onCreated }) {
     pmApi.listIMMasters({ status: "Active" }).then(res => setIms(res || [])).catch(() => {});
     pmApi.listProjectDomains().then(res => setDomains(res || [])).catch(() => {});
     pmApi.listHuaweiIMs().then(res => setHuaweiIms(res || [])).catch(() => {});
+    pmApi.listISDPOwners().then(res => setIsdpOwners(res || [])).catch(() => {});
+    pmApi.listIBuyOwners().then(res => setIbuyOwners(res || [])).catch(() => {});
   }, [open]);
 
   if (!open) return null;
@@ -85,6 +91,8 @@ function CreateProjectModal({ open, onClose, onCreated }) {
         project_domain: form.project_domain || undefined,
         budget_amount: form.budget_amount ? parseFloat(form.budget_amount) : undefined,
         project_status: form.project_status,
+        isdp_owner: form.isdp_owner || undefined,
+        ibuy_owner: form.ibuy_owner || undefined,
         active_flag: "Yes",
       };
       await pmApi.upsertProject(payload);
@@ -109,22 +117,22 @@ function CreateProjectModal({ open, onClose, onCreated }) {
       background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)",
     }} onClick={onClose}>
       <div style={{
-        background: "var(--bg-white)", borderRadius: 12, width: 560, maxHeight: "90vh", overflow: "auto",
-        boxShadow: "0 20px 60px rgba(0,0,0,0.2)", padding: "28px 32px",
+        background: "var(--bg-white)", borderRadius: 12, width: 640, maxHeight: "92vh", overflow: "auto",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
       }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 700 }}>Create New Project</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted)" }}>&times;</button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px", borderBottom: "1px solid var(--border)" }}>
+          <h2 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>Create New Project</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted)", lineHeight: 1 }}>&times;</button>
         </div>
 
         {error && (
-          <div className="notice error" style={{ marginBottom: 14 }}>
+          <div className="notice error" style={{ margin: "14px 24px 0" }}>
             <span>&oplus;</span> {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <form onSubmit={handleSubmit} style={{ padding: "20px 24px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 13 }}>
             <div>
               <label style={labelStyle}>Project Code *</label>
               <input style={inputStyle} value={form.project_code} onChange={e => setField("project_code", e.target.value)} placeholder="e.g. PRJ-2026-001" required />
@@ -154,12 +162,12 @@ function CreateProjectModal({ open, onClose, onCreated }) {
               />
             </div>
             <div>
-              <label style={labelStyle}>Implementation Manager</label>
+              <label style={labelStyle}>Domain</label>
               <SearchableSelect
-                value={form.implementation_manager}
-                onChange={(v) => setField("implementation_manager", v)}
-                options={ims.map(im => ({ id: im.name, label: `${im.full_name}${im.email ? ` (${im.email})` : ""}` }))}
-                placeholder="-- Select --"
+                value={form.project_domain}
+                onChange={(v) => setField("project_domain", v)}
+                options={domains.map(d => ({ id: d.name, label: d.name }))}
+                placeholder="-- Select Domain --"
                 style={{ width: "100%" }}
                 minWidth={0}
               />
@@ -169,12 +177,16 @@ function CreateProjectModal({ open, onClose, onCreated }) {
               <input style={inputStyle} value={form.center_area} onChange={e => setField("center_area", e.target.value)} placeholder="e.g. Central" />
             </div>
             <div>
-              <label style={labelStyle}>Project Domain</label>
+              <label style={labelStyle}>Budget Amount (SAR)</label>
+              <input style={inputStyle} type="number" min="0" step="0.01" value={form.budget_amount} onChange={e => setField("budget_amount", e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label style={labelStyle}>Implementation Manager</label>
               <SearchableSelect
-                value={form.project_domain}
-                onChange={(v) => setField("project_domain", v)}
-                options={domains.map(d => ({ id: d.name, label: d.name }))}
-                placeholder="-- Select Domain --"
+                value={form.implementation_manager}
+                onChange={(v) => setField("implementation_manager", v)}
+                options={ims.map(im => ({ id: im.name, label: `${im.full_name}${im.email ? ` (${im.email})` : ""}` }))}
+                placeholder="-- Select --"
                 style={{ width: "100%" }}
                 minWidth={0}
               />
@@ -191,12 +203,46 @@ function CreateProjectModal({ open, onClose, onCreated }) {
               />
             </div>
             <div>
-              <label style={labelStyle}>Budget Amount (SAR)</label>
-              <input style={inputStyle} type="number" min="0" step="0.01" value={form.budget_amount} onChange={e => setField("budget_amount", e.target.value)} placeholder="0" />
+              <label style={labelStyle}>ISDP Owner</label>
+              <SearchableSelect
+                value={form.isdp_owner}
+                onChange={(v) => setField("isdp_owner", v)}
+                options={isdpOwners.map(o => ({ id: o.name, label: o.owner_name }))}
+                placeholder="-- Select --"
+                style={{ width: "100%" }}
+                minWidth={0}
+                onCreateNew={async (name) => {
+                  try {
+                    await pmApi.createISDPOwner(name);
+                    const res = await pmApi.listISDPOwners();
+                    setIsdpOwners(res || []);
+                    setField("isdp_owner", name);
+                  } catch (err) { alert(err.message || "Failed to create"); }
+                }}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>iBuy Owner</label>
+              <SearchableSelect
+                value={form.ibuy_owner}
+                onChange={(v) => setField("ibuy_owner", v)}
+                options={ibuyOwners.map(o => ({ id: o.name, label: o.owner_name }))}
+                placeholder="-- Select --"
+                style={{ width: "100%" }}
+                minWidth={0}
+                onCreateNew={async (name) => {
+                  try {
+                    await pmApi.createIBuyOwner(name);
+                    const res = await pmApi.listIBuyOwners();
+                    setIbuyOwners(res || []);
+                    setField("ibuy_owner", name);
+                  } catch (err) { alert(err.message || "Failed to create"); }
+                }}
+              />
             </div>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn-primary" disabled={saving}>
               {saving ? "Creating..." : "Create Project"}

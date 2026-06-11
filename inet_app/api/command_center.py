@@ -818,6 +818,13 @@ def _upsert_po_dispatch_for_line(
     }
     if project_code and frappe.db.exists("Project Control Center", project_code):
         payload["project_code"] = project_code
+        proj_owners = frappe.db.get_value(
+            "Project Control Center", project_code, ["isdp_owner", "ibuy_owner"], as_dict=True
+        ) or {}
+        if proj_owners.get("isdp_owner"):
+            payload["isdp_owner"] = proj_owners["isdp_owner"]
+        if proj_owners.get("ibuy_owner"):
+            payload["ibuy_owner"] = proj_owners["ibuy_owner"]
 
     existing_name = frappe.db.get_value(
         "PO Dispatch", {"po_intake": po_intake_name, "po_line_no": po_line_no}, "name"
@@ -5538,6 +5545,19 @@ def update_work_done_submission(name, submission_status):
                     "PO Dispatch", po_dispatch, "pic_rejection_remark", "",
                     update_modified=False,
                 )
+            # Map ISDP Owner and iBuy Owner from Project Control Center
+            project_code = frappe.db.get_value("PO Dispatch", po_dispatch, "project_code")
+            if project_code and frappe.db.exists("Project Control Center", project_code):
+                proj_owners = frappe.db.get_value(
+                    "Project Control Center", project_code, ["isdp_owner", "ibuy_owner"], as_dict=True
+                ) or {}
+                owner_update = {}
+                if proj_owners.get("isdp_owner"):
+                    owner_update["isdp_owner"] = proj_owners["isdp_owner"]
+                if proj_owners.get("ibuy_owner"):
+                    owner_update["ibuy_owner"] = proj_owners["ibuy_owner"]
+                if owner_update:
+                    frappe.db.set_value("PO Dispatch", po_dispatch, owner_update, update_modified=False)
         else:
             # IM is un-confirming — clear pic_status if nothing has been processed yet
             pic_warning = _revert_pic_status_if_safe(po_dispatch)
@@ -9657,11 +9677,13 @@ _PO_ARCHIVE_ALIAS = {
     "PAT Status": "pat_status",
     "IM's Remarks on Rejection": "im_rejection_remark",
     "PIC Remarks": "pic_status",
-    "ISDP / I-Buy Owner": "isdp_ibuy_owner",
+    "ISDP Owner": "isdp_owner",
+    "ISDP / I-Buy Owner": "isdp_owner",
     "MS1": "ms1_amount",
     "MS2": "ms2_amount",
     "PIC Remarks (2nd Milestone)": "pic_status_ms2",
-    "ISD / I-Buy Owner (2nd Milestone)": "isdp_owner_ms2",
+    "iBuy Owner": "ibuy_owner",
+    "ISD / I-Buy Owner (2nd Milestone)": "ibuy_owner",
     "Remaining Milestone": "remaining_milestone_pct",
     "1st Payment PO Amount": "ms1_amount",
     "1st Payment Invoiced": "ms1_invoiced",
@@ -9743,7 +9765,7 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
     PIC_KEYS = (
         "sqc_status", "pat_status", "im_rejection_remark",
         "pic_status", "pic_status_ms2",
-        "isdp_ibuy_owner", "isdp_owner_ms2",
+        "isdp_owner", "ibuy_owner",
         "pic_detail_remark", "pic_detail_remark_ms2",
         "ms1_applied_date", "ms2_applied_date",
         "ms1_amount", "ms2_amount",
