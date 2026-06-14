@@ -267,6 +267,14 @@ export default function ExecutionMonitor() {
 
   const hasFilters = !!(searchDebounced || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || imFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
+  const totals = rows.reduce(
+    (acc, r) => ({
+      target: acc.target + (parseFloat(r.target_amount) || 0),
+      achieved: acc.achieved + (parseFloat(r.execution_achieved_amount || r.achieved_amount) || 0),
+    }),
+    { target: 0, achieved: 0 }
+  );
+
   return (
     <div>
       <div className="page-header">
@@ -484,11 +492,19 @@ export default function ExecutionMonitor() {
                 })}
               </tbody>
               <tfoot>
-                <tr>
-                  <td colSpan={27} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    <strong>{rows.length}</strong>
-                    {" "}record{rows.length !== 1 ? "s" : ""}
+                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                  <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                    {rows.length} rows
                   </td>
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td style={{ textAlign: "right", padding: "8px 16px" }} />
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
+                    {fmt.format(totals.target)}
+                  </td>
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#047857" }}>
+                    {fmt.format(totals.achieved)}
+                  </td>
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                 </tr>
               </tfoot>
             </table>

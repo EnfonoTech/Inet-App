@@ -206,6 +206,14 @@ export default function IMWorkDone() {
   const duidOptions = dispOpts.site_code || [];
   const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
 
+  const totals = filteredRows.reduce(
+    (acc, r) => ({
+      lineAmount: acc.lineAmount + (parseFloat(r.line_amount) || 0),
+      revenue: acc.revenue + (parseFloat(r.revenue_sar) || 0),
+    }),
+    { lineAmount: 0, revenue: 0 }
+  );
+
   return (
     <div>
       <div className="page-header">
@@ -377,6 +385,23 @@ export default function IMWorkDone() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                  <td />
+                  <td style={{ fontSize: "0.75rem", fontWeight: 700, color: "#64748b", padding: "8px 12px", whiteSpace: "nowrap" }}>
+                    {rows.length} rows
+                  </td>
+                  <td /><td /><td /><td />
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
+                    {money.format(totals.lineAmount)}
+                  </td>
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
+                    {fmt.format(totals.revenue)}
+                  </td>
+                  <td /><td /><td />
+                </tr>
+              </tfoot>
             </table>
           )}
         </DataTableWrapper>

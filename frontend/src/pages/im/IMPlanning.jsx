@@ -385,20 +385,20 @@ export default function IMPlanning() {
                 ))}
               </tbody>
               <tfoot>
-                <tr>
-                  <td colSpan={12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                    <strong>{plans.length}</strong>
-                    {" "}plan{plans.length !== 1 ? "s" : ""}
+                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                  <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                    {plans.length} plan{plans.length !== 1 ? "s" : ""}
                     {selected.size > 0 && (
-                      <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600, fontSize: "0.82rem" }}>
+                      <span style={{ marginLeft: 12, color: "#6366f1", fontWeight: 600 }}>
                         {selected.size} selected
                       </span>
                     )}
                   </td>
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
                     {fmt.format(totalAmt)}
                   </td>
-                  <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                  <td /><td /><td /><td /><td />
                 </tr>
               </tfoot>
             </table>

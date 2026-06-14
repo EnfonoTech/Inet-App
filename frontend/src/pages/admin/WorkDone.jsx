@@ -419,19 +419,16 @@ export default function WorkDone() {
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
-                  <td colSpan={14} style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.78rem", padding: "10px 16px" }}>
-                    TOTALS ({rows.length} rows)
+                  <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
+                    {rows.length} rows
                   </td>
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px" }}>{fmt.format(totals.qty)}</td>
-                  <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "10px 16px" }}>
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td style={{ textAlign: "right", padding: "8px 16px" }} />
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                     {fmt.format(totals.revenue)}
                   </td>
-                  <td />
-                  <td />
-                  <td />
-                  <td />
-                  <td />
-                  <td />
+                  <td /><td /><td /><td /><td /><td />
                 </tr>
               </tfoot>
             </table>
