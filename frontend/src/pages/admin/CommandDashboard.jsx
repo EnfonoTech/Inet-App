@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import KPICard from "../../components/KPICard";
 import MiniTable from "../../components/MiniTable";
@@ -106,6 +107,13 @@ function defaultRange() {
 }
 
 export default function CommandDashboard() {
+  const navigate = useNavigate();
+
+  // Helper: navigate to Teams page with pre-applied filters
+  function goTeams(filters) {
+    navigate("/teams", { state: { teamFilters: filters } });
+  }
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
@@ -218,12 +226,13 @@ export default function CommandDashboard() {
 
   /* ── Team Status charts ──────────────────────────────────── */
   const ts = team_status || {};
-  const totalTeams = (ts.active || 0) + (ts.idle || 0);
-  const activePct = totalTeams > 0 ? Math.round(((ts.active || 0) / totalTeams) * 100) : 0;
+  const totalTeams = ts.active || 0;
+  const workingTeams = (ts.in_progress || 0) + (ts.teams_planned || 0);
+  const activePct = totalTeams > 0 ? Math.round((workingTeams / totalTeams) * 100) : 0;
   const statusBars = [
     { label: "Active", value: ts.active || 0, color: "green" },
     { label: "Idle", value: ts.idle || 0, color: "amber" },
-    { label: "Planned", value: ts.planned || 0, color: "" },
+    { label: "Planned", value: ts.teams_planned || 0, color: "" },
     { label: "In Progress", value: ts.in_progress || 0, color: "green" },
   ];
 
@@ -237,18 +246,15 @@ export default function CommandDashboard() {
     <div className="dashboard">
       <DashboardSwitcher />
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="dash-header" style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 240 }}>
-          <h1 style={{ margin: 0 }}>INet Telecom Operations Command Dashboard</h1>
-          <div className="subtitle">
+      <div className="dash-header" style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 20px", textAlign: "left" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800, letterSpacing: "-0.2px" }}>Command Dashboard</h1>
+          <div className="subtitle" style={{ justifyContent: "flex-start", marginTop: 3 }}>
             <span className="live-dot" />
             <span className="dash-timestamp">Last updated: {last_updated ? fmtTimestamp(last_updated) : "—"}</span>
           </div>
         </div>
-        <DateRangePicker
-          value={range}
-          onChange={(r) => setRange({ from: r.from, to: r.to })}
-        />
+        <DateRangePicker value={range} onChange={(r) => setRange({ from: r.from, to: r.to })} />
       </div>
 
       {/* ── Row 1: Operational Overview ─────────────────────── */}
@@ -256,7 +262,22 @@ export default function CommandDashboard() {
       <div className="kpi-row kpi-row-top">
         <KPICard label="Open PO lines" value={operational.total_open_po_lines ?? 0} />
         <KPICard label="Open PO line value (SAR)" value={operational.total_open_po_line_value ?? operational.total_open_po ?? 0} />
-        <KPICard label="Idle Teams" value={operational.idle_teams} colorClass="text-amber" />
+        <KPICard label="Idle Teams" value={ts.idle ?? operational.idle_teams} colorClass="text-amber"
+          onClick={() => goTeams({ statFilter: { field: "today_status", value: "Idle" } })}
+          sub={
+            <span style={{ display: "flex", gap: 6, marginTop: 3, whiteSpace: "nowrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "0.68rem", fontWeight: 600, color: "#047857" }}>
+                <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#10b981", flexShrink: 0 }} />
+                {ts.in_progress ?? 0} exec
+              </span>
+              <span style={{ color: "#cbd5e1" }}>·</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "0.68rem", fontWeight: 600, color: "#1d4ed8" }}>
+                <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#3b82f6", flexShrink: 0 }} />
+                {ts.teams_planned ?? 0} planned
+              </span>
+            </span>
+          }
+        />
         <KPICard label="Planned Activities" value={`SAR ${fmt.format(operational.planned_amount ?? 0)}`} sub={`${operational.planned_activities ?? 0} plans`} />
         <KPICard label="Closed Activities" value={`SAR ${fmt.format(operational.closed_amount ?? 0)}`} sub={`${operational.closed_activities ?? 0} plans`} colorClass="text-green" />
         <KPICard label="ReVisits" value={operational.revisits} colorClass="text-amber" />
@@ -265,7 +286,8 @@ export default function CommandDashboard() {
       {/* ── Row 2: INET Teams Performance ──────────────────── */}
       <div className="section-label">INET Teams Performance</div>
       <div className="kpi-row kpi-row-inet">
-        <KPICard label="Active Teams" value={inet.active_inet_teams} colorClass="text-green" />
+        <KPICard label="Active Teams" value={inet.active_inet_teams} colorClass="text-green"
+          onClick={() => goTeams({ typeFilter: ["INET"], categoryFilter: ["Field Team"] })} />
         <KPICard label="Monthly Cost" value={inetMonthlyCost} />
         <KPICard label="Monthly Target" value={inetMonthlyTarget} />
         <KPICard label="Target as of Today" value={inetTargetToday} />
@@ -276,7 +298,8 @@ export default function CommandDashboard() {
       {/* ── Row 3: Subcontractor Performance ───────────────── */}
       <div className="section-label">Subcontractor Performance</div>
       <div className="kpi-row kpi-row-sub">
-        <KPICard label="Sub Teams" value={subcon.active_sub_teams} colorClass="text-green" />
+        <KPICard label="Sub Teams" value={subcon.active_sub_teams} colorClass="text-green"
+          onClick={() => goTeams({ typeFilter: ["SUB"] })} />
         <KPICard label="Target" value={subcon.sub_target} />
         <KPICard label="Revenue" value={subcon.sub_revenue} colorClass="text-green" />
         <KPICard label="Expense" value={subcon.sub_expense} />
@@ -287,8 +310,10 @@ export default function CommandDashboard() {
       {/* ── Row 3b: Backend Teams ──────────────────────────── */}
       <div className="section-label">Backend Teams</div>
       <div className="kpi-row kpi-row-backend">
-        <KPICard label="Active Teams" value={backend.active_teams ?? 0} colorClass="text-green" />
-        <KPICard label="Pending" value={backend.assigned_pending ?? 0} colorClass="text-amber" />
+        <KPICard label="Active Teams" value={backend.active_teams ?? 0} colorClass="text-green"
+          onClick={() => goTeams({ categoryFilter: ["Backend Team"] })} />
+        <KPICard label="Pending" value={backend.assigned_pending ?? 0} colorClass="text-amber"
+          onClick={() => navigate("/backend")} />
         <KPICard label="Completed" value={backend.completed_mtd ?? 0} colorClass="text-green" />
       </div>
 
@@ -334,7 +359,7 @@ export default function CommandDashboard() {
             <div style={{ flex: 1 }}>
               <BarChart bars={statusBars} />
             </div>
-            <DonutChart value={activePct} label="Active" />
+            <DonutChart value={activePct} label="Working" />
           </div>
         </div>
 

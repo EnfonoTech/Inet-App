@@ -48,7 +48,9 @@ def _dashboard_etag(*discriminators):
             SELECT
               (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabPO Dispatch`)    AS pd,
               (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabDaily Execution`) AS de,
-              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabWork Done`)       AS wd
+              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabWork Done`)       AS wd,
+              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabRollout Plan`)    AS rp,
+              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabINET Team`)       AS it
             """,
             as_dict=True,
         )
@@ -59,6 +61,8 @@ def _dashboard_etag(*discriminators):
         str(row.get("pd") or 0),
         str(row.get("de") or 0),
         str(row.get("wd") or 0),
+        str(row.get("rp") or 0),
+        str(row.get("it") or 0),
     ]
     for d in discriminators:
         parts.append("" if d is None else str(d))
@@ -5961,13 +5965,32 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         (today_str,),
         as_dict=True,
     )
-    active_teams_count = len(active_team_rows)
     active_team_ids = {r.team for r in active_team_rows}
+    active_teams_count = len(active_team_ids)
+
+    # Teams with a Rollout Plan for TODAY in Planned/In Execution status
+    # — they have assigned work today so they should NOT count as idle.
+    # We use plan_date = today (not <=) so old stale unexecuted plans from
+    # past dates don't prevent a team from being counted as idle today.
+    planned_team_rows = frappe.db.sql(
+        """
+        SELECT DISTINCT rp.team FROM `tabRollout Plan` rp
+        LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        WHERE rp.plan_status IN ('Planned', 'In Execution')
+        AND rp.plan_date = %s
+        AND IFNULL(it.team_category, '') != 'Backend Team'
+        AND IFNULL(it.status, 'Active') = 'Active'
+        """,
+        (today_str,),
+        as_dict=True,
+    )
+    # Union of executing + planned teams — used only for idle calculation
+    non_idle_team_ids = active_team_ids | {r.team for r in planned_team_rows}
 
     total_teams = frappe.db.sql(
         "SELECT COUNT(*) FROM `tabINET Team` WHERE IFNULL(status, 'Active') = 'Active' AND IFNULL(team_category, '') != 'Backend Team'"
     )[0][0]
-    idle_teams_count = max(0, total_teams - active_teams_count)
+    idle_teams_count = max(0, total_teams - len(non_idle_team_ids))
 
     planned_activities = frappe.db.sql(
         """
@@ -6223,10 +6246,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         as_dict=True,
     )[0].cnt or 0
 
+    # Teams that have a plan today but are NOT yet executing (pure "Planned" state)
+    teams_planned_only = len({r.team for r in planned_team_rows} - active_team_ids)
+
     team_status = {
-        "active": active_teams_count,
+        "active": total_teams,
         "idle": idle_teams_count,
-        "planned": planned_today,
+        "planned": planned_today,           # distinct teams with any plan today (for bar chart compat)
+        "teams_planned": teams_planned_only, # teams planned but not yet executing
         "in_progress": in_progress_count,
     }
 
@@ -9108,6 +9135,68 @@ def get_im_team_detail(name):
 
 
 @frappe.whitelist()
+def admin_list_employees_for_picker(search=None, limit=100):
+    """Employee picker accessible to PM/admin roles (no IM ownership check)."""
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if search and search.strip():
+        s = f"%{search.strip()}%"
+        emps = frappe.db.sql(
+            """
+            SELECT name, employee_name, designation
+            FROM `tabEmployee`
+            WHERE status = 'Active'
+              AND (name LIKE %s OR IFNULL(employee_name,'') LIKE %s)
+            ORDER BY employee_name ASC
+            LIMIT %s
+            """,
+            (s, s, int(limit)),
+            as_dict=True,
+        )
+    else:
+        emps = frappe.get_all(
+            "Employee",
+            filters={"status": "Active"},
+            fields=["name", "employee_name", "designation"],
+            order_by="employee_name asc",
+            limit_page_length=int(limit),
+        )
+    return emps or []
+
+
+@frappe.whitelist()
+def list_im_masters_for_picker(search=None, limit=200):
+    """IM Master picker for admin forms — returns name + full_name."""
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if search and search.strip():
+        s = f"%{search.strip()}%"
+        ims = frappe.db.sql(
+            """
+            SELECT name, IFNULL(full_name, name) AS full_name
+            FROM `tabIM Master`
+            WHERE name LIKE %s OR IFNULL(full_name,'') LIKE %s
+            ORDER BY full_name ASC
+            LIMIT %s
+            """,
+            (s, s, int(limit)),
+            as_dict=True,
+        )
+    else:
+        ims = frappe.db.sql(
+            """
+            SELECT name, IFNULL(full_name, name) AS full_name
+            FROM `tabIM Master`
+            ORDER BY full_name ASC
+            LIMIT %s
+            """,
+            (int(limit),),
+            as_dict=True,
+        )
+    return ims or []
+
+
+@frappe.whitelist()
 def list_employees_for_picker(search=None, limit=50):
     """Lightweight Employee picker for the IM team-edit modal."""
     _require_inet_im_session()
@@ -11108,3 +11197,260 @@ def list_pending_cancel_requests(status=None):
         r["poid"] = poid_map.get(r.get("po_dispatch"), r.get("po_dispatch"))
 
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Admin Teams view
+# ---------------------------------------------------------------------------
+
+_ADMIN_TEAM_EDITABLE_FIELDS = [
+    "team_name", "team_type", "team_category", "im", "status",
+    "subcontractor", "field_user", "warehouse", "department",
+    "isdp_account", "daily_cost", "daily_cost_applies", "note",
+]
+
+
+@frappe.whitelist()
+def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500):
+    """List all INET Teams with current active project/domain for the PM admin Teams page."""
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    lim = min(int(limit or 500), 1000)
+    wheres = []
+    params = []
+
+    if status:
+        wheres.append("it.status = %s")
+        params.append(status)
+    if team_type:
+        wheres.append("it.team_type = %s")
+        params.append(team_type)
+    if team_category:
+        wheres.append("it.team_category = %s")
+        params.append(team_category)
+    if im:
+        wheres.append("it.im = %s")
+        params.append(im)
+    if search:
+        pat = f"%{(search or '').strip()}%"
+        wheres.append("(it.team_id LIKE %s OR it.team_name LIKE %s OR IFNULL(im_m.full_name,'') LIKE %s)")
+        params.extend([pat, pat, pat])
+
+    where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT
+            it.name,
+            it.team_id,
+            it.team_name,
+            it.team_type,
+            it.team_category,
+            it.im,
+            IFNULL(im_m.full_name, it.im) AS im_name,
+            it.status,
+            it.daily_cost,
+            it.daily_cost_applies,
+            it.subcontractor,
+            it.field_user,
+            it.isdp_account,
+            it.warehouse,
+            it.department,
+            it.note,
+            (SELECT COUNT(*) FROM `tabINET Team Member` itm WHERE itm.parent = it.name) AS member_count,
+            (
+                SELECT GROUP_CONCAT(DISTINCT IFNULL(pcc.project_domain,'') ORDER BY pcc.project_domain SEPARATOR ', ')
+                FROM `tabRollout Plan` rp
+                INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+                LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+                WHERE rp.team = it.name
+                  AND rp.plan_status IN ('Planned','In Execution')
+                  AND rp.plan_date = CURDATE()
+                  AND IFNULL(pcc.project_domain,'') != ''
+            ) AS current_domains,
+            (
+                SELECT GROUP_CONCAT(DISTINCT IFNULL(pd2.project_code,'') ORDER BY pd2.project_code SEPARATOR ', ')
+                FROM `tabRollout Plan` rp2
+                INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
+                WHERE rp2.team = it.name
+                  AND rp2.plan_status IN ('Planned','In Execution')
+                  AND rp2.plan_date = CURDATE()
+                  AND IFNULL(pd2.project_code,'') != ''
+            ) AS current_projects,
+            (
+                SELECT COUNT(*)
+                FROM `tabRollout Plan` rpa
+                WHERE rpa.team = it.name
+                  AND rpa.plan_status IN ('Planned','In Execution')
+            ) AS active_plan_count,
+            (
+                CASE
+                    WHEN IFNULL(it.team_category, '') = 'Backend Team' THEN NULL
+                    WHEN EXISTS (
+                        SELECT 1 FROM `tabDaily Execution` de_s
+                        WHERE de_s.team = it.name
+                          AND de_s.execution_date = CURDATE()
+                          AND de_s.execution_status NOT IN ('Cancelled')
+                    ) THEN 'In Execution'
+                    WHEN EXISTS (
+                        SELECT 1 FROM `tabRollout Plan` rp_s
+                        WHERE rp_s.team = it.name
+                          AND rp_s.plan_status IN ('Planned', 'In Execution')
+                          AND rp_s.plan_date = CURDATE()
+                    ) THEN 'Planned'
+                    ELSE 'Idle'
+                END
+            ) AS today_status
+        FROM `tabINET Team` it
+        LEFT JOIN `tabIM Master` im_m ON im_m.name = it.im
+        {where_sql}
+        ORDER BY it.team_category, it.team_name
+        LIMIT {lim}
+        """,
+        tuple(params) if params else (),
+        as_dict=True,
+    )
+    return rows or []
+
+
+@frappe.whitelist()
+def admin_get_team_detail(name):
+    """Full INET Team detail including members and active plans. Admin-only."""
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if not name:
+        frappe.throw("name is required")
+
+    doc = frappe.get_doc("INET Team", name).as_dict()
+
+    members = []
+    for m in (doc.get("team_members") or []):
+        emp_full = ""
+        if m.get("employee"):
+            emp_full = frappe.db.get_value("Employee", m.get("employee"), "employee_name") or ""
+        members.append({
+            "employee": m.get("employee"),
+            "employee_name": emp_full,
+            "designation": m.get("designation") or "",
+            "is_team_lead": 1 if m.get("is_team_lead") else 0,
+        })
+
+    im_full_name = ""
+    if doc.get("im"):
+        im_full_name = frappe.db.get_value("IM Master", doc.get("im"), "full_name") or ""
+
+    active_plans = frappe.db.sql(
+        """
+        SELECT
+            rp.name AS plan_name,
+            rp.plan_date,
+            rp.plan_status,
+            pd.project_code,
+            IFNULL(pcc.project_domain,'') AS project_domain,
+            IFNULL(pcc.project_name,'') AS project_name,
+            COALESCE(NULLIF(pd.poid,''), pd.name) AS poid,
+            pd.site_code
+        FROM `tabRollout Plan` rp
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+        WHERE rp.team = %s
+          AND rp.plan_status IN ('Planned','In Execution')
+        ORDER BY rp.plan_date DESC
+        LIMIT 20
+        """,
+        (name,),
+        as_dict=True,
+    )
+
+    return {
+        "name": doc.get("name"),
+        "team_id": doc.get("team_id"),
+        "team_name": doc.get("team_name"),
+        "team_type": doc.get("team_type"),
+        "team_category": doc.get("team_category"),
+        "im": doc.get("im"),
+        "im_name": im_full_name,
+        "subcontractor": doc.get("subcontractor"),
+        "isdp_account": doc.get("isdp_account"),
+        "field_user": doc.get("field_user"),
+        "warehouse": doc.get("warehouse"),
+        "department": doc.get("department"),
+        "status": doc.get("status"),
+        "daily_cost": doc.get("daily_cost"),
+        "daily_cost_applies": 1 if doc.get("daily_cost_applies") else 0,
+        "note": doc.get("note"),
+        "team_members": members,
+        "active_plans": [dict(r) for r in (active_plans or [])],
+    }
+
+
+@frappe.whitelist()
+def admin_update_team(name, payload=None):
+    """Update any INET Team field (admin-only, no ownership restriction)."""
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if not name:
+        frappe.throw("name is required")
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload) if payload else {}
+    payload = payload or {}
+
+    if not frappe.db.exists("INET Team", name):
+        frappe.throw(f"INET Team not found: {name}")
+
+    members_raw = payload.get("team_members")
+    members_changed = members_raw is not None
+    clean = []
+
+    updates = {}
+    for fname in _ADMIN_TEAM_EDITABLE_FIELDS:
+        if fname not in payload:
+            continue
+        val = payload.get(fname)
+        if fname == "daily_cost":
+            try:
+                val = flt(val)
+            except Exception:
+                continue
+        elif fname == "daily_cost_applies":
+            val = 1 if val in (1, "1", True, "true", "yes", "on") else 0
+        elif isinstance(val, str):
+            val = val.strip()
+        updates[fname] = val
+
+    if updates:
+        frappe.db.set_value("INET Team", name, updates, update_modified=True)
+
+    if members_changed:
+        seen_emp = set()
+        team_leads = 0
+        for m in (members_raw or []):
+            emp = (m or {}).get("employee")
+            if not emp:
+                continue
+            emp = str(emp).strip()
+            if not emp or emp in seen_emp:
+                continue
+            seen_emp.add(emp)
+            is_lead = 1 if (m.get("is_team_lead") in (1, "1", True, "true", "yes", "on")) else 0
+            if is_lead:
+                team_leads += 1
+            desig = (m.get("designation") or "").strip() or None
+            clean.append({"employee": emp, "designation": desig, "is_team_lead": is_lead})
+        if team_leads > 1:
+            frappe.throw("Only one team member can be marked as Team Lead.")
+        doc = frappe.get_doc("INET Team", name)
+        doc.set("team_members", [])
+        for row in clean:
+            doc.append("team_members", row)
+        doc.save(ignore_permissions=True)
+
+    frappe.db.commit()
+    return {
+        "name": name,
+        "updated": len(updates),
+        "fields": list(updates.keys()),
+        "members_replaced": members_changed,
+        "member_count": len(clean) if members_changed else None,
+    }

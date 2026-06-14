@@ -22,6 +22,7 @@ const ProjectDetail       = lazy(() => import("./pages/admin/ProjectDetail"));
 const AdminTimesheets     = lazy(() => import("./pages/admin/Timesheets"));
 const PODump              = lazy(() => import("./pages/admin/PODump"));
 const TeamAllocationApprovals = lazy(() => import("./pages/admin/TeamAllocationApprovals"));
+const AdminTeams              = lazy(() => import("./pages/admin/Teams"));
 const CEODashboard        = lazy(() => import("./pages/admin/CEODashboard"));
 const CommercialDashboard = lazy(() => import("./pages/admin/CommercialDashboard"));
 const PMDashboard         = lazy(() => import("./pages/admin/PMDashboard"));
@@ -129,6 +130,7 @@ function AppContent() {
               <Route path="/reports" element={<Reports />} />
               <Route path="/timesheets" element={<AdminTimesheets />} />
               <Route path="/approvals" element={<TeamAllocationApprovals />} />
+              <Route path="/teams" element={<AdminTeams />} />
               <Route path="/expenses" element={<IMExpense isAdmin={true} />} />
               <Route path="/masters" element={<Masters />} />
               <Route path="/overview" element={<OperationsOverview />} />

@@ -137,6 +137,7 @@ const adminNav = [
   { to: "/reports",    label: "Reports",     icon: "barChart" },
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/approvals", label: "Approvals", icon: "shieldCheck" },
+  { to: "/teams",     label: "Teams",     icon: "user" },
   { to: "/expenses",   label: "Expenses",    icon: "dollar" },
   { to: "/overview",   label: "Search / Overview", icon: "search" },
   { to: "/im-material-request", label: "Material Requests", icon: "package" },

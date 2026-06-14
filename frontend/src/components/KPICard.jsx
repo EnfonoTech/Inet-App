@@ -25,10 +25,15 @@ function formatSar(v) {
   return `SAR ${fmt.format(Number(v))}`;
 }
 
-export default function KPICard({ label, value, sub, colorClass = "" }) {
+export default function KPICard({ label, value, sub, colorClass = "", onClick }) {
   return (
-    <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
+    <div
+      className="kpi-card"
+      onClick={onClick}
+      style={onClick ? { cursor: "pointer" } : undefined}
+      title={onClick ? `Go to ${label}` : undefined}
+    >
+      <div className="kpi-label">{label}{onClick && <span style={{ marginLeft: 5, fontSize: "0.6rem", opacity: 0.5 }}>↗</span>}</div>
       <div className={`kpi-value ${colorClass}`.trim()}>{formatValue(value)}</div>
       {sub ? <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#475569", marginTop: 4 }}>{sub}</div> : null}
     </div>
