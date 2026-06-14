@@ -377,7 +377,7 @@ export default function IMPOIntake() {
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>
                       {row.item_description || "—"}
                     </td>
-                    <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? fmt.format(row.qty) : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(row.line_amount || 0)}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={row.site_name || ""}>{row.site_code || "—"}</td>

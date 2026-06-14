@@ -157,12 +157,12 @@ function WorkCard({ plan, onClick }) {
             </span>
           </div>
         )}
-        {plan.customer_activity_type && (
+        {plan.activity_type && (
           <div className="meta-row">
             <svg className="meta-svg-icon" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z" clipRule="evenodd" />
             </svg>
-            <span>{plan.customer_activity_type}</span>
+            <span>{plan.activity_type}</span>
           </div>
         )}
         {plan.project_code && (

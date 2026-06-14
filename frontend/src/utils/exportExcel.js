@@ -42,7 +42,7 @@ const _LABEL_OVERRIDES = {
   im_full_name: "IM Name",
   site_code: "DUID",
   site_name: "Site Name",
-  customer_activity_type: "Activity Type",
+  activity_type: "Activity Type",
   qty: "Qty",
   line_amount: "Line Amount",
   target_month: "Target Month",

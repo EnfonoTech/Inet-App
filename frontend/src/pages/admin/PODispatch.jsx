@@ -599,7 +599,7 @@ export default function PODispatch() {
                       <td>{row.shipment_number}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.item_code}</td>
                       <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.item_description}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{row.customer_activity_type || "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{row.activity_type || "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.qty}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(row.rate || 0)}</td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmtAmt.format(row.line_amount || 0)}</td>

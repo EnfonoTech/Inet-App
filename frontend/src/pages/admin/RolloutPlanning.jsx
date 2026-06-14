@@ -341,7 +341,7 @@ export default function RolloutPlanning() {
               { key: "poid",        label: "POID" },
               { key: "item_code",   label: "Item" },
               { key: "item_description", label: "Description" },
-              { key: "customer_activity_type", label: "Activity Type" },
+              { key: "activity_type", label: "Activity Type" },
               { key: "project_code", label: "Project" },
               { key: "site_code",   label: "DUID" },
               { key: "center_area", label: "Center Area" },
@@ -570,7 +570,7 @@ export default function RolloutPlanning() {
                         ? <span style={{ color: "#b45309", fontStyle: "italic" }}>{row.item_description || "—"}</span>
                         : (row.item_description || "—")}
                     </td>
-                    <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
                     <td>{row.project_code}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>

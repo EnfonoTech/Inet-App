@@ -1383,7 +1383,7 @@ export default function IMDispatch() {
                       <td>{row.project_code}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.item_code}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
-                      <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.qty}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
                       <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.im_full_name || row.im || "—"}</td>

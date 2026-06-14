@@ -2429,13 +2429,11 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
             limit_page_length=len(im_names) + 1,
         ):
             im_labels[imm.name] = imm.full_name or imm.name
-    # Batch-fetch Customer Activity Type from Customer Item Master, keyed by
-    # (customer, item_code). One query instead of per-row lookups.
-    cim_map = _batch_customer_activity_types(rows)
+    act_map = _batch_item_activity_types(rows)
     for r in rows:
         imn = r.get("im")
         r["im_full_name"] = im_labels.get(imn) if imn else None
-        r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+        r["activity_type"] = act_map.get(r.get("item_code") or "")
     _apply_dummy_description(rows)
     return rows
 
@@ -2465,35 +2463,22 @@ def _next_visit_number_for_dispatch(po_dispatch_name):
     return max(max_v, cnt) + 1
 
 
-def _batch_customer_activity_types(rows, customer_key="customer", item_key="item_code"):
-    """Return {(customer, item_code): customer_activity_type} from Customer
-    Item Master for every unique (customer, item) pair in `rows`. Picks the
-    active-flag row first when multiple exist for a pair."""
-    pairs = {(r.get(customer_key) or "", r.get(item_key) or "") for r in rows or []}
-    pairs = {p for p in pairs if p[0] and p[1]}
-    if not pairs:
+def _batch_item_activity_types(rows, item_key="item_code"):
+    """Return {item_code: activity_type} from Item for every unique item_code in rows."""
+    item_codes = list({r.get(item_key) or "" for r in rows or []} - {""})
+    if not item_codes:
         return {}
-    customers = list({p[0] for p in pairs})
-    items = list({p[1] for p in pairs})
-    c_ph = ",".join(["%s"] * len(customers))
-    i_ph = ",".join(["%s"] * len(items))
+    ph = ",".join(["%s"] * len(item_codes))
     try:
-        cim_rows = frappe.db.sql(
-            f"SELECT customer, item_code, customer_activity_type, IFNULL(active_flag, 0) AS active "
-            f"FROM `tabCustomer Item Master` "
-            f"WHERE customer IN ({c_ph}) AND item_code IN ({i_ph}) "
-            f"ORDER BY IFNULL(active_flag, 0) DESC",
-            tuple(customers) + tuple(items),
+        item_rows = frappe.db.sql(
+            f"SELECT name, activity_type FROM `tabItem` "
+            f"WHERE name IN ({ph}) AND IFNULL(activity_type, '') != ''",
+            tuple(item_codes),
             as_dict=True,
         )
     except Exception:
         return {}
-    out = {}
-    for r in cim_rows:
-        k = (r.customer, r.item_code)
-        if k not in out and r.customer_activity_type:
-            out[k] = r.customer_activity_type
-    return out
+    return {r.name: r.activity_type for r in item_rows}
 
 
 @frappe.whitelist()
@@ -3838,11 +3823,8 @@ def get_rollout_plan_details(rollout_plan):
             plan["region_type"] = pd.get("region_type") or region_type_from_center_area(
                 pd.get("center_area")
             )
-        # Activity type is keyed by (customer, item_code) in CIM master.
-        cim_map = _batch_customer_activity_types([{"customer": pd.get("customer"), "item_code": pd.get("item_code")}])
-        plan["customer_activity_type"] = cim_map.get(
-            (pd.get("customer") or "", pd.get("item_code") or "")
-        )
+        act_map = _batch_item_activity_types([{"item_code": pd.get("item_code")}])
+        plan["activity_type"] = act_map.get(pd.get("item_code") or "")
 
     # Pull every Daily Execution for this plan. Multi-team plans have
     # one DE per team. Pick the one matching the calling user's team
@@ -5009,9 +4991,9 @@ def list_execution_monitor_rows(filters=None, limit=500):
             }
         )
     if out:
-        cim_map = _batch_customer_activity_types(out)
+        act_map = _batch_item_activity_types(out)
         for r in out:
-            r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+            r["activity_type"] = act_map.get(r.get("item_code") or "")
         _apply_dummy_description(out)
     return out
 
@@ -5339,9 +5321,9 @@ def list_work_done_rows(filters=None, limit=500):
             }
         )
     if out:
-        cim_map = _batch_customer_activity_types(out)
+        act_map = _batch_item_activity_types(out)
         for r in out:
-            r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+            r["activity_type"] = act_map.get(r.get("item_code") or "")
 
     # ── Sub-Contract completions: synthesize Work Done rows for PO Dispatches
     # whose subcon_status='Work Done'. Subcon flow lives outside the rollout
@@ -5459,7 +5441,7 @@ def _synthesize_subcon_workdone_rows(filters):
     im_name_map = _batch_im_master_full_names(im_prefetch) if im_prefetch else {}
 
     out = []
-    cim_map = _batch_customer_activity_types(rows)
+    act_map = _batch_item_activity_types(rows)
     for r in rows:
         out.append({
             # Synthetic name so React/UI keys stay unique. There's no Work Done
@@ -5484,7 +5466,7 @@ def _synthesize_subcon_workdone_rows(filters):
             "item_code": r.get("item_code"),
             "item_description": r.get("item_description"),
             "customer": r.get("customer"),
-            "customer_activity_type": cim_map.get((r.get("customer") or "", r.get("item_code") or "")),
+            "activity_type": act_map.get(r.get("item_code") or ""),
             "executed_qty": None,
             "billing_rate_sar": None,
             "revenue_sar": r.get("line_amount"),
@@ -6638,9 +6620,9 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         as_dict=True,
     )
     if rows:
-        cim_map = _batch_customer_activity_types(rows)
+        act_map = _batch_item_activity_types(rows)
         for r in rows:
-            r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+            r["activity_type"] = act_map.get(r.get("item_code") or "")
         _apply_dummy_description(rows)
     return rows or []
 
@@ -6810,9 +6792,9 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         as_dict=True,
     )
     if rows:
-        cim_map = _batch_customer_activity_types(rows)
+        act_map = _batch_item_activity_types(rows)
         for r in rows:
-            r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+            r["activity_type"] = act_map.get(r.get("item_code") or "")
         _apply_dummy_description(rows)
     return rows or []
 
@@ -7823,9 +7805,8 @@ def get_field_team_dashboard(team_id=None):
         except Exception:
             pass
 
-    # Customer Activity Type lookup, keyed by (customer, item_code).
-    cim_map = _batch_customer_activity_types(
-        [{"customer": (d or {}).get("customer"), "item_code": (d or {}).get("item_code")} for d in dispatch_map.values()]
+    act_map = _batch_item_activity_types(
+        [{"item_code": (d or {}).get("item_code")} for d in dispatch_map.values()]
     )
 
     # Merge dispatch data into plan records
@@ -7855,9 +7836,7 @@ def get_field_team_dashboard(team_id=None):
                 "center_area": dispatch_info.get("center_area"),
                 "region_type": dispatch_info.get("region_type")
                 or region_type_from_center_area(dispatch_info.get("center_area")),
-                "customer_activity_type": cim_map.get(
-                    (dispatch_info.get("customer") or "", dispatch_info.get("item_code") or "")
-                ),
+                "activity_type": act_map.get(dispatch_info.get("item_code") or ""),
                 # IM-confirmed and field-side execution flags so the card
                 # can show "IM ✓" or "Awaiting IM" without a second fetch.
                 "execution_status": ex.get("execution_status"),
@@ -7973,8 +7952,8 @@ def list_field_team_actionable_plans(team_id=None):
         )
         dispatch_map = {d.name: d for d in dispatch_rows}
 
-    cim_map = _batch_customer_activity_types(
-        [{"customer": (d or {}).get("customer"), "item_code": (d or {}).get("item_code")} for d in dispatch_map.values()]
+    act_map = _batch_item_activity_types(
+        [{"item_code": (d or {}).get("item_code")} for d in dispatch_map.values()]
     )
 
     out = []
@@ -7995,9 +7974,7 @@ def list_field_team_actionable_plans(team_id=None):
             "project_code": d.get("project_code"),
             "site_code": d.get("site_code"),
             "site_name": d.get("site_name"),
-            "customer_activity_type": cim_map.get(
-                (d.get("customer") or "", d.get("item_code") or "")
-            ),
+            "activity_type": act_map.get(d.get("item_code") or ""),
             "access_time": p.get("access_time") if has_access_time else None,
             "access_period": p.get("access_period") if has_access_period else None,
             "qc_required": p.get("qc_required", 1) if has_qc_req else 1,

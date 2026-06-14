@@ -328,7 +328,7 @@ export default function IMPlanning() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.poid || p.po_dispatch || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.item_description || ""}>{p.item_description || "—"}</td>
-                    <td style={{ fontSize: "0.82rem" }}>{p.customer_activity_type || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{p.activity_type || "—"}</td>
                     <td>{p.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={p.center_area || ""}>
                       {p.center_area || "—"}

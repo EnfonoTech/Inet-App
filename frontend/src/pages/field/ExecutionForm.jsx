@@ -846,9 +846,9 @@ export default function ExecutionForm() {
                         {p.plan_date && <span>{p.plan_date}</span>}
                       </div>
 
-                      {p.customer_activity_type && (
+                      {p.activity_type && (
                         <div style={{ marginTop: 6, fontSize: "0.72rem", color: "#475569" }}>
-                          Activity: <strong>{p.customer_activity_type}</strong>
+                          Activity: <strong>{p.activity_type}</strong>
                         </div>
                       )}
                     </button>
@@ -1054,10 +1054,10 @@ export default function ExecutionForm() {
                     <span>Qty {Number(plan.qty)}</span>
                   </div>
                 )}
-                {plan.customer_activity_type && (
+                {plan.activity_type && (
                   <div className="exec-plan-chip" title="Activity type">
                     <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z" clipRule="evenodd"/></svg>
-                    <span>{plan.customer_activity_type}</span>
+                    <span>{plan.activity_type}</span>
                   </div>
                 )}
                 {plan.item_code && (
