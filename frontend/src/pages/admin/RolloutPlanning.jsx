@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
@@ -108,6 +109,7 @@ function Pill({ label, value, tone = "blue" }) {
 
 export default function RolloutPlanning() {
   const { rowLimit } = useTableRowLimit();
+  const location = useLocation();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -119,11 +121,10 @@ export default function RolloutPlanning() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  // Workflow #2: "Unplanned" shows POIDs that haven't been planned yet
-  // (dispatch_status = Dispatched). "All Visits" lifts that filter so
-  // the IM can pick a POID that already has a plan and create the next
-  // sequential visit (visit_number auto-increments).
-  const [planScope, setPlanScope] = useState("unplanned"); // "unplanned" | "all"
+  // "unplanned" = dispatch_status Dispatched (default)
+  // "all" = all POIDs (re-plan)
+  // "open_dummy" = is_dummy_po=1 (unmapped dummy POs)
+  const [planScope, setPlanScope] = useState(location.state?.planScope ?? "unplanned");
 
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -175,9 +176,10 @@ export default function RolloutPlanning() {
         if (duidFilter.length) portal.site_code = duidFilter;
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
-        // "all" scope drops the dispatch_status filter so the IM can pick
-        // a POID with an existing plan and create the next visit.
-        const filters = planScope === "all" ? {} : { dispatch_status: "Dispatched" };
+        if (planScope === "open_dummy") portal.dummy_preset = "dummy";
+        const filters = planScope === "all" || planScope === "open_dummy"
+          ? {}
+          : { dispatch_status: "Dispatched" };
         const list = await pmApi.listPODispatches(filters, rowLimit, portal);
         if (!cancelled) setRows(Array.isArray(list) ? list : []);
       } catch (err) {
@@ -372,10 +374,14 @@ export default function RolloutPlanning() {
             border: "1px solid #e2e8f0",
           }}>
             {[
-              { id: "unplanned", label: "Unplanned" },
-              { id: "all",       label: "All POIDs (re-plan)" },
+              { id: "unplanned",   label: "Unplanned" },
+              { id: "all",         label: "All POIDs (re-plan)" },
+              { id: "open_dummy",  label: "Open Dummy POs" },
             ].map((tab) => {
               const active = planScope === tab.id;
+              const isDummy = tab.id === "open_dummy";
+              const activeBg = isDummy ? "#b45309" : "#1d4ed8";
+              const activeShadow = isDummy ? "0 1px 3px rgba(180,83,9,0.3)" : "0 1px 3px rgba(29,78,216,0.3)";
               return (
                 <button
                   key={tab.id}
@@ -388,9 +394,9 @@ export default function RolloutPlanning() {
                   style={{
                     padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700,
                     border: "none", borderRadius: 6, cursor: "pointer",
-                    background: active ? "#1d4ed8" : "transparent",
-                    color: active ? "#fff" : "#475569",
-                    boxShadow: active ? "0 1px 3px rgba(29,78,216,0.3)" : "none",
+                    background: active ? activeBg : "transparent",
+                    color: active ? "#fff" : isDummy ? "#b45309" : "#475569",
+                    boxShadow: active ? activeShadow : "none",
                     transition: "background 120ms",
                   }}
                 >
@@ -469,12 +475,20 @@ export default function RolloutPlanning() {
             </div>
           ) : rows.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-icon">📦</div>
-              <h3>{searchDebounced.trim() ? "No results match your search" : "No dispatched lines ready for planning"}</h3>
+              <div className="empty-icon">{planScope === "open_dummy" ? "✅" : "📦"}</div>
+              <h3>
+                {searchDebounced.trim()
+                  ? "No results match your search"
+                  : planScope === "open_dummy"
+                    ? "No unmapped dummy POs"
+                    : "No dispatched lines ready for planning"}
+              </h3>
               <p>
                 {searchDebounced.trim()
                   ? "Try a different search term."
-                  : "Dispatch PO Intake lines first before creating rollout plans."}
+                  : planScope === "open_dummy"
+                    ? "All dummy POs have been mapped to real PO intake lines."
+                    : "Dispatch PO Intake lines first before creating rollout plans."}
               </p>
             </div>
           ) : (
@@ -518,8 +532,22 @@ export default function RolloutPlanning() {
                       />
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>
-                      <span>{row.poid || row.name}</span>
-                      {(row.dispatch_status || "").toLowerCase() === "planned" && (
+                      <span>{row.poid || row.original_dummy_poid || row.name}</span>
+                      {row.is_dummy_po ? (
+                        <span
+                          title="This is an unmapped dummy PO — IM needs to map it to a real PO intake line."
+                          style={{
+                            display: "inline-block", marginLeft: 6,
+                            padding: "1px 7px", borderRadius: 999,
+                            fontSize: "0.62rem", fontWeight: 700,
+                            background: "#fffbeb", color: "#b45309",
+                            border: "1px solid #fde68a",
+                            verticalAlign: "middle",
+                          }}
+                        >
+                          DUMMY
+                        </span>
+                      ) : (row.dispatch_status || "").toLowerCase() === "planned" && (
                         <span
                           title="A rollout plan already exists for this POID. Selecting will create a new visit (visit_number auto-increments)."
                           style={{
@@ -565,20 +593,20 @@ export default function RolloutPlanning() {
                 ))}
               </tbody>
               <tfoot>
-                <tr>
-                  <td colSpan={9} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    <strong>{rows.length}</strong>
-                    {" "}row{rows.length !== 1 ? "s" : ""}
+                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                  <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                    {rows.length} row{rows.length !== 1 ? "s" : ""}
                     {selected.size > 0 && (
-                      <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600, fontSize: "0.82rem" }}>
+                      <span style={{ marginLeft: 12, color: "#6366f1", fontWeight: 600 }}>
                         {selected.size} selected
                       </span>
                     )}
                   </td>
-                  <td style={{ textAlign: "right", padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700 }}>
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
                     {fmt.format(totalAmt)}
                   </td>
-                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                  <td />
                 </tr>
               </tfoot>
             </table>

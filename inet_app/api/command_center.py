@@ -5076,6 +5076,8 @@ def list_work_done_rows(filters=None, limit=500):
     if filters.get("to_date"):
         wheres.append("de.execution_date <= %s")
         params.append(filters["to_date"])
+    if filters.get("exclude_backend"):
+        wheres.append("COALESCE(pd.dispatch_status, pd_sys.dispatch_status, '') != 'Backend Assigned'")
 
     like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
     rp_im_join_wd = (
@@ -5329,7 +5331,9 @@ def list_work_done_rows(filters=None, limit=500):
     # whose subcon_status='Work Done'. Subcon flow lives outside the rollout
     # chain (no Daily Execution / Rollout Plan / Work Done record), so we union
     # them in here as flagged synthetic rows so they show up in the same list.
-    subcon_rows = _synthesize_subcon_workdone_rows(filters)
+    # When exclude_backend is set the caller wants only field-execution rows
+    # (Rollout Plan → Daily Execution → Work Done), so skip subcon entirely.
+    subcon_rows = [] if filters.get("exclude_backend") else _synthesize_subcon_workdone_rows(filters)
     if subcon_rows:
         out.extend(subcon_rows)
         out.sort(
@@ -6036,7 +6040,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         WHERE pd.dispatch_status != 'Backend Assigned'
-        AND wd.creation BETWEEN %s AND %s
+        AND de.execution_date BETWEEN %s AND %s
         """,
         (first_day, last_day),
         as_dict=True,
@@ -6051,7 +6055,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
           INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
           INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
           WHERE pd.dispatch_status != 'Backend Assigned'
-          AND wd.creation BETWEEN %s AND %s
+          AND de.execution_date BETWEEN %s AND %s
         ) d
         """,
         (first_day, last_day),
@@ -6067,6 +6071,10 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         (first_day, last_day),
         as_dict=True,
     )[0].cnt or 0
+
+    open_dummy_pos = 0
+    if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
+        open_dummy_pos = frappe.db.count("PO Dispatch", {"is_dummy_po": 1}) or 0
 
     # ---- INET KPIs ---------------------------------------------------------
     inet_teams = frappe.db.sql(
@@ -6344,6 +6352,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "closed_activities": closed_activities,
             "closed_amount": closed_amount,
             "revisits": revisits,
+            "open_dummy_pos": open_dummy_pos,
         },
         "inet": {
             "active_inet_teams": active_inet_teams,

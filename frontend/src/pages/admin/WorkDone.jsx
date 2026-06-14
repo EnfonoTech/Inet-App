@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
@@ -100,6 +101,9 @@ function Pill({ label, value, tone = "blue" }) {
 
 export default function WorkDone() {
   const { rowLimit } = useTableRowLimit();
+  const location = useLocation();
+  const _navWD = location.state?.workDoneFilters;
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -111,8 +115,9 @@ export default function WorkDone() {
   const [teamFilter, setTeamFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [fromDate, setFromDate] = useState(_navWD?.fromDate ?? "");
+  const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
+  const [excludeBackend, setExcludeBackend] = useState(_navWD?.excludeBackend ?? false);
   const [detailRow, setDetailRow] = useState(null);
   const [submissionFor, setSubmissionFor] = useState(null);
   const [submissionPick, setSubmissionPick] = useState("");
@@ -194,6 +199,7 @@ export default function WorkDone() {
         if (duidFilter.length) filters.site_code = duidFilter;
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
+        if (excludeBackend) filters.exclude_backend = true;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const list = await pmApi.listWorkDoneRows(filters, rowLimit);
         if (cancelled) return;
@@ -205,7 +211,7 @@ export default function WorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, excludeBackend, refreshKey]);
 
   const hasFilters = !!(searchDebounced || billingFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
@@ -303,11 +309,26 @@ export default function WorkDone() {
           minWidth={150}
         />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
-        {hasFilters && (
+        <button
+          type="button"
+          onClick={() => setExcludeBackend(!excludeBackend)}
+          title={excludeBackend ? "Showing field work only — click to show all" : "Click to hide backend work"}
+          style={{
+            padding: "6px 12px", fontSize: "0.8rem", fontWeight: 600,
+            borderRadius: 7, cursor: "pointer", whiteSpace: "nowrap",
+            border: `1px solid ${excludeBackend ? "#1d4ed8" : "#e2e8f0"}`,
+            background: excludeBackend ? "#eff6ff" : "#f8fafc",
+            color: excludeBackend ? "#1d4ed8" : "#94a3b8",
+            transition: "all 0.12s",
+          }}
+        >
+          Field Only
+        </button>
+        {(hasFilters || excludeBackend) && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); setExcludeBackend(false); }}
           >
             Clear
           </button>

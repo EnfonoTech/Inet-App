@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
@@ -139,9 +140,12 @@ export default function ExecutionMonitor() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const intervalRef = useRef(null);
 
+  const location = useLocation();
+  const _navExec = location.state?.execFilters;
+
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [planStatusFilter, setPlanStatusFilter] = useState(["Planned", "In Execution", "Completed", "Planning with Issue"]);
+  const [planStatusFilter, setPlanStatusFilter] = useState(_navExec?.planStatusFilter ?? ["Planned", "In Execution", "Completed", "Planning with Issue"]);
   const [executionStatusFilter, setExecutionStatusFilter] = useState([]);
   const [visitFilter, setVisitFilter] = useState([]);
   const [imFilter, setImFilter] = useState([]);

@@ -280,9 +280,17 @@ export default function CommandDashboard() {
             </span>
           }
         />
-        <KPICard label="Planned Activities" value={`SAR ${fmt.format(operational.planned_amount ?? 0)}`} sub={`${operational.planned_activities ?? 0} plans`} />
-        <KPICard label="Closed Activities" value={`SAR ${fmt.format(operational.closed_amount ?? 0)}`} sub={`${operational.closed_activities ?? 0} plans`} colorClass="text-green" />
-        <KPICard label="ReVisits" value={operational.revisits} colorClass="text-amber" />
+        <KPICard label="Planned Activities" value={`SAR ${fmt.format(operational.planned_amount ?? 0)}`} sub={`${operational.planned_activities ?? 0} plans`}
+          onClick={() => navigate("/execution", { state: { execFilters: { planStatusFilter: ["Planned"] } } })} />
+        <KPICard label="Closed Activities" value={`SAR ${fmt.format(operational.closed_amount ?? 0)}`} sub={`${operational.closed_activities ?? 0} plans`} colorClass="text-green"
+          onClick={() => navigate("/work-done", { state: { workDoneFilters: { fromDate: range.from, toDate: range.to, excludeBackend: true } } })} />
+        <KPICard
+          label="Unmapped Dummy POs"
+          value={operational.open_dummy_pos ?? 0}
+          colorClass={(operational.open_dummy_pos ?? 0) > 0 ? "text-amber" : ""}
+          sub={(operational.open_dummy_pos ?? 0) > 0 ? "Pending IM mapping" : "All mapped"}
+          onClick={() => navigate("/planning", { state: { planScope: "open_dummy" } })}
+        />
       </div>
 
       {/* ── Row 2: INET Teams Performance ──────────────────── */}
