@@ -972,9 +972,10 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
     ``OPEN`` (New / Dispatched / Completed), ``CLOSED``, ``CANCELLED``. Defaults
     to OPEN only so dumps stay small after archive imports.
     """
-    fd = getdate(from_date) if from_date else add_days(getdate(), -30)
-    td = getdate(to_date) if to_date else getdate()
-    if td < fd:
+    has_date_filter = bool(from_date and to_date)
+    fd = getdate(from_date) if from_date else None
+    td = getdate(to_date) if to_date else None
+    if has_date_filter and td < fd:
         frappe.throw("to_date must be on or after from_date")
 
     if isinstance(statuses, str):
@@ -995,16 +996,26 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
     if "CANCELLED" in bucket_set or "CANCELED" in bucket_set:
         line_status_filter.append("Cancelled")
 
-    parents = frappe.db.sql(
-        """
-        SELECT name, po_no, status, DATE(creation) AS upload_date
-        FROM `tabPO Intake`
-        WHERE DATE(creation) BETWEEN %s AND %s
-        ORDER BY creation DESC
-        """,
-        (fd, td),
-        as_dict=True,
-    )
+    if has_date_filter:
+        parents = frappe.db.sql(
+            """
+            SELECT name, po_no, status, DATE(creation) AS upload_date
+            FROM `tabPO Intake`
+            WHERE DATE(creation) BETWEEN %s AND %s
+            ORDER BY creation DESC
+            """,
+            (fd, td),
+            as_dict=True,
+        )
+    else:
+        parents = frappe.db.sql(
+            """
+            SELECT name, po_no, status, DATE(creation) AS upload_date
+            FROM `tabPO Intake`
+            ORDER BY creation DESC
+            """,
+            as_dict=True,
+        )
     parent_map = {p.name: p for p in parents}
     parent_names = list(parent_map.keys())
     rows_out = []

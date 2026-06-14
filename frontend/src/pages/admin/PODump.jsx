@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
@@ -35,10 +36,12 @@ function writeCache(payload) {
 
 export default function PODump() {
   const { rowLimit } = useTableRowLimit();
-  const cached = useRef(readCache());
+  const location = useLocation();
+  const navFilters = location.state?.poDumpFilters;
+  const cached = useRef(navFilters ? null : readCache()); // skip cache when navigating with filters
 
-  const [fromDate, setFromDate] = useState(cached.current?.fromDate || monthStartISO());
-  const [toDate, setToDate] = useState(cached.current?.toDate || todayISO());
+  const [fromDate, setFromDate] = useState(cached.current?.fromDate ?? "");
+  const [toDate, setToDate] = useState(cached.current?.toDate ?? "");
   const [rows, setRows] = useState(cached.current?.rows || []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -47,10 +50,11 @@ export default function PODump() {
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
 
-  // Default: hide closed/cancelled archive lines unless explicitly toggled.
-  const [showClosed, setShowClosed] = useState(cached.current?.showClosed ?? false);
-  const [showCancelled, setShowCancelled] = useState(cached.current?.showCancelled ?? false);
-  const [showOpen, setShowOpen] = useState(cached.current?.showOpen ?? true);
+  // Default: show Open only; hide closed/cancelled unless toggled.
+  // Navigation state overrides cache.
+  const [showOpen, setShowOpen] = useState(navFilters?.showOpen ?? cached.current?.showOpen ?? true);
+  const [showClosed, setShowClosed] = useState(navFilters?.showClosed ?? cached.current?.showClosed ?? false);
+  const [showCancelled, setShowCancelled] = useState(navFilters?.showCancelled ?? cached.current?.showCancelled ?? false);
 
   const activeStatuses = useMemo(() => {
     const out = [];
@@ -103,7 +107,7 @@ export default function PODump() {
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `po-dump-${fromDate}-to-${toDate}.csv`;
+    a.download = `po-dump${fromDate ? `-${fromDate}-to-${toDate}` : ""}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
