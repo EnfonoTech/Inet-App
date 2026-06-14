@@ -227,6 +227,16 @@ def _sql_search_clause(concat_expr, term):
     return f"({ors})", patterns
 
 
+def _apply_dummy_description(rows):
+    """For open dummy PO rows (is_dummy_po=1) replace item_description with
+    manager_remark so every list view shows the IM's note instead of the
+    placeholder text set at creation time."""
+    for r in rows:
+        if r.get("is_dummy_po"):
+            r["item_description"] = r.get("manager_remark") or ""
+    return rows
+
+
 def _po_dispatch_col_expr(col, alias=None, prefix="pd"):
     """Return ``"<prefix>.<col> AS <alias>"`` if the column exists on PO Dispatch,
     otherwise ``"NULL AS <alias>"``. Lets queries that touch optional columns
@@ -2180,7 +2190,7 @@ def create_im_dummy_po_dispatch(payload=None):
 
     # item_code is a Link to Item — leaving it blank avoids tripping the
     # LinkValidationError. The map-to-intake-line step fills the real item.
-    item_description = "Fill by mapping to PO Intake line"
+    item_description = ""
     qty = flt(1)
     rate = flt(0)
     line_amount = flt(0)
@@ -2426,6 +2436,7 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
         imn = r.get("im")
         r["im_full_name"] = im_labels.get(imn) if imn else None
         r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+    _apply_dummy_description(rows)
     return rows
 
 
@@ -4915,6 +4926,8 @@ def list_execution_monitor_rows(filters=None, limit=500):
             d_fields.append("region_type")
         if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
             d_fields.append("original_dummy_poid")
+        if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
+            d_fields.append("is_dummy_po")
         for rk in ("general_remark", "manager_remark", "team_lead_remark"):
             if frappe.db.has_column("PO Dispatch", rk):
                 d_fields.append(rk)
@@ -4987,6 +5000,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "general_remark": d.get("general_remark") if d else None,
                 "manager_remark": d.get("manager_remark") if d else None,
                 "team_lead_remark": d.get("team_lead_remark") if d else None,
+                "is_dummy_po": d.get("is_dummy_po") if d else None,
                 "original_dummy_poid": (
                     (d.get("original_dummy_poid") or "").strip()
                     if d and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
@@ -4998,6 +5012,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
         cim_map = _batch_customer_activity_types(out)
         for r in out:
             r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+        _apply_dummy_description(out)
     return out
 
 
@@ -5193,7 +5208,7 @@ def list_work_done_rows(filters=None, limit=500):
     all_dispatch_names = dispatch_names + sys_id_extras
     pd_map = {}
     if all_dispatch_names:
-        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer", "line_amount", "po_line_no", "dispatch_status"]
+        pd_fields_wd = ["name", "po_no", "project_code", "site_name", "site_code", "item_code", "item_description", "customer", "line_amount", "po_line_no", "dispatch_status", "is_dummy_po"]
         for opt in ("general_remark", "manager_remark", "team_lead_remark"):
             if frappe.db.has_column("PO Dispatch", opt):
                 pd_fields_wd.append(opt)
@@ -5313,6 +5328,7 @@ def list_work_done_rows(filters=None, limit=500):
                 "project_name": project_name_map.get(project_code) if project_code else None,
                 "general_remark": pd.get("general_remark") if pd else None,
                 "manager_remark": pd.get("manager_remark") if pd else None,
+                "is_dummy_po": pd.get("is_dummy_po") if pd else None,
                 "team_lead_remark": pd.get("team_lead_remark") if pd else None,
                 "pic_rejection_remark": pd.get("pic_rejection_remark") if pd else None,
                 "original_dummy_poid": (
@@ -5340,6 +5356,7 @@ def list_work_done_rows(filters=None, limit=500):
             key=lambda r: (r.get("execution_date") or "", r.get("modified") or ""),
             reverse=True,
         )
+    _apply_dummy_description(out)
     return out
 
 
@@ -5822,6 +5839,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             pd.site_name,
             pd.item_code,
             pd.item_description,
+            pd.is_dummy_po,
             pd.line_amount,
             pd.center_area,
             pd.region_type,
@@ -5883,6 +5901,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
                 "site_name": r.get("site_name"),
                 "item_code": r.get("item_code"),
                 "item_description": r.get("item_description"),
+                "is_dummy_po": r.get("is_dummy_po"),
                 "line_amount": r.get("line_amount"),
                 "center_area": r.get("center_area"),
                 "region_type": r.get("region_type"),
@@ -5900,6 +5919,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
                 "modified": r.get("modified"),
             }
         )
+    _apply_dummy_description(out)
     return out
 
 
@@ -6600,7 +6620,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                rp.cancel_requested_at, rp.cancel_responded_at, rp.cancel_pm_remark,
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
-               pd.customer AS customer, pd.item_description,
+               pd.customer AS customer, pd.item_description, pd.is_dummy_po,
                {_remark_select()},
                it.team_name AS team_name,
                {im_full_sql}
@@ -6621,6 +6641,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         cim_map = _batch_customer_activity_types(rows)
         for r in rows:
             r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+        _apply_dummy_description(rows)
     return rows or []
 
 
@@ -6758,6 +6779,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                {access_time_sel} AS access_time,
                {access_period_sel} AS access_period,
                pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
+               pd.is_dummy_po,
                pd.customer AS customer,
                {_remark_select()},
                (
@@ -6791,6 +6813,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         cim_map = _batch_customer_activity_types(rows)
         for r in rows:
             r["customer_activity_type"] = cim_map.get((r.get("customer") or "", r.get("item_code") or ""))
+        _apply_dummy_description(rows)
     return rows or []
 
 

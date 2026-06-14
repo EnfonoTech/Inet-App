@@ -352,7 +352,7 @@ export default function IMPOIntake() {
                   <tr key={row.name}
                       className={selected.has(row.name) ? "row-selected" : ""}
                       onClick={() => toggleRow(row.name)}
-                      style={{ cursor: "pointer", background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined }}>
+                      style={{ cursor: "pointer", background: row.is_dummy_po ? "#fffbeb" : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined }}>
                     <td onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"

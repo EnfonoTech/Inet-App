@@ -316,7 +316,7 @@ export default function IMPlanning() {
                     key={p.name}
                     className={selected.has(p.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(p.name)}
-                    style={{ cursor: "pointer" }}
+                    style={{ cursor: "pointer", ...(p.is_dummy_po ? { background: "#fffbeb" } : {}) }}
                   >
                     <td onClick={(e) => e.stopPropagation()}>
                       <input

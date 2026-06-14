@@ -29,7 +29,6 @@
   "dispatch_status",
   "dispatch_mode",
   "is_dummy_po",
-  "dummy_note",
   "original_dummy_poid",
   "was_dummy_po",
   "section_site",
@@ -218,11 +217,6 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Dummy PO"
-  },
-  {
-   "fieldname": "dummy_note",
-   "fieldtype": "Small Text",
-   "label": "Dummy note"
   },
   {
    "description": "Business POID while the line was still dummy (unchanged after map to real PO).",

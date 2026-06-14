@@ -522,7 +522,7 @@ export default function RolloutPlanning() {
                     key={row.name}
                     className={selected.has(row.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(row.name)}
-                    style={{ cursor: "pointer" }}
+                    style={{ cursor: "pointer", ...(row.is_dummy_po ? { background: "#fffbeb" } : {}) }}
                   >
                     <td onClick={(e) => e.stopPropagation()}>
                       <input
@@ -564,7 +564,12 @@ export default function RolloutPlanning() {
                       )}
                     </td>
                     <td>{row.item_code}</td>
-                    <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
+                    <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      title={row.item_description || ""}>
+                      {row.is_dummy_po
+                        ? <span style={{ color: "#b45309", fontStyle: "italic" }}>{row.item_description || "—"}</span>
+                        : (row.item_description || "—")}
+                    </td>
                     <td style={{ fontSize: "0.82rem" }}>{row.customer_activity_type || "—"}</td>
                     <td>{row.project_code}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>

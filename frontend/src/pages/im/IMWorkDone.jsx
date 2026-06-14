@@ -338,7 +338,7 @@ export default function IMWorkDone() {
                     key={r.name}
                     className={selectedRow?.name === r.name ? "row-selected" : ""}
                     onClick={() => setSelectedRow((prev) => prev?.name === r.name ? null : r)}
-                    style={{ cursor: "pointer" }}
+                    style={{ cursor: "pointer", ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}
                   >
                     <td style={{ width: 36, padding: "6px 4px", textAlign: "center", boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
                       <input

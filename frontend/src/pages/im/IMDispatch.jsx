@@ -1120,7 +1120,7 @@ export default function IMDispatch() {
                 "po_line_no", "shipment_number",
                 "site_code", "site_name", "area", "center_area", "region_type",
                 "target_month", "planning_mode",
-                "is_dummy_po", "was_dummy_po", "original_dummy_poid", "dummy_note",
+                "is_dummy_po", "was_dummy_po", "original_dummy_poid",
                 "customer",
               ]}
             />

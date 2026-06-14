@@ -647,7 +647,7 @@ export default function IMExecution() {
               </thead>
               <tbody>
                 {executions.map((e) => (
-                  <tr key={e.name}>
+                  <tr key={e.name} style={e.is_dummy_po ? { background: "#fffbeb" } : undefined}>
                     <td>
                       <input
                         type="checkbox"

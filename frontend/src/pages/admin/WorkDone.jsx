@@ -389,7 +389,7 @@ export default function WorkDone() {
                 {rows.map((row) => {
                   const revenue = parseFloat(row.revenue_sar || row.revenue || row.line_amount) || 0;
                   return (
-                    <tr key={row.name}>
+                    <tr key={row.name} style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() ? `Dummy POID: ${row.original_dummy_poid}` : ""}>
                         {(row.original_dummy_poid || "").trim() || "—"}

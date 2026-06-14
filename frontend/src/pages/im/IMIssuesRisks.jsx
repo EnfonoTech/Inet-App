@@ -307,7 +307,7 @@ export default function IMIssuesRisks() {
               </thead>
               <tbody>
                 {filteredRows.map((r) => (
-                  <tr key={`${r.rollout_plan}-${r.execution_name || ""}`}>
+                  <tr key={`${r.rollout_plan}-${r.execution_name || ""}`} style={{ ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
                     <td>
                       <input
                         type="checkbox"
