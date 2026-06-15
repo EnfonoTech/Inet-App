@@ -12,6 +12,22 @@ import { useAuth } from "../../context/AuthContext";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
+const DOC_REQUIREMENTS = {
+  "installation":    { doc1Label: "Confirmation Mail", doc2: null },
+  "Dismantle":       { doc1Label: "Confirmation Mail", doc2: { label: "Supporting Documents", parts: [{ label: "Dismantling Checklist", slot: "im_doc2a" }, { label: "PPT", slot: "im_doc2b" }, { label: "POD", slot: "im_doc2c" }] } },
+  "Survey & Design": { doc1Label: "Confirmation Mail", doc2: { label: "Survey Report" } },
+  "PAT":             { doc1Label: "Confirmation Mail", doc2: { label: "PAT Document" } },
+  "Design":          { doc1Label: "Confirmation Mail", doc2: { label: "MOP / SED" } },
+  "test":            { doc1Label: "Confirmation Mail", doc2: { label: "Test Report" } },
+  "Visit":           { doc1Label: "Confirmation Mail", doc2: { label: "Visit Justification Mail" } },
+  "Local Material":  { doc1Label: "Confirmation Mail", doc2: { label: "POD" } },
+  "commission":      { doc1Label: "Confirmation", doc2: null },
+  "Acquizision":     { doc1Label: "Confirmation", doc2: null },
+  "Batteries":       { doc1Label: "Confirmation Mail", doc2: null },
+  "Migration":       { doc1Label: "Confirmation Mail", doc2: null },
+  "Document":        { doc1Label: "Confirmation Mail", doc2: { label: "Document" } },
+};
+
 const PIC_STATUSES = [
   "Work Not Done",
   "Under Process to Apply",
@@ -853,29 +869,78 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
           {tab === "ATT" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <Card title="IM Documents">
-                <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: 10 }}>
-                  Files uploaded by the IM for this POID.
-                </div>
+                {row?.im_confirmation_note && (
+                  <div style={{ marginBottom: 12, padding: "10px 12px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: "0.85rem", color: "#1e40af" }}>
+                    <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#3b82f6", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>IM Note</div>
+                    {row.im_confirmation_note}
+                  </div>
+                )}
                 {imAttachLoading ? (
                   <div style={{ color: "#94a3b8", textAlign: "center", padding: "12px 0" }}>Loading…</div>
                 ) : !imAttachments || imAttachments.length === 0 ? (
                   <div style={{ color: "#94a3b8", textAlign: "center", padding: "12px 0", fontSize: "0.85rem" }}>No IM documents found.</div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                    {imAttachments.map((f) => (
-                      <a key={f.name} href={f.file_url} target="_blank" rel="noopener noreferrer"
-                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 7, textDecoration: "none" }}>
-                        <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>📎</span>
-                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.85rem", color: "#1d4ed8" }}>{f.file_name}</span>
-                        {f.file_size ? (
-                          <span style={{ fontSize: "0.72rem", color: "#94a3b8", flexShrink: 0 }}>
-                            {f.file_size < 1024 * 1024 ? `${Math.round(f.file_size / 1024)} KB` : `${(f.file_size / (1024 * 1024)).toFixed(1)} MB`}
-                          </span>
-                        ) : null}
-                      </a>
-                    ))}
-                  </div>
-                )}
+                ) : (() => {
+                  const docReq = DOC_REQUIREMENTS[row.activity_type] || null;
+                  const doc2Parts = docReq?.doc2?.parts;
+                  const doc2Tone = { bg: "#f0fdf4", bd: "#bbf7d0", fg: "#14532d", tag: "#16a34a" };
+                  const slots = [
+                    { key: "im_doc1", label: docReq?.doc1Label || "Confirmation Mail", tag: "DOC1", tone: { bg: "#eff6ff", bd: "#bfdbfe", fg: "#1e40af", tag: "#3b82f6" } },
+                    ...(doc2Parts
+                      ? [
+                          ...doc2Parts.map((p) => ({ key: p.slot, label: p.label, tag: "DOC2", tone: doc2Tone })),
+                          { key: "im_doc2", label: docReq.doc2.label || "Supporting Documents", tag: "DOC2", tone: doc2Tone },
+                        ]
+                      : [{ key: "im_doc2", label: docReq?.doc2?.label || "Supporting Document", tag: "DOC2", tone: doc2Tone }]),
+                    { key: "im_attachment", label: "Other Attachments", tag: "ATT", tone: { bg: "#f8fafc", bd: "#e2e8f0", fg: "#0f172a", tag: "#64748b" } },
+                  ];
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {slots.map(({ key, label, tag, tone }) => {
+                        const files = imAttachments.filter((f) => f.attached_to_field === key);
+                        if (!files.length) return null;
+                        return (
+                          <div key={key} style={{ border: `1px solid ${tone.bd}`, borderRadius: 8, overflow: "hidden" }}>
+                            <div style={{ background: tone.bg, borderBottom: `1px solid ${tone.bd}`, padding: "6px 10px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ fontSize: "0.65rem", fontWeight: 700, color: tone.tag, textTransform: "uppercase", letterSpacing: "0.06em" }}>{tag}</span>
+                                <span style={{ fontSize: "0.78rem", fontWeight: 600, color: tone.fg }}>{label}</span>
+                              </div>
+                              {(() => {
+                                const slotDocReq = key === "im_doc2" ? docReq?.doc2 : key === "im_doc1" ? null : null;
+                                return slotDocReq?.parts?.length > 0 ? (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4 }}>
+                                    {slotDocReq.parts.map((p) => (
+                                      <span key={p.slot || p} style={{ fontSize: "0.65rem", fontWeight: 600, padding: "1px 7px", borderRadius: 999, background: "#fff", color: tone.fg, border: `1px solid ${tone.bd}` }}>{p.label || p}</span>
+                                    ))}
+                                  </div>
+                                ) : null;
+                              })()}
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                              {files.map((f, i) => {
+                                const isMsgFile = (f.file_name || "").toLowerCase().endsWith(".msg");
+                                return (
+                                  <a key={f.name} href={f.file_url} download={isMsgFile ? f.file_name : undefined}
+                                    target={isMsgFile ? undefined : "_blank"} rel="noopener noreferrer"
+                                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: i % 2 === 0 ? "#fff" : tone.bg, textDecoration: "none", borderTop: i > 0 ? `1px solid ${tone.bd}` : "none" }}>
+                                    <span style={{ fontSize: "1rem", flexShrink: 0 }}>{isMsgFile ? "✉️" : "📎"}</span>
+                                    <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.85rem", color: "#1d4ed8" }}>{f.file_name}</div>
+                                    {f.file_size ? (
+                                      <span style={{ fontSize: "0.72rem", color: "#94a3b8", flexShrink: 0 }}>
+                                        {f.file_size < 1024 * 1024 ? `${Math.round(f.file_size / 1024)} KB` : `${(f.file_size / (1024 * 1024)).toFixed(1)} MB`}
+                                      </span>
+                                    ) : null}
+                                    {isMsgFile && <span style={{ fontSize: "0.68rem", color: "#64748b", flexShrink: 0 }}>↓ download</span>}
+                                  </a>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </Card>
 
               {role === "pic" && (

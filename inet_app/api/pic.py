@@ -10,6 +10,7 @@ import frappe
 from frappe.utils import cint, flt, getdate, nowdate
 
 from inet_app.api.command_center import (
+    _batch_item_activity_types,
     _dashboard_etag,
     _ensure_list,
     _iso_now,
@@ -258,6 +259,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       pd.pic_status_ms2,
       pd.isdp_owner, pd.ibuy_owner,
       pd.pic_detail_remark, pd.pic_detail_remark_ms2,
+      pd.im_confirmation_note,
       pd.ms1_pct, pd.ms2_pct,
       pd.ms1_amount, pd.ms2_amount,
       pd.ms1_invoiced, pd.ms2_invoiced,
@@ -276,7 +278,12 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     ORDER BY pd.modified DESC
     {_sql_limit_suffix(limit_page_length)}
     """
-    return frappe.db.sql(sql, tuple(params), as_dict=True)
+    rows = frappe.db.sql(sql, tuple(params), as_dict=True)
+    if rows:
+        act_map = _batch_item_activity_types(rows)
+        for r in rows:
+            r["activity_type"] = act_map.get(r.get("item_code") or "")
+    return rows
 
 
 # Fields the PIC is allowed to write via update_pic_row. Anything outside this
@@ -1435,19 +1442,22 @@ def reject_pic_line(po_dispatch, remark):
 
 @frappe.whitelist()
 def get_po_dispatch_im_attachments(po_dispatch):
-    """Return IM file attachments for a PO Dispatch (uploaded by IM)."""
+    """Return IM file attachments for a PO Dispatch (uploaded by IM).
+    Includes legacy im_attachment and the newer im_doc1/im_doc2 slots."""
     po_dispatch = (po_dispatch or "").strip()
     if not po_dispatch:
         return []
-    return frappe.get_all(
-        "File",
-        filters={
-            "attached_to_doctype": "PO Dispatch",
-            "attached_to_name": po_dispatch,
-            "attached_to_field": "im_attachment",
-        },
-        fields=["name", "file_name", "file_url", "file_size", "creation"],
-        order_by="creation desc",
+    return frappe.db.sql(
+        """
+        SELECT name, file_name, file_url, file_size, attached_to_field, creation
+        FROM `tabFile`
+        WHERE attached_to_doctype = 'PO Dispatch'
+          AND attached_to_name = %s
+          AND attached_to_field IN ('im_attachment', 'im_doc1', 'im_doc2', 'im_doc2a', 'im_doc2b', 'im_doc2c')
+        ORDER BY attached_to_field, creation ASC
+        """,
+        po_dispatch,
+        as_dict=True,
     )
 
 

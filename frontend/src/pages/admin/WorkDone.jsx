@@ -19,6 +19,112 @@ const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 const BILLING_STATUSES = ["", "Pending", "Invoiced", "Closed"];
 
+const DOC_REQUIREMENTS = {
+  "installation":    { doc1Label: "Confirmation Mail", doc2: null },
+  "Dismantle":       { doc1Label: "Confirmation Mail", doc2: { label: "Supporting Documents", parts: [{ label: "Dismantling Checklist", slot: "im_doc2a" }, { label: "PPT", slot: "im_doc2b" }, { label: "POD", slot: "im_doc2c" }], accept: ".pdf,.xls,.xlsx,.doc,.docx,.ppt,.pptx" } },
+  "Survey & Design": { doc1Label: "Confirmation Mail", doc2: { label: "Survey Report", accept: ".pdf" } },
+  "PAT":             { doc1Label: "Confirmation Mail", doc2: { label: "PAT Document", accept: ".pdf" } },
+  "Design":          { doc1Label: "Confirmation Mail", doc2: { label: "MOP / SED", accept: ".pdf" } },
+  "test":            { doc1Label: "Confirmation Mail", doc2: { label: "Test Report", accept: ".pdf,.xls,.xlsx,.doc,.docx,.csv" } },
+  "Visit":           { doc1Label: "Confirmation Mail", doc2: { label: "Visit Justification Mail", accept: ".msg" } },
+  "Local Material":  { doc1Label: "Confirmation Mail", doc2: { label: "POD", accept: ".pdf" } },
+  "commission":      { doc1Label: "Confirmation", doc2: null },
+  "Acquizision":     { doc1Label: "Confirmation", doc2: null },
+  "Batteries":       { doc1Label: "Confirmation Mail", doc2: null },
+  "Migration":       { doc1Label: "Confirmation Mail", doc2: null },
+  "Document":        { doc1Label: "Confirmation Mail", doc2: { label: "Document", accept: ".pdf" } },
+};
+
+function AttachmentSlotList({ attachments, docReq }) {
+  if (!attachments?.length) return null;
+  const doc2Parts = docReq?.doc2?.parts;
+  const doc2SlotProps = { tag: "DOC2", bg: "#f0fdf4", bd: "#bbf7d0", fg: "#14532d", tagColor: "#16a34a" };
+  const slots = [
+    { key: "im_doc1", label: docReq?.doc1Label || "Confirmation Mail", tag: "DOC1", bg: "#eff6ff", bd: "#bfdbfe", fg: "#1e40af", tagColor: "#3b82f6" },
+    ...(doc2Parts
+      ? [
+          ...doc2Parts.map((p) => ({ key: p.slot, label: p.label, ...doc2SlotProps })),
+          { key: "im_doc2", label: docReq.doc2.label || "Supporting Documents", ...doc2SlotProps },
+        ]
+      : [{ key: "im_doc2", label: docReq?.doc2?.label || "Supporting Document", ...doc2SlotProps }]),
+    { key: "im_attachment", label: "Other Attachments", tag: "ATT", bg: "#f8fafc", bd: "#e2e8f0", fg: "#334155", tagColor: "#64748b" },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {slots.map(({ key, label, tag, bg, bd, fg, tagColor, parts }) => {
+        const files = attachments.filter((f) => f.attached_to_field === key);
+        if (!files.length) return null;
+        return (
+          <div key={key} style={{ border: `1px solid ${bd}`, borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ background: bg, borderBottom: `1px solid ${bd}`, padding: "5px 10px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: "0.65rem", fontWeight: 700, color: tagColor, textTransform: "uppercase", letterSpacing: "0.06em" }}>{tag}</span>
+                <span style={{ fontSize: "0.78rem", fontWeight: 600, color: fg }}>{label}</span>
+              </div>
+              {parts?.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 3 }}>
+                  {parts.map((p) => <span key={p} style={{ fontSize: "0.62rem", padding: "1px 6px", borderRadius: 999, background: "#fff", color: fg, border: `1px solid ${bd}` }}>{p}</span>)}
+                </div>
+              )}
+            </div>
+            {files.map((f, i) => {
+              const isMsgFile = (f.file_name || "").toLowerCase().endsWith(".msg");
+              return (
+                <a key={f.name} href={f.file_url} download={isMsgFile ? f.file_name : undefined}
+                  target={isMsgFile ? undefined : "_blank"} rel="noopener noreferrer"
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: i % 2 === 0 ? "#fff" : bg, textDecoration: "none", borderTop: i > 0 ? `1px solid ${bd}` : "none" }}>
+                  <span style={{ fontSize: "1rem", flexShrink: 0 }}>{isMsgFile ? "✉️" : "📎"}</span>
+                  <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.85rem", color: "#1d4ed8" }}>{f.file_name}</div>
+                  {f.file_size ? <span style={{ fontSize: "0.72rem", color: "#94a3b8", flexShrink: 0 }}>{f.file_size < 1048576 ? `${Math.round(f.file_size / 1024)} KB` : `${(f.file_size / 1048576).toFixed(1)} MB`}</span> : null}
+                  {isMsgFile && <span style={{ fontSize: "0.68rem", color: "#64748b", flexShrink: 0 }}>↓ download</span>}
+                </a>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FileSlot({ slotKey, slotLabel, accept, files, setFiles, required }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        {slotKey && <span>{slotKey} —</span>} {slotLabel}
+        {required && <span style={{ fontSize: "0.7rem", color: "#ef4444", fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>* required</span>}
+        {accept && <span style={{ fontSize: "0.68rem", color: "#94a3b8", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>({accept})</span>}
+      </div>
+      <label style={{
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: 4, padding: "10px 14px", border: `2px dashed ${files.length > 0 ? "#86efac" : "#cbd5e1"}`,
+        borderRadius: 8, cursor: "pointer",
+        background: files.length > 0 ? "#f0fdf4" : "#f8fafc",
+        color: "#64748b", fontSize: "0.8rem",
+      }}>
+        <span style={{ fontSize: "1.1rem" }}>📁</span>
+        {files.length > 0
+          ? <span style={{ color: "#047857", fontWeight: 600 }}>{files.length} file{files.length !== 1 ? "s" : ""} selected</span>
+          : <span>Click to select</span>}
+        <input type="file" multiple accept={accept || undefined} style={{ display: "none" }}
+          onChange={(e) => setFiles(Array.from(e.target.files))} />
+      </label>
+      {files.length > 0 && (
+        <div style={{ marginTop: 4, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: "5px 10px" }}>
+          {files.map((f, i) => (
+            <div key={i} style={{ fontSize: "0.78rem", color: "#14532d", display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}>
+              <span>📄</span>{f.name}
+              <span style={{ color: "#16a34a", fontSize: "0.7rem" }}>
+                {f.size < 1024 * 1024 ? `${Math.round(f.size / 1024)} KB` : `${(f.size / 1024 / 1024).toFixed(1)} MB`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function badgeTone(value) {
   const s = String(value || "").toLowerCase();
   if (!s) return { bg: "#f1f5f9", fg: "#334155", dot: "#64748b" };
@@ -119,19 +225,26 @@ export default function WorkDone() {
   const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
   const [excludeBackend, setExcludeBackend] = useState(_navWD?.excludeBackend ?? false);
   const [detailRow, setDetailRow] = useState(null);
+  const [selectedRow, setSelectedRow] = useState(null);
   const [submissionFor, setSubmissionFor] = useState(null);
   const [submissionPick, setSubmissionPick] = useState("");
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const [submissionErr, setSubmissionErr] = useState(null);
   const [submissionWarn, setSubmissionWarn] = useState(null);
-  const [attachFiles, setAttachFiles] = useState([]);
+  const [doc1Files, setDoc1Files] = useState([]);
+  const [doc2Files, setDoc2Files] = useState([]);
+  const [doc2PartFiles, setDoc2PartFiles] = useState([]);
+  const [imNote, setImNote] = useState("");
   const [existingAttachments, setExistingAttachments] = useState([]);
   const [attachLoading, setAttachLoading] = useState(false);
 
   function openSubmissionModal(r) {
     setSubmissionErr(null);
     setSubmissionPick(r.submission_status || "");
-    setAttachFiles([]);
+    setDoc1Files([]);
+    setDoc2Files([]);
+    setDoc2PartFiles([]);
+    setImNote("");
     setExistingAttachments([]);
     setSubmissionFor(r);
     const po_dispatch = r.po_dispatch || r.poid;
@@ -147,27 +260,42 @@ export default function WorkDone() {
   async function submitSubmission() {
     if (!submissionFor) return;
     const needsAttach = submissionPick === "Confirmation Done";
-    if (needsAttach && existingAttachments.length === 0 && attachFiles.length === 0) {
-      setSubmissionErr("At least one attachment is required when setting Confirmation Done.");
-      return;
+    if (needsAttach && existingAttachments.length === 0) {
+      const docReq = DOC_REQUIREMENTS[submissionFor.activity_type];
+      if (doc1Files.length === 0) {
+        setSubmissionErr(`DOC1 (${docReq?.doc1Label || "Confirmation Mail"}) is required for Confirmation Done.`);
+        return;
+      }
+      if (docReq?.doc2) {
+        const hasDoc2 = docReq.doc2.parts ? doc2PartFiles.flat().length > 0 : doc2Files.length > 0;
+        if (!hasDoc2) {
+          setSubmissionErr(`DOC2 (${docReq.doc2.label}) is required for this activity type.`);
+          return;
+        }
+      }
     }
     setSubmissionBusy(true);
     setSubmissionErr(null);
     try {
       const po_dispatch = submissionFor.po_dispatch || submissionFor.poid;
-      if (po_dispatch) {
-        for (const file of attachFiles) {
-          await pmApi.uploadImAttachment(po_dispatch, file);
+      if (!po_dispatch) throw new Error("Missing PO Dispatch reference");
+      const docReqUp = DOC_REQUIREMENTS[submissionFor?.activity_type];
+      for (const file of doc1Files) await pmApi.uploadImAttachment(po_dispatch, file, "im_doc1");
+      if (docReqUp?.doc2?.parts) {
+        for (let i = 0; i < docReqUp.doc2.parts.length; i++) {
+          for (const file of (doc2PartFiles[i] || [])) {
+            await pmApi.uploadImAttachment(po_dispatch, file, docReqUp.doc2.parts[i].slot);
+          }
         }
+      } else {
+        for (const file of doc2Files) await pmApi.uploadImAttachment(po_dispatch, file, "im_doc2");
       }
       let res;
       if (submissionFor.is_subcon) {
-        const dispatch = submissionFor.po_dispatch || submissionFor.poid;
-        if (!dispatch) throw new Error("Missing PO Dispatch reference for sub-contract row");
-        res = await pmApi.updateSubconSubmission(dispatch, submissionPick);
+        res = await pmApi.updateSubconSubmission(po_dispatch, submissionPick, imNote || undefined);
       } else {
         if (!submissionFor.name) throw new Error("Missing Work Done name");
-        res = await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick);
+        res = await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick, imNote || undefined);
       }
       setSubmissionFor(null);
       if (res?.pic_warning) setSubmissionWarn(res.pic_warning);
@@ -333,6 +461,21 @@ export default function WorkDone() {
             Clear
           </button>
         )}
+        <div className="toolbar-actions">
+          {selectedRow && (
+            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+              {selectedRow.poid || selectedRow.po_dispatch} selected
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={!selectedRow}
+            onClick={() => openSubmissionModal(selectedRow)}
+          >
+            Update Submission
+          </button>
+        </div>
       </div>
 
       <div className="page-content">
@@ -361,6 +504,14 @@ export default function WorkDone() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th style={{ width: 36 }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedRow != null}
+                      onChange={() => setSelectedRow(null)}
+                      title="Clear selection"
+                    />
+                  </th>
                   <th>POID</th>
                   <th>Dummy POID</th>
                   <th>Execution</th>
@@ -389,7 +540,18 @@ export default function WorkDone() {
                 {rows.map((row) => {
                   const revenue = parseFloat(row.revenue_sar || row.revenue || row.line_amount) || 0;
                   return (
-                    <tr key={row.name} style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
+                    <tr key={row.name}
+                      className={selectedRow?.name === row.name ? "row-selected" : ""}
+                      style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}), cursor: "pointer" }}
+                      onClick={() => setSelectedRow((prev) => prev?.name === row.name ? null : row)}
+                    >
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedRow?.name === row.name}
+                          onChange={() => setSelectedRow((prev) => prev?.name === row.name ? null : row)}
+                        />
+                      </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() ? `Dummy POID: ${row.original_dummy_poid}` : ""}>
                         {(row.original_dummy_poid || "").trim() || "—"}
@@ -410,16 +572,7 @@ export default function WorkDone() {
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.executed_qty}</td>
                       <td style={{ textAlign: "right", color: "var(--green)" }}>{fmt.format(revenue)}</td>
-                      <td>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); openSubmissionModal(row); }}
-                          style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
-                          title="Click to change submission status"
-                        >
-                          <StatusPill value={row.submission_status} />
-                        </button>
-                      </td>
+                      <td><StatusPill value={row.submission_status} /></td>
                       <td title={row.pic_status ? `PIC status: ${row.pic_status}` : ""}><StatusPill value={row.billing_status} /></td>
                       <td><RemarksCell value={row.general_remark} tone="general" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.general_remark = v; }} /></td>
                       <td><RemarksCell value={row.manager_remark} tone="manager" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.manager_remark = v; }} /></td>
@@ -429,7 +582,7 @@ export default function WorkDone() {
                           type="button"
                           className="btn-secondary"
                           style={{ fontSize: "0.72rem", padding: "4px 10px" }}
-                          onClick={() => setDetailRow(row)}
+                          onClick={(e) => { e.stopPropagation(); setDetailRow(row); }}
                         >
                           View
                         </button>
@@ -443,7 +596,7 @@ export default function WorkDone() {
                   <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
                     {rows.length} rows
                   </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                   <td style={{ textAlign: "right", padding: "8px 16px" }} />
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
                   <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
@@ -504,59 +657,94 @@ export default function WorkDone() {
             </div>
 
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
                 Attachments
-                {submissionPick === "Confirmation Done" && (
-                  <span style={{ fontSize: "0.7rem", color: "#ef4444", fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>* required</span>
-                )}
-                <span style={{ fontSize: "0.7rem", color: "#64748b", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>— saved to PO Dispatch</span>
               </div>
 
               {attachLoading ? (
                 <div style={{ color: "#94a3b8", fontSize: "0.82rem", padding: "6px 0" }}>Loading…</div>
               ) : existingAttachments.length > 0 ? (
-                <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
-                  <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#64748b", marginBottom: 4 }}>EXISTING ({existingAttachments.length})</div>
-                  {existingAttachments.map((f) => (
-                    <div key={f.name} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", fontSize: "0.82rem" }}>
-                      <span style={{ color: "#64748b" }}>📎</span>
-                      <a href={f.file_url} target="_blank" rel="noopener noreferrer" style={{ color: "#1d4ed8", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 360 }}>
-                        {f.file_name}
-                      </a>
-                      {f.file_size ? (
-                        <span style={{ color: "#94a3b8", fontSize: "0.72rem", flexShrink: 0 }}>
-                          {f.file_size < 1024 * 1024
-                            ? `${Math.round(f.file_size / 1024)} KB`
-                            : `${(f.file_size / (1024 * 1024)).toFixed(1)} MB`}
-                        </span>
-                      ) : null}
-                    </div>
-                  ))}
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 5 }}>Existing Documents</div>
+                  <AttachmentSlotList attachments={existingAttachments} docReq={DOC_REQUIREMENTS[submissionFor?.activity_type] || null} />
                 </div>
               ) : null}
 
-              <label style={{
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                gap: 6, padding: "12px 16px", border: "2px dashed #cbd5e1", borderRadius: 8,
-                cursor: "pointer", background: "#f8fafc", color: "#64748b", fontSize: "0.82rem",
-              }}>
-                <span style={{ fontSize: "1.3rem" }}>📁</span>
-                <span>Click to attach files (PDF, Excel, email, images, any type)</span>
-                {attachFiles.length > 0 && (
-                  <span style={{ color: "#047857", fontWeight: 600 }}>{attachFiles.length} file{attachFiles.length !== 1 ? "s" : ""} selected</span>
-                )}
-                <input
-                  type="file"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => setAttachFiles(Array.from(e.target.files))}
-                />
-              </label>
+              {(() => {
+                const docReq = DOC_REQUIREMENTS[submissionFor?.activity_type] || null;
+                const isConfDone = submissionPick === "Confirmation Done";
+                const hasExisting = existingAttachments.length > 0;
+                return (
+                  <>
+                    <FileSlot
+                      slotKey="DOC1"
+                      slotLabel={docReq?.doc1Label || "Confirmation Mail"}
+                      accept=".msg"
+                      files={doc1Files}
+                      setFiles={setDoc1Files}
+                      required={isConfDone && !hasExisting}
+                    />
+                    {docReq?.doc2 ? (
+                      docReq.doc2.parts ? (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                            DOC2 — {docReq.doc2.label}
+                            {isConfDone && !hasExisting && <span style={{ fontSize: "0.7rem", color: "#ef4444", fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>* required</span>}
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px" }}>
+                            {docReq.doc2.parts.map((part, i) => {
+                              const partFiles = doc2PartFiles[i] || [];
+                              return (
+                                <div key={part.slot}>
+                                  <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#1d4ed8", marginBottom: 3 }}>{part.label}</div>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", border: `1.5px dashed ${partFiles.length ? "#86efac" : "#cbd5e1"}`, borderRadius: 6, cursor: "pointer", background: partFiles.length ? "#f0fdf4" : "#fff", fontSize: "0.8rem", color: "#64748b" }}>
+                                    <span>{partFiles.length ? "✅" : "📁"}</span>
+                                    <span style={{ flex: 1 }}>{partFiles.length ? partFiles.map(f => f.name).join(", ") : `Select ${part.label} file`}</span>
+                                    {partFiles.length > 0 && <span style={{ fontSize: "0.7rem", color: "#16a34a" }}>{partFiles.length} file{partFiles.length !== 1 ? "s" : ""}</span>}
+                                    <input type="file" multiple accept={docReq.doc2.accept} style={{ display: "none" }}
+                                      onChange={(e) => {
+                                        const newFiles = Array.from(e.target.files);
+                                        setDoc2PartFiles(prev => { const next = [...prev]; next[i] = newFiles; return next; });
+                                      }} />
+                                  </label>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <FileSlot slotKey="DOC2" slotLabel={docReq.doc2.label} accept={docReq.doc2.accept} files={doc2Files} setFiles={setDoc2Files} required={isConfDone && !hasExisting} />
+                      )
+                    ) : (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>DOC2</div>
+                        <div style={{ fontSize: "0.8rem", color: "#94a3b8", padding: "8px 12px", border: "1px dashed #e2e8f0", borderRadius: 8, background: "#f8fafc" }}>
+                          Not required for this activity type
+                          <FileSlot slotKey="" slotLabel="Optional attachment" accept="" files={doc2Files} setFiles={setDoc2Files} required={false} />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn-primary" disabled={submissionBusy} onClick={submitSubmission}>{submissionBusy ? "Saving…" : "Save"}</button>
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>
+                Note
+              </label>
+              <textarea
+                value={imNote}
+                onChange={(e) => setImNote(e.target.value)}
+                placeholder="Add any instructions or remarks for PIC…"
+                rows={3}
+                style={{ width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.88rem", resize: "vertical", boxSizing: "border-box" }}
+              />
+            </div>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button type="button" className="btn-secondary" onClick={() => setSubmissionFor(null)}>Cancel</button>
+              <button className="btn-primary" disabled={submissionBusy} onClick={submitSubmission}>{submissionBusy ? "Saving…" : "Save"}</button>
             </div>
           </div>
         </div>

@@ -398,8 +398,8 @@ export const pmApi = {
   getTablePreferences:  (table_id) => call("inet_app.api.command_center.get_table_preferences", { table_id }),
   getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
-  updateWorkDoneSubmission: (name, submission_status) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status }),
-  updateSubconSubmission: (po_dispatch, submission_status) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status }),
+  updateWorkDoneSubmission: (name, submission_status, note) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status, note }),
+  updateSubconSubmission: (po_dispatch, submission_status, note) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status, note }),
   getWorkDoneAttachments: (name) => call("inet_app.api.command_center.get_work_done_attachments", { name }),
   getWorkDoneAttachmentsByDispatch: (po_dispatch) => call("inet_app.api.pic.get_work_done_attachments_for_dispatch", { po_dispatch }),
   getDocAttachments: (doctype, docname) => call("frappe.client.get_list", {
@@ -428,8 +428,8 @@ export const pmApi = {
     if (!res.ok || json.exc) throw new Error(json.message || "Upload failed");
     return json.message;
   },
-  uploadImAttachment: (po_dispatch, file) =>
-    pmApi.uploadDocAttachment("PO Dispatch", po_dispatch, file, "im_attachment"),
+  uploadImAttachment: (po_dispatch, file, slot = "im_attachment") =>
+    pmApi.uploadDocAttachment("PO Dispatch", po_dispatch, file, slot),
   uploadPicAttachment: (po_dispatch, file) =>
     pmApi.uploadDocAttachment("PO Dispatch", po_dispatch, file, "pic_attachment"),
   getPoDispatchImAttachments: (po_dispatch) =>

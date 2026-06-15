@@ -5527,9 +5527,9 @@ def _revert_pic_status_if_safe(po_dispatch_name):
 
 
 @frappe.whitelist()
-def update_work_done_submission(name, submission_status):
+def update_work_done_submission(name, submission_status, note=None):
     """IM sets Work Done submission status: 'Ready for Confirmation' or
-    'Confirmation Done'."""
+    'Confirmation Done'. Optional note saved to PO Dispatch.im_confirmation_note."""
     name = (name or "").strip()
     status = (submission_status or "").strip()
     if not name:
@@ -5572,6 +5572,11 @@ def update_work_done_submission(name, submission_status):
                     "PO Dispatch", po_dispatch, "pic_rejection_remark", "",
                     update_modified=False,
                 )
+            if note is not None and frappe.db.has_column("PO Dispatch", "im_confirmation_note"):
+                frappe.db.set_value(
+                    "PO Dispatch", po_dispatch, "im_confirmation_note", (note or "").strip(),
+                    update_modified=False,
+                )
             # Map ISDP Owner and iBuy Owner from Project Control Center
             project_code = frappe.db.get_value("PO Dispatch", po_dispatch, "project_code")
             if project_code and frappe.db.exists("Project Control Center", project_code):
@@ -5611,7 +5616,7 @@ def get_work_done_attachments(name):
 
 
 @frappe.whitelist()
-def update_subcon_submission(po_dispatch, submission_status):
+def update_subcon_submission(po_dispatch, submission_status, note=None):
     """Set submission_status on a sub-contracted PO Dispatch (no Work Done row exists).
 
     Stored on PO Dispatch.subcon_submission_status so synthetic Work Done rows can
@@ -5643,6 +5648,9 @@ def update_subcon_submission(po_dispatch, submission_status):
         "subcon_submission_status", status,
         update_modified=True,
     )
+
+    if note is not None and status == "Confirmation Done" and frappe.db.has_column("PO Dispatch", "im_confirmation_note"):
+        frappe.db.set_value("PO Dispatch", name, "im_confirmation_note", (note or "").strip(), update_modified=False)
 
     pic_warning = None
     if status != "Confirmation Done":
