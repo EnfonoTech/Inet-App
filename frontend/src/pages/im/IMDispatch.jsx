@@ -1179,8 +1179,7 @@ export default function IMDispatch() {
             style={{ display: "block", width: "100%" }}
             minWidth={0}
             triggerStyle={{
-              width: "100%", padding: "10px 28px 10px 12px",
-              borderRadius: 8, fontSize: "0.88rem",
+              width: "100%", borderRadius: 8, fontSize: "0.88rem",
             }}
             panelStyle={{
               width: "100%", minWidth: 0, maxWidth: "none", right: 0,

@@ -61,7 +61,6 @@ export default function DispatchVisitHistory({ poDispatch, rolloutPlan, currentP
               <th style={{ textAlign: "left", padding: "6px 10px" }}>Team</th>
               <th style={{ textAlign: "left", padding: "6px 10px" }}>Status</th>
               <th style={{ textAlign: "right", padding: "6px 10px" }}>Target</th>
-              <th style={{ textAlign: "right", padding: "6px 10px" }}>Achieved</th>
               <th style={{ textAlign: "left", padding: "6px 10px" }}>WD</th>
             </tr>
           </thead>
@@ -106,9 +105,6 @@ export default function DispatchVisitHistory({ poDispatch, rolloutPlan, currentP
                   </td>
                   <td style={{ padding: "6px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                     {fmt.format(Number(v.target_amount || 0))}
-                  </td>
-                  <td style={{ padding: "6px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: Number(v.achieved_amount || 0) > 0 ? "#047857" : "#94a3b8" }}>
-                    {fmt.format(Number(v.achieved_amount || 0))}
                   </td>
                   <td style={{ padding: "6px 10px", fontSize: "0.74rem", fontFamily: "ui-monospace, monospace" }}>
                     {v.work_done ? (

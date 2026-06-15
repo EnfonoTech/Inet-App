@@ -3941,7 +3941,6 @@ def list_dispatch_visits(po_dispatch=None, rollout_plan=None):
                rp.plan_status, rp.plan_date, rp.team,
                IFNULL(it.team_name, rp.team) AS team_name,
                IFNULL(rp.target_amount, 0) AS target_amount,
-               IFNULL(rp.achieved_amount, 0) AS achieved_amount,
                IFNULL(rp.completion_pct, 0) AS completion_pct,
                IFNULL(rp.issue_category, '') AS issue_category,
                (SELECT COUNT(*) FROM `tabDaily Execution` de

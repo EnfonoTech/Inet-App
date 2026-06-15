@@ -274,9 +274,8 @@ export default function ExecutionMonitor() {
   const totals = rows.reduce(
     (acc, r) => ({
       target: acc.target + (parseFloat(r.target_amount) || 0),
-      achieved: acc.achieved + (parseFloat(r.execution_achieved_amount || r.achieved_amount) || 0),
     }),
-    { target: 0, achieved: 0 }
+    { target: 0 }
   );
 
   return (
@@ -385,7 +384,6 @@ export default function ExecutionMonitor() {
                   <th>Visit Type</th>
                   <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
                   <th style={{ textAlign: "right" }}>Target</th>
-                  <th style={{ textAlign: "right" }}>Achieved</th>
                   <th>Plan Status</th>
                   <th>TL Status</th>
                   <th>Exec Status</th>
@@ -401,10 +399,6 @@ export default function ExecutionMonitor() {
               <tbody>
                 {rows.map((row) => {
                   const target = row.target_amount || 0;
-                  const achieved = row.execution_achieved_amount || row.achieved_amount || 0;
-                  const pct = target > 0
-                    ? Math.round((achieved / target) * 100)
-                    : 0;
                   return (
                     <tr key={row.name} style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
@@ -427,14 +421,6 @@ export default function ExecutionMonitor() {
                       <td>{row.visit_type}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(target)}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <span style={{ color: pct >= 80 ? "var(--green)" : pct >= 40 ? "var(--amber)" : "var(--red)" }}>
-                          {fmt.format(achieved)}
-                        </span>
-                        <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: 4 }}>
-                          ({pct}%)
-                        </span>
-                      </td>
                       <td>
                         <span className={`status-badge ${statusBadgeClass(row.plan_status)}`}>
                           <span className="status-dot" />
@@ -585,7 +571,6 @@ export default function ExecutionMonitor() {
               row={{
                 ...detailRow,
                 target_sar: detailRow.target_amount,
-                achieved_sar: detailRow.execution_achieved_amount || detailRow.achieved_amount,
                 // Hide duplicate dummy POID when it matches the current POID
                 original_dummy_poid: (detailRow.original_dummy_poid || "").trim() && String(detailRow.original_dummy_poid).trim() !== String(detailRow.po_dispatch || "").trim()
                   ? detailRow.original_dummy_poid
@@ -601,7 +586,6 @@ export default function ExecutionMonitor() {
                 <DetailHero>
                   <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} />
                   <DetailStatTile label="Target (SAR)" value={fmt.format(detailRow.target_amount || 0)} tone="slate" />
-                  <DetailStatTile label="Achieved (SAR)" value={fmt.format(detailRow.execution_achieved_amount || detailRow.achieved_amount || 0)} tone="green" />
                   {detailRow.plan_status && (
                     <DetailStatTile
                       label="Plan Status"

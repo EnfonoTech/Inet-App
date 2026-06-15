@@ -782,12 +782,6 @@ export default function WorkDone() {
                   <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} />
                   <DetailStatTile label="Executed Qty" value={detailRow.executed_qty != null ? fmt.format(detailRow.executed_qty) : "—"} tone="blue" />
                   <DetailStatTile label="Revenue (SAR)" value={fmt.format(detailRow.revenue_sar || 0)} tone="green" />
-                  <DetailStatTile label="Cost (SAR)" value={fmt.format(detailRow.total_cost_sar || 0)} tone="amber" />
-                  <DetailStatTile
-                    label="Margin (SAR)"
-                    value={fmt.format(detailRow.margin_sar || 0)}
-                    tone={(detailRow.margin_sar || 0) < 0 ? "rose" : "green"}
-                  />
                 </DetailHero>
               }
               hiddenFields={[

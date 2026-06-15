@@ -193,7 +193,7 @@ function Pill({ label, tone = "blue" }) {
       padding: "4px 12px",
       fontSize: 12.5,
       fontWeight: 700,
-      maxWidth: "100%",
+      maxWidth: 220,
       overflow: "hidden",
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",
