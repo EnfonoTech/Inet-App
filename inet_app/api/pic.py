@@ -57,7 +57,17 @@ LEFT JOIN (
 ) plan ON plan.po_dispatch = pd.name
 LEFT JOIN (
     SELECT rp.po_dispatch AS po_dispatch,
-           MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
+           MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed,
+           CASE MAX(CASE wd.submission_status
+               WHEN 'PIC Rejected'          THEN 3
+               WHEN 'Confirmation Done'      THEN 2
+               WHEN 'Ready for Confirmation' THEN 1
+               ELSE 0 END)
+               WHEN 3 THEN 'PIC Rejected'
+               WHEN 2 THEN 'Confirmation Done'
+               WHEN 1 THEN 'Ready for Confirmation'
+               ELSE NULL
+           END AS im_submission_status
     FROM `tabRollout Plan` rp
     INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
     INNER JOIN `tabWork Done` wd ON wd.execution = de.name
@@ -82,7 +92,17 @@ LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
 LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
 LEFT JOIN (
     SELECT rp.po_dispatch AS po_dispatch,
-           MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
+           MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed,
+           CASE MAX(CASE wd.submission_status
+               WHEN 'PIC Rejected'          THEN 3
+               WHEN 'Confirmation Done'      THEN 2
+               WHEN 'Ready for Confirmation' THEN 1
+               ELSE 0 END)
+               WHEN 3 THEN 'PIC Rejected'
+               WHEN 2 THEN 'Confirmation Done'
+               WHEN 1 THEN 'Ready for Confirmation'
+               ELSE NULL
+           END AS im_submission_status
     FROM `tabRollout Plan` rp
     INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
     INNER JOIN `tabWork Done` wd ON wd.execution = de.name
@@ -272,7 +292,8 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       pd.ms1_payment_received_date, pd.ms2_payment_received_date,
       pd.remaining_milestone_pct,
       {team_cols},
-      pd.modified
+      pd.modified,
+      wd_sub.im_submission_status
     {from_clause}
     WHERE {' AND '.join(where)}
     ORDER BY pd.modified DESC
@@ -292,11 +313,11 @@ _PIC_WRITABLE = (
     # MS1
     "pic_status", "isdp_owner", "ibuy_owner", "pic_detail_remark", "ms1_applied_date",
     "subcon_pct_ms1", "inet_pct_ms1",
-    "ms1_invoice_month", "ms1_ibuy_inv_date", "ms1_payment_received_date",
+    "ms1_invoice_month", "ms1_ibuy_inv_date",
     # MS2
     "pic_status_ms2", "pic_detail_remark_ms2", "ms2_applied_date",
     "subcon_pct_ms2", "inet_pct_ms2",
-    "ms2_invoice_month", "ms2_ibuy_inv_date", "ms2_payment_received_date",
+    "ms2_invoice_month", "ms2_ibuy_inv_date",
     # Common
     "ms1_pct", "ms2_pct",  # PIC may override the parsed split
     # Acceptance gates — PIC can correct typos coming from the master tracker
@@ -1365,6 +1386,7 @@ def on_sales_invoice_submit(doc, method):
                 "pic_status": "Commercial Invoice Submitted",
                 "ms1_invoiced": item_amount,
                 "ms1_unbilled": round(ms1_amt - item_amount, 4),
+                "ms1_invoice_month": doc.posting_date,
             })
 
         if update_ms2:
@@ -1372,6 +1394,7 @@ def on_sales_invoice_submit(doc, method):
                 "pic_status_ms2": "Commercial Invoice Submitted",
                 "ms2_invoiced": item_amount,
                 "ms2_unbilled": round(ms2_amt - item_amount, 4),
+                "ms2_invoice_month": doc.posting_date,
             })
 
         if not updates:
@@ -1390,6 +1413,66 @@ def on_sales_invoice_submit(doc, method):
         wd_names = frappe.db.get_all("Work Done", {"system_id": pd_name}, pluck="name")
         for wd_name in wd_names:
             frappe.db.set_value("Work Done", wd_name, "billing_status", "Invoiced")
+
+
+def on_sales_invoice_cancel(doc, method):
+    """When a Sales Invoice is cancelled, revert PIC status to 'Ready for Invoice'
+    and clear the invoice month so the row re-enters the billing queue."""
+    for item in doc.items:
+        pd_name = (item.get("poid") or "").strip()
+        if not pd_name or not frappe.db.exists("PO Dispatch", pd_name):
+            continue
+
+        try:
+            pd = frappe.db.get_value("PO Dispatch", pd_name, [
+                "pic_status", "pic_status_ms2",
+                "ms1_amount", "ms2_amount",
+            ], as_dict=True)
+        except Exception:
+            continue
+        if not pd:
+            continue
+
+        item_milestone = (item.get("milestone") or "").strip().upper()
+        updates = {}
+
+        ms1_submitted = (pd.pic_status or "").strip() == "Commercial Invoice Submitted"
+        ms2_submitted = (pd.pic_status_ms2 or "").strip() == "Commercial Invoice Submitted"
+
+        revert_ms1 = (item_milestone == "MS1" and ms1_submitted) or (not item_milestone and ms1_submitted)
+        revert_ms2 = (item_milestone == "MS2" and ms2_submitted) or (not item_milestone and ms2_submitted)
+
+        if revert_ms1:
+            updates.update({
+                "pic_status": "Ready for Invoice",
+                "ms1_invoiced": 0,
+                "ms1_unbilled": flt(pd.ms1_amount or 0),
+                "ms1_invoice_month": None,
+            })
+
+        if revert_ms2:
+            updates.update({
+                "pic_status_ms2": "Ready for Invoice",
+                "ms2_invoiced": 0,
+                "ms2_unbilled": flt(pd.ms2_amount or 0),
+                "ms2_invoice_month": None,
+            })
+
+        if not updates:
+            continue
+
+        ms1_amt = flt(pd.ms1_amount or 0)
+        ms2_amt = flt(pd.ms2_amount or 0)
+        m1_unb = flt(updates.get("ms1_unbilled", 0))
+        m2_unb = flt(updates.get("ms2_unbilled", 0))
+        line = ms1_amt + ms2_amt
+        updates["remaining_milestone_pct"] = round((m1_unb + m2_unb) / line * 100.0, 2) if line else 0.0
+
+        frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
+
+        wd_names = frappe.db.get_all("Work Done", {"system_id": pd_name}, pluck="name")
+        for wd_name in wd_names:
+            frappe.db.set_value("Work Done", wd_name, "billing_status", "")
 
 
 @frappe.whitelist()
@@ -1411,9 +1494,9 @@ def get_work_done_attachments_for_dispatch(po_dispatch):
 
 @frappe.whitelist()
 def reject_pic_line(po_dispatch, remark):
-    """PIC rejects a confirmed Work Done line. Sets pic_status='Work Not Done',
-    saves rejection remark on PO Dispatch, and marks related Work Done docs as
-    'PIC Rejected'. Row disappears from PIC tracker until IM resubmits."""
+    """PIC rejects a confirmed Work Done line. Saves rejection remark on PO
+    Dispatch and marks related Work Done docs as 'PIC Rejected'. pic_status
+    is intentionally left unchanged so the row stays visible in PIC tracker."""
     _pic_role_or_throw()
     po_dispatch = (po_dispatch or "").strip()
     remark = (remark or "").strip()
@@ -1432,10 +1515,8 @@ def reject_pic_line(po_dispatch, remark):
     for wd in wd_docs:
         frappe.db.set_value("Work Done", wd.name, "submission_status", "PIC Rejected", update_modified=True)
 
-    update_vals = {"pic_status": "Work Not Done"}
     if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
-        update_vals["pic_rejection_remark"] = remark
-    frappe.db.set_value("PO Dispatch", po_dispatch, update_vals, update_modified=False)
+        frappe.db.set_value("PO Dispatch", po_dispatch, "pic_rejection_remark", remark, update_modified=False)
     frappe.db.commit()
     return {"status": "ok", "rejected_work_done": [wd.name for wd in wd_docs]}
 

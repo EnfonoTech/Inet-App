@@ -73,7 +73,6 @@ const CSV_COLUMNS = [
   ["ms1_unbilled", "MS1 Unbilled"],
   ["ms1_invoice_month", "MS1 Invoicing Month"],
   ["ms1_ibuy_inv_date", "MS1 IBUY/INV Date"],
-  ["ms1_payment_received_date", "MS1 Payment Received"],
   ["pic_status_ms2", "PIC Status (MS2)"],
   ["pic_detail_remark_ms2", "Detail Remarks (MS2)"],
   ["ms2_applied_date", "Applied Date (MS2)"],
@@ -83,7 +82,6 @@ const CSV_COLUMNS = [
   ["ms2_unbilled", "MS2 Unbilled"],
   ["ms2_invoice_month", "MS2 Invoicing Month"],
   ["ms2_ibuy_inv_date", "MS2 IBUY/INV Date"],
-  ["ms2_payment_received_date", "MS2 Payment Received"],
   ["remaining_milestone_pct", "Remaining Milestone %"],
 ];
 
@@ -109,6 +107,21 @@ function downloadPicTrackerCsv(rows) {
   a.download = `pic-tracker-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function IMStatusPill({ value }) {
+  if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
+  const v = String(value);
+  let bg, fg;
+  if (/Confirmation Done/i.test(v))      { bg = "rgba(16,185,129,0.12)"; fg = "#047857"; }
+  else if (/PIC Rejected/i.test(v))      { bg = "rgba(239,68,68,0.10)";  fg = "#b91c1c"; }
+  else if (/Ready for Confirmation/i.test(v)) { bg = "rgba(59,130,246,0.10)"; fg = "#1d4ed8"; }
+  else                                   { bg = "rgba(100,116,139,0.10)"; fg = "#475569"; }
+  return (
+    <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: bg, color: fg }}>
+      {v}
+    </span>
+  );
 }
 
 function StatusPill({ value }) {
@@ -250,8 +263,6 @@ export default function PICTracker() {
       ms2_invoice_month: row.ms2_invoice_month || "",
       ms1_ibuy_inv_date: row.ms1_ibuy_inv_date || "",
       ms2_ibuy_inv_date: row.ms2_ibuy_inv_date || "",
-      ms1_payment_received_date: row.ms1_payment_received_date || "",
-      ms2_payment_received_date: row.ms2_payment_received_date || "",
     });
     setEditErr(null);
   }
@@ -263,8 +274,6 @@ export default function PICTracker() {
     const futureDateFields = [
       ["ms1_applied_date", "MS1 Applied Date"],
       ["ms2_applied_date", "MS2 Applied Date"],
-      ["ms1_payment_received_date", "MS1 Payment Received Date"],
-      ["ms2_payment_received_date", "MS2 Payment Received Date"],
       ["ms1_ibuy_inv_date", "MS1 iBuy Invoice Date"],
       ["ms2_ibuy_inv_date", "MS2 iBuy Invoice Date"],
     ];
@@ -448,6 +457,7 @@ export default function PICTracker() {
                   <th style={{ textAlign: "right" }}>Line Amount</th>
                   <th>Tax Rate</th>
                   <th>Payment Terms</th>
+                  <th>IM Status</th>
                   <th>PIC Status (MS1)</th>
                   <th>ISDP Owner</th>
                   <th>iBuy Owner</th>
@@ -487,6 +497,7 @@ export default function PICTracker() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.line_amount || 0)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.tax_rate || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.payment_terms || ""}>{r.payment_terms || "—"}</td>
+                    <td><IMStatusPill value={r.im_submission_status} /></td>
                     <td><StatusPill value={r.pic_status_effective} /></td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.isdp_owner || ""}>{r.isdp_owner || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.ibuy_owner || ""}>{r.ibuy_owner || "—"}</td>
@@ -834,7 +845,6 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
               invoicedKey="ms1_invoiced"
               invoiceMonthKey="ms1_invoice_month"
               ibuyDateKey="ms1_ibuy_inv_date"
-              receivedKey="ms1_payment_received_date"
               pctLabel={`${ms1Pct.toFixed(0)}% of line`}
               amount={ms1Amt}
               invoiced={ms1Inv}
@@ -855,7 +865,6 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
               invoicedKey="ms2_invoiced"
               invoiceMonthKey="ms2_invoice_month"
               ibuyDateKey="ms2_ibuy_inv_date"
-              receivedKey="ms2_payment_received_date"
               pctLabel={`${ms2Pct.toFixed(0)}% of line`}
               amount={ms2Amt}
               invoiced={ms2Inv}
@@ -1188,9 +1197,6 @@ function MilestonePanel({
         </Field>
         <Field label="IBUY / INV Date">
           <input type="date" value={fields[ibuyDateKey] || ""} onChange={(e) => set(ibuyDateKey, e.target.value)} disabled={busy} style={fieldInputStyle} />
-        </Field>
-        <Field label="Payment Received Date">
-          <input type="date" value={fields[receivedKey] || ""} onChange={(e) => set(receivedKey, e.target.value)} disabled={busy} style={fieldInputStyle} />
         </Field>
       </div>
     </Card>

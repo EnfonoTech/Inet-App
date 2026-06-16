@@ -9861,8 +9861,6 @@ def _resolve_archive_header_keys(headers):
         ("Applied Date", 2): "ms2_applied_date",
         ("IBUY / INV date", 1): "ms1_ibuy_inv_date",
         ("IBUY / INV date", 2): "ms2_ibuy_inv_date",
-        ("Payment Received Date", 1): "ms1_payment_received_date",
-        ("Payment Received Date", 2): "ms2_payment_received_date",
     }
     DUP_NAMES = {h for (h, _) in DUP_BY_MS.keys()}
 
@@ -9910,7 +9908,6 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
         "remaining_milestone_pct",
         "ms1_invoice_month", "ms2_invoice_month",
         "ms1_ibuy_inv_date", "ms2_ibuy_inv_date",
-        "ms1_payment_received_date", "ms2_payment_received_date",
         "manager_remark",
     )
     NUMERIC = {
@@ -9960,8 +9957,6 @@ def _archive_date_keys():
         "ms2_invoice_month",
         "ms1_ibuy_inv_date",
         "ms2_ibuy_inv_date",
-        "ms1_payment_received_date",
-        "ms2_payment_received_date",
     )
 
 
