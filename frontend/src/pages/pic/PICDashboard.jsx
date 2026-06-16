@@ -75,7 +75,7 @@ export default function PICDashboard({ showSwitcher = false }) {
   const monthly = data?.monthly || [];
   const pendingIbuy = data?.pending_ibuy || [];
   const pendingIsdp = data?.pending_isdp || [];
-  const inetSubcon = data?.inet_subcon || [];
+  const inetSubcon = data?.inet_subcon || null;
   const kpi = data?.kpi || {};
 
   // Aggregate amounts across active (non-terminal) buckets to compute the
@@ -257,15 +257,11 @@ export default function PICDashboard({ showSwitcher = false }) {
           )}
         </Section>
 
-        <Section title="INET vs Subcon" subtitle="Lines grouped by team type">
-          {inetSubcon.length === 0 ? (
-            <Empty>No team data yet.</Empty>
+        <Section title="INET / Subcons Split" subtitle="MS1 + MS2 amount split by entity">
+          {!inetSubcon ? (
+            <Empty>No data yet.</Empty>
           ) : (
-            <div style={{ padding: "8px 12px" }}>
-              {inetSubcon.map((r) => (
-                <TeamSplitRow key={r.team_type} row={r} />
-              ))}
-            </div>
+            <InetSubconSplitCard data={inetSubcon} />
           )}
         </Section>
       </div>
@@ -353,34 +349,67 @@ function OwnerTable({ rows }) {
   );
 }
 
-function TeamSplitRow({ row }) {
-  const isInet = row.team_type === "INET";
-  const accent = isInet ? "#3b82f6" : "#a855f7";
-  const bg = isInet ? "rgba(59,130,246,0.08)" : "rgba(168,85,247,0.08)";
-  const billed = Number(row.invoiced_total || 0);
-  const total = Number(row.po_total || 0);
-  const pct = total > 0 ? Math.min(100, Math.round((billed / total) * 100)) : 0;
+function InetSubconSplitCard({ data: d }) {
+  const grand = d.grand_total || 0;
+  const inetPct   = grand > 0 ? Math.round((d.inet_total   / grand) * 100) : 0;
+  const subconPct = grand > 0 ? Math.round((d.subcon_total / grand) * 100) : 0;
+
+  const rows = [
+    { label: "INET",   pct: inetPct,   ms1: d.inet_ms1,   ms2: d.inet_ms2,   total: d.inet_total,   fg: "#1e40af", bar: "#3b82f6", track: "#dbeafe" },
+    { label: "Subcon", pct: subconPct, ms1: d.subcon_ms1, ms2: d.subcon_ms2, total: d.subcon_total, fg: "#6d28d9", bar: "#8b5cf6", track: "#ede9fe" },
+  ];
+
   return (
-    <div style={{ background: bg, borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: "0.74rem", fontWeight: 700, background: accent, color: "#fff" }}>
-          {row.team_type}
-        </span>
-        <span style={{ fontSize: "0.78rem", color: "#475569" }}>{fmt.format(row.line_count || 0)} lines</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 8, fontSize: "0.78rem" }}>
-        <div>
-          <div style={{ color: "#94a3b8", fontWeight: 600 }}>Invoiced</div>
-          <div style={{ color: "#047857", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(billed)}</div>
-        </div>
-        <div>
-          <div style={{ color: "#94a3b8", fontWeight: 600 }}>PO Total</div>
-          <div style={{ color: "#0f172a", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(total)}</div>
-        </div>
-      </div>
-      <div style={{ height: 4, background: "rgba(15,23,42,0.08)", borderRadius: 99, overflow: "hidden", marginTop: 8 }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: accent }} />
-      </div>
+    <div style={{ padding: "10px 14px" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+        <thead>
+          <tr style={{ color: "#94a3b8", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <th style={{ textAlign: "left",  padding: "0 0 6px",  fontWeight: 600 }}>Entity</th>
+            <th style={{ textAlign: "right", padding: "0 0 6px 8px", fontWeight: 600 }}>MS1</th>
+            <th style={{ textAlign: "right", padding: "0 0 6px 8px", fontWeight: 600 }}>MS2</th>
+            <th style={{ textAlign: "right", padding: "0 0 6px 8px", fontWeight: 600 }}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label}>
+              <td style={{ padding: "6px 0", verticalAlign: "top" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontWeight: 800, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.06em", color: r.fg }}>{r.label}</span>
+                  <span style={{ fontSize: "0.66rem", fontWeight: 700, color: r.fg, background: r.track, padding: "1px 6px", borderRadius: 999 }}>{r.pct}%</span>
+                </div>
+                <div style={{ height: 3, background: r.track, borderRadius: 99, overflow: "hidden", marginTop: 4, width: "90%" }}>
+                  <div style={{ height: "100%", width: `${r.pct}%`, background: r.bar, borderRadius: 99 }} />
+                </div>
+              </td>
+              <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: r.fg, verticalAlign: "top" }}>
+                {fmtMoney.format(r.ms1 || 0)}
+              </td>
+              <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: r.fg, verticalAlign: "top" }}>
+                {fmtMoney.format(r.ms2 || 0)}
+              </td>
+              <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: r.fg, verticalAlign: "top" }}>
+                {fmtMoney.format(r.total || 0)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: "1px solid #e2e8f0" }}>
+            <td style={{ padding: "8px 0 2px", fontWeight: 700, fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#475569" }}>Total</td>
+            <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#0f172a" }}>
+              {fmtMoney.format((d.inet_ms1 || 0) + (d.subcon_ms1 || 0))}
+            </td>
+            <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#0f172a" }}>
+              {fmtMoney.format((d.inet_ms2 || 0) + (d.subcon_ms2 || 0))}
+            </td>
+            <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: "#0f172a" }}>
+              {fmtMoney.format(grand)} <span style={{ fontSize: "0.66rem", fontWeight: 600, color: "#94a3b8" }}>SAR</span>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
   );
 }
+

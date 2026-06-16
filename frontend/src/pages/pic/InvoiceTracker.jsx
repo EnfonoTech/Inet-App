@@ -26,6 +26,8 @@ export default function InvoiceTracker() {
   const searchDebounced = useDebounced(search, 300);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const [ms1StatusFilter, setMs1StatusFilter] = useState([]);
+  const [ms2StatusFilter, setMs2StatusFilter] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceBusy, setInvoiceBusy] = useState(false);
@@ -40,6 +42,8 @@ export default function InvoiceTracker() {
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
       if (projectFilter.length) filters.project_code = projectFilter;
       if (duidFilter.length) filters.site_code = duidFilter;
+      if (ms1StatusFilter.length) filters.pic_status_ms1 = ms1StatusFilter;
+      if (ms2StatusFilter.length) filters.pic_status_ms2 = ms2StatusFilter;
       const list = await pmApi.listInvoiceTrackerRows(filters, rowLimit);
       setRows(Array.isArray(list) ? list : []);
     } catch (e) {
@@ -47,7 +51,7 @@ export default function InvoiceTracker() {
     } finally {
       setLoading(false);
     }
-  }, [searchDebounced, projectFilter, duidFilter, rowLimit]);
+  }, [searchDebounced, projectFilter, duidFilter, ms1StatusFilter, ms2StatusFilter, rowLimit]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -55,7 +59,13 @@ export default function InvoiceTracker() {
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
 
-  const hasFilters = !!(search || projectFilter.length || duidFilter.length);
+  const PIC_STATUS_OPTIONS = [
+    { id: "Ready for Invoice",              label: "Ready for Invoice" },
+    { id: "Commercial Invoice Submitted",   label: "Invoice Submitted" },
+    { id: "Commercial Invoice Closed",      label: "Invoice Closed" },
+  ];
+
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || ms1StatusFilter.length || ms2StatusFilter.length);
 
   const selectedRows = useMemo(
     () => rows.filter((r) => selected.has(r.name)),
@@ -214,8 +224,10 @@ export default function InvoiceTracker() {
           />
           <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
           <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+          <SearchableSelect multi value={ms1StatusFilter} onChange={setMs1StatusFilter} options={PIC_STATUS_OPTIONS} placeholder="MS1 Status" minWidth={150} />
+          <SearchableSelect multi value={ms2StatusFilter} onChange={setMs2StatusFilter} options={PIC_STATUS_OPTIONS} placeholder="MS2 Status" minWidth={150} />
           {hasFilters && (
-            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); }}>
+            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setMs1StatusFilter([]); setMs2StatusFilter([]); }}>
               Clear
             </button>
           )}

@@ -9822,12 +9822,8 @@ _PO_ARCHIVE_ALIAS = {
     "Remaining Milestone": "remaining_milestone_pct",
     "1st Payment PO Amount": "ms1_amount",
     "1st Payment Invoiced": "ms1_invoiced",
-    "Subcon Per% MS1": "subcon_pct_ms1",
-    "Inet Per% MS1": "inet_pct_ms1",
     "2nd Payment PO Amount": "ms2_amount",
     "2nd Payment Invoiced": "ms2_invoiced",
-    "Subcon Per% MS2": "subcon_pct_ms2",
-    "Inet Per% MS2": "inet_pct_ms2",
     "Invoicing Month (First Payment Milestone)": "ms1_invoice_month",
     "Invoicing Month (Second Payment Milestone)": "ms2_invoice_month",
     # Duplicate-named cols ("Applied Date", "IBUY / INV date", "Payment Received
@@ -9903,8 +9899,6 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
         "ms1_applied_date", "ms2_applied_date",
         "ms1_amount", "ms2_amount",
         "ms1_invoiced", "ms2_invoiced",
-        "subcon_pct_ms1", "inet_pct_ms1",
-        "subcon_pct_ms2", "inet_pct_ms2",
         "remaining_milestone_pct",
         "ms1_invoice_month", "ms2_invoice_month",
         "ms1_ibuy_inv_date", "ms2_ibuy_inv_date",
@@ -9912,7 +9906,6 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
     )
     NUMERIC = {
         "ms1_amount", "ms2_amount", "ms1_invoiced", "ms2_invoiced",
-        "subcon_pct_ms1", "inet_pct_ms1", "subcon_pct_ms2", "inet_pct_ms2",
         "remaining_milestone_pct",
     }
     updates = {}

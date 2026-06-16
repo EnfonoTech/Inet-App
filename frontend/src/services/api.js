@@ -497,6 +497,10 @@ export const pmApi = {
   updatePoRemark: (po_dispatch, remark_type, value) => call("inet_app.api.command_center.update_po_remark", { po_dispatch, remark_type, value }),
 
   // PIC (Project Invoice Controller) endpoints
+  picInvoicingSummary: (portalFilters) => call("inet_app.api.pic.pic_invoicing_summary", {
+    portal_filters: JSON.stringify(portalFilters || {}),
+  }),
+  getPicSummaryFilterOptions: () => call("inet_app.api.pic.get_pic_summary_filter_options"),
   listPicRows: (portalFilters, limit) => call("inet_app.api.pic.list_pic_rows", {
     portal_filters: JSON.stringify(portalFilters || {}),
     // 0 = "All" (no LIMIT). Anything else is a positive cap.

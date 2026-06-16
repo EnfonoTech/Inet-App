@@ -52,6 +52,7 @@ const PICDashboard        = lazy(() => import("./pages/pic/PICDashboard"));
 const PICTracker          = lazy(() => import("./pages/pic/PICTracker"));
 const InvoiceTracker      = lazy(() => import("./pages/pic/InvoiceTracker"));
 const PICReports          = lazy(() => import("./pages/pic/PICReports"));
+const PICInvoicingSummary = lazy(() => import("./pages/pic/PICInvoicingSummary"));
 
 /* -- Field pages ------------------------------------------------ */
 const TodaysWork          = lazy(() => import("./pages/field/TodaysWork"));
@@ -180,6 +181,7 @@ function AppContent() {
               <Route path="/pic-dashboard" element={<PICDashboard />} />
               <Route path="/pic-tracker" element={<PICTracker />} />
               <Route path="/pic-invoice-tracker" element={<InvoiceTracker />} />
+              <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
               <Route path="/pic-reports" element={<PICReports />} />
             </>
           )}
@@ -189,6 +191,7 @@ function AppContent() {
               <Route path="/pic-dashboard" element={<PICDashboard showSwitcher />} />
               <Route path="/pic-tracker" element={<PICTracker />} />
               <Route path="/pic-invoice-tracker" element={<InvoiceTracker />} />
+              <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
               <Route path="/pic-reports" element={<PICReports />} />
             </>
           )}

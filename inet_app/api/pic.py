@@ -73,7 +73,9 @@ LEFT JOIN (
     INNER JOIN `tabWork Done` wd ON wd.execution = de.name
     GROUP BY rp.po_dispatch
 ) wd_sub ON wd_sub.po_dispatch = pd.name
-LEFT JOIN `tabSubcontractor Master` sm ON sm.name = plan.subcontractor
+LEFT JOIN `tabINET Team` sc_team_full ON sc_team_full.name = pd.subcon_team
+LEFT JOIN `tabSubcontractor Master` sm
+       ON sm.name = COALESCE(plan.subcontractor, sc_team_full.subcontractor)
 """
 
 
@@ -114,7 +116,9 @@ LEFT JOIN (
     LEFT JOIN `tabINET Team` it ON it.name = rp.team
     GROUP BY rp.po_dispatch
 ) plan_contract ON plan_contract.po_dispatch = pd.name
-LEFT JOIN `tabSubcontractor Master` sm_sub ON sm_sub.name = plan_contract.subcontractor
+LEFT JOIN `tabINET Team` sc_team ON sc_team.name = pd.subcon_team
+LEFT JOIN `tabSubcontractor Master` sm_sub
+       ON sm_sub.name = COALESCE(plan_contract.subcontractor, sc_team.subcontractor)
 """
 
 
@@ -234,7 +238,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             "sm.subcontractor_name AS subcontractor, "
             "sm.sub_payout_pct AS subcontractor_payout_pct, "
             "sm.inet_margin_pct AS subcontractor_margin_pct, "
-            "sm.contract_model AS contract_model"
+            "COALESCE(sm.contract_model, 'Fix & Core') AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN
     else:
@@ -243,7 +247,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             "NULL AS subcontractor, "
             "NULL AS subcontractor_payout_pct, "
             "NULL AS subcontractor_margin_pct, "
-            "sm_sub.contract_model AS contract_model"
+            "COALESCE(sm_sub.contract_model, 'Fix & Core') AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN_LEAN
 
@@ -284,8 +288,6 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       pd.ms1_amount, pd.ms2_amount,
       pd.ms1_invoiced, pd.ms2_invoiced,
       pd.ms1_unbilled, pd.ms2_unbilled,
-      pd.subcon_pct_ms1, pd.inet_pct_ms1,
-      pd.subcon_pct_ms2, pd.inet_pct_ms2,
       pd.ms1_applied_date, pd.ms2_applied_date,
       pd.ms1_invoice_month, pd.ms2_invoice_month,
       pd.ms1_ibuy_inv_date, pd.ms2_ibuy_inv_date,
@@ -307,16 +309,196 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     return rows
 
 
+@frappe.whitelist()
+def pic_invoicing_summary(portal_filters=None):
+    """Aggregate invoicing summary grouped by PIC status — INET vs Subcon split.
+
+    Returns::
+        {
+          top: {inet_ms1, subcon_ms1, total_ms1, inet_ms2, subcon_ms2, total_ms2,
+                inet_total, subcon_total, grand_total},
+          ms1_rows: [{pic_status, row_count, po_amount, invoiced, unbilled,
+                      subcon_amt, inet_amt}],
+          ms2_rows: same shape,
+        }
+
+    Accepted portal_filters keys:
+        project_code, site_code, im,
+        from_date / to_date  (ms1_applied_date range),
+        contract_model       (sm_sub.contract_model),
+        ms1_invoice_month    (YYYY-MM, filters MS1 rows only),
+        ms2_invoice_month    (YYYY-MM, filters MS2 rows only),
+        dispatch_status      (default: hide Cancelled / Closed).
+    """
+    _pic_role_or_throw()
+    pf = _portal_filters_dict(portal_filters)
+
+    # ── Common WHERE (applies to both MS1 and MS2 queries) ──────────────
+    where_common = ["1=1"]
+    params_common = []
+
+    for col, key in (
+        ("pd.project_code", "project_code"),
+        ("pd.site_code",    "site_code"),
+        ("pd.im",           "im"),
+    ):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            where_common.append(c)
+            params_common.extend(p)
+
+    if pf.get("from_date"):
+        where_common.append("pd.ms1_applied_date >= %s")
+        params_common.append(pf["from_date"])
+    if pf.get("to_date"):
+        where_common.append("pd.ms1_applied_date <= %s")
+        params_common.append(pf["to_date"])
+
+    if pf.get("contract_model"):
+        cm_vals = _ensure_list(pf["contract_model"])
+        ph = ", ".join(["%s"] * len(cm_vals))
+        where_common.append(f"COALESCE(sm_sub.contract_model, 'Fix & Core') IN ({ph})")
+        params_common.extend(cm_vals)
+
+    if pf.get("dispatch_status"):
+        ds_vals = _ensure_list(pf["dispatch_status"])
+        ph = ", ".join(["%s"] * len(ds_vals))
+        where_common.append(f"IFNULL(pd.dispatch_status,'') IN ({ph})")
+        params_common.extend(ds_vals)
+    else:
+        where_common.append("IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled', 'Closed')")
+
+    # ── MS1: additional invoice-month filter ─────────────────────────────
+    where_ms1 = list(where_common)
+    params_ms1 = list(params_common)
+    ms1_month_vals = _ensure_list(pf.get("ms1_invoice_month"))
+    if ms1_month_vals:
+        ph = ", ".join(["%s"] * len(ms1_month_vals))
+        where_ms1.append(f"DATE_FORMAT(pd.ms1_invoice_month, '%%Y-%%m') IN ({ph})")
+        params_ms1.extend(ms1_month_vals)
+
+    # ── MS2: additional invoice-month filter + only rows with an MS2 ─────
+    where_ms2 = list(where_common)
+    params_ms2 = list(params_common)
+    ms2_month_vals = _ensure_list(pf.get("ms2_invoice_month"))
+    if ms2_month_vals:
+        ph = ", ".join(["%s"] * len(ms2_month_vals))
+        where_ms2.append(f"DATE_FORMAT(pd.ms2_invoice_month, '%%Y-%%m') IN ({ph})")
+        params_ms2.extend(ms2_month_vals)
+    where_ms2.append("IFNULL(pd.ms2_amount, 0) > 0")
+
+    # ── MS1 breakdown query ───────────────────────────────────────────────
+    ms1_sql = f"""
+    SELECT
+      ({_PIC_INITIAL_RULE_SQL.strip()}) AS pic_status,
+      COUNT(*) AS row_count,
+      SUM(IFNULL(pd.ms1_amount,  0)) AS po_amount,
+      SUM(IFNULL(pd.ms1_invoiced,0)) AS invoiced,
+      SUM(IFNULL(pd.ms1_unbilled,0)) AS unbilled,
+      SUM(IFNULL(pd.ms1_amount,  0) * IFNULL(sm_sub.sub_payout_pct,   0)   / 100) AS subcon_amt,
+      SUM(IFNULL(pd.ms1_amount,  0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100) AS inet_amt
+    {_PIC_FROM_JOIN_LEAN}
+    WHERE {' AND '.join(where_ms1)}
+    GROUP BY ({_PIC_INITIAL_RULE_SQL.strip()})
+    ORDER BY po_amount DESC
+    """
+
+    # ── MS2 breakdown query ───────────────────────────────────────────────
+    ms2_sql = f"""
+    SELECT
+      COALESCE(NULLIF(pd.pic_status_ms2, ''), 'Work Not Done') AS pic_status,
+      COUNT(*) AS row_count,
+      SUM(IFNULL(pd.ms2_amount,  0)) AS po_amount,
+      SUM(IFNULL(pd.ms2_invoiced,0)) AS invoiced,
+      SUM(IFNULL(pd.ms2_unbilled,0)) AS unbilled,
+      SUM(IFNULL(pd.ms2_amount,  0) * IFNULL(sm_sub.sub_payout_pct,   0)   / 100) AS subcon_amt,
+      SUM(IFNULL(pd.ms2_amount,  0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100) AS inet_amt
+    {_PIC_FROM_JOIN_LEAN}
+    WHERE {' AND '.join(where_ms2)}
+    GROUP BY COALESCE(NULLIF(pd.pic_status_ms2, ''), 'Work Not Done')
+    ORDER BY po_amount DESC
+    """
+
+    ms1_rows = frappe.db.sql(ms1_sql, tuple(params_ms1), as_dict=True)
+    ms2_rows = frappe.db.sql(ms2_sql, tuple(params_ms2), as_dict=True)
+
+    # Split only meaningful for invoiced statuses; zero out everything else.
+    _INVOICED = {"Commercial Invoice Closed", "Commercial Invoice Submitted"}
+    for r in ms1_rows:
+        if r.get("pic_status") not in _INVOICED:
+            r["subcon_amt"] = 0.0; r["inet_amt"] = 0.0
+    for r in ms2_rows:
+        if r.get("pic_status") not in _INVOICED:
+            r["subcon_amt"] = 0.0; r["inet_amt"] = 0.0
+
+    # ── Top summary (derived from row aggregates) ─────────────────────────
+    inet_ms1   = sum(flt(r.get("inet_amt"))   for r in ms1_rows)
+    subcon_ms1 = sum(flt(r.get("subcon_amt")) for r in ms1_rows)
+    inet_ms2   = sum(flt(r.get("inet_amt"))   for r in ms2_rows)
+    subcon_ms2 = sum(flt(r.get("subcon_amt")) for r in ms2_rows)
+
+    return {
+        "top": {
+            "inet_ms1":    round(inet_ms1,   2),
+            "subcon_ms1":  round(subcon_ms1, 2),
+            "total_ms1":   round(inet_ms1 + subcon_ms1, 2),
+            "inet_ms2":    round(inet_ms2,   2),
+            "subcon_ms2":  round(subcon_ms2, 2),
+            "total_ms2":   round(inet_ms2 + subcon_ms2, 2),
+            "inet_total":  round(inet_ms1 + inet_ms2, 2),
+            "subcon_total": round(subcon_ms1 + subcon_ms2, 2),
+            "grand_total": round(inet_ms1 + subcon_ms1 + inet_ms2 + subcon_ms2, 2),
+        },
+        "ms1_rows": [dict(r) for r in ms1_rows],
+        "ms2_rows": [dict(r) for r in ms2_rows],
+    }
+
+
+@frappe.whitelist()
+def get_pic_summary_filter_options():
+    """Distinct contract models and invoice months for the invoicing summary filters."""
+    _pic_role_or_throw()
+    contract_models = frappe.db.sql(
+        """
+        SELECT DISTINCT sm.contract_model
+        FROM `tabSubcontractor Master` sm
+        WHERE IFNULL(sm.contract_model, '') != ''
+        ORDER BY sm.contract_model
+        """,
+        as_dict=True,
+    )
+    months = frappe.db.sql(
+        """
+        SELECT DISTINCT m FROM (
+          SELECT DATE_FORMAT(ms1_invoice_month, '%%Y-%%m') AS m
+          FROM `tabPO Dispatch` WHERE ms1_invoice_month IS NOT NULL
+          UNION
+          SELECT DATE_FORMAT(ms2_invoice_month, '%%Y-%%m') AS m
+          FROM `tabPO Dispatch` WHERE ms2_invoice_month IS NOT NULL
+        ) t
+        WHERE m IS NOT NULL
+        ORDER BY m
+        """,
+        (),
+        as_dict=True,
+    )
+    models = [r.contract_model for r in contract_models]
+    if "Fix & Core" not in models:
+        models.insert(0, "Fix & Core")
+    return {
+        "contract_models": models,
+        "invoice_months":  [r.m for r in months],
+    }
+
+
 # Fields the PIC is allowed to write via update_pic_row. Anything outside this
 # allowlist is silently ignored to keep the IM/admin-owned columns safe.
 _PIC_WRITABLE = (
     # MS1
     "pic_status", "isdp_owner", "ibuy_owner", "pic_detail_remark", "ms1_applied_date",
-    "subcon_pct_ms1", "inet_pct_ms1",
     "ms1_invoice_month", "ms1_ibuy_inv_date",
     # MS2
     "pic_status_ms2", "pic_detail_remark_ms2", "ms2_applied_date",
-    "subcon_pct_ms2", "inet_pct_ms2",
     "ms2_invoice_month", "ms2_ibuy_inv_date",
     # Common
     "ms1_pct", "ms2_pct",  # PIC may override the parsed split
@@ -677,18 +859,32 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     )
 
     # ── INET vs Subcon split — full pipeline (no date filter).
-    inet_subcon = frappe.db.sql(
+    _split = frappe.db.sql(
         f"""
-        SELECT COALESCE(plan.team_type, 'INET') AS team_type,
-               COUNT(*) AS line_count,
-               COALESCE(SUM(pd.ms1_invoiced + pd.ms2_invoiced), 0) AS invoiced_total,
-               COALESCE(SUM(pd.ms1_amount + pd.ms2_amount), 0) AS po_total
-        {_PIC_FROM_JOIN}
+        SELECT
+          SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              THEN IFNULL(pd.ms1_amount, 0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms1,
+          SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              THEN IFNULL(pd.ms1_amount, 0) * IFNULL(sm_sub.sub_payout_pct, 0) / 100 ELSE 0 END) AS subcon_ms1,
+          SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              THEN IFNULL(pd.ms2_amount, 0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms2,
+          SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              THEN IFNULL(pd.ms2_amount, 0) * IFNULL(sm_sub.sub_payout_pct, 0) / 100 ELSE 0 END) AS subcon_ms2
+        {_PIC_FROM_JOIN_LEAN}
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
-        GROUP BY COALESCE(plan.team_type, 'INET')
         """,
         as_dict=True,
     )
+    _r = (_split[0] if _split else {}) or {}
+    _im1  = flt(_r.get("inet_ms1"));  _sm1 = flt(_r.get("subcon_ms1"))
+    _im2  = flt(_r.get("inet_ms2"));  _sm2 = flt(_r.get("subcon_ms2"))
+    inet_subcon = {
+        "inet_ms1":    round(_im1,  2), "subcon_ms1":  round(_sm1, 2), "total_ms1":   round(_im1 + _sm1, 2),
+        "inet_ms2":    round(_im2,  2), "subcon_ms2":  round(_sm2, 2), "total_ms2":   round(_im2 + _sm2, 2),
+        "inet_total":  round(_im1 + _im2, 2),
+        "subcon_total": round(_sm1 + _sm2, 2),
+        "grand_total": round(_im1 + _sm1 + _im2 + _sm2, 2),
+    }
 
     # ── Top-line KPIs — full pipeline.
     kpi = frappe.db.sql(
@@ -985,14 +1181,28 @@ def list_invoice_tracker_rows(filters=None, limit=500):
     filters = filters or {}
     lim = _portal_row_limit(limit, 500)
 
-    status_vals = _ensure_list(filters.get("pic_status"))
-    if not status_vals:
-        status_vals = list(INVOICE_TRACKER_STATUSES)
+    ms1_vals = _ensure_list(filters.get("pic_status_ms1") or filters.get("pic_status"))
+    ms2_vals = _ensure_list(filters.get("pic_status_ms2"))
 
-    ph = ", ".join(["%s"] * len(status_vals))
-    wheres = ["(({rule}) IN ({ph}) OR pd.pic_status_ms2 IN ({ph}))".format(
-        rule=_PIC_INITIAL_RULE_SQL.strip(), ph=ph)]
-    params = list(status_vals) + list(status_vals)
+    if not ms1_vals and not ms2_vals:
+        # No filter: show any row with an invoicing-stage status on MS1 OR MS2
+        default = list(INVOICE_TRACKER_STATUSES)
+        ph = ", ".join(["%s"] * len(default))
+        wheres = ["(({rule}) IN ({ph}) OR IFNULL(pd.pic_status_ms2,'') IN ({ph}))".format(
+            rule=_PIC_INITIAL_RULE_SQL.strip(), ph=ph)]
+        params = default + default
+    else:
+        parts = []
+        params = []
+        if ms1_vals:
+            ph1 = ", ".join(["%s"] * len(ms1_vals))
+            parts.append(f"({_PIC_INITIAL_RULE_SQL.strip()}) IN ({ph1})")
+            params.extend(ms1_vals)
+        if ms2_vals:
+            ph2 = ", ".join(["%s"] * len(ms2_vals))
+            parts.append(f"IFNULL(pd.pic_status_ms2,'') IN ({ph2})")
+            params.extend(ms2_vals)
+        wheres = [f"({' OR '.join(parts)})"]
 
     # Optional filters
     for col, key in (
@@ -1050,9 +1260,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                {_sqc2}, {_pat2}, {_isdp2}, {_ibuy2},
                pd.payment_terms, pd.tax_rate,
                pd.ms1_payment_received_date, pd.ms2_payment_received_date,
-               pd.subcon_pct_ms1, pd.inet_pct_ms1,
-               pd.subcon_pct_ms2, pd.inet_pct_ms2,
-               sm_inv.contract_model AS contract_model,
+               COALESCE(sm_inv.contract_model, 'Fix & Core') AS contract_model,
                pd.modified,
                {si_cols}
         FROM `tabPO Dispatch` pd
@@ -1062,7 +1270,9 @@ def list_invoice_tracker_rows(filters=None, limit=500):
             LEFT JOIN `tabINET Team` it ON it.name = rp.team
             GROUP BY rp.po_dispatch
         ) plan_inv ON plan_inv.po_dispatch = pd.name
-        LEFT JOIN `tabSubcontractor Master` sm_inv ON sm_inv.name = plan_inv.subcontractor
+        LEFT JOIN `tabINET Team` sc_team_inv ON sc_team_inv.name = pd.subcon_team
+        LEFT JOIN `tabSubcontractor Master` sm_inv
+               ON sm_inv.name = COALESCE(plan_inv.subcontractor, sc_team_inv.subcontractor)
         LEFT JOIN (
             SELECT rp.po_dispatch AS po_dispatch,
                    MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
@@ -1332,6 +1542,106 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
     }
 
 
+def _get_poid_milestone_from_item(item):
+    """Return (pd_name, milestone) derived from item.  milestone is 'MS1'/'MS2'/None."""
+    pd_name = (item.get("poid") or "").strip()
+    if not pd_name:
+        return None, None
+    milestone = (item.get("milestone") or "").strip().upper()
+    if milestone not in ("MS1", "MS2"):
+        milestone = None
+    return pd_name, milestone
+
+
+def _calc_invoiced_from_submitted(pd_name, excluding_invoice=None):
+    """Sum item.amount from all *submitted* Sales Invoices for a POID, split by milestone.
+
+    Returns (ms1_total, ms2_total) as floats.
+    """
+    filters = {"poid": pd_name, "docstatus": 1}
+    si_names = frappe.db.get_all(
+        "Sales Invoice Item",
+        filters=filters,
+        fields=["parent", "amount", "milestone"],
+    )
+    ms1_total = 0.0
+    ms2_total = 0.0
+    for row in si_names:
+        if excluding_invoice and row.parent == excluding_invoice:
+            continue
+        ms = (row.get("milestone") or "").strip().upper()
+        amt = flt(row.amount or 0)
+        if ms == "MS2":
+            ms2_total += amt
+        else:
+            ms1_total += amt
+    return round(ms1_total, 4), round(ms2_total, 4)
+
+
+def before_sales_invoice_submit(doc, method):
+    """Validate invoice line items against PO Dispatch milestone amounts before submit.
+
+    For each item with a POID set:
+    - Validates that item.amount matches the milestone amount on PO Dispatch
+      (within SAR 0.01 tolerance).
+    - Validates that the cumulative invoiced amount (existing submitted invoices
+      + this invoice) does not exceed the milestone amount.
+    """
+    for item in doc.items:
+        pd_name = (item.get("poid") or "").strip()
+        if not pd_name:
+            continue
+        if not frappe.db.exists("PO Dispatch", pd_name):
+            frappe.throw(
+                f"Item {item.item_code or item.idx}: POID '{pd_name}' does not exist in PO Dispatch."
+            )
+
+        pd = frappe.db.get_value(
+            "PO Dispatch", pd_name,
+            ["ms1_amount", "ms2_amount"],
+            as_dict=True,
+        )
+        if not pd:
+            continue
+
+        item_amount = flt(item.amount or 0)
+        milestone = (item.get("milestone") or "").strip().upper()
+        ms1_amt = flt(pd.ms1_amount or 0)
+        ms2_amt = flt(pd.ms2_amount or 0)
+
+        if not milestone:
+            # Auto-detect milestone by amount match (legacy path)
+            if ms1_amt > 0 and abs(item_amount - ms1_amt) < 0.01:
+                milestone = "MS1"
+            elif ms2_amt > 0 and abs(item_amount - ms2_amt) < 0.01:
+                milestone = "MS2"
+            else:
+                # Can't determine milestone — skip validation (may be a non-INET line)
+                continue
+
+        target_amt = ms1_amt if milestone == "MS1" else ms2_amt
+        if target_amt <= 0:
+            frappe.throw(
+                f"Item {item.item_code or item.idx}: POID '{pd_name}' has no {milestone} amount set."
+            )
+
+        if abs(item_amount - target_amt) > 0.01:
+            frappe.throw(
+                f"Item {item.item_code or item.idx} (POID {pd_name}, {milestone}): "
+                f"Invoice amount {item_amount:,.2f} does not match {milestone} amount {target_amt:,.2f} on PO Dispatch."
+            )
+
+        # Cumulative check: already-submitted invoices + this invoice must not exceed milestone amount
+        ms1_already, ms2_already = _calc_invoiced_from_submitted(pd_name, excluding_invoice=doc.name)
+        already = ms1_already if milestone == "MS1" else ms2_already
+        if already + item_amount > target_amt + 0.01:
+            frappe.throw(
+                f"Item {item.item_code or item.idx} (POID {pd_name}, {milestone}): "
+                f"Cumulative invoiced amount ({already:,.2f} + {item_amount:,.2f} = {already + item_amount:,.2f}) "
+                f"exceeds {milestone} amount {target_amt:,.2f} on PO Dispatch."
+            )
+
+
 def on_sales_invoice_submit(doc, method):
     """When a Sales Invoice is submitted, update PIC status to 'Commercial Invoice Submitted'.
 
@@ -1364,9 +1674,7 @@ def on_sales_invoice_submit(doc, method):
         updates = {}
 
         ms1_amt = flt(pd.ms1_amount or 0)
-        ms1_old_inv = flt(pd.ms1_invoiced or 0)
         ms2_amt = flt(pd.ms2_amount or 0)
-        ms2_old_inv = flt(pd.ms2_invoiced or 0)
 
         ms1_ready = (pd.pic_status or "").strip() == "Ready for Invoice"
         ms2_ready = (pd.pic_status_ms2 or "").strip() == "Ready for Invoice"
@@ -1382,18 +1690,21 @@ def on_sales_invoice_submit(doc, method):
             update_ms2 = ms2_ready and ms2_amount_match
 
         if update_ms1:
+            # Accumulate from all submitted invoices for this POID
+            ms1_total, _ = _calc_invoiced_from_submitted(pd_name)
             updates.update({
                 "pic_status": "Commercial Invoice Submitted",
-                "ms1_invoiced": item_amount,
-                "ms1_unbilled": round(ms1_amt - item_amount, 4),
+                "ms1_invoiced": ms1_total,
+                "ms1_unbilled": round(ms1_amt - ms1_total, 4),
                 "ms1_invoice_month": doc.posting_date,
             })
 
         if update_ms2:
+            _, ms2_total = _calc_invoiced_from_submitted(pd_name)
             updates.update({
                 "pic_status_ms2": "Commercial Invoice Submitted",
-                "ms2_invoiced": item_amount,
-                "ms2_unbilled": round(ms2_amt - item_amount, 4),
+                "ms2_invoiced": ms2_total,
+                "ms2_unbilled": round(ms2_amt - ms2_total, 4),
                 "ms2_invoice_month": doc.posting_date,
             })
 
@@ -1401,8 +1712,8 @@ def on_sales_invoice_submit(doc, method):
             continue
 
         # Recompute remaining_milestone_pct from the updated invoiced values
-        m1_inv = flt(updates.get("ms1_invoiced", ms1_old_inv))
-        m2_inv = flt(updates.get("ms2_invoiced", ms2_old_inv))
+        m1_inv = flt(updates.get("ms1_invoiced", flt(pd.ms1_invoiced or 0)))
+        m2_inv = flt(updates.get("ms2_invoiced", flt(pd.ms2_invoiced or 0)))
         line = flt(pd.line_amount or 0)
         remaining = (ms1_amt - m1_inv) + (ms2_amt - m2_inv)
         updates["remaining_milestone_pct"] = round(remaining / line * 100.0, 2) if line else 0.0
@@ -1416,8 +1727,8 @@ def on_sales_invoice_submit(doc, method):
 
 
 def on_sales_invoice_cancel(doc, method):
-    """When a Sales Invoice is cancelled, revert PIC status to 'Ready for Invoice'
-    and clear the invoice month so the row re-enters the billing queue."""
+    """When a Sales Invoice is cancelled, recalculate invoiced amounts from remaining
+    submitted invoices and revert PIC status to 'Ready for Invoice' if none remain."""
     for item in doc.items:
         pd_name = (item.get("poid") or "").strip()
         if not pd_name or not frappe.db.exists("PO Dispatch", pd_name):
@@ -1427,6 +1738,7 @@ def on_sales_invoice_cancel(doc, method):
             pd = frappe.db.get_value("PO Dispatch", pd_name, [
                 "pic_status", "pic_status_ms2",
                 "ms1_amount", "ms2_amount",
+                "line_amount",
             ], as_dict=True)
         except Exception:
             continue
@@ -1436,6 +1748,9 @@ def on_sales_invoice_cancel(doc, method):
         item_milestone = (item.get("milestone") or "").strip().upper()
         updates = {}
 
+        ms1_amt = flt(pd.ms1_amount or 0)
+        ms2_amt = flt(pd.ms2_amount or 0)
+
         ms1_submitted = (pd.pic_status or "").strip() == "Commercial Invoice Submitted"
         ms2_submitted = (pd.pic_status_ms2 or "").strip() == "Commercial Invoice Submitted"
 
@@ -1443,36 +1758,53 @@ def on_sales_invoice_cancel(doc, method):
         revert_ms2 = (item_milestone == "MS2" and ms2_submitted) or (not item_milestone and ms2_submitted)
 
         if revert_ms1:
-            updates.update({
-                "pic_status": "Ready for Invoice",
-                "ms1_invoiced": 0,
-                "ms1_unbilled": flt(pd.ms1_amount or 0),
-                "ms1_invoice_month": None,
-            })
+            # Recalculate from remaining submitted invoices (excluding this cancelled one)
+            ms1_remaining, _ = _calc_invoiced_from_submitted(pd_name, excluding_invoice=doc.name)
+            if ms1_remaining > 0:
+                updates.update({
+                    "ms1_invoiced": ms1_remaining,
+                    "ms1_unbilled": round(ms1_amt - ms1_remaining, 4),
+                })
+            else:
+                updates.update({
+                    "pic_status": "Ready for Invoice",
+                    "ms1_invoiced": 0,
+                    "ms1_unbilled": ms1_amt,
+                    "ms1_invoice_month": None,
+                })
 
         if revert_ms2:
-            updates.update({
-                "pic_status_ms2": "Ready for Invoice",
-                "ms2_invoiced": 0,
-                "ms2_unbilled": flt(pd.ms2_amount or 0),
-                "ms2_invoice_month": None,
-            })
+            _, ms2_remaining = _calc_invoiced_from_submitted(pd_name, excluding_invoice=doc.name)
+            if ms2_remaining > 0:
+                updates.update({
+                    "ms2_invoiced": ms2_remaining,
+                    "ms2_unbilled": round(ms2_amt - ms2_remaining, 4),
+                })
+            else:
+                updates.update({
+                    "pic_status_ms2": "Ready for Invoice",
+                    "ms2_invoiced": 0,
+                    "ms2_unbilled": ms2_amt,
+                    "ms2_invoice_month": None,
+                })
 
         if not updates:
             continue
 
-        ms1_amt = flt(pd.ms1_amount or 0)
-        ms2_amt = flt(pd.ms2_amount or 0)
-        m1_unb = flt(updates.get("ms1_unbilled", 0))
-        m2_unb = flt(updates.get("ms2_unbilled", 0))
-        line = ms1_amt + ms2_amt
-        updates["remaining_milestone_pct"] = round((m1_unb + m2_unb) / line * 100.0, 2) if line else 0.0
+        m1_inv = flt(updates.get("ms1_invoiced", 0))
+        m2_inv = flt(updates.get("ms2_invoiced", 0))
+        line = flt(pd.line_amount or 0) or (ms1_amt + ms2_amt)
+        remaining = (ms1_amt - m1_inv) + (ms2_amt - m2_inv)
+        updates["remaining_milestone_pct"] = round(remaining / line * 100.0, 2) if line else 0.0
 
         frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
 
-        wd_names = frappe.db.get_all("Work Done", {"system_id": pd_name}, pluck="name")
-        for wd_name in wd_names:
-            frappe.db.set_value("Work Done", wd_name, "billing_status", "")
+        # Revert Work Done billing_status only if no submitted invoices remain for this POID
+        ms1_rem, ms2_rem = _calc_invoiced_from_submitted(pd_name, excluding_invoice=doc.name)
+        if ms1_rem + ms2_rem <= 0:
+            wd_names = frappe.db.get_all("Work Done", {"system_id": pd_name}, pluck="name")
+            for wd_name in wd_names:
+                frappe.db.set_value("Work Done", wd_name, "billing_status", "")
 
 
 @frappe.whitelist()

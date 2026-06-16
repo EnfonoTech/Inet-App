@@ -174,6 +174,7 @@ role_home_page = {
 
 doc_events = {
 	"Sales Invoice": {
+		"before_submit": "inet_app.api.pic.before_sales_invoice_submit",
 		"on_submit": "inet_app.api.pic.on_sales_invoice_submit",
 		"on_cancel": "inet_app.api.pic.on_sales_invoice_cancel"
 	},
