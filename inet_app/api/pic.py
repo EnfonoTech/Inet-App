@@ -727,12 +727,10 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
 def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     """KPIs + bucket counts + monthly invoicing roll-up for the PIC dashboard.
 
-    The date range scopes **time-series** panels only — monthly invoicing
-    roll-up and the I-BUY / ISDP pending-owner tables (filtered by
-    applied date). Bucket counts, INET-vs-Subcon split, and top-line KPIs
-    always show the full pipeline so they don't collapse to almost-empty
-    when the user picks a date range that excludes the typical "Work Not
-    Done" pile (those rows have no applied date yet).
+    The date range filters all panels by ``ms1_applied_date`` (the date a
+    line entered the invoicing pipeline). Rows without an applied date (e.g.
+    "Work Not Done") are excluded when a date range is set.  Clearing the
+    filter shows the full pipeline.
 
     If the caller passes ``etag`` matching the current data version,
     short-circuits with ``{"unchanged": True, "etag": ...}``.
@@ -771,8 +769,26 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
         invoice_clause = "WHERE m <= DATE_FORMAT(%s, '%%Y-%%m')"
         invoice_params = [td]
 
+    # Invoice-month conditions for the INET/Subcon split CASE expressions.
+    # Each of the 4 SUM(CASE ...) uses split_ms1_cond (2 params each × 2 = 4)
+    # then split_ms2_cond (2 params each × 2 = 4), total 8 params when both dates set.
+    split_ms1_cond = ""
+    split_ms2_cond = ""
+    split_params = []
+    if fd and td:
+        split_ms1_cond = "AND DATE_FORMAT(pd.ms1_invoice_month,'%%Y-%%m') BETWEEN DATE_FORMAT(%s,'%%Y-%%m') AND DATE_FORMAT(%s,'%%Y-%%m')"
+        split_ms2_cond = "AND DATE_FORMAT(pd.ms2_invoice_month,'%%Y-%%m') BETWEEN DATE_FORMAT(%s,'%%Y-%%m') AND DATE_FORMAT(%s,'%%Y-%%m')"
+        split_params = [fd, td, fd, td, fd, td, fd, td]
+    elif fd:
+        split_ms1_cond = "AND pd.ms1_invoice_month >= %s"
+        split_ms2_cond = "AND pd.ms2_invoice_month >= %s"
+        split_params = [fd, fd, fd, fd]
+    elif td:
+        split_ms1_cond = "AND pd.ms1_invoice_month <= %s"
+        split_ms2_cond = "AND pd.ms2_invoice_month <= %s"
+        split_params = [td, td, td, td]
+
     # ── Acceptance buckets — count + 1st/2nd/total amounts per pic_status.
-    # NO date filter — these are the live pipeline counts.
     bucket_rows = frappe.db.sql(
         f"""
         SELECT bucket,
@@ -786,10 +802,12 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
             pd.ms1_amount, pd.ms2_amount
           {_PIC_FROM_JOIN}
           WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+          {applied_clause}
         ) t
         GROUP BY bucket
         ORDER BY line_count DESC
         """,
+        tuple(applied_params),
         as_dict=True,
     )
 
@@ -858,21 +876,26 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
         as_dict=True,
     )
 
-    # ── INET vs Subcon split — full pipeline (no date filter).
+    # ── INET vs Subcon split — filtered by invoice month when date range set.
     _split = frappe.db.sql(
         f"""
         SELECT
           SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              {split_ms1_cond}
               THEN IFNULL(pd.ms1_amount, 0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms1,
           SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              {split_ms1_cond}
               THEN IFNULL(pd.ms1_amount, 0) * IFNULL(sm_sub.sub_payout_pct, 0) / 100 ELSE 0 END) AS subcon_ms1,
           SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              {split_ms2_cond}
               THEN IFNULL(pd.ms2_amount, 0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms2,
           SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              {split_ms2_cond}
               THEN IFNULL(pd.ms2_amount, 0) * IFNULL(sm_sub.sub_payout_pct, 0) / 100 ELSE 0 END) AS subcon_ms2
         {_PIC_FROM_JOIN_LEAN}
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
         """,
+        tuple(split_params),
         as_dict=True,
     )
     _r = (_split[0] if _split else {}) or {}
@@ -886,7 +909,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
         "grand_total": round(_im1 + _sm1 + _im2 + _sm2, 2),
     }
 
-    # ── Top-line KPIs — full pipeline.
+    # ── Top-line KPIs — scoped by date when set.
     kpi = frappe.db.sql(
         f"""
         SELECT
@@ -896,7 +919,9 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
           COUNT(*) AS line_count
         {_PIC_FROM_JOIN}
         WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+        {applied_clause}
         """,
+        tuple(applied_params),
         as_dict=True,
     )
     kpi = (kpi[0] if kpi else {}) or {}

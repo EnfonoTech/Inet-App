@@ -119,10 +119,21 @@ export default function PICDashboard({ showSwitcher = false }) {
             <div style={{ fontSize: "0.82rem", opacity: 0.85, marginTop: 4 }}>
               Acceptance pipeline + invoicing roll-up.
               {lastUpdated && <span style={{ marginLeft: 8, opacity: 0.7 }}>· Last refreshed {lastUpdated}</span>}
+              {(range.from || range.to) && (
+                <span style={{ marginLeft: 10, background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700 }}>
+                  Filtered: {range.from || "…"} → {range.to || "…"}
+                </span>
+              )}
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <DateRangePicker value={range} onChange={({ from, to }) => setRange({ from, to })} />
+            {(range.from || range.to) && (
+              <button type="button" onClick={() => setRange({ from: "", to: "" })}
+                style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", borderRadius: 6, padding: "5px 10px", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer" }}>
+                ✕ Clear
+              </button>
+            )}
             <button type="button" className="btn-secondary" onClick={load} disabled={loading}
               style={{ background: "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.25)", color: "#fff", fontWeight: 600 }}>
               {loading && !data ? "Loading…" : "Refresh"}
