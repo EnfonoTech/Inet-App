@@ -1897,6 +1897,12 @@ def reject_pic_line(po_dispatch, remark):
     if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
         frappe.db.set_value("PO Dispatch", po_dispatch, "pic_rejection_remark", remark, update_modified=False)
     frappe.db.commit()
+    # Notify IM (db.set_value doesn't fire hooks)
+    try:
+        from inet_app.api.notifications import notify_im_pic_rejected
+        notify_im_pic_rejected(po_dispatch)
+    except Exception:
+        pass
     return {"status": "ok", "rejected_work_done": [wd.name for wd in wd_docs]}
 
 

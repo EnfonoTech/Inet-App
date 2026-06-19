@@ -181,29 +181,43 @@ def on_daily_execution_update(doc, method=None):
 	_notify_im_execution_completed(doc)
 
 
-def notify_tl_work_done_confirmed(work_done_name):
-	"""Called directly from command_center.update_work_done_submission() because
-	db.set_value() does not fire Frappe doc hooks."""
-	row = frappe.db.sql(
-		"""
-		SELECT de.team
-		FROM `tabWork Done` wd
-		JOIN `tabDaily Execution` de ON de.name = wd.execution
-		WHERE wd.name = %s
-		LIMIT 1
-		""",
-		work_done_name,
-		as_dict=True,
-	)
-	team = row[0].team if row else None
-	tl_user = _tl_user_from_team(team) if team else None
+def notify_pic_work_done_submitted(work_done_name):
+	"""Called directly from command_center.update_work_done_submission() when IM
+	sets Confirmation Done. db.set_value() does not fire Frappe doc hooks."""
 	po = _po_from_work_done(work_done_name)
 	label = _po_label(po) or work_done_name
+	subject = f"[ALERT] Work Done confirmed by IM — {label}"
+	for user in _users_by_role("INET PIC"):
+		_make_notification(
+			user,
+			subject,
+			"Work Done", work_done_name,
+			link="/pms/pic-tracker",
+		)
+
+
+def notify_im_pic_rejected(po_dispatch_name):
+	"""Called directly from pic.reject_pic_line(). Notifies the IM that owns
+	the PO Dispatch so they can resubmit or rectify the Work Done."""
+	if not po_dispatch_name:
+		return
+	pd = frappe.db.get_value(
+		"PO Dispatch", po_dispatch_name, ["im", "poid", "site_code"], as_dict=True
+	)
+	if not pd:
+		return
+	im_user = frappe.db.get_value("IM Master", pd.im, "user") if pd.im else None
+	parts = []
+	if pd.poid:
+		parts.append(f"POID {pd.poid}")
+	if pd.site_code:
+		parts.append(f"DUID {pd.site_code}")
+	label = " · ".join(parts) or po_dispatch_name
 	_make_notification(
-		tl_user,
-		f"[INFO] Work confirmed by IM — {label}",
-		"Work Done", work_done_name,
-		link="/pms/today",
+		im_user,
+		f"[CRITICAL] Work Done rejected by PIC — {label}",
+		"PO Dispatch", po_dispatch_name,
+		link="/pms/im-work-done",
 	)
 
 
@@ -337,6 +351,137 @@ def on_expense_claim_update(doc, method=None):
 			"Expense Claim", doc.name,
 			link="/pms/field-expense",
 		)
+
+
+# ---------------------------------------------------------------------------
+# Team Allocation Request — IM-to-IM transfer with PM approval
+# Direct injection (db.set_value never fires hooks)
+# ---------------------------------------------------------------------------
+
+def _im_label(im_master_name):
+	"""Return a human-readable display name for an IM Master."""
+	if not im_master_name:
+		return im_master_name or ""
+	return frappe.db.get_value("IM Master", im_master_name, "full_name") or im_master_name
+
+
+def notify_source_im_allocation_requested(request_name):
+	"""Notify source (from) IM when another IM requests their team."""
+	req = frappe.db.get_value(
+		"Team Allocation Request", request_name,
+		["from_im", "to_im", "team"], as_dict=True,
+	)
+	if not req:
+		return
+	from_user = frappe.db.get_value("IM Master", req.from_im, "user") if req.from_im else None
+	to_label = _im_label(req.to_im)
+	_make_notification(
+		from_user,
+		f"[ALERT] Team transfer request — team {req.team} requested by {to_label}",
+		"Team Allocation Request", request_name,
+		link="/pms/im-teams",
+	)
+
+
+def notify_pm_allocation_pending(request_name):
+	"""Notify all PM when source IM accepts → Pending PM Approval."""
+	req = frappe.db.get_value(
+		"Team Allocation Request", request_name,
+		["from_im", "to_im", "team"], as_dict=True,
+	)
+	if not req:
+		return
+	from_label = _im_label(req.from_im)
+	to_label = _im_label(req.to_im)
+	subject = f"[ALERT] Team transfer awaiting approval — team {req.team} from {from_label} to {to_label}"
+	for user in _users_by_role("INET Admin"):
+		_make_notification(user, subject, "Team Allocation Request", request_name, link="/pms/approvals")
+
+
+def notify_to_im_allocation_source_rejected(request_name):
+	"""Notify requesting (to) IM when source IM rejects the transfer."""
+	req = frappe.db.get_value(
+		"Team Allocation Request", request_name,
+		["from_im", "to_im", "team"], as_dict=True,
+	)
+	if not req:
+		return
+	to_user = frappe.db.get_value("IM Master", req.to_im, "user") if req.to_im else None
+	from_label = _im_label(req.from_im)
+	_make_notification(
+		to_user,
+		f"[CRITICAL] Team transfer rejected by {from_label} — team {req.team}",
+		"Team Allocation Request", request_name,
+		link="/pms/im-teams",
+	)
+
+
+def notify_ims_allocation_pm_decided(request_name, action):
+	"""Notify both IMs when PM approves; only requesting IM when PM rejects."""
+	req = frappe.db.get_value(
+		"Team Allocation Request", request_name,
+		["from_im", "to_im", "team"], as_dict=True,
+	)
+	if not req:
+		return
+	to_user = frappe.db.get_value("IM Master", req.to_im, "user") if req.to_im else None
+	from_user = frappe.db.get_value("IM Master", req.from_im, "user") if req.from_im else None
+	if action == "approve":
+		_make_notification(
+			to_user,
+			f"[INFO] Team transfer approved — team {req.team} is now yours",
+			"Team Allocation Request", request_name,
+			link="/pms/im-teams",
+		)
+		_make_notification(
+			from_user,
+			f"[INFO] Team transfer approved — team {req.team} moved to {_im_label(req.to_im)}",
+			"Team Allocation Request", request_name,
+			link="/pms/im-teams",
+		)
+	else:
+		_make_notification(
+			to_user,
+			f"[CRITICAL] Team transfer rejected by PM — team {req.team}",
+			"Team Allocation Request", request_name,
+			link="/pms/im-teams",
+		)
+
+
+# ---------------------------------------------------------------------------
+# Rollout Plan Cancel Request — IM requests PM approval to cancel
+# Direct injection (db.set_value never fires hooks; on_rollout_plan_update
+# hook exists but is unreachable via the API functions)
+# ---------------------------------------------------------------------------
+
+def notify_pm_cancel_plan_requested(rollout_plan_name):
+	"""Notify all PM when IM requests cancellation of a Rollout Plan."""
+	po = _po_from_rollout_plan(rollout_plan_name)
+	label = _po_label(po) or rollout_plan_name
+	subject = f"[ALERT] Plan cancel requested — {label}"
+	for user in _users_by_role("INET Admin"):
+		_make_notification(user, subject, "Rollout Plan", rollout_plan_name, link="/pms/approvals")
+
+
+def notify_im_cancel_plan_decided(rollout_plan_name, action):
+	"""Notify requesting IM when PM approves or rejects the cancel request."""
+	plan = frappe.db.get_value(
+		"Rollout Plan", rollout_plan_name,
+		["cancel_requested_by", "po_dispatch"], as_dict=True,
+	)
+	if not plan or not plan.cancel_requested_by:
+		return
+	po = _po_info(plan.po_dispatch) if plan.po_dispatch else {}
+	label = _po_label(po) or rollout_plan_name
+	if action == "approve":
+		subject = f"[INFO] Plan cancel approved — {label}"
+	else:
+		subject = f"[CRITICAL] Plan cancel rejected by PM — {label}"
+	_make_notification(
+		plan.cancel_requested_by, subject,
+		"Rollout Plan", rollout_plan_name,
+		link="/pms/im-planning",
+	)
 
 
 # ---------------------------------------------------------------------------

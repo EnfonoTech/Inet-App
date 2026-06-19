@@ -5562,11 +5562,11 @@ def update_work_done_submission(name, submission_status, note=None):
         frappe.throw(f"Work Done not found: {name}")
     frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
 
-    # Notify TL when IM confirms (db.set_value doesn't fire on_update hooks)
+    # Notify PIC when IM confirms (db.set_value doesn't fire on_update hooks)
     if status == "Confirmation Done":
         try:
-            from inet_app.api.notifications import notify_tl_work_done_confirmed
-            notify_tl_work_done_confirmed(name)
+            from inet_app.api.notifications import notify_pic_work_done_submitted
+            notify_pic_work_done_submitted(name)
         except Exception:
             pass
 
@@ -10811,6 +10811,11 @@ def request_team_allocation(team, reason=None):
         doc.reason = str(reason)[:2000]
     doc.insert(ignore_permissions=True)
     frappe.db.commit()
+    try:
+        from inet_app.api.notifications import notify_source_im_allocation_requested
+        notify_source_im_allocation_requested(doc.name)
+    except Exception:
+        pass
     return _team_allocation_serialize(doc.name)
 
 
@@ -10863,6 +10868,15 @@ def respond_team_allocation(request, action, remark=None):
         updates["source_im_remark"] = str(remark)[:2000]
     frappe.db.set_value("Team Allocation Request", request, updates, update_modified=True)
     frappe.db.commit()
+    try:
+        if new_status == "Pending PM Approval":
+            from inet_app.api.notifications import notify_pm_allocation_pending
+            notify_pm_allocation_pending(request)
+        else:
+            from inet_app.api.notifications import notify_to_im_allocation_source_rejected
+            notify_to_im_allocation_source_rejected(request)
+    except Exception:
+        pass
     return _team_allocation_serialize(request)
 
 
@@ -10894,6 +10908,11 @@ def pm_decide_team_allocation(request, action, remark=None):
             update_modified=True,
         )
         frappe.db.commit()
+        try:
+            from inet_app.api.notifications import notify_ims_allocation_pm_decided
+            notify_ims_allocation_pm_decided(request, "reject")
+        except Exception:
+            pass
         return _team_allocation_serialize(request)
 
     # Approve — atomic transfer. Re-read the team's current IM and only
@@ -10921,6 +10940,11 @@ def pm_decide_team_allocation(request, action, remark=None):
         update_modified=True,
     )
     frappe.db.commit()
+    try:
+        from inet_app.api.notifications import notify_ims_allocation_pm_decided
+        notify_ims_allocation_pm_decided(request, "approve")
+    except Exception:
+        pass
     return _team_allocation_serialize(request)
 
 
@@ -11102,7 +11126,11 @@ def request_cancel_plan(rollout_plan, reason=None):
         "cancel_responded_at": None,
         "cancel_pm_remark": None,
     }, update_modified=True)
-
+    try:
+        from inet_app.api.notifications import notify_pm_cancel_plan_requested
+        notify_pm_cancel_plan_requested(rollout_plan)
+    except Exception:
+        pass
     return _serialize_plan_for_cancel(rollout_plan)
 
 
@@ -11144,6 +11172,12 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
             "cancel_responded_at": now,
             "cancel_pm_remark": (remark or "").strip()[:8000] if remark else None,
         }, update_modified=True)
+        frappe.db.commit()
+        try:
+            from inet_app.api.notifications import notify_im_cancel_plan_decided
+            notify_im_cancel_plan_decided(rollout_plan, "reject")
+        except Exception:
+            pass
         return _serialize_plan_for_cancel(rollout_plan)
 
     # Approve — atomic: cancel plan + revert PO Dispatch
@@ -11162,7 +11196,11 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
             frappe.db.set_value("PO Dispatch", po_dispatch_name, "dispatch_status", "Dispatched")
 
     frappe.db.commit()
-
+    try:
+        from inet_app.api.notifications import notify_im_cancel_plan_decided
+        notify_im_cancel_plan_decided(rollout_plan, "approve")
+    except Exception:
+        pass
     return _serialize_plan_for_cancel(rollout_plan)
 
 
