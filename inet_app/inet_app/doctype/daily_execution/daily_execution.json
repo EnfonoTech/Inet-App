@@ -80,7 +80,7 @@
    "in_list_view": 1,
    "label": "TL Status",
    "description": "Status reported by the field Team Lead (also editable by the IM).",
-   "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed"
+   "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed\nNot Attended"
   },
   {
    "default": "In Progress",

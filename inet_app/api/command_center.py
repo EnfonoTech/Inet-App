@@ -3589,6 +3589,7 @@ _ALLOWED_DAILY_EXECUTION_STATUSES = frozenset(
         "Hold",
         "Cancelled",
         "Postponed",
+        "Not Attended",
         "POD Pending",
         "PO Required",
         "Span Loss",

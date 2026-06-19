@@ -13,8 +13,11 @@ export const EXECUTION_STATUS_OPTIONS = [
   "Postponed",
 ];
 
-/** Alias so TL-status dropdowns read more naturally at the call site. */
-export const TL_STATUS_OPTIONS = EXECUTION_STATUS_OPTIONS;
+/** TL-only statuses — superset of EXECUTION_STATUS_OPTIONS. */
+export const TL_STATUS_OPTIONS = [
+  ...EXECUTION_STATUS_OPTIONS,
+  "Not Attended",
+];
 
 /** Issue Category select values — used on Rollout Plan + Daily Execution. */
 export const ISSUE_CATEGORY_OPTIONS = [
