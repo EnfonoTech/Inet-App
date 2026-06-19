@@ -71,6 +71,7 @@ export default function TeamAllocationApprovals() {
       setDecideTarget(null);
       await load();
       window.dispatchEvent(new Event("inet:approvals-changed"));
+      window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
     } catch (e) {
       setErr(e?.message || "Action failed");
     } finally {

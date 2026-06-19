@@ -272,6 +272,7 @@ export default function IMWorkDone() {
       } else {
         res = await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick, imNote || undefined);
       }
+      window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
       setSubmissionFor(null);
       if (res?.pic_warning) setSubmissionWarn(res.pic_warning);
       loadData();

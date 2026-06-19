@@ -351,11 +351,34 @@ def ensure_item_master(item_code_input, item_name=None):
         if hasattr(it, "is_stock_item"):
             it.is_stock_item = 0
         it.insert(ignore_permissions=True)
+        _try_set_arabic_item_name(code, it.item_name)
     except Exception as e:
         if frappe.db.exists("Item", code):
             return True, None
         return False, str(e)
     return True, None
+
+
+def _try_set_arabic_item_name(item_code, item_name_en):
+    """Auto-translate item_name to Arabic after creation. Silent no-op when:
+    - custom_item_name_arabic field doesn't exist (app not installed)
+    - Groq API key not configured
+    - Translation API call fails
+    """
+    try:
+        if not frappe.db.has_column("Item", "custom_item_name_arabic"):
+            return
+        try:
+            from arabic_translation.api.translation import translate_to_arabic, get_groq_api_key
+        except ImportError:
+            return
+        if not get_groq_api_key():
+            return
+        arabic = translate_to_arabic(item_name_en)
+        if arabic and arabic.strip():
+            frappe.db.set_value("Item", item_code, "custom_item_name_arabic", arabic.strip())
+    except Exception:
+        pass
 
 
 def ensure_project_control_center(project_code, customer_input, project_name=None, center_area=None):
@@ -5539,6 +5562,14 @@ def update_work_done_submission(name, submission_status, note=None):
         frappe.throw(f"Work Done not found: {name}")
     frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
 
+    # Notify TL when IM confirms (db.set_value doesn't fire on_update hooks)
+    if status == "Confirmation Done":
+        try:
+            from inet_app.api.notifications import notify_tl_work_done_confirmed
+            notify_tl_work_done_confirmed(name)
+        except Exception:
+            pass
+
     # Resolve PO Dispatch via rollout-plan chain; fall back to Work Done.system_id
     chain_row = frappe.db.sql(
         """
@@ -9822,8 +9853,12 @@ _PO_ARCHIVE_ALIAS = {
     "Remaining Milestone": "remaining_milestone_pct",
     "1st Payment PO Amount": "ms1_amount",
     "1st Payment Invoiced": "ms1_invoiced",
+    "Subcon Per% MS1": "subcon_pct_ms1",
+    "Inet Per% MS1": "inet_pct_ms1",
     "2nd Payment PO Amount": "ms2_amount",
     "2nd Payment Invoiced": "ms2_invoiced",
+    "Subcon Per% MS2": "subcon_pct_ms2",
+    "Inet Per% MS2": "inet_pct_ms2",
     "Invoicing Month (First Payment Milestone)": "ms1_invoice_month",
     "Invoicing Month (Second Payment Milestone)": "ms2_invoice_month",
     # Duplicate-named cols ("Applied Date", "IBUY / INV date", "Payment Received
@@ -9900,6 +9935,8 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
         "ms1_amount", "ms2_amount",
         "ms1_invoiced", "ms2_invoiced",
         "remaining_milestone_pct",
+        "subcon_pct_ms1", "inet_pct_ms1",
+        "subcon_pct_ms2", "inet_pct_ms2",
         "ms1_invoice_month", "ms2_invoice_month",
         "ms1_ibuy_inv_date", "ms2_ibuy_inv_date",
         "manager_remark",
@@ -9907,6 +9944,7 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
     NUMERIC = {
         "ms1_amount", "ms2_amount", "ms1_invoiced", "ms2_invoiced",
         "remaining_milestone_pct",
+        "subcon_pct_ms1", "inet_pct_ms1", "subcon_pct_ms2", "inet_pct_ms2",
     }
     updates = {}
     for k in PIC_KEYS:

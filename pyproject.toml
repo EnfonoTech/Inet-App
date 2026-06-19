@@ -6,7 +6,7 @@ authors = [
 description = "custom app for inet"
 requires-python = ">=3.10"
 readme = "README.md"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
     # "frappe~=15.0.0" # Installed and managed by bench.
 ]

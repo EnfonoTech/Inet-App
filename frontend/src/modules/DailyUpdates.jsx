@@ -27,6 +27,7 @@ export default function DailyUpdates() {
   const saveUpdate = async () => {
     if (!form.project || !form.team) return;
     await pmApi.upsertUpdate(form);
+    window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
     setForm((p) => ({ ...p, team: "", work_description: "" }));
     load();
     setOpenCreate(false);

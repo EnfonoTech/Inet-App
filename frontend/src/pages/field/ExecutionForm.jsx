@@ -740,6 +740,7 @@ export default function ExecutionForm() {
               poids: [plan.po_dispatch],
             })),
           });
+          window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
         } catch (err) {
           // Execution already submitted — surface the expense failure without blocking success.
           setExpenseError(err.message || "Expense claim creation failed. Please file from the Expenses page.");

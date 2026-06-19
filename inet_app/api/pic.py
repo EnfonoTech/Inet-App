@@ -8,6 +8,7 @@ the Cash Flow Summary dashboard.
 
 import frappe
 from frappe.utils import cint, flt, getdate, nowdate
+from inet_app.api.notifications import _make_notification, _notify_role
 
 from inet_app.api.command_center import (
     _batch_item_activity_types,
@@ -710,6 +711,15 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
         )
 
     frappe.db.commit()
+
+    if updated:
+        n = len(updated)
+        _make_notification(
+            frappe.session.user,
+            f"[INFO] Bulk update complete — {n} dispatch(es) moved to '{pic_status}'",
+            "PO Dispatch", None,
+        )
+
     return {
         "updated": updated,
         "errors": errors,
@@ -1285,7 +1295,11 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                {_sqc2}, {_pat2}, {_isdp2}, {_ibuy2},
                pd.payment_terms, pd.tax_rate,
                pd.ms1_payment_received_date, pd.ms2_payment_received_date,
-               COALESCE(sm_inv.contract_model, 'Fix & Core') AS contract_model,
+               COALESCE(sm_inv.contract_model,
+                        CASE WHEN (plan_inv.po_dispatch IS NOT NULL OR sc_team_inv.name IS NOT NULL)
+                             THEN 'Fix & Core'
+                             ELSE pd.contract
+                        END) AS contract_model,
                pd.modified,
                {si_cols}
         FROM `tabPO Dispatch` pd
@@ -1750,6 +1764,10 @@ def on_sales_invoice_submit(doc, method):
         for wd_name in wd_names:
             frappe.db.set_value("Work Done", wd_name, "billing_status", "Invoiced")
 
+    _notify_role("INET Admin",
+        f"[INFO] Sales Invoice {doc.name} submitted",
+        "Sales Invoice", doc.name)
+
 
 def on_sales_invoice_cancel(doc, method):
     """When a Sales Invoice is cancelled, recalculate invoiced amounts from remaining
@@ -1830,6 +1848,10 @@ def on_sales_invoice_cancel(doc, method):
             wd_names = frappe.db.get_all("Work Done", {"system_id": pd_name}, pluck="name")
             for wd_name in wd_names:
                 frappe.db.set_value("Work Done", wd_name, "billing_status", "")
+
+    _notify_role("INET PIC",
+        f"[ALERT] Sales Invoice {doc.name} was cancelled — dispatches reverted",
+        "Sales Invoice", doc.name)
 
 
 @frappe.whitelist()

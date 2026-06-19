@@ -155,6 +155,7 @@ function ActionModal({ open, claim, mode, onClose, onDone }) {
     try {
       if (mode === "approve") await pmApi.approveExpenseClaim(claim.name);
       else await pmApi.rejectExpenseClaim(claim.name, reason);
+      window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
       onDone();
       onClose();
     } catch (e) {

@@ -180,30 +180,44 @@ doc_events = {
 	},
 	"Stock Entry": {
 		"before_submit": "inet_app.api.material_management.before_stock_entry_submit",
-		"on_submit": "inet_app.api.material_management.on_stock_entry_submit"
+		"on_submit": [
+			"inet_app.api.material_management.on_stock_entry_submit",
+			"inet_app.api.notifications.on_stock_entry_submit_notification",
+		],
+	},
+	"Daily Work Update": {
+		"on_update": "inet_app.api.notifications.on_daily_work_update_update",
+	},
+	"Daily Execution": {
+		"after_insert": "inet_app.api.notifications.on_daily_execution_insert",
+		"on_update": "inet_app.api.notifications.on_daily_execution_update",
+	},
+	"Rollout Plan": {
+		"after_insert": "inet_app.api.notifications.on_rollout_plan_insert",
+		"on_update": "inet_app.api.notifications.on_rollout_plan_update",
+	},
+	"Material Request": {
+		"on_submit": "inet_app.api.notifications.on_material_request_submit",
+		"on_cancel": "inet_app.api.notifications.on_material_request_cancel",
+	},
+	"Expense Claim": {
+		"on_submit": "inet_app.api.notifications.on_expense_claim_submit",
+		"on_update": "inet_app.api.notifications.on_expense_claim_update",
+	},
+	"Huawei Outbound Plan": {
+		"after_insert": "inet_app.api.notifications.on_huawei_plan_insert",
 	},
 }
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"inet_app.tasks.all"
-# 	],
-# 	"daily": [
-# 		"inet_app.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"inet_app.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"inet_app.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"inet_app.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		"0 18 * * *": ["inet_app.api.notifications.send_missed_dwu_alert"],
+		"0 8 * * *":  ["inet_app.api.notifications.send_dummy_po_reminder"],
+	},
+}
 
 # Testing
 # -------

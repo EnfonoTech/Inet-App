@@ -327,6 +327,7 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
           poids: l.poids,
         })),
       });
+      window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
       onCreated(result);
       onClose();
     } catch (err) {

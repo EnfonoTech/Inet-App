@@ -636,4 +636,12 @@ export const pmApi = {
   rejectExpenseClaim:      (claim_name, reason) => call("inet_app.api.expense.reject_expense_claim", { claim_name, reason: reason || "" }),
   getImListForFilter:      ()             => callCached("inet_app.api.expense.get_im_list_for_filter", {}, 300_000),
   getTeamsForFilter:       (im_user)      => call("inet_app.api.expense.get_teams_for_filter", im_user ? { im_user } : {}),
+
+  // ── Notifications ──────────────────────────────────────────
+  getNotifications: (limit = 50) =>
+    call("inet_app.api.notifications.get_my_notifications", { limit }),
+  markNotificationRead: (name) =>
+    call("inet_app.api.notifications.mark_notification_read", { name }),
+  markAllNotificationsRead: () =>
+    call("inet_app.api.notifications.mark_all_notifications_read", {}),
 };

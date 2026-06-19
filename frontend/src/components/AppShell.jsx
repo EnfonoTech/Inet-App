@@ -5,6 +5,7 @@ import { pmApi } from "../services/api";
 import FieldGlobalTimerBar from "./FieldGlobalTimerBar";
 import DataTablePro from "./DataTablePro";
 import PullToRefresh from "./PullToRefresh";
+import NotificationBell from "./NotificationBell";
 import inetLogo from "../assets/inet-logo.png";
 
 /* ── SVG Icon Components (Feather-style) ───────────────────── */
@@ -194,7 +195,15 @@ export default function AppShell() {
   const [collapsed, setCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // 900px matches the CSS breakpoint where sidebar slides out and field dock appears
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 900);
   const menuRef = useRef(null);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 900);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -355,6 +364,11 @@ export default function AppShell() {
           )}
         </div>
 
+        {/* Notification bell — top of sidebar */}
+        <div style={{ padding: "0 8px 4px" }}>
+          <NotificationBell collapsed={collapsed} />
+        </div>
+
         {/* Navigation */}
         <nav className="sidebar-nav">
           <span className="nav-section-label">Menu</span>
@@ -493,6 +507,23 @@ export default function AppShell() {
             </NavLink>
           ))}
         </nav>
+      )}
+
+      {/* Floating bell — mobile only.
+          Field/TL: always mobile → top-right (no hamburger for them).
+          Other roles: beside the hamburger button when viewport is narrow. */}
+      {/* Floating bell — only when sidebar is hidden (≤ 900px matches CSS breakpoint).
+          Field/TL: no hamburger, so bell sits at far right.
+          Other roles: bell sits left of the hamburger button. */}
+      {isMobile && role === "field" && (
+        <div style={{ position: "fixed", top: 10, left: 10, zIndex: 200 }}>
+          <NotificationBell variant="top-float" />
+        </div>
+      )}
+      {isMobile && role !== "field" && (
+        <div style={{ position: "fixed", top: 10, right: 58, zIndex: 200 }}>
+          <NotificationBell variant="top-float" />
+        </div>
       )}
     </div>
   );

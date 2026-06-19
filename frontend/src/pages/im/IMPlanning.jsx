@@ -196,6 +196,7 @@ export default function IMPlanning() {
       setCancelTarget(null);
       loadPlans();
       window.dispatchEvent(new Event("inet:approvals-changed"));
+      window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
     } catch (e) {
       setCancelError(e?.message || "Failed to request cancellation");
     } finally {
