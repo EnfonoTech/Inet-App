@@ -185,9 +185,6 @@ doc_events = {
 			"inet_app.api.notifications.on_stock_entry_submit_notification",
 		],
 	},
-	"Daily Work Update": {
-		"on_update": "inet_app.api.notifications.on_daily_work_update_update",
-	},
 	"Daily Execution": {
 		"after_insert": "inet_app.api.notifications.on_daily_execution_insert",
 		"on_update": "inet_app.api.notifications.on_daily_execution_update",
@@ -214,8 +211,7 @@ doc_events = {
 
 scheduler_events = {
 	"cron": {
-		"0 18 * * *": ["inet_app.api.notifications.send_missed_dwu_alert"],
-		"0 8 * * *":  ["inet_app.api.notifications.send_dummy_po_reminder"],
+		"0 8 * * *": ["inet_app.api.notifications.send_dummy_po_reminder"],
 	},
 }
 

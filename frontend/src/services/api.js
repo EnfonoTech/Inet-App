@@ -163,13 +163,7 @@ export const pmApi = {
   overview:        ()        => call("inet_app.api.project_management.get_pms_overview"),
   charts:          ()        => call("inet_app.api.project_management.dashboard_charts"),
 
-  // Daily Work Updates
-  listUpdates:     (args)    => call("inet_app.api.project_management.list_daily_work_updates", args),
-  upsertUpdate:    (payload) => call("inet_app.api.project_management.upsert_daily_work_update", { payload: JSON.stringify(payload) }),
 
-  // Team Assignments
-  listAssignments: (args)    => call("inet_app.api.project_management.list_team_assignments", args),
-  upsertAssignment:(payload) => call("inet_app.api.project_management.upsert_team_assignment", { payload: JSON.stringify(payload) }),
 
   // PO Intake
   listPoIntake:    (args)    => call("inet_app.api.project_management.list_po_intake", args),

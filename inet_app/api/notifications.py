@@ -149,43 +149,6 @@ def _po_label(po_info):
 
 
 # ---------------------------------------------------------------------------
-# Execution workflow — Daily Work Update (DWU in /app desk)
-# ---------------------------------------------------------------------------
-
-def on_daily_work_update_update(doc, method=None):
-	before = doc.get_doc_before_save()
-	if not before:
-		return
-
-	im_user = _im_user_from_team(doc.team)
-	tl_user = _tl_user_from_team(doc.team)
-
-	if doc.status != before.status and doc.status == "Submitted":
-		_make_notification(
-			im_user,
-			f"[ALERT] Daily update submitted — team {doc.team}, {doc.update_date}",
-			"Daily Work Update", doc.name,
-			link="/pms/im-execution",
-		)
-
-	if doc.approval_status != before.approval_status:
-		if doc.approval_status == "Approved":
-			_make_notification(
-				tl_user,
-				f"[INFO] Daily update approved — {doc.update_date}",
-				"Daily Work Update", doc.name,
-				link="/pms/today",
-			)
-		elif doc.approval_status == "Rejected":
-			_make_notification(
-				tl_user,
-				f"[CRITICAL] Daily update rejected — {doc.update_date}",
-				"Daily Work Update", doc.name,
-				link="/pms/today",
-			)
-
-
-# ---------------------------------------------------------------------------
 # Execution workflow — Daily Execution (TL submits from /pms)
 # ---------------------------------------------------------------------------
 
@@ -379,46 +342,6 @@ def on_expense_claim_update(doc, method=None):
 # ---------------------------------------------------------------------------
 # Scheduled tasks
 # ---------------------------------------------------------------------------
-
-def send_missed_dwu_alert():
-	"""Run at 18:00 daily — notify TL + IM for teams with no DWU today."""
-	today = frappe.utils.today()
-
-	planned_teams = frappe.db.sql("""
-		SELECT DISTINCT team FROM `tabRollout Plan`
-		WHERE plan_date <= %(today)s
-		  AND (plan_end_date IS NULL OR plan_end_date >= %(today)s)
-		  AND plan_status NOT IN ('Cancelled', 'Completed')
-	""", {"today": today}, as_dict=True)
-
-	if not planned_teams:
-		return
-
-	submitted_teams = set(frappe.db.get_all(
-		"Daily Work Update",
-		filters={"update_date": today, "status": ("!=", "Draft")},
-		pluck="team",
-	))
-
-	for row in planned_teams:
-		team = row.team
-		if not team or team in submitted_teams:
-			continue
-		tl_user = _tl_user_from_team(team)
-		im_user = _im_user_from_team(team)
-		_make_notification(
-			tl_user,
-			f"[ALERT] Submit today's work update — team {team}",
-			"INET Team", team,
-			link="/pms/today",
-		)
-		_make_notification(
-			im_user,
-			f"[ALERT] Team {team} missing today's work update",
-			"INET Team", team,
-			link="/pms/im-execution",
-		)
-
 
 def send_dummy_po_reminder():
 	"""Run at 08:00 daily — notify each IM about unmapped dummy PO dispatches."""

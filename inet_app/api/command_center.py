@@ -8257,35 +8257,13 @@ def get_project_summary(project_code):
         for wd in work_done:
             wd["system_id"] = exec_poid_map.get(wd.execution)
 
-    # Teams involved — from rollout plans + Team Assignment doctype
-    dispatch_teams = set(p.team for p in plans if p.get("team"))
-
-    # Team Assignments for this project
-    team_assignments = frappe.get_all("Team Assignment",
-        filters={"project": project_code},
-        fields=["name", "team_id", "assignment_date", "end_date", "role_in_project",
-                "daily_cost", "utilization_percentage", "status"],
-        order_by="assignment_date desc",
-        limit_page_length=200)
-    assigned_teams = set(ta.team_id for ta in team_assignments if ta.team_id)
-
-    all_team_ids = list(dispatch_teams | assigned_teams)
+    # Teams involved — from rollout plans
+    dispatch_teams = list(set(p.team for p in plans if p.get("team")))
     team_details = []
-    if all_team_ids:
+    if dispatch_teams:
         team_details = frappe.get_all("INET Team",
-            filters={"team_id": ["in", all_team_ids]},
+            filters={"team_id": ["in", dispatch_teams]},
             fields=["team_id", "team_name", "im", "team_type", "status", "daily_cost"])
-        # Enrich with assignment info
-        assignment_map = {ta.team_id: ta for ta in team_assignments}
-        for t in team_details:
-            ta = assignment_map.get(t.team_id)
-            if ta:
-                t["assignment_name"] = ta.name
-                t["role_in_project"] = ta.role_in_project
-                t["assignment_date"] = str(ta.assignment_date) if ta.assignment_date else None
-                t["end_date"] = str(ta.end_date) if ta.end_date else None
-                t["assignment_status"] = ta.status
-                t["utilization_percentage"] = ta.utilization_percentage
 
     # Financial summary
     total_po_value = sum(flt(d.line_amount) for d in dispatches)
@@ -8302,7 +8280,6 @@ def get_project_summary(project_code):
         "executions": executions,
         "work_done": work_done,
         "teams": team_details,
-        "team_assignments": team_assignments,
         "rollout_by_duid": rollout_by_duid,
         "financial_summary": {
             "total_po_value": total_po_value,

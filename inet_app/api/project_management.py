@@ -132,28 +132,6 @@ def get_project_kpis():
 @frappe.whitelist()
 def get_pms_overview():
     """Operational snapshot used by PMS dashboard widgets."""
-    update_status = frappe.db.sql(
-        """
-        SELECT status, COUNT(*) AS count
-        FROM `tabDaily Work Update`
-        GROUP BY status
-        """,
-        as_dict=True,
-    )
-    assignment_status = frappe.db.sql(
-        """
-        SELECT status, COUNT(*) AS count
-        FROM `tabTeam Assignment`
-        GROUP BY status
-        """,
-        as_dict=True,
-    )
-    recent_updates = frappe.get_all(
-        "Daily Work Update",
-        fields=["name", "project", "team", "update_date", "status"],
-        order_by="modified desc",
-        limit_page_length=10,
-    )
     return {
         "workflow_stages": [
             "PO Intake",
@@ -163,78 +141,7 @@ def get_pms_overview():
             "Completion Ledger",
             "Dashboard",
         ],
-        "daily_update_status": update_status,
-        "team_assignment_status": assignment_status,
-        "recent_updates": recent_updates,
     }
-
-
-@frappe.whitelist()
-def list_daily_work_updates(limit=20, offset=0, project=None, team=None, status=None, from_date=None, to_date=None):
-    filters = {}
-    if project:
-        filters["project"] = project
-    if team:
-        filters["team"] = team
-    if status:
-        filters["status"] = status
-    if from_date and to_date:
-        filters["update_date"] = ["between", [from_date, to_date]]
-    elif from_date:
-        filters["update_date"] = [">=", from_date]
-    elif to_date:
-        filters["update_date"] = ["<=", to_date]
-
-    return frappe.get_list(
-        "Daily Work Update",
-        filters=filters,
-        fields=["name", "project", "team", "update_date", "status", "approval_status", "gps_location", "modified"],
-        order_by="update_date desc, modified desc",
-        start=cint(offset),
-        page_length=min(cint(limit) or 20, 100),
-    )
-
-
-@frappe.whitelist()
-def upsert_daily_work_update(payload):
-    data = _as_dict(payload)
-    name = data.get("name")
-    if name:
-        doc = frappe.get_doc("Daily Work Update", name)
-        doc.update(data)
-        doc.save()
-    else:
-        doc = frappe.get_doc({"doctype": "Daily Work Update", **data})
-        doc.insert()
-    return {"name": doc.name}
-
-
-@frappe.whitelist()
-def submit_work_update(work_update_id):
-    doc = frappe.get_doc("Daily Work Update", work_update_id)
-    doc.status = "Submitted"
-    doc.approval_status = "Pending"
-    doc.save()
-    return {"name": doc.name, "status": doc.status, "approval_status": doc.approval_status}
-
-
-@frappe.whitelist()
-def approve_work_update(work_update_id, approved_by=None):
-    doc = frappe.get_doc("Daily Work Update", work_update_id)
-    doc.status = "Approved"
-    doc.approval_status = "Approved"
-    if approved_by:
-        doc.remarks = f"{doc.remarks or ''}\nApproved By: {approved_by}".strip()
-    doc.save()
-    return {"name": doc.name, "status": doc.status, "approval_status": doc.approval_status}
-
-
-@frappe.whitelist()
-def upload_work_photos(work_update_id, photos):
-    doc = frappe.get_doc("Daily Work Update", work_update_id)
-    doc.photos = photos
-    doc.save()
-    return {"name": doc.name, "photos": doc.photos}
 
 
 @frappe.whitelist()
@@ -246,46 +153,6 @@ def capture_gps_location(lat=None, lng=None):
     if lat < -90 or lat > 90 or lng < -180 or lng > 180:
         frappe.throw(_("GPS coordinates are out of valid range."))
     return f"{lat},{lng}"
-
-
-@frappe.whitelist()
-def list_team_assignments(limit=20, offset=0, project=None, team_id=None, status=None, from_date=None, to_date=None):
-    filters = {}
-    if project:
-        filters["project"] = project
-    if team_id:
-        filters["team_id"] = team_id
-    if status:
-        filters["status"] = status
-    if from_date and to_date:
-        filters["assignment_date"] = ["between", [from_date, to_date]]
-    elif from_date:
-        filters["assignment_date"] = [">=", from_date]
-    elif to_date:
-        filters["assignment_date"] = ["<=", to_date]
-
-    return frappe.get_list(
-        "Team Assignment",
-        filters=filters,
-        fields=["name", "team_id", "project", "assignment_date", "end_date", "role_in_project", "daily_cost", "utilization_percentage", "status", "modified"],
-        order_by="assignment_date desc, modified desc",
-        start=cint(offset),
-        page_length=min(cint(limit) or 20, 100),
-    )
-
-
-@frappe.whitelist()
-def upsert_team_assignment(payload):
-    data = _as_dict(payload)
-    name = data.get("name")
-    if name:
-        doc = frappe.get_doc("Team Assignment", name)
-        doc.update(data)
-        doc.save()
-    else:
-        doc = frappe.get_doc({"doctype": "Team Assignment", **data})
-        doc.insert()
-    return {"name": doc.name}
 
 
 @frappe.whitelist()
@@ -526,14 +393,6 @@ def report_budget_vs_actual_by_project(filters=None):
 @frappe.whitelist()
 def report_team_utilization_report(filters=None):
     from inet_app.inet_app.report.team_utilization_report.team_utilization_report import execute
-
-    columns, data = execute(_as_dict(filters or {}))
-    return {"columns": columns, "data": data}
-
-
-@frappe.whitelist()
-def report_daily_work_progress_report(filters=None):
-    from inet_app.inet_app.report.daily_work_progress_report.daily_work_progress_report import execute
 
     columns, data = execute(_as_dict(filters or {}))
     return {"columns": columns, "data": data}
