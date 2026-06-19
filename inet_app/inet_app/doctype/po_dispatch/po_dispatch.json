@@ -79,7 +79,11 @@
   "ms2_unbilled",
   "ms2_invoice_month",
   "ms2_ibuy_inv_date",
-  "ms2_payment_received_date"
+  "ms2_payment_received_date",
+  "subcon_pct_ms1",
+  "inet_pct_ms1",
+  "subcon_pct_ms2",
+  "inet_pct_ms2"
  ],
  "fields": [
   {
@@ -526,6 +530,30 @@
    "fieldname": "ms2_payment_received_date",
    "fieldtype": "Date",
    "label": "Payment Received Date (MS2)"
+  },
+  {
+   "fieldname": "subcon_pct_ms1",
+   "fieldtype": "Percent",
+   "label": "Subcon % MS1 (Archive)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "inet_pct_ms1",
+   "fieldtype": "Percent",
+   "label": "INET % MS1 (Archive)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "subcon_pct_ms2",
+   "fieldtype": "Percent",
+   "label": "Subcon % MS2 (Archive)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "inet_pct_ms2",
+   "fieldtype": "Percent",
+   "label": "INET % MS2 (Archive)",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

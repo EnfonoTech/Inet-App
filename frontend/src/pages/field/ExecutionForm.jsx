@@ -657,8 +657,12 @@ export default function ExecutionForm() {
     try {
       await pmApi.startExecutionTimer(id);
       window.dispatchEvent(new Event("inet-timer-changed"));
-      const r = await pmApi.getRunningExecutionTimer();
+      const [r, refreshed] = await Promise.all([
+        pmApi.getRunningExecutionTimer(),
+        pmApi.getRolloutPlanDetails(id),
+      ]);
       if (r?.rollout_plan === id) { setRunningHere(r); setRunningElsewhere(null); }
+      if (refreshed) setPlan(refreshed);
     } catch (e) { setTimerError(e.message || "Could not start timer"); }
     finally { setTimerBusy(false); }
   }
