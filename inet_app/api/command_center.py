@@ -8456,6 +8456,10 @@ def start_execution_timer(rollout_plan):
     log.start_time = now_datetime()
     log.is_running = 1
     log.insert(ignore_permissions=True)
+
+    if plan_status in ("Planned", "Planning with Issue"):
+        frappe.db.set_value("Rollout Plan", rollout_plan, "plan_status", "In Execution", update_modified=False)
+
     frappe.db.commit()
 
     server_now = now_datetime()

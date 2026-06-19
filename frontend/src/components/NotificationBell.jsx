@@ -91,16 +91,15 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }) {
     setOpen((v) => !v);
   };
 
-  const handleNotifClick = async (notif) => {
-    if (!notif.read) await markAsRead(notif.name);
+  const handleNotifClick = (notif) => {
+    // Mark as read immediately (optimistic update) — don't await so navigation is instant
+    if (!notif.read) markAsRead(notif.name);
     setOpen(false);
     const url = docUrl(notif);
     if (!url) return;
     if (url.startsWith("/pms")) {
-      // Strip the /pms basename — React Router's basename is already /pms
       navigate(url.slice(4) || "/");
     } else {
-      // ERPNext or external: open in new tab (PM/admin only)
       window.open(url, "_blank", "noopener");
     }
   };

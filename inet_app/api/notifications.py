@@ -29,10 +29,16 @@ def get_my_notifications(limit=50):
 def mark_notification_read(name):
 	"""Mark one notification as read."""
 	user = frappe.session.user
-	if name and frappe.db.get_value("Notification Log", name, "for_user",
-	                                ignore_permissions=True) == user:
-		frappe.db.set_value("Notification Log", name, "read", 1,
-		                    update_modified=False, for_update=False)
+	if not name:
+		return
+	owner = frappe.db.sql(
+		"SELECT for_user FROM `tabNotification Log` WHERE name=%s LIMIT 1", name
+	)
+	if owner and owner[0][0] == user:
+		frappe.db.sql(
+			"UPDATE `tabNotification Log` SET `read`=1 WHERE name=%s AND for_user=%s",
+			(name, user),
+		)
 
 
 @frappe.whitelist()
