@@ -9,8 +9,16 @@ class DailyExecution(Document):
 
     def before_save(self):
         if self.execution_status == "Completed" and self.rollout_plan:
+            total = frappe.db.sql(
+                """
+                SELECT COALESCE(SUM(achieved_amount), 0)
+                FROM `tabDaily Execution`
+                WHERE rollout_plan = %s AND execution_status = 'Completed' AND name != %s
+                """,
+                (self.rollout_plan, self.name or ""),
+            )[0][0]
             rp = frappe.get_doc("Rollout Plan", self.rollout_plan)
-            rp.achieved_amount = flt(rp.achieved_amount) + flt(self.achieved_amount)
+            rp.achieved_amount = flt(total) + flt(self.achieved_amount)
             if flt(rp.target_amount) > 0:
                 rp.completion_pct = round(flt(rp.achieved_amount) / flt(rp.target_amount) * 100, 2)
             rp.plan_status = "Completed" if rp.completion_pct >= 100 else "In Execution"

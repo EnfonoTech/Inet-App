@@ -3644,39 +3644,21 @@ def _get_rollout_billing_rate(rollout_plan):
     if not rollout_plan:
         return 0.0
 
-    rp = frappe.db.get_value("Rollout Plan", rollout_plan, ["po_dispatch"], as_dict=True)
-    if not rp or not rp.po_dispatch:
-        return 0.0
-
-    dispatch = frappe.db.get_value(
-        "PO Dispatch",
-        rp.po_dispatch,
-        ["item_code", "center_area", "region_type", "customer"],
+    row = frappe.db.sql(
+        """
+        SELECT pd.line_amount, pd.qty
+        FROM `tabRollout Plan` rp
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE rp.name = %s
+        """,
+        rollout_plan,
         as_dict=True,
     )
-    if not dispatch or not dispatch.item_code:
+    if not row:
         return 0.0
-
-    is_hard = is_hard_region(dispatch.region_type, dispatch.center_area)
-    cim_filters = {"item_code": dispatch.item_code, "active_flag": 1}
-    if dispatch.customer:
-        cim_filters["customer"] = dispatch.customer
-    cim = frappe.db.get_value(
-        "Customer Item Master",
-        cim_filters,
-        ["standard_rate_sar", "hard_rate_sar"],
-        as_dict=True,
-    )
-    if not cim:
-        cim = frappe.db.get_value(
-            "Customer Item Master",
-            {"item_code": dispatch.item_code, "active_flag": 1},
-            ["standard_rate_sar", "hard_rate_sar"],
-            as_dict=True,
-        )
-    if not cim:
-        return 0.0
-    return flt(cim.hard_rate_sar if is_hard else cim.standard_rate_sar)
+    line_amount = flt(row[0].line_amount)
+    qty = flt(row[0].qty) or 1.0
+    return line_amount / qty
 
 
 def _user_execution_update_mode(user, doc):
@@ -6080,7 +6062,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
         INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabINET Team` it ON it.name = de.team
         WHERE pd.dispatch_status != 'Backend Assigned'
+        AND IFNULL(it.team_category, '') != 'Backend Team'
         AND de.execution_date BETWEEN %s AND %s
         """,
         (first_day, last_day),
@@ -6095,7 +6079,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
           INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
           INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
           INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+          LEFT JOIN `tabINET Team` it ON it.name = de.team
           WHERE pd.dispatch_status != 'Backend Assigned'
+          AND IFNULL(it.team_category, '') != 'Backend Team'
           AND de.execution_date BETWEEN %s AND %s
         ) d
         """,
@@ -6214,14 +6200,20 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         "SELECT COUNT(*) AS cnt FROM `tabINET Team` WHERE IFNULL(status, 'Active') = 'Active' AND IFNULL(team_category, '') = 'Backend Team'"
     )[0][0] or 0
 
-    backend_assigned_pending = frappe.db.sql(
-        "SELECT COUNT(*) AS cnt FROM `tabPO Dispatch` WHERE subcon_status = 'Pending' AND dispatch_status = 'Backend Assigned'"
-    )[0][0] or 0
+    _backend_pending_rows = frappe.db.sql(
+        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Pending' AND dispatch_status = 'Backend Assigned'",
+        as_dict=True,
+    )
+    backend_assigned_pending = cint(_backend_pending_rows[0].cnt if _backend_pending_rows else 0)
+    backend_pending_value = flt(_backend_pending_rows[0].val if _backend_pending_rows else 0)
 
-    backend_completed_mtd = frappe.db.sql(
-        "SELECT COUNT(*) AS cnt FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status = 'Completed' AND subcon_completed_on BETWEEN %s AND %s",
-        (first_day, last_day)
-    )[0][0] or 0
+    _backend_done_rows = frappe.db.sql(
+        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status = 'Completed' AND subcon_completed_on BETWEEN %s AND %s",
+        (first_day, last_day),
+        as_dict=True,
+    )
+    backend_completed_mtd = cint(_backend_done_rows[0].cnt if _backend_done_rows else 0)
+    backend_completed_value = flt(_backend_done_rows[0].val if _backend_done_rows else 0)
 
     # ---- Company-level KPIs ------------------------------------------------
     company_target = inet_monthly_target + sub_target
@@ -6414,7 +6406,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         "backend": {
             "active_teams": backend_active_teams,
             "assigned_pending": backend_assigned_pending,
+            "pending_value": backend_pending_value,
             "completed_mtd": backend_completed_mtd,
+            "completed_value": backend_completed_value,
         },
         "company": {
             "company_target": company_target,

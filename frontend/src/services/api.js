@@ -183,6 +183,7 @@ export const pmApi = {
   reportProjectStatusSummary:    (f) => call("inet_app.api.project_management.report_project_status_summary",    { filters: JSON.stringify(f || {}) }),
   reportBudgetVsActualByProject: (f) => call("inet_app.api.project_management.report_budget_vs_actual_by_project", { filters: JSON.stringify(f || {}) }),
   reportTeamUtilizationReport:   (f) => call("inet_app.api.project_management.report_team_utilization_report",   { filters: JSON.stringify(f || {}) }),
+  reportMonthlyTeamDetails:      (f) => call("inet_app.api.project_management.report_monthly_team_details",      { filters: JSON.stringify(f || {}) }),
   reportDailyWorkProgressReport: (f) => call("inet_app.api.project_management.report_daily_work_progress_report", { filters: JSON.stringify(f || {}) }),
 
   // ── Command Center APIs ────────────────────────────────────

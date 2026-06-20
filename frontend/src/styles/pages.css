@@ -1169,6 +1169,7 @@
 
 .tab {
   padding: 12px 24px;
+  margin: 0;
   font-size: 0.86rem;
   font-weight: 600;
   color: var(--text-muted);

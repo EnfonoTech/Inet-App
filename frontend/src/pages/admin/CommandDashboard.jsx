@@ -322,9 +322,11 @@ export default function CommandDashboard() {
       <div className="kpi-row kpi-row-backend">
         <KPICard label="Active Teams" value={backend.active_teams ?? 0} colorClass="text-green"
           onClick={() => goTeams({ categoryFilter: ["Backend Team"] })} />
-        <KPICard label="Pending" value={backend.assigned_pending ?? 0} colorClass="text-amber"
+        <KPICard label="Pending" value={`SAR ${fmt.format(backend.pending_value ?? 0)}`} colorClass="text-amber"
+          sub={`${backend.assigned_pending ?? 0} lines`}
           onClick={() => navigate("/backend")} />
-        <KPICard label="Completed" value={backend.completed_mtd ?? 0} colorClass="text-green" />
+        <KPICard label="Completed MTD" value={`SAR ${fmt.format(backend.completed_value ?? 0)}`} colorClass="text-green"
+          sub={`${backend.completed_mtd ?? 0} lines`} />
       </div>
 
       {/* ── Row 4: Company Financial Summary ───────────────── */}

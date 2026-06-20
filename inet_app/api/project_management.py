@@ -398,6 +398,22 @@ def report_team_utilization_report(filters=None):
     return {"columns": columns, "data": data}
 
 
+@frappe.whitelist()
+def report_daily_work_progress_report(filters=None):
+    from inet_app.inet_app.report.daily_work_progress_report.daily_work_progress_report import execute
+
+    columns, data = execute(_as_dict(filters or {}))
+    return {"columns": columns, "data": data}
+
+
+@frappe.whitelist()
+def report_monthly_team_details(filters=None):
+    from inet_app.inet_app.report.monthly_team_details.monthly_team_details import execute
+
+    columns, data = execute(_as_dict(filters or {}))
+    return {"columns": columns, "data": data}
+
+
 def _item_meta(item_code):
     meta = frappe.db.get_value(
         "Item",
