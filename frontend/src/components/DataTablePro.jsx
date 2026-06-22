@@ -442,7 +442,8 @@ export default function DataTablePro() {
             const k = h.dataset.colKey;
             if (!k) return;
             if (selectColumnKey && k === selectColumnKey) return;
-            const w = Math.round(h.getBoundingClientRect().width);
+            const defaultAttr = h.dataset.defaultWidth ? Number(h.dataset.defaultWidth) : null;
+            const w = defaultAttr || Math.round(h.getBoundingClientRect().width);
             state.widths[k] = Math.max(60, w || 60);
           });
         };
@@ -1011,6 +1012,12 @@ export default function DataTablePro() {
           state.hidden = new Set();
           state.frozen = new Set();
           state.widths = {};
+          // Restore data-default-width values for any column that specifies one
+          Array.from(table.querySelectorAll("thead tr:first-child > th")).forEach((h) => {
+            const k = h.dataset.colKey;
+            if (!k || (selectColumnKey && k === selectColumnKey)) return;
+            if (h.dataset.defaultWidth) state.widths[k] = Number(h.dataset.defaultWidth);
+          });
           state.filters = {};
           state.show_filters = false;
           state.sort = { key: null, dir: "desc" };

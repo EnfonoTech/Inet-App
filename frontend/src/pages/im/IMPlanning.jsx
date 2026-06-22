@@ -65,6 +65,7 @@ export default function IMPlanning() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const [dummyFilter, setDummyFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -75,6 +76,13 @@ export default function IMPlanning() {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
+  const [mapForRow, setMapForRow] = useState(null);
+  const [mapLines, setMapLines] = useState([]);
+  const [mapLineId, setMapLineId] = useState("");
+  const [mapBusy, setMapBusy] = useState(false);
+  const [mapErr, setMapErr] = useState(null);
+  const [mapLinesLoading, setMapLinesLoading] = useState(false);
+  const [mapSuccessMsg, setMapSuccessMsg] = useState(null);
 
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -132,7 +140,12 @@ export default function IMPlanning() {
   }, [plans]);
   const duidOptions = dispOpts.site_code || [];
 
-  const visibleNames = useMemo(() => new Set(plans.map((p) => p.name)), [plans]);
+  const filteredPlans = useMemo(() => {
+    if (!dummyFilter) return plans;
+    return plans.filter((p) => dummyFilter === "Dummy Only" ? !!p.is_dummy_po : !p.is_dummy_po);
+  }, [plans, dummyFilter]);
+
+  const visibleNames = useMemo(() => new Set(filteredPlans.map((p) => p.name)), [filteredPlans]);
 
   useEffect(() => {
     setSelected((prev) => {
@@ -152,14 +165,14 @@ export default function IMPlanning() {
   }
 
   function toggleAll() {
-    if (selected.size === plans.length && plans.length > 0) {
+    if (selected.size === filteredPlans.length && filteredPlans.length > 0) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(plans.map((p) => p.name)));
+      setSelected(new Set(filteredPlans.map((p) => p.name)));
     }
   }
 
-  const hasFilters = !!(visitFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(visitFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate || dummyFilter);
   const totalAmt = plans.reduce((s, p) => s + (p.target_amount || 0), 0);
   const selectedAmt = plans
     .filter((p) => selected.has(p.name))
@@ -179,6 +192,40 @@ export default function IMPlanning() {
   function canCancelPlan(p) {
     return ["Planned", "In Execution", "Planning with Issue"].includes(p.plan_status || "")
       && (!p.cancel_request_status || p.cancel_request_status === "None" || p.cancel_request_status === "Rejected");
+  }
+
+  useEffect(() => {
+    if (!mapForRow?.project_code) { setMapLines([]); setMapLineId(""); return; }
+    let cancelled = false;
+    setMapLinesLoading(true);
+    setMapErr(null);
+    pmApi.listPoIntakeLinesForIMMap(mapForRow.project_code).then((list) => {
+      if (!cancelled) { setMapLines(Array.isArray(list) ? list : []); setMapLineId(""); }
+    }).catch((e) => {
+      if (!cancelled) setMapErr(e.message || "Failed to load PO lines");
+    }).finally(() => { if (!cancelled) setMapLinesLoading(false); });
+    return () => { cancelled = true; };
+  }, [mapForRow]);
+
+  async function submitMapDummy() {
+    if (!mapForRow || !mapLineId) return;
+    setMapBusy(true);
+    setMapErr(null);
+    try {
+      const res = await pmApi.mapIMDummyPoToIntakeLine({
+        dummy_po_dispatch: mapForRow.po_dispatch_name,
+        po_intake_line: mapLineId,
+      });
+      setMapForRow(null);
+      const pid = (res?.poid || res?.name || "").trim();
+      const oid = (res?.original_dummy_poid || "").trim();
+      setMapSuccessMsg(oid ? `Mapped. New POID: ${pid}. Original dummy POID: ${oid}.` : "Dummy PO mapped successfully.");
+      loadPlans();
+    } catch (e) {
+      setMapErr(e.message || "Map failed");
+    } finally {
+      setMapBusy(false);
+    }
   }
 
   function openCancelModal(p) {
@@ -218,6 +265,13 @@ export default function IMPlanning() {
         </div>
       </div>
 
+      {mapSuccessMsg && (
+        <div style={{ background: "#dcfce7", border: "1px solid #86efac", borderRadius: 8, padding: "10px 16px", margin: "0 0 12px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.84rem", color: "#166534" }}>
+          <span>{mapSuccessMsg}</span>
+          <button type="button" onClick={() => setMapSuccessMsg(null)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#166534", lineHeight: 1, marginLeft: 12 }}>&times;</button>
+        </div>
+      )}
+
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input
@@ -235,12 +289,24 @@ export default function IMPlanning() {
           <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
           <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
           <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+          <button
+            type="button"
+            style={{
+              fontSize: "0.78rem", padding: "5px 12px", borderRadius: 8, cursor: "pointer",
+              border: dummyFilter ? "1px solid #f59e0b" : "1px solid #e2e8f0",
+              background: dummyFilter ? "#fffbeb" : "#fff",
+              color: dummyFilter ? "#92400e" : "#64748b",
+            }}
+            onClick={() => setDummyFilter(dummyFilter ? "" : "Dummy Only")}
+          >
+            {dummyFilter ? "Dummy PO ×" : "Dummy PO"}
+          </button>
           <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {(hasFilters) && (
             <button
               className="btn-secondary"
               style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-              onClick={() => { setSearch(""); setVisitFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+              onClick={() => { setSearch(""); setVisitFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setDummyFilter(""); setFromDate(""); setToDate(""); }}
             >
               Clear
             </button>
@@ -268,7 +334,7 @@ export default function IMPlanning() {
         <DataTableWrapper>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : plans.length === 0 ? (
+          ) : filteredPlans.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📅</div>
               <h3>{hasFilters ? "No results match your filters" : "No rollout plans yet"}</h3>
@@ -285,7 +351,7 @@ export default function IMPlanning() {
                   <th>
                     <input
                       type="checkbox"
-                      checked={selected.size === plans.length && plans.length > 0}
+                      checked={selected.size === filteredPlans.length && filteredPlans.length > 0}
                       onChange={toggleAll}
                     />
                   </th>
@@ -308,11 +374,11 @@ export default function IMPlanning() {
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
                   <th>Cancel</th>
-                  <th>View</th>
+                  <th style={{ minWidth: 175, width: 175, whiteSpace: "nowrap" }} data-default-width="175">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {plans.map((p) => (
+                {filteredPlans.map((p) => (
                   <tr
                     key={p.name}
                     className={selected.has(p.name) ? "row-selected" : ""}
@@ -372,15 +438,26 @@ export default function IMPlanning() {
                         <span style={{ color: "#cbd5e1", fontSize: "0.72rem" }}>—</span>
                       )}
                     </td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        style={{ fontSize: "0.72rem", padding: "4px 10px" }}
-                        onClick={() => setDetailRow(p)}
-                      >
-                        View
-                      </button>
+                    <td onClick={(e) => e.stopPropagation()} style={{ minWidth: 175, width: 175, whiteSpace: "nowrap" }}>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: "0.72rem", padding: "4px 10px" }}
+                          onClick={() => setDetailRow(p)}
+                        >
+                          View
+                        </button>
+                        {p.is_dummy_po ? (
+                          <button
+                            type="button"
+                            style={{ fontSize: "0.72rem", padding: "4px 10px", whiteSpace: "nowrap", background: "#fffbeb", color: "#92400e", border: "1px solid #f59e0b", borderRadius: 8, cursor: "pointer" }}
+                            onClick={() => { setMapErr(null); setMapForRow({ po_dispatch_name: p.po_dispatch, project_code: p.project_code, poid: p.poid || p.po_dispatch, site_code: p.site_code }); }}
+                          >
+                            Map PO
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -388,7 +465,7 @@ export default function IMPlanning() {
               <tfoot>
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                   <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                    {plans.length} plan{plans.length !== 1 ? "s" : ""}
+                    {filteredPlans.length} plan{filteredPlans.length !== 1 ? "s" : ""}
                     {selected.size > 0 && (
                       <span style={{ marginLeft: 12, color: "#6366f1", fontWeight: 600 }}>
                         {selected.size} selected
@@ -407,8 +484,8 @@ export default function IMPlanning() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={plans.length}
-          filteredCount={plans.length}
+          loadedCount={filteredPlans.length}
+          filteredCount={filteredPlans.length}
           filterActive={!!hasFilters}
         />
       </div>
@@ -462,6 +539,59 @@ export default function IMPlanning() {
               <button type="button" className="btn-secondary" disabled={cancelBusy} onClick={() => setCancelTarget(null)}>Back</button>
               <button type="button" className="btn-primary" disabled={cancelBusy} onClick={submitCancelPlan} style={{ background: "#b91c1c" }}>
                 {cancelBusy ? "Submitting…" : "Request cancellation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mapForRow && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !mapBusy && setMapForRow(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(480px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 6px", fontSize: "1.05rem" }}>Map Dummy PO</h3>
+            <p style={{ fontSize: "0.82rem", color: "#64748b", margin: "0 0 16px" }}>
+              POID: <strong>{mapForRow.poid}</strong>
+            </p>
+            {mapErr && <div className="notice error" style={{ marginBottom: 12 }}>{mapErr}</div>}
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>
+              Select Real PO Intake Line
+            </label>
+            {mapLinesLoading ? (
+              <p style={{ fontSize: "0.82rem", color: "#94a3b8" }}>Loading…</p>
+            ) : (() => {
+              const duidLines = mapForRow?.site_code ? mapLines.filter((l) => l.site_code === mapForRow.site_code) : mapLines;
+              const optionLines = duidLines.length > 0 ? duidLines : mapLines;
+              const fallback = mapForRow?.site_code && duidLines.length === 0 && mapLines.length > 0;
+              return (
+                <>
+                  {mapForRow?.site_code && (
+                    <div style={{ fontSize: "0.75rem", marginBottom: 6, color: fallback ? "#b45309" : "#047857" }}>
+                      {fallback
+                        ? `No intake lines for DUID ${mapForRow.site_code} — showing all lines`
+                        : `Filtered by DUID: ${mapForRow.site_code} (${duidLines.length} line${duidLines.length !== 1 ? "s" : ""})`}
+                    </div>
+                  )}
+                  <SearchableSelect
+                    value={mapLineId}
+                    onChange={(id) => setMapLineId(id)}
+                    options={optionLines.map((l) => ({ id: l.name, label: `${l.poid || l.name}${l.item_description ? ` — ${l.item_description}` : ""}` }))}
+                    placeholder={optionLines.length ? "— search & select PO line —" : "No open lines for this project"}
+                    style={{ display: "block", width: "100%" }}
+                    panelStyle={{ zIndex: 10001 }}
+                  />
+                </>
+              );
+            })()}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+              <button type="button" className="btn-secondary" disabled={mapBusy} onClick={() => setMapForRow(null)}>Cancel</button>
+              <button type="button" className="btn-primary" disabled={mapBusy || !mapLineId} onClick={submitMapDummy}>
+                {mapBusy ? "Mapping…" : "Map PO"}
               </button>
             </div>
           </div>

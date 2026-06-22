@@ -1209,40 +1209,61 @@ export default function IMDispatch() {
         </div>
       </Modal>
 
-      <Modal
-        open={!!mapForRow}
-        onClose={() => !mapBusy && setMapForRow(null)}
-        title={`Map dummy PO — ${mapForRow?.poid || mapForRow?.name || ""}`}
-        width={560}
-      >
-        {mapErr && <div className="notice error" style={{ marginBottom: 12 }}>{mapErr}</div>}
-        {mapLinesLoading ? (
-          <div style={{ padding: 20, textAlign: "center", color: "#64748b" }}>Loading PO lines…</div>
-        ) : (
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>PO Intake line</label>
-            <select
-              value={mapLineId}
-              onChange={(e) => setMapLineId(e.target.value)}
-              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
-            >
-              <option value="">{mapLines.length ? "Select line" : "No open lines for this project"}</option>
-              {mapLines.map((l) => (
-                <option key={l.name} value={l.name}>
-                  {l.poid || l.po_no || l.name} · L{l.po_line_no} · {l.item_code || "—"} · {l.po_line_status || ""}
-                  {l.existing_dispatch ? ` · dispatched (${l.existing_dispatch_status || "?"})` : " · not yet dispatched"}
-                </option>
-              ))}
-            </select>
+      {mapForRow && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !mapBusy && setMapForRow(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(480px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 6px", fontSize: "1.05rem" }}>Map Dummy PO</h3>
+            <p style={{ fontSize: "0.82rem", color: "#64748b", margin: "0 0 16px" }}>
+              POID: <strong>{mapForRow.poid || mapForRow.name}</strong>
+            </p>
+            {mapErr && <div className="notice error" style={{ marginBottom: 12 }}>{mapErr}</div>}
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>
+              Select Real PO Intake Line
+            </label>
+            {mapLinesLoading ? (
+              <p style={{ fontSize: "0.82rem", color: "#94a3b8" }}>Loading…</p>
+            ) : (() => {
+              const duidLines = mapForRow?.site_code ? mapLines.filter((l) => l.site_code === mapForRow.site_code) : mapLines;
+              const optionLines = duidLines.length > 0 ? duidLines : mapLines;
+              const fallback = mapForRow?.site_code && duidLines.length === 0 && mapLines.length > 0;
+              return (
+                <>
+                  {mapForRow?.site_code && (
+                    <div style={{ fontSize: "0.75rem", marginBottom: 6, color: fallback ? "#b45309" : "#047857" }}>
+                      {fallback
+                        ? `No intake lines for DUID ${mapForRow.site_code} — showing all lines`
+                        : `Filtered by DUID: ${mapForRow.site_code} (${duidLines.length} line${duidLines.length !== 1 ? "s" : ""})`}
+                    </div>
+                  )}
+                  <SearchableSelect
+                    value={mapLineId}
+                    onChange={(id) => setMapLineId(id)}
+                    options={optionLines.map((l) => ({
+                      id: l.name,
+                      label: `${l.poid || l.po_no || l.name} · L${l.po_line_no} · ${l.item_code || "—"}${l.existing_dispatch ? ` · dispatched (${l.existing_dispatch_status || "?"})` : ""}`,
+                    }))}
+                    placeholder={optionLines.length ? "— search & select PO line —" : "No open lines for this project"}
+                    style={{ display: "block", width: "100%" }}
+                    panelStyle={{ zIndex: 10001 }}
+                  />
+                </>
+              );
+            })()}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+              <button type="button" className="btn-secondary" disabled={mapBusy} onClick={() => setMapForRow(null)}>Cancel</button>
+              <button type="button" className="btn-primary" disabled={mapBusy || !mapLineId || mapLinesLoading} onClick={submitMapDummy}>
+                {mapBusy ? "Mapping…" : "Map PO"}
+              </button>
+            </div>
           </div>
-        )}
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button type="button" className="btn-secondary" disabled={mapBusy} onClick={() => setMapForRow(null)}>Cancel</button>
-          <button type="button" className="btn-primary" disabled={mapBusy || !mapLineId || mapLinesLoading} onClick={submitMapDummy}>
-            {mapBusy ? "Mapping…" : "Confirm map"}
-          </button>
         </div>
-      </Modal>
+      )}
 
       <div className="page-content">
         {error && (
@@ -1309,7 +1330,7 @@ export default function IMDispatch() {
                     <tr
                       key={row.name}
                       style={{
-                        background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
+                        background: !!Number(row.is_dummy_po) ? "#fffbeb" : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
                         opacity: canPlan ? 1 : 0.85,
                       }}
                     >
@@ -1397,7 +1418,7 @@ export default function IMDispatch() {
                           {row.dispatch_status || "Pending"}
                         </span>
                       </td>
-                      <td style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>
+                      <td style={{ minWidth: 175, width: 175, whiteSpace: "nowrap" }}>
                         <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                           <button
                             type="button"
@@ -1410,8 +1431,7 @@ export default function IMDispatch() {
                           {!!Number(row.is_dummy_po) && (
                             <button
                               type="button"
-                              className="btn-secondary"
-                              style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}
+                              style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0, background: "#fffbeb", color: "#92400e", border: "1px solid #f59e0b", borderRadius: 8, cursor: "pointer" }}
                               onClick={() => { setMapErr(null); setMapForRow(row); }}
                             >
                               Map PO

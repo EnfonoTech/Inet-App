@@ -136,6 +136,7 @@ export default function IMExecution() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const [dummyFilter, setDummyFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -182,6 +183,14 @@ export default function IMExecution() {
   const [bulkExecBusy, setBulkExecBusy] = useState(false);
   const [bulkExecErr, setBulkExecErr] = useState(null);
   const [wdConfirmOpen, setWdConfirmOpen] = useState(false);
+
+  const [mapForRow, setMapForRow] = useState(null);
+  const [mapLines, setMapLines] = useState([]);
+  const [mapLineId, setMapLineId] = useState("");
+  const [mapBusy, setMapBusy] = useState(false);
+  const [mapErr, setMapErr] = useState(null);
+  const [mapLinesLoading, setMapLinesLoading] = useState(false);
+  const [mapSuccessMsg, setMapSuccessMsg] = useState(null);
 
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -245,7 +254,13 @@ export default function IMExecution() {
     return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
   }, [executions]);
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
+
+  const filteredExecutions = useMemo(() => {
+    if (!dummyFilter) return executions;
+    return executions.filter((e) => dummyFilter === "Dummy Only" ? !!e.is_dummy_po : !e.is_dummy_po);
+  }, [executions, dummyFilter]);
+
+  const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate || dummyFilter);
   const totalAchieved = executions.reduce((s, e) => s + (e.achieved_qty || 0), 0);
   // Multi-team plans have one Daily Execution per team but only ONE
   // Work Done per plan. De-duplicate by rollout_plan: surface a single
@@ -497,6 +512,40 @@ export default function IMExecution() {
     }
   }
 
+  useEffect(() => {
+    if (!mapForRow?.project_code) { setMapLines([]); setMapLineId(""); return; }
+    let cancelled = false;
+    setMapLinesLoading(true);
+    setMapErr(null);
+    pmApi.listPoIntakeLinesForIMMap(mapForRow.project_code).then((list) => {
+      if (!cancelled) { setMapLines(Array.isArray(list) ? list : []); setMapLineId(""); }
+    }).catch((e) => {
+      if (!cancelled) setMapErr(e.message || "Failed to load PO lines");
+    }).finally(() => { if (!cancelled) setMapLinesLoading(false); });
+    return () => { cancelled = true; };
+  }, [mapForRow]);
+
+  async function submitMapDummy() {
+    if (!mapForRow || !mapLineId) return;
+    setMapBusy(true);
+    setMapErr(null);
+    try {
+      const res = await pmApi.mapIMDummyPoToIntakeLine({
+        dummy_po_dispatch: mapForRow.po_dispatch_name,
+        po_intake_line: mapLineId,
+      });
+      setMapForRow(null);
+      const pid = (res?.poid || res?.name || "").trim();
+      const oid = (res?.original_dummy_poid || "").trim();
+      setMapSuccessMsg(oid ? `Mapped. New POID: ${pid}. Original dummy POID: ${oid}.` : "Dummy PO mapped successfully.");
+      loadExecutions();
+    } catch (e) {
+      setMapErr(e.message || "Map failed");
+    } finally {
+      setMapBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -512,6 +561,13 @@ export default function IMExecution() {
         <div className="notice error" style={{ margin: "0 28px 12px" }}>
           <span>!</span> {wdErr}
           <button type="button" className="btn-secondary" style={{ marginLeft: 12, fontSize: "0.75rem" }} onClick={() => setWdErr(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {mapSuccessMsg && (
+        <div style={{ background: "#dcfce7", border: "1px solid #86efac", borderRadius: 8, padding: "10px 16px", margin: "0 0 12px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.84rem", color: "#166534" }}>
+          <span>{mapSuccessMsg}</span>
+          <button type="button" onClick={() => setMapSuccessMsg(null)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#166534", lineHeight: 1, marginLeft: 12 }}>&times;</button>
         </div>
       )}
 
@@ -586,6 +642,11 @@ export default function IMExecution() {
           <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
             <h4 style={{ margin: "0 0 12px" }}>Execution status: {execStatusFor.name}</h4>
             {execStatusErr && <div className="notice error" style={{ marginBottom: 10 }}>{execStatusErr}</div>}
+            {execStatusFor.is_dummy_po && execStatusPick === "Completed" && (
+              <div style={{ background: "#fffbeb", border: "1px solid #fbbf24", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: "0.82rem", color: "#92400e" }}>
+                <strong>Warning:</strong> This POID is a Dummy PO. Marking it as Completed counts as an invalid entry until the PO is mapped to a real PO Intake Line. Use <em>Map PO</em> to map it first.
+              </div>
+            )}
             <div className="form-group" style={{ marginBottom: 12 }}>
               <label>Status</label>
               <select value={execStatusPick} onChange={(e) => setExecStatusPick(e.target.value)} style={{ padding: 8, minWidth: 280, width: "100%" }}>
@@ -836,12 +897,24 @@ export default function IMExecution() {
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <button
+          type="button"
+          style={{
+            fontSize: "0.78rem", padding: "5px 12px", borderRadius: 8, cursor: "pointer",
+            border: dummyFilter ? "1px solid #f59e0b" : "1px solid #e2e8f0",
+            background: dummyFilter ? "#fffbeb" : "#fff",
+            color: dummyFilter ? "#92400e" : "#64748b",
+          }}
+          onClick={() => setDummyFilter(dummyFilter ? "" : "Dummy Only")}
+        >
+          {dummyFilter ? "Dummy PO ×" : "Dummy PO"}
+        </button>
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setStatusFilter([]); setQcFilter([]); setCiagFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setStatusFilter([]); setQcFilter([]); setCiagFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setDummyFilter(""); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -883,7 +956,7 @@ export default function IMExecution() {
         <DataTableWrapper>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : executions.length === 0 ? (
+          ) : filteredExecutions.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📊</div>
               <h3>{hasFilters ? "No results match your filters" : "No execution records"}</h3>
@@ -900,12 +973,12 @@ export default function IMExecution() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={executions.length > 0 && executions.every((e) => selectedExecs.has(e.name))}
+                      checked={filteredExecutions.length > 0 && filteredExecutions.every((e) => selectedExecs.has(e.name))}
                       onChange={() => {
-                        if (executions.length > 0 && executions.every((e) => selectedExecs.has(e.name))) {
+                        if (filteredExecutions.length > 0 && filteredExecutions.every((e) => selectedExecs.has(e.name))) {
                           setSelectedExecs(new Set());
                         } else {
-                          setSelectedExecs(new Set(executions.map((e) => e.name)));
+                          setSelectedExecs(new Set(filteredExecutions.map((e) => e.name)));
                         }
                       }}
                     />
@@ -935,11 +1008,11 @@ export default function IMExecution() {
                   <th title="Remark set by PM">General</th>
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
-                  <th style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>Actions</th>
+                  <th style={{ minWidth: 210, width: 210, whiteSpace: "nowrap" }} data-default-width="210">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {executions.map((e) => (
+                {filteredExecutions.map((e) => (
                   <tr key={e.name} style={e.is_dummy_po ? { background: "#fffbeb" } : undefined}>
                     <td>
                       <input
@@ -1069,7 +1142,7 @@ export default function IMExecution() {
                     <td><RemarksCell value={e.general_remark} tone="general" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.general_remark = v; }} /></td>
                     <td><RemarksCell value={e.manager_remark} tone="manager" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.manager_remark = v; }} /></td>
                     <td><RemarksCell value={e.team_lead_remark} tone="team_lead" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.team_lead_remark = v; }} /></td>
-                    <td style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>
+                    <td style={{ minWidth: 210, width: 210, whiteSpace: "nowrap" }}>
                       <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                         <button
                           type="button"
@@ -1089,6 +1162,16 @@ export default function IMExecution() {
                             Re-plan
                           </button>
                         )}
+                        {e.is_dummy_po ? (
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0, background: "#fffbeb", color: "#92400e", border: "1px solid #f59e0b", borderRadius: 8, cursor: "pointer" }}
+                            onClick={() => { setMapErr(null); setMapForRow({ po_dispatch_name: e.system_id, project_code: e.project_code, poid: e.poid || e.system_id, site_code: e.site_code }); }}
+                          >
+                            Map PO
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -1097,7 +1180,7 @@ export default function IMExecution() {
               <tfoot>
                 <tr>
                   <td colSpan={21} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                    {executions.length} row{executions.length !== 1 ? "s" : ""}
+                    {filteredExecutions.length} row{filteredExecutions.length !== 1 ? "s" : ""}
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                     {fmt.format(totalAchieved)}
@@ -1114,11 +1197,64 @@ export default function IMExecution() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={executions.length}
-          filteredCount={executions.length}
+          loadedCount={filteredExecutions.length}
+          filteredCount={filteredExecutions.length}
           filterActive={!!hasFilters}
         />
       </div>
+      {mapForRow && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !mapBusy && setMapForRow(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(480px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 6px", fontSize: "1.05rem" }}>Map Dummy PO</h3>
+            <p style={{ fontSize: "0.82rem", color: "#64748b", margin: "0 0 16px" }}>
+              POID: <strong>{mapForRow.poid}</strong>
+            </p>
+            {mapErr && <div className="notice error" style={{ marginBottom: 12 }}>{mapErr}</div>}
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>
+              Select Real PO Intake Line
+            </label>
+            {mapLinesLoading ? (
+              <p style={{ fontSize: "0.82rem", color: "#94a3b8" }}>Loading…</p>
+            ) : (() => {
+              const duidLines = mapForRow?.site_code ? mapLines.filter((l) => l.site_code === mapForRow.site_code) : mapLines;
+              const optionLines = duidLines.length > 0 ? duidLines : mapLines;
+              const fallback = mapForRow?.site_code && duidLines.length === 0 && mapLines.length > 0;
+              return (
+                <>
+                  {mapForRow?.site_code && (
+                    <div style={{ fontSize: "0.75rem", marginBottom: 6, color: fallback ? "#b45309" : "#047857" }}>
+                      {fallback
+                        ? `No intake lines for DUID ${mapForRow.site_code} — showing all lines`
+                        : `Filtered by DUID: ${mapForRow.site_code} (${duidLines.length} line${duidLines.length !== 1 ? "s" : ""})`}
+                    </div>
+                  )}
+                  <SearchableSelect
+                    value={mapLineId}
+                    onChange={(id) => setMapLineId(id)}
+                    options={optionLines.map((l) => ({ id: l.name, label: `${l.poid || l.name}${l.item_description ? ` — ${l.item_description}` : ""}` }))}
+                    placeholder={optionLines.length ? "— search & select PO line —" : "No open lines for this project"}
+                    style={{ display: "block", width: "100%" }}
+                    panelStyle={{ zIndex: 10001 }}
+                  />
+                </>
+              );
+            })()}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+              <button type="button" className="btn-secondary" disabled={mapBusy} onClick={() => setMapForRow(null)}>Cancel</button>
+              <button type="button" className="btn-primary" disabled={mapBusy || !mapLineId} onClick={submitMapDummy}>
+                {mapBusy ? "Mapping…" : "Map PO"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {detailRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setDetailRow(null)}>
           <div style={{
