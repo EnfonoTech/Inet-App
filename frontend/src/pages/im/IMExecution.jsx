@@ -169,6 +169,19 @@ export default function IMExecution() {
   const [wdBusy, setWdBusy] = useState("");
   const [wdErr, setWdErr] = useState(null);
   const [selectedExecs, setSelectedExecs] = useState(new Set());
+  const [bulkQcOpen, setBulkQcOpen] = useState(false);
+  const [bulkQcPick, setBulkQcPick] = useState("Pass");
+  const [bulkQcBusy, setBulkQcBusy] = useState(false);
+  const [bulkQcErr, setBulkQcErr] = useState(null);
+  const [bulkCiagOpen, setBulkCiagOpen] = useState(false);
+  const [bulkCiagPick, setBulkCiagPick] = useState("Open");
+  const [bulkCiagBusy, setBulkCiagBusy] = useState(false);
+  const [bulkCiagErr, setBulkCiagErr] = useState(null);
+  const [bulkExecOpen, setBulkExecOpen] = useState(false);
+  const [bulkExecPick, setBulkExecPick] = useState("Completed");
+  const [bulkExecBusy, setBulkExecBusy] = useState(false);
+  const [bulkExecErr, setBulkExecErr] = useState(null);
+  const [wdConfirmOpen, setWdConfirmOpen] = useState(false);
 
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -244,6 +257,7 @@ export default function IMExecution() {
     const seenPlans = new Set();
     const out = [];
     for (const e of executions) {
+      if (e.is_dummy_po) continue;
       if (e.execution_status !== "Completed") continue;
       if (!(isNotRequired(e.qc_required) || e.qc_status === "Pass")) continue;
       if (e.work_done) continue;
@@ -255,6 +269,47 @@ export default function IMExecution() {
     return out;
   })();
   const selectedEligible = eligibleForWorkDone.filter((e) => selectedExecs.has(e.name));
+
+  // Rows currently checked in the table
+  const selectedRows = useMemo(
+    () => executions.filter((e) => selectedExecs.has(e.name)),
+    [executions, selectedExecs],
+  );
+
+  // QC breakdown: which selected rows are applicable vs. already N/A
+  const qcWillUpdate = useMemo(
+    () => selectedRows.filter((e) => !isNotRequired(e.qc_required) && e.qc_status !== "Not Applicable"),
+    [selectedRows],
+  );
+  const qcWillSkip = useMemo(
+    () => selectedRows.filter((e) => isNotRequired(e.qc_required) || e.qc_status === "Not Applicable"),
+    [selectedRows],
+  );
+
+  // CIAG breakdown
+  const ciagWillUpdate = useMemo(
+    () => selectedRows.filter((e) => !isNotRequired(e.ciag_required) && e.ciag_status !== "Not Applicable"),
+    [selectedRows],
+  );
+  const ciagWillSkip = useMemo(
+    () => selectedRows.filter((e) => isNotRequired(e.ciag_required) || e.ciag_status === "Not Applicable"),
+    [selectedRows],
+  );
+
+  // Work Done breakdown: selected rows that cannot get Work Done, and why
+  const eligibleNames = useMemo(() => new Set(selectedEligible.map((e) => e.name)), [selectedEligible]);
+  const selectedNonEligible = useMemo(
+    () => selectedRows.filter((e) => !eligibleNames.has(e.name)),
+    [selectedRows, eligibleNames],
+  );
+
+  function workDoneBlockReason(e) {
+    if (e.is_dummy_po) return "Dummy PO — must be mapped to a real PO before Work Done can be created";
+    if (e.work_done) return "Work Done already exists";
+    if (e.execution_status !== "Completed") return `Not completed — ${e.execution_status || "—"}`;
+    if (!isNotRequired(e.qc_required) && e.qc_status !== "Pass") return `QC not passed — ${e.qc_status || "Pending"}`;
+    return "Duplicate plan (another execution covers this)";
+  }
 
   async function submitReopen() {
     if (!reopenFor) return;
@@ -386,6 +441,59 @@ export default function IMExecution() {
       setIssueCatErr(err.message || "Failed to update issue category");
     } finally {
       setIssueCatBusy(false);
+    }
+  }
+
+  async function submitBulkQc() {
+    const names = qcWillUpdate.map((e) => e.name);
+    if (!names.length) return;
+    setBulkQcBusy(true);
+    setBulkQcErr(null);
+    try {
+      const res = await pmApi.bulkUpdateExecutionField(names, "qc_status", bulkQcPick);
+      setBulkQcOpen(false);
+      setSelectedExecs(new Set());
+      if (res?.errors?.length) setBulkQcErr(`Updated ${res.updated}. ${res.errors.length} failed.`);
+      await loadExecutions();
+    } catch (err) {
+      setBulkQcErr(err.message || "Bulk QC update failed");
+    } finally {
+      setBulkQcBusy(false);
+    }
+  }
+
+  async function submitBulkCiag() {
+    const names = ciagWillUpdate.map((e) => e.name);
+    if (!names.length) return;
+    setBulkCiagBusy(true);
+    setBulkCiagErr(null);
+    try {
+      const res = await pmApi.bulkUpdateExecutionField(names, "ciag_status", bulkCiagPick);
+      setBulkCiagOpen(false);
+      setSelectedExecs(new Set());
+      if (res?.errors?.length) setBulkCiagErr(`Updated ${res.updated}. ${res.errors.length} failed.`);
+      await loadExecutions();
+    } catch (err) {
+      setBulkCiagErr(err.message || "Bulk CIAG update failed");
+    } finally {
+      setBulkCiagBusy(false);
+    }
+  }
+
+  async function submitBulkExecStatus() {
+    if (!selectedExecs.size) return;
+    setBulkExecBusy(true);
+    setBulkExecErr(null);
+    try {
+      const res = await pmApi.bulkUpdateExecutionField([...selectedExecs], "execution_status", bulkExecPick);
+      setBulkExecOpen(false);
+      setSelectedExecs(new Set());
+      if (res?.errors?.length) setBulkExecErr(`Updated ${res.updated}. ${res.errors.length} failed.`);
+      await loadExecutions();
+    } catch (err) {
+      setBulkExecErr(err.message || "Bulk status update failed");
+    } finally {
+      setBulkExecBusy(false);
     }
   }
 
@@ -542,6 +650,175 @@ export default function IMExecution() {
         </div>
       )}
 
+      {bulkQcOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setBulkQcOpen(false)}>
+          <div style={{ width: "min(720px, 94vw)", maxHeight: "85dvh", overflowY: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 24 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 4px" }}>Bulk QC Update</h4>
+            {bulkQcErr && <div className="notice error" style={{ marginBottom: 10 }}>{bulkQcErr}</div>}
+            {qcWillUpdate.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#047857", marginBottom: 4 }}>Will update ({qcWillUpdate.length}):</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {qcWillUpdate.map((e) => (
+                    <span key={e.name} style={{ fontSize: 11, background: "#dcfce7", color: "#15803d", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
+                      {e.poid || e.system_id || e.name} · {e.site_code || "—"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {qcWillSkip.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 4 }}>Will skip — QC not applicable ({qcWillSkip.length}):</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {qcWillSkip.map((e) => (
+                    <span key={e.name} style={{ fontSize: 11, background: "#f1f5f9", color: "#475569", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
+                      {e.poid || e.system_id || e.name} · {e.site_code || "—"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {qcWillUpdate.length === 0 && (
+              <p style={{ fontSize: 13, color: "#64748b", marginBottom: 12 }}>All selected rows have QC set to Not Applicable — nothing to update.</p>
+            )}
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label>QC Result</label>
+              <select value={bulkQcPick} onChange={(e) => setBulkQcPick(e.target.value)} style={{ padding: 8, minWidth: 220 }}>
+                <option value="Pass">Pass</option>
+                <option value="Fail">Fail</option>
+                <option value="Not Applicable">Not Applicable</option>
+              </select>
+            </div>
+            <button className="btn-primary" disabled={bulkQcBusy || qcWillUpdate.length === 0} onClick={submitBulkQc}>
+              {bulkQcBusy ? "Updating…" : `Apply to ${qcWillUpdate.length} row${qcWillUpdate.length !== 1 ? "s" : ""}`}
+            </button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setBulkQcOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {bulkCiagOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setBulkCiagOpen(false)}>
+          <div style={{ width: "min(720px, 94vw)", maxHeight: "85dvh", overflowY: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 24 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 4px" }}>Bulk CIAG Update</h4>
+            {bulkCiagErr && <div className="notice error" style={{ marginBottom: 10 }}>{bulkCiagErr}</div>}
+            {ciagWillUpdate.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#047857", marginBottom: 4 }}>Will update ({ciagWillUpdate.length}):</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {ciagWillUpdate.map((e) => (
+                    <span key={e.name} style={{ fontSize: 11, background: "#dcfce7", color: "#15803d", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
+                      {e.poid || e.system_id || e.name} · {e.site_code || "—"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {ciagWillSkip.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 4 }}>Will skip — CIAG not applicable ({ciagWillSkip.length}):</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {ciagWillSkip.map((e) => (
+                    <span key={e.name} style={{ fontSize: 11, background: "#f1f5f9", color: "#475569", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
+                      {e.poid || e.system_id || e.name} · {e.site_code || "—"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {ciagWillUpdate.length === 0 && (
+              <p style={{ fontSize: 13, color: "#64748b", marginBottom: 12 }}>All selected rows have CIAG set to Not Applicable — nothing to update.</p>
+            )}
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label>CIAG Status</label>
+              <select value={bulkCiagPick} onChange={(e) => setBulkCiagPick(e.target.value)} style={{ padding: 8, minWidth: 220 }}>
+                {CIAG_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary" disabled={bulkCiagBusy || ciagWillUpdate.length === 0} onClick={submitBulkCiag}>
+              {bulkCiagBusy ? "Updating…" : `Apply to ${ciagWillUpdate.length} row${ciagWillUpdate.length !== 1 ? "s" : ""}`}
+            </button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setBulkCiagOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {bulkExecOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setBulkExecOpen(false)}>
+          <div style={{ width: "min(720px, 94vw)", maxHeight: "85dvh", overflowY: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 24 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 4px" }}>Bulk Execution Status</h4>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>Applies to all {selectedExecs.size} selected rows.</p>
+            {bulkExecErr && <div className="notice error" style={{ marginBottom: 10 }}>{bulkExecErr}</div>}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 12 }}>
+              {selectedRows.map((e) => (
+                <span key={e.name} style={{ fontSize: 11, background: "#eff6ff", color: "#1d4ed8", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
+                  {e.poid || e.system_id || e.name} · {e.site_code || "—"}
+                </span>
+              ))}
+            </div>
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label>New Status</label>
+              <select value={bulkExecPick} onChange={(e) => setBulkExecPick(e.target.value)} style={{ padding: 8, minWidth: 220 }}>
+                {EXECUTION_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary" disabled={bulkExecBusy} onClick={submitBulkExecStatus}>
+              {bulkExecBusy ? "Updating…" : `Apply to ${selectedExecs.size} row${selectedExecs.size !== 1 ? "s" : ""}`}
+            </button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setBulkExecOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {wdConfirmOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setWdConfirmOpen(false)}>
+          <div style={{ width: "min(720px, 94vw)", maxHeight: "85dvh", overflowY: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 24 }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px" }}>Create Work Done — Confirmation</h4>
+            {selectedEligible.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#047857", marginBottom: 4 }}>
+                  Will create Work Done ({selectedEligible.length}):
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {selectedEligible.map((e) => (
+                    <span key={e.name} style={{ fontSize: 11, background: "#dcfce7", color: "#15803d", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
+                      {e.poid || e.system_id || e.name} · {e.site_code || "—"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selectedNonEligible.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>
+                  Will NOT create ({selectedNonEligible.length}) — reasons below:
+                </div>
+                <div style={{ fontSize: 11, borderRadius: 6, background: "#fef2f2", padding: "6px 8px" }}>
+                  {selectedNonEligible.map((e) => (
+                    <div key={e.name} style={{ display: "flex", gap: 6, padding: "3px 0", borderBottom: "1px solid #fee2e2", flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: "monospace", color: "#991b1b", fontWeight: 600 }}>{e.poid || e.system_id || e.name}</span>
+                      <span style={{ color: "#6b7280" }}>·</span>
+                      <span style={{ color: "#374151" }}>{e.site_code || "—"}</span>
+                      <span style={{ color: "#6b7280" }}>—</span>
+                      <span style={{ color: "#b91c1c" }}>{workDoneBlockReason(e)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <button
+              className="btn-primary"
+              disabled={selectedEligible.length === 0 || wdBusy === "bulk"}
+              onClick={() => { setWdConfirmOpen(false); createWorkDoneBulk(); }}
+            >
+              {wdBusy === "bulk" ? "Creating…" : `Confirm — Create ${selectedEligible.length} Work Done`}
+            </button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setWdConfirmOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       <div className="toolbar">
         <input
           type="search"
@@ -569,22 +846,38 @@ export default function IMExecution() {
             Clear
           </button>
         )}
-        <div className="toolbar-actions">
-          {selectedEligible.length > 0 && (
-            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
-              {selectedEligible.length} selected for Work Done
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={selectedEligible.length === 0 || wdBusy === "bulk"}
-            onClick={createWorkDoneBulk}
-          >
-            {wdBusy === "bulk" ? "Creating…" : `Create Work Done (${selectedEligible.length})`}
-          </button>
-        </div>
       </div>
+
+      {selectedExecs.size > 0 && (
+        <div style={{ padding: "8px 28px 10px", background: "#eff6ff", borderBottom: "1px solid #bfdbfe" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+            <span style={{ fontSize: "0.82rem", color: "#1d4ed8", fontWeight: 600, whiteSpace: "nowrap" }}>
+              {selectedExecs.size} selected
+            </span>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
+              onClick={() => { setBulkQcErr(null); setBulkQcPick("Pass"); setBulkQcOpen(true); }}>
+              Bulk QC
+            </button>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
+              onClick={() => { setBulkCiagErr(null); setBulkCiagPick("Open"); setBulkCiagOpen(true); }}>
+              Bulk CIAG
+            </button>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
+              onClick={() => { setBulkExecErr(null); setBulkExecPick("Completed"); setBulkExecOpen(true); }}>
+              Bulk Exec Status
+            </button>
+            <button type="button" className="btn-primary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
+              disabled={wdBusy === "bulk"}
+              onClick={() => setWdConfirmOpen(true)}>
+              {wdBusy === "bulk" ? "Creating…" : `Create Work Done (${selectedEligible.length} / ${selectedExecs.size})`}
+            </button>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
+              onClick={() => setSelectedExecs(new Set())}>
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="page-content">
         <DataTableWrapper>
@@ -607,12 +900,12 @@ export default function IMExecution() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={eligibleForWorkDone.length > 0 && eligibleForWorkDone.every((e) => selectedExecs.has(e.name))}
+                      checked={executions.length > 0 && executions.every((e) => selectedExecs.has(e.name))}
                       onChange={() => {
-                        if (eligibleForWorkDone.length > 0 && eligibleForWorkDone.every((e) => selectedExecs.has(e.name))) {
+                        if (executions.length > 0 && executions.every((e) => selectedExecs.has(e.name))) {
                           setSelectedExecs(new Set());
                         } else {
-                          setSelectedExecs(new Set(eligibleForWorkDone.map((e) => e.name)));
+                          setSelectedExecs(new Set(executions.map((e) => e.name)));
                         }
                       }}
                     />
@@ -651,7 +944,6 @@ export default function IMExecution() {
                     <td>
                       <input
                         type="checkbox"
-                        disabled={!(e.execution_status === "Completed" && (isNotRequired(e.qc_required) || e.qc_status === "Pass") && !e.work_done)}
                         checked={selectedExecs.has(e.name)}
                         onChange={() => {
                           setSelectedExecs((prev) => {

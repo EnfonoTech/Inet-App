@@ -311,6 +311,7 @@ export const pmApi = {
   convertDispatchMode:  (payload)   => call("inet_app.api.command_center.convert_dispatch_mode", { payload: JSON.stringify(payload) }),
   createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
   updateExecution:      (payload)   => call("inet_app.api.command_center.update_execution", { payload: JSON.stringify(payload) }),
+  bulkUpdateExecutionField: (names, field, value) => call("inet_app.api.command_center.bulk_update_execution_field", { names: JSON.stringify(names), field, value }),
   generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),
   getFieldExecutionForRollout: (rollout_plan) =>
     call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),

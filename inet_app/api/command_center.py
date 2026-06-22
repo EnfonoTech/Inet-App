@@ -4330,6 +4330,52 @@ def update_execution(payload):
 
 
 @frappe.whitelist()
+def bulk_update_execution_field(names, field, value):
+    """
+    Bulk-update a single status field across multiple Daily Executions.
+
+    Parameters
+    ----------
+    names : JSON list of Daily Execution names
+    field : one of "qc_status", "ciag_status", "execution_status"
+    value : the new value for that field
+
+    Returns
+    -------
+    {"updated": N, "errors": [...]}
+    """
+    _ALLOWED = {"qc_status", "ciag_status", "execution_status"}
+    if field not in _ALLOWED:
+        frappe.throw(f"Field '{field}' is not allowed for bulk update.")
+
+    if isinstance(names, str):
+        names = frappe.parse_json(names)
+    if not isinstance(names, list) or not names:
+        frappe.throw("names must be a non-empty list.")
+
+    roles = set(frappe.get_roles(frappe.session.user))
+    if not (
+        "Administrator" in roles
+        or "System Manager" in roles
+        or "INET Admin" in roles
+        or "INET IM" in roles
+    ):
+        frappe.throw("Only an Implementation Manager or administrator can bulk-update executions.", frappe.PermissionError)
+
+    updated = 0
+    errors = []
+    for name in names:
+        try:
+            update_execution({"name": name, field: value})
+            updated += 1
+        except Exception as exc:
+            errors.append({"name": name, "error": str(exc)})
+
+    frappe.db.commit()
+    return {"updated": updated, "errors": errors}
+
+
+@frappe.whitelist()
 def generate_work_done(execution_name):
     """
     Create a Work Done record from a completed Daily Execution.
