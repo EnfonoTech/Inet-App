@@ -236,11 +236,12 @@ export default function CommandDashboard() {
     { label: "In Progress", value: ts.in_progress || 0, color: "green" },
   ];
 
-  const inetMonthlyCost    = inet.inet_monthly_cost || 0;
-  const inetMonthlyTarget  = inet.inet_monthly_target || 0;
-  const inetTargetToday    = inet.inet_target_today || 0;
-  const inetAchieved       = inet.inet_achieved || 0;
-  const inetGapToday       = inetAchieved - inetTargetToday;
+  const inetMonthlyCost       = inet.inet_monthly_cost || 0;
+  const inetMonthlyTarget     = inet.inet_monthly_target || 0;
+  const inetTargetToday       = inet.inet_target_today || 0;
+  const inetAchieved          = inet.inet_achieved || 0;
+  const inetGapToday          = inetAchieved - inetTargetToday;
+  const inetProfitLossToday   = inet.inet_profit_loss_today ?? (inetAchieved - inetTargetToday);
 
   return (
     <div className="dashboard">
@@ -303,6 +304,7 @@ export default function CommandDashboard() {
         <KPICard label="Target as of Today" value={inetTargetToday} />
         <KPICard label="Achieved as of Today" value={inetAchieved} colorClass="text-green" />
         <KPICard label="Gap as of Today" value={inetGapToday} colorClass={inetGapToday < 0 ? "text-red" : "text-green"} />
+        <KPICard label="Profit / Loss Today" value={inetProfitLossToday} colorClass={inetProfitLossToday >= 0 ? "text-green" : "text-red"} />
       </div>
 
       {/* ── Row 3: Subcontractor Performance ───────────────── */}
@@ -311,6 +313,7 @@ export default function CommandDashboard() {
         <KPICard label="Sub Teams" value={subcon.active_sub_teams} colorClass="text-green"
           onClick={() => goTeams({ typeFilter: ["SUB"] })} />
         <KPICard label="Target" value={subcon.sub_target} />
+        <KPICard label="Margin Target" value={subcon.inet_margin_target_sub} />
         <KPICard label="Revenue" value={subcon.sub_revenue} colorClass="text-green" />
         <KPICard label="Expense" value={subcon.sub_expense} />
         <KPICard label="INET Margin" value={subcon.inet_margin_sub} colorClass={(subcon.inet_margin_sub ?? 0) >= 0 ? "text-green" : "text-red"} />
@@ -332,10 +335,11 @@ export default function CommandDashboard() {
       {/* ── Row 4: Company Financial Summary ───────────────── */}
       <div className="section-label">Company Financial Summary</div>
       <div className="kpi-row kpi-row-company">
-        <KPICard label="Company Target" value={company.company_target} />
-        <KPICard label="Achieved" value={company.total_achieved} colorClass="text-green" />
+        <KPICard label="Total INET Target" value={company.company_target} />
+        <KPICard label="Target as of Today" value={company.total_target_today} />
+        <KPICard label="Total Revenue" value={company.total_achieved} colorClass="text-green" />
         <KPICard label="Gap" value={company.company_gap} colorClass="text-red" />
-        <KPICard label="Total Cost" value={company.total_cost} />
+        <KPICard label="Total Cost Today" value={company.total_cost_today} />
         <KPICard label="Profit / Loss" value={company.profit_loss} colorClass={(company.profit_loss ?? 0) >= 0 ? "text-green" : "text-red"} />
         <KPICard label="Coverage %" value={`${Number(company.coverage_pct ?? 0).toFixed(1)}%`} colorClass={(company.coverage_pct ?? 0) >= 50 ? "text-green" : (company.coverage_pct ?? 0) >= 20 ? "text-amber" : "text-red"} />
       </div>

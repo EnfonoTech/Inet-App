@@ -6115,17 +6115,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )
     active_inet_teams = len(inet_teams)
 
-    inet_monthly_cost = sum(flt(t.daily_cost) * 26 for t in inet_teams)
+    # Teams are monthly-paid (fixed salary), so cost = monthly_cost = daily_cost × 30
+    inet_monthly_cost = sum(flt(t.daily_cost) * 30 for t in inet_teams)
 
     # Monthly target = cost × 1.25 (25% margin), consistent with Command Dashboard frontend
     inet_monthly_target = round(inet_monthly_cost * 1.25)
 
-    # Pro-rate by working days elapsed (excl. Fridays) out of 26 working days per month
-    _working_days_elapsed = sum(
-        1 for i in range(day_of_month)
-        if (date(today.year, today.month, i + 1)).weekday() != 4  # 4 = Friday
-    )
-    inet_target_today = round(inet_monthly_target * (_working_days_elapsed / 26))
+    # Pro-rate linearly by calendar day (day 15 of 30 = 50%), matches Excel logic
+    inet_target_today = round(inet_monthly_target * (day_of_month / 30))
 
     # Achieved as of today: sum PO Dispatch line_amount for INET teams (excl. backend)
     # Always uses current month 1st → today, independent of the date range filter
@@ -6175,10 +6172,24 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         )
         sub_target = flt(sub_tgt_rows[0].total if sub_tgt_rows else 0)
 
+    # Avg INET margin % from Subcontractor Master for active SUB teams → used for target margin
+    _sm_margin_rows = frappe.db.sql(
+        """
+        SELECT AVG(sm.inet_margin_pct) AS avg_pct
+        FROM `tabSubcontractor Master` sm
+        JOIN `tabINET Team` it ON it.subcontractor = sm.name
+        WHERE it.status = 'Active'
+        AND it.team_type = 'SUB'
+        AND IFNULL(it.team_category, '') != 'Backend Team'
+        """,
+        as_dict=True,
+    )
+    avg_subcon_margin_pct = flt(_sm_margin_rows[0].avg_pct if _sm_margin_rows else 0)
+    inet_margin_target_sub = round(sub_target * (avg_subcon_margin_pct / 100.0), 2)
+
     sub_revenue_rows = frappe.db.sql(
         """
         SELECT COALESCE(SUM(wd.revenue_sar), 0) AS rev,
-               COALESCE(SUM(wd.total_cost_sar), 0) AS cost,
                COALESCE(AVG(wd.inet_margin_pct), 0) AS avg_margin
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
@@ -6190,9 +6201,10 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         as_dict=True,
     )
     sub_revenue = flt(sub_revenue_rows[0].rev if sub_revenue_rows else 0)
-    sub_expense = flt(sub_revenue_rows[0].cost if sub_revenue_rows else 0)
     avg_margin_pct = flt(sub_revenue_rows[0].avg_margin if sub_revenue_rows else 0)
     inet_margin_sub = sub_revenue * (avg_margin_pct / 100.0)
+    # Expense = what INET pays the subcontractor = Revenue − INET Margin (matches Excel)
+    sub_expense = sub_revenue - inet_margin_sub
     sub_gap = sub_target - sub_revenue
 
     # ---- Backend Teams KPIs ------------------------------------------------
@@ -6216,11 +6228,23 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     backend_completed_value = flt(_backend_done_rows[0].val if _backend_done_rows else 0)
 
     # ---- Company-level KPIs ------------------------------------------------
+    day_progress_pct = round(day_of_month / 30 * 100, 1)
+
+    # INET cost pro-rated to today (teams are monthly-paid, linear over 30 days)
+    inet_cost_today = round(inet_monthly_cost * (day_of_month / 30), 2)
+    inet_profit_loss_today = round(inet_achieved - inet_cost_today, 2)
+
+    # Sub-Con target pro-rated to today (same 30-day linear basis)
+    sub_target_today = round(sub_target * (day_of_month / 30), 2)
+    total_target_today = round(inet_target_today + sub_target_today, 2)
+
+    # Total Revenue = INET achieved + INET's margin from sub-con (not full sub-con revenue)
     company_target = inet_monthly_target + sub_target
-    total_achieved = inet_achieved + sub_revenue
-    total_cost = inet_monthly_cost + sub_expense
+    total_achieved = inet_achieved + inet_margin_sub
+    # Total Cost Today = pro-rated INET cost + sub-con expense (actual, not pro-rated)
+    total_cost_today = round(inet_cost_today + sub_expense, 2)
     company_gap = company_target - total_achieved
-    profit_loss = total_achieved - total_cost
+    profit_loss = round(total_achieved - total_cost_today, 2)
     coverage_pct = (total_achieved / company_target * 100.0) if company_target else 0.0
 
     # ---- Top 5 teams by revenue this month ---------------------------------
@@ -6394,10 +6418,12 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "inet_target_today": inet_target_today,
             "inet_achieved": inet_achieved,
             "inet_gap_today": inet_gap_today,
+            "inet_profit_loss_today": inet_profit_loss_today,
         },
         "subcon": {
             "active_sub_teams": active_sub_teams,
             "sub_target": sub_target,
+            "inet_margin_target_sub": inet_margin_target_sub,
             "sub_revenue": sub_revenue,
             "sub_expense": sub_expense,
             "inet_margin_sub": inet_margin_sub,
@@ -6411,10 +6437,12 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "completed_value": backend_completed_value,
         },
         "company": {
+            "day_progress_pct": day_progress_pct,
             "company_target": company_target,
+            "total_target_today": total_target_today,
             "total_achieved": total_achieved,
             "company_gap": company_gap,
-            "total_cost": total_cost,
+            "total_cost_today": total_cost_today,
             "profit_loss": profit_loss,
             "coverage_pct": coverage_pct,
         },
