@@ -5578,6 +5578,71 @@ def _revert_pic_status_if_safe(po_dispatch_name):
 
 
 @frappe.whitelist()
+def bulk_submit_work_done(payload=None):
+    """
+    Bulk-update submission_status for multiple Work Done rows.
+    Optionally attaches a single shared file URL to each linked PO Dispatch.
+
+    payload: {
+        work_done_names: list[str],
+        submission_status: str,
+        note: str (optional),
+        file_urls: { slot: url } (optional, e.g. {"im_doc1": "/files/..."})
+    }
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload) if payload else {}
+    payload = payload or {}
+
+    work_done_names = _ensure_list(payload.get("work_done_names") or [])
+    status = (payload.get("submission_status") or "").strip()
+    note = payload.get("note") or None
+    file_urls = payload.get("file_urls") or {}
+
+    if not work_done_names:
+        frappe.throw("No work done rows specified")
+    if status not in ("", "Ready for Confirmation", "Confirmation Done"):
+        frappe.throw(f"Invalid submission status: {status}")
+
+    ALLOWED_SLOTS = {"im_doc1", "im_doc2", "im_doc2a", "im_doc2b", "im_doc2c"}
+
+    def _resolve_po_dispatch(wd_name):
+        pd = frappe.db.get_value("Work Done", wd_name, "system_id") or ""
+        if pd:
+            return pd
+        execution = frappe.db.get_value("Work Done", wd_name, "execution") or ""
+        if execution:
+            rp = frappe.db.get_value("Daily Execution", execution, "rollout_plan") or ""
+            if rp:
+                return frappe.db.get_value("Rollout Plan", rp, "po_dispatch") or ""
+        return ""
+
+    updated = 0
+    errors = []
+
+    for wd_name in work_done_names:
+        try:
+            po_dispatch = _resolve_po_dispatch(wd_name)
+            if po_dispatch and file_urls:
+                for slot, url in file_urls.items():
+                    if url and slot in ALLOWED_SLOTS:
+                        frappe.get_doc({
+                            "doctype": "File",
+                            "file_url": url,
+                            "attached_to_doctype": "PO Dispatch",
+                            "attached_to_name": po_dispatch,
+                            "attached_to_field": slot,
+                        }).insert(ignore_permissions=True)
+            update_work_done_submission(wd_name, status, note)
+            updated += 1
+        except Exception as e:
+            errors.append({"name": wd_name, "error": str(e)})
+
+    frappe.db.commit()
+    return {"updated": updated, "errors": errors}
+
+
+@frappe.whitelist()
 def update_work_done_submission(name, submission_status, note=None):
     """IM sets Work Done submission status: 'Ready for Confirmation' or
     'Confirmation Done'. Optional note saved to PO Dispatch.im_confirmation_note."""
@@ -6691,6 +6756,10 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         im_plan_extras.append("pd.center_area AS center_area")
     else:
         im_plan_extras.append("NULL AS center_area")
+    if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+        im_plan_extras.append("pd.original_dummy_poid AS original_dummy_poid")
+    else:
+        im_plan_extras.append("NULL AS original_dummy_poid")
     im_plan_extra_sql = ", " + ", ".join(im_plan_extras)
     rp_im_join = ""
     im_full_sql = "im_pd.full_name AS im_full_name"

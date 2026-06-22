@@ -426,6 +426,25 @@ export const pmApi = {
   },
   uploadImAttachment: (po_dispatch, file, slot = "im_attachment") =>
     pmApi.uploadDocAttachment("PO Dispatch", po_dispatch, file, slot),
+  uploadFileGeneric: async (file) => {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    fd.append("is_private", "0");
+    fd.append("folder", "Home/Attachments");
+    const res = await fetch("/api/method/upload_file", {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-Frappe-CSRF-Token": getCsrf() },
+      body: fd,
+    });
+    const json = await res.json();
+    if (!res.ok || json.exc) throw new Error(json.message || "Upload failed");
+    return json.message?.file_url || "";
+  },
+  bulkSubmitWorkDone: (payload) =>
+    call("inet_app.api.command_center.bulk_submit_work_done", {
+      payload: JSON.stringify(payload),
+    }),
   uploadPicAttachment: (po_dispatch, file) =>
     pmApi.uploadDocAttachment("PO Dispatch", po_dispatch, file, "pic_attachment"),
   getPoDispatchImAttachments: (po_dispatch) =>

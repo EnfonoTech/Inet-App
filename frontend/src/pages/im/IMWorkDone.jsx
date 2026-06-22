@@ -195,8 +195,17 @@ export default function IMWorkDone() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [selectedRow, setSelectedRow] = useState(null);
+  const [selectedRows, setSelectedRows] = useState(new Set());
   const [submissionFor, setSubmissionFor] = useState(null);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkDoc1Files, setBulkDoc1Files] = useState([]);
+  const [bulkDoc2Files, setBulkDoc2Files] = useState([]);
+  const [bulkDoc2PartFiles, setBulkDoc2PartFiles] = useState([]);
+  const [bulkImNote, setBulkImNote] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkErr, setBulkErr] = useState(null);
+  const [bulkResult, setBulkResult] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
   const [submissionPick, setSubmissionPick] = useState("");
   const [submissionBusy, setSubmissionBusy] = useState(false);
@@ -286,6 +295,47 @@ export default function IMWorkDone() {
   const [refreshKey, setRefreshKey] = useState(0);
   const loadData = () => setRefreshKey((k) => k + 1);
 
+  async function submitBulk() {
+    setBulkBusy(true);
+    setBulkErr(null);
+    try {
+      const fileUrls = {};
+      const bulkSelectedList = filteredRows.filter((r) => selectedRows.has(r.name));
+      const actTypes = [...new Set(bulkSelectedList.map((r) => r.activity_type).filter(Boolean))];
+      const bulkDocReq = actTypes.length === 1 ? (DOC_REQUIREMENTS[actTypes[0]] || null) : null;
+
+      if (bulkDoc1Files.length > 0) {
+        const url = await pmApi.uploadFileGeneric(bulkDoc1Files[0]);
+        if (url) fileUrls.im_doc1 = url;
+      }
+      if (bulkDocReq?.doc2?.parts) {
+        for (let i = 0; i < bulkDocReq.doc2.parts.length; i++) {
+          const files = bulkDoc2PartFiles[i] || [];
+          if (files.length > 0) {
+            const url = await pmApi.uploadFileGeneric(files[0]);
+            if (url) fileUrls[bulkDocReq.doc2.parts[i].slot] = url;
+          }
+        }
+      } else if (bulkDoc2Files.length > 0) {
+        const url = await pmApi.uploadFileGeneric(bulkDoc2Files[0]);
+        if (url) fileUrls.im_doc2 = url;
+      }
+      const res = await pmApi.bulkSubmitWorkDone({
+        work_done_names: [...selectedRows],
+        submission_status: bulkStatus,
+        note: bulkImNote || undefined,
+        file_urls: Object.keys(fileUrls).length ? fileUrls : undefined,
+      });
+      setBulkResult(res);
+      setSelectedRows(new Set());
+      loadData();
+    } catch (err) {
+      setBulkErr(err.message || "Bulk submit failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   // Single useEffect with cancellation guard. Replaces the older
   // useResetOnRowLimitChange + separate-load pattern that left the table
   // blank when going from a higher to a lower row limit.
@@ -335,6 +385,10 @@ export default function IMWorkDone() {
     if (execStatusFilter.length && !execStatusFilter.includes(r.execution_status || "")) return false;
     return true;
   }), [rows, submissionFilter, execStatusFilter]);
+
+  const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
+  const bulkActTypes = [...new Set(filteredRows.filter((r) => selectedRows.has(r.name)).map((r) => r.activity_type).filter(Boolean))];
+  const bulkDocReq = bulkActTypes.length === 1 ? (DOC_REQUIREMENTS[bulkActTypes[0]] || null) : null;
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
@@ -406,18 +460,39 @@ export default function IMWorkDone() {
           </button>
         )}
         <div className="toolbar-actions">
-          {selectedRow && (
+          {selectedRows.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
-              {selectedRow.poid || selectedRow.po_dispatch} selected
+              {selectedRows.size} selected
             </span>
           )}
           <button
             type="button"
             className="btn-primary"
-            disabled={!selectedRow}
-            onClick={() => openSubmissionModal(selectedRow)}
+            disabled={selectedRows.size === 0}
+            onClick={() => {
+              if (selectedRows.size === 1) {
+                openSubmissionModal(selectedRow);
+              } else {
+                setBulkErr(null); setBulkStatus(""); setBulkDoc1Files([]); setBulkDoc2Files([]);
+                setBulkImNote(""); setBulkResult(null); setBulkDoc2PartFiles([]);
+                setExistingAttachments([]); setAttachLoading(true);
+                const pds = [...new Set(
+                  filteredRows.filter((r) => selectedRows.has(r.name))
+                    .map((r) => r.po_dispatch || r.poid).filter(Boolean)
+                )];
+                Promise.all(pds.map((pd) => pmApi.getPoDispatchImAttachments(pd).catch(() => [])))
+                  .then((results) => {
+                    const seen = new Set();
+                    const merged = [];
+                    results.flat().forEach((f) => { if (f.file_url && !seen.has(f.file_url)) { seen.add(f.file_url); merged.push(f); } });
+                    setExistingAttachments(merged);
+                  })
+                  .finally(() => setAttachLoading(false));
+                setBulkModalOpen(true);
+              }
+            }}
           >
-            Update Submission
+            Update Submission{selectedRows.size > 1 ? ` (${selectedRows.size})` : ""}
           </button>
         </div>
       </div>
@@ -434,9 +509,13 @@ export default function IMWorkDone() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={selectedRow != null}
-                      onChange={() => setSelectedRow(null)}
-                      title="Clear selection"
+                      checked={filteredRows.length > 0 && filteredRows.every((r) => selectedRows.has(r.name))}
+                      ref={(el) => { if (el) el.indeterminate = selectedRows.size > 0 && !filteredRows.every((r) => selectedRows.has(r.name)); }}
+                      onChange={() => {
+                        const allSel = filteredRows.every((r) => selectedRows.has(r.name));
+                        setSelectedRows(allSel ? new Set() : new Set(filteredRows.map((r) => r.name)));
+                      }}
+                      title={filteredRows.every((r) => selectedRows.has(r.name)) ? "Deselect all" : "Select all"}
                     />
                   </th>
                   <th>Project Code</th>
@@ -473,15 +552,15 @@ export default function IMWorkDone() {
                 {filteredRows.map((r) => (
                   <tr
                     key={r.name}
-                    className={selectedRow?.name === r.name ? "row-selected" : ""}
-                    onClick={() => setSelectedRow((prev) => prev?.name === r.name ? null : r)}
+                    className={selectedRows.has(r.name) ? "row-selected" : ""}
+                    onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(r.name) ? next.delete(r.name) : next.add(r.name); return next; })}
                     style={{ cursor: "pointer", ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}
                   >
                     <td style={{ width: 36, padding: "6px 4px", textAlign: "center", boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
-                        checked={selectedRow?.name === r.name}
-                        onChange={() => setSelectedRow((prev) => prev?.name === r.name ? null : r)}
+                        checked={selectedRows.has(r.name)}
+                        onChange={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(r.name) ? next.delete(r.name) : next.add(r.name); return next; })}
                       />
                     </td>
                     <td>{r.project_code || "—"}</td>
@@ -591,6 +670,136 @@ export default function IMWorkDone() {
                 <AttachmentSlotList attachments={detailAttachments} docReq={DOC_REQUIREMENTS[detailRow?.activity_type]} />
               </div>
             ) : null}
+          </div>
+        </div>
+      )}
+
+      {bulkModalOpen && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !bulkBusy && setBulkModalOpen(false)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(520px, 96vw)", maxHeight: "90dvh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Update Submission — {selectedRows.size} rows</h3>
+              <button type="button" onClick={() => setBulkModalOpen(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }} disabled={bulkBusy}>&times;</button>
+            </div>
+
+            {bulkResult ? (
+              <div>
+                <div style={{ padding: "12px 14px", background: "#ecfdf5", border: "1px solid #bbf7d0", borderRadius: 8, marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, color: "#047857", marginBottom: 4 }}>Updated {bulkResult.updated} row{bulkResult.updated !== 1 ? "s" : ""}</div>
+                  {bulkResult.errors?.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>Failed ({bulkResult.errors.length}):</div>
+                      {bulkResult.errors.map((e, i) => (
+                        <div key={i} style={{ fontSize: "0.75rem", color: "#991b1b" }}>{e.name}: {e.error}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-primary" onClick={() => setBulkModalOpen(false)}>Close</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {bulkErr && <div className="notice error" style={{ marginBottom: 12 }}>{bulkErr}</div>}
+
+                <div className="form-group" style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>Status</label>
+                  <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} style={{ padding: 8, width: "100%", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.9rem" }}>
+                    <option value="">— Not set —</option>
+                    <option value="Ready for Confirmation">Ready for Confirmation</option>
+                    <option value="Confirmation Done">Confirmation Done</option>
+                  </select>
+                </div>
+
+                <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+                  Required Documents
+                </div>
+                {attachLoading ? (
+                  <div style={{ color: "#94a3b8", fontSize: "0.82rem", padding: "6px 0", marginBottom: 8 }}>Loading existing documents…</div>
+                ) : existingAttachments.length > 0 ? (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 5 }}>
+                      Existing Documents
+                    </div>
+                    <AttachmentSlotList attachments={existingAttachments} docReq={bulkDocReq} />
+                    <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: 6 }}>Add a shared file below to attach it to all selected rows:</div>
+                  </div>
+                ) : null}
+                {(() => {
+                  const doc1Label = bulkDocReq?.doc1Label || "Confirmation Mail";
+                  return (
+                    <>
+                      {bulkActTypes.length > 1 && (
+                        <div style={{ fontSize: "0.72rem", color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "5px 10px", marginBottom: 8 }}>
+                          Mixed activity types selected — showing generic document slots.
+                        </div>
+                      )}
+                      <FileSlot slotKey="DOC1" slotLabel={doc1Label} accept=".msg" files={bulkDoc1Files} setFiles={setBulkDoc1Files} required={false} />
+                      {bulkDocReq?.doc2 ? (
+                        bulkDocReq.doc2.parts ? (
+                          <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                              DOC2 — {bulkDocReq.doc2.label}
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px" }}>
+                              {bulkDocReq.doc2.parts.map((part, i) => {
+                                const partFiles = bulkDoc2PartFiles[i] || [];
+                                return (
+                                  <div key={part.slot}>
+                                    <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#1d4ed8", marginBottom: 3 }}>{part.label}</div>
+                                    <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", border: `1.5px dashed ${partFiles.length ? "#86efac" : "#cbd5e1"}`, borderRadius: 6, cursor: "pointer", background: partFiles.length ? "#f0fdf4" : "#fff", fontSize: "0.8rem", color: "#64748b" }}>
+                                      <span>{partFiles.length ? "✅" : "📁"}</span>
+                                      <span style={{ flex: 1 }}>{partFiles.length ? partFiles.map((f) => f.name).join(", ") : `Select ${part.label} file`}</span>
+                                      {partFiles.length > 0 && <span style={{ fontSize: "0.7rem", color: "#16a34a" }}>{partFiles.length} file{partFiles.length !== 1 ? "s" : ""}</span>}
+                                      <input type="file" multiple accept={bulkDocReq.doc2.accept} style={{ display: "none" }}
+                                        onChange={(e) => {
+                                          const newFiles = Array.from(e.target.files);
+                                          setBulkDoc2PartFiles((prev) => { const next = [...prev]; next[i] = newFiles; return next; });
+                                        }} />
+                                    </label>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <FileSlot slotKey="DOC2" slotLabel={bulkDocReq.doc2.label} accept={bulkDocReq.doc2.accept} files={bulkDoc2Files} setFiles={setBulkDoc2Files} required={false} />
+                        )
+                      ) : bulkDocReq ? (
+                        <FileSlot slotKey="DOC2" slotLabel="Optional supplementary document" accept={undefined} files={bulkDoc2Files} setFiles={setBulkDoc2Files} required={false} />
+                      ) : (
+                        <FileSlot slotKey="DOC2" slotLabel="Supporting Document" accept={undefined} files={bulkDoc2Files} setFiles={setBulkDoc2Files} required={false} />
+                      )}
+                    </>
+                  );
+                })()}
+
+                <div className="form-group" style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>Note</label>
+                  <textarea
+                    value={bulkImNote}
+                    onChange={(e) => setBulkImNote(e.target.value)}
+                    placeholder="Add any instructions or remarks for PIC…"
+                    rows={3}
+                    style={{ width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.88rem", resize: "vertical", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-secondary" disabled={bulkBusy} onClick={() => setBulkModalOpen(false)}>Cancel</button>
+                  <button type="button" className="btn-primary" disabled={bulkBusy} onClick={submitBulk}>
+                    {bulkBusy ? "Submitting…" : `Submit All (${selectedRows.size})`}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

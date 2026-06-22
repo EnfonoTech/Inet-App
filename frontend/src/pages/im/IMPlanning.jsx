@@ -357,6 +357,7 @@ export default function IMPlanning() {
                   </th>
                   <th>Plan ID</th>
                   <th>POID</th>
+                  <th>Dummy POID</th>
                   <th>Description</th>
                   <th>Activity Type</th>
                   <th>DUID</th>
@@ -394,6 +395,7 @@ export default function IMPlanning() {
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.poid || p.po_dispatch || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(p.original_dummy_poid || "").trim() ? `Dummy POID: ${p.original_dummy_poid}` : ""}>{(p.original_dummy_poid || "").trim() || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.item_description || ""}>{p.item_description || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{p.activity_type || "—"}</td>
                     <td>{p.site_code || "—"}</td>
@@ -472,7 +474,7 @@ export default function IMPlanning() {
                       </span>
                     )}
                   </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
                     {fmt.format(totalAmt)}
                   </td>

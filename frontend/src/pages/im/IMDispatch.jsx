@@ -479,8 +479,7 @@ export default function IMDispatch() {
   const openDummyCount = rows.filter((r) => Number(r.is_dummy_po) === 1).length;
   const visibleRows = rows.filter((r) => {
     if (planScope === "all") return true;
-    const planned = (r.dispatch_status || "").toLowerCase() === "planned";
-    return !planned || isUnmappedDummy(r);
+    return (r.dispatch_status || "") === "Dispatched";
   });
 
   const planableRows = visibleRows.filter(planable);
