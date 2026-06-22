@@ -178,6 +178,10 @@ doc_events = {
 		"on_submit": "inet_app.api.pic.on_sales_invoice_submit",
 		"on_cancel": "inet_app.api.pic.on_sales_invoice_cancel"
 	},
+	"Payment Entry": {
+		"on_submit": "inet_app.api.pic.on_payment_entry_submit",
+		"on_cancel": "inet_app.api.pic.on_payment_entry_cancel",
+	},
 	"Stock Entry": {
 		"before_submit": "inet_app.api.material_management.before_stock_entry_submit",
 		"on_submit": [

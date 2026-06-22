@@ -284,7 +284,8 @@ export default function InvoiceTracker() {
                   <th style={{ width: 32 }}>
                     <input type="checkbox" onChange={() => {}} checked={false} style={{ visibility: "hidden" }} />
                   </th>
-                  <th>Contract</th>
+                  <th>Subcontractor</th>
+                  <th>Contract Model</th>
                   <th>POID</th>
                   <th>Customer</th>
                   <th>Project</th>
@@ -312,6 +313,7 @@ export default function InvoiceTracker() {
                       <td onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(r.name)} onChange={() => toggleRow(r.name)} />
                       </td>
+                      <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.name}</td>
                       <td>{r.customer || "—"}</td>

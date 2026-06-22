@@ -77,6 +77,7 @@ LEFT JOIN (
 LEFT JOIN `tabINET Team` sc_team_full ON sc_team_full.name = pd.subcon_team
 LEFT JOIN `tabSubcontractor Master` sm
        ON sm.name = COALESCE(plan.subcontractor, sc_team_full.subcontractor)
+LEFT JOIN `tabSubcontractor Master` sm_pd ON sm_pd.name = pd.contract
 """
 
 
@@ -120,6 +121,7 @@ LEFT JOIN (
 LEFT JOIN `tabINET Team` sc_team ON sc_team.name = pd.subcon_team
 LEFT JOIN `tabSubcontractor Master` sm_sub
        ON sm_sub.name = COALESCE(plan_contract.subcontractor, sc_team.subcontractor)
+LEFT JOIN `tabSubcontractor Master` sm_pd ON sm_pd.name = pd.contract
 """
 
 
@@ -236,19 +238,19 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     if with_team_type:
         team_cols = (
             "plan.team_type AS team_type, "
-            "sm.subcontractor_name AS subcontractor, "
+            "COALESCE(sm.subcontractor_name, sm_pd.subcontractor_name) AS subcontractor, "
             "sm.sub_payout_pct AS subcontractor_payout_pct, "
             "sm.inet_margin_pct AS subcontractor_margin_pct, "
-            "COALESCE(sm.contract_model, 'Fix & Core') AS contract_model"
+            "COALESCE(sm.contract_model, sm_pd.contract_model) AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN
     else:
         team_cols = (
             "NULL AS team_type, "
-            "NULL AS subcontractor, "
+            "COALESCE(sm_sub.subcontractor_name, sm_pd.subcontractor_name) AS subcontractor, "
             "NULL AS subcontractor_payout_pct, "
             "NULL AS subcontractor_margin_pct, "
-            "COALESCE(sm_sub.contract_model, 'Fix & Core') AS contract_model"
+            "COALESCE(sm_sub.contract_model, sm_pd.contract_model) AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN_LEAN
 
@@ -1295,11 +1297,8 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                {_sqc2}, {_pat2}, {_isdp2}, {_ibuy2},
                pd.payment_terms, pd.tax_rate,
                pd.ms1_payment_received_date, pd.ms2_payment_received_date,
-               COALESCE(sm_inv.contract_model,
-                        CASE WHEN (plan_inv.po_dispatch IS NOT NULL OR sc_team_inv.name IS NOT NULL)
-                             THEN 'Fix & Core'
-                             ELSE pd.contract
-                        END) AS contract_model,
+               COALESCE(sm_inv.subcontractor_name, sm_pd_inv.subcontractor_name) AS subcontractor,
+               COALESCE(sm_inv.contract_model, sm_pd_inv.contract_model) AS contract_model,
                pd.modified,
                {si_cols}
         FROM `tabPO Dispatch` pd
@@ -1312,6 +1311,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
         LEFT JOIN `tabINET Team` sc_team_inv ON sc_team_inv.name = pd.subcon_team
         LEFT JOIN `tabSubcontractor Master` sm_inv
                ON sm_inv.name = COALESCE(plan_inv.subcontractor, sc_team_inv.subcontractor)
+        LEFT JOIN `tabSubcontractor Master` sm_pd_inv ON sm_pd_inv.name = pd.contract
         LEFT JOIN (
             SELECT rp.po_dispatch AS po_dispatch,
                    MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
@@ -1852,6 +1852,142 @@ def on_sales_invoice_cancel(doc, method):
     _notify_role("INET PIC",
         f"[ALERT] Sales Invoice {doc.name} was cancelled — dispatches reverted",
         "Sales Invoice", doc.name)
+
+
+def _po_dispatch_names_from_payment_entry(pe_doc):
+    """Return list of (pd_name, milestone, si_name) tuples from a Payment Entry.
+
+    Walks the references child table for Sales Invoice entries, then reads
+    each SI's item rows to find POID accounting dimensions.
+    """
+    results = []
+    for ref in (pe_doc.get("references") or []):
+        if (ref.get("reference_doctype") or "") != "Sales Invoice":
+            continue
+        si_name = (ref.get("reference_name") or "").strip()
+        if not si_name:
+            continue
+        try:
+            si_items = frappe.db.get_all(
+                "Sales Invoice Item",
+                filters={"parent": si_name},
+                fields=["poid", "milestone", "amount"],
+            )
+        except Exception:
+            continue
+        for item in si_items:
+            pd_name = (item.get("poid") or "").strip()
+            if pd_name and frappe.db.exists("PO Dispatch", pd_name):
+                results.append({
+                    "pd_name": pd_name,
+                    "milestone": (item.get("milestone") or "").strip().upper(),
+                    "si_name": si_name,
+                    "amount": flt(item.get("amount") or 0),
+                })
+    return results
+
+
+def on_payment_entry_submit(doc, method=None):
+    """When a Payment Entry is submitted for a Sales Invoice that has POID items,
+    advance pic_status / pic_status_ms2 from 'Commercial Invoice Submitted'
+    to 'Commercial Invoice Closed' and stamp the payment received date.
+    """
+    posting_date = doc.posting_date
+    seen = set()
+    for entry in _po_dispatch_names_from_payment_entry(doc):
+        pd_name = entry["pd_name"]
+        milestone = entry["milestone"]
+        key = (pd_name, milestone)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        try:
+            pd = frappe.db.get_value("PO Dispatch", pd_name, [
+                "pic_status", "pic_status_ms2",
+                "ms1_amount", "ms2_amount",
+            ], as_dict=True)
+        except Exception:
+            continue
+        if not pd:
+            continue
+
+        ms1_status = (pd.pic_status or "").strip()
+        ms2_status = (pd.pic_status_ms2 or "").strip()
+        ms1_amt = flt(pd.ms1_amount or 0)
+        ms2_amt = flt(pd.ms2_amount or 0)
+        updates = {}
+
+        # Determine which milestone to close
+        if milestone == "MS1":
+            close_ms1 = ms1_status == "Commercial Invoice Submitted"
+            close_ms2 = False
+        elif milestone == "MS2":
+            close_ms1 = False
+            close_ms2 = ms2_status == "Commercial Invoice Submitted"
+        else:
+            # No milestone tag — fall back to amount matching
+            amt = entry["amount"]
+            close_ms1 = ms1_status == "Commercial Invoice Submitted" and ms1_amt > 0 and abs(amt - ms1_amt) < 0.01
+            close_ms2 = ms2_status == "Commercial Invoice Submitted" and ms2_amt > 0 and abs(amt - ms2_amt) < 0.01
+
+        if close_ms1:
+            updates["pic_status"] = "Commercial Invoice Closed"
+            updates["ms1_payment_received_date"] = posting_date
+        if close_ms2:
+            updates["pic_status_ms2"] = "Commercial Invoice Closed"
+            updates["ms2_payment_received_date"] = posting_date
+
+        if updates:
+            frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
+
+
+def on_payment_entry_cancel(doc, method=None):
+    """When a Payment Entry is cancelled, revert pic_status from
+    'Commercial Invoice Closed' back to 'Commercial Invoice Submitted'
+    and clear the payment received date.
+    """
+    seen = set()
+    for entry in _po_dispatch_names_from_payment_entry(doc):
+        pd_name = entry["pd_name"]
+        milestone = entry["milestone"]
+        key = (pd_name, milestone)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        try:
+            pd = frappe.db.get_value("PO Dispatch", pd_name, [
+                "pic_status", "pic_status_ms2",
+            ], as_dict=True)
+        except Exception:
+            continue
+        if not pd:
+            continue
+
+        ms1_status = (pd.pic_status or "").strip()
+        ms2_status = (pd.pic_status_ms2 or "").strip()
+        updates = {}
+
+        if milestone == "MS1":
+            revert_ms1 = ms1_status == "Commercial Invoice Closed"
+            revert_ms2 = False
+        elif milestone == "MS2":
+            revert_ms1 = False
+            revert_ms2 = ms2_status == "Commercial Invoice Closed"
+        else:
+            revert_ms1 = ms1_status == "Commercial Invoice Closed"
+            revert_ms2 = ms2_status == "Commercial Invoice Closed"
+
+        if revert_ms1:
+            updates["pic_status"] = "Commercial Invoice Submitted"
+            updates["ms1_payment_received_date"] = None
+        if revert_ms2:
+            updates["pic_status_ms2"] = "Commercial Invoice Submitted"
+            updates["ms2_payment_received_date"] = None
+
+        if updates:
+            frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
 
 
 @frappe.whitelist()

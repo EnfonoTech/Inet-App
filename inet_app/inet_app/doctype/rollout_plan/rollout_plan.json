@@ -76,9 +76,9 @@
   },
   {
    "fieldname": "team",
-      "fieldtype": "Link",
-      "label": "Team",
-      "options": "INET Team"
+   "fieldtype": "Link",
+   "label": "Team",
+   "options": "INET Team"
   },
   {
    "fieldname": "plan_date",
@@ -287,6 +287,10 @@
    "read": 1,
    "report": 1,
    "role": "INET Field Team"
+  },
+  {
+   "read": 1,
+   "role": "INET PIC"
   }
  ],
  "row_format": "Dynamic",

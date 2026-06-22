@@ -44,7 +44,8 @@ const PIC_STATUSES = [
 // works with day-to-day. Dynamic doctype fields added via Manage Table aren't
 // included to keep the export deterministic.
 const CSV_COLUMNS = [
-  ["contract_model", "Contract"],
+  ["subcontractor", "Subcontractor"],
+  ["contract_model", "Contract Model"],
   ["poid", "POID"],
   ["po_no", "PO No"],
   ["dispatch_status", "PO Status"],
@@ -443,7 +444,8 @@ export default function PICTracker() {
                   <th style={{ width: 36 }}>
                     <input type="checkbox" checked={rows.length > 0 && rows.every((r) => selected.has(r.po_dispatch))} onChange={toggleAll} />
                   </th>
-                  <th>Contract</th>
+                  <th>Subcontractor</th>
+                  <th>Contract Model</th>
                   <th>POID</th>
                   <th>PO No</th>
                   <th>PO Status</th>
@@ -483,6 +485,7 @@ export default function PICTracker() {
                     <td onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(r.po_dispatch)} onChange={() => toggleRow(r.po_dispatch)} />
                     </td>
+                    <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch}</td>
                     <td>{r.po_no || "—"}</td>

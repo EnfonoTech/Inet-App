@@ -43,6 +43,10 @@
    "role": "System Manager",
    "share": 1,
    "write": 1
+  },
+  {
+   "read": 1,
+   "role": "INET PIC"
   }
  ],
  "quick_entry": 1,

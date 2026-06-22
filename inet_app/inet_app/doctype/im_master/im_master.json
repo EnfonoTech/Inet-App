@@ -136,6 +136,10 @@
    "report": 1,
    "role": "INET IM",
    "write": 1
+  },
+  {
+   "read": 1,
+   "role": "INET PIC"
   }
  ],
  "row_format": "Dynamic",

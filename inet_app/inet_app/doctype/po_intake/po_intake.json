@@ -49,7 +49,7 @@
   },
   {
    "default": "OPEN",
-   "description": "Hidden — status / workflow are tracked per line on PO Intake Line.",
+   "description": "Hidden \u2014 status / workflow are tracked per line on PO Intake Line.",
    "fieldname": "status",
    "fieldtype": "Select",
    "hidden": 1,
@@ -148,6 +148,10 @@
    "read": 1,
    "report": 1,
    "role": "INET IM"
+  },
+  {
+   "read": 1,
+   "role": "INET PIC"
   }
  ],
  "row_format": "Dynamic",

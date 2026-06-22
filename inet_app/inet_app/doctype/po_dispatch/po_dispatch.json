@@ -352,8 +352,8 @@
   {
    "fieldname": "contract",
    "fieldtype": "Link",
-   "label": "Contract",
-   "options": "Contract Model"
+   "label": "Subcontractor (Archive)",
+   "options": "Subcontractor Master"
   },
   {
    "fieldname": "sqc_status",

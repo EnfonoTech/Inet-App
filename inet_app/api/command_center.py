@@ -5720,6 +5720,28 @@ def update_work_done_submission(name, submission_status, note=None):
                     owner_update["ibuy_owner"] = proj_owners["ibuy_owner"]
                 if owner_update:
                     frappe.db.set_value("PO Dispatch", po_dispatch, owner_update, update_modified=False)
+
+            # Stamp subcontractor onto PO Dispatch (only if not already set)
+            if frappe.db.has_column("PO Dispatch", "contract"):
+                existing_contract = frappe.db.get_value("PO Dispatch", po_dispatch, "contract")
+                if not existing_contract:
+                    sub_row = frappe.db.sql(
+                        """
+                        SELECT it.subcontractor
+                        FROM `tabWork Done` wd
+                        JOIN `tabDaily Execution` de ON de.name = wd.execution
+                        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+                        JOIN `tabINET Team` it ON it.name = rp.team
+                        WHERE wd.name = %s AND IFNULL(it.subcontractor, '') != ''
+                        LIMIT 1
+                        """,
+                        name, as_dict=True,
+                    )
+                    if sub_row:
+                        frappe.db.set_value(
+                            "PO Dispatch", po_dispatch, "contract", sub_row[0].subcontractor,
+                            update_modified=False,
+                        )
         else:
             # IM is un-confirming — clear pic_status if nothing has been processed yet
             pic_warning = _revert_pic_status_if_safe(po_dispatch)

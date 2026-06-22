@@ -188,6 +188,10 @@
   {
    "read": 1,
    "role": "INET Field Team"
+  },
+  {
+   "read": 1,
+   "role": "INET PIC"
   }
  ],
  "row_format": "Dynamic",
