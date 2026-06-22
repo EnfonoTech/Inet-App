@@ -10052,6 +10052,7 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
     ``ms2_unbilled`` here so they don't drift when validate hasn't run.
     """
     PIC_KEYS = (
+        "contract",
         "sqc_status", "pat_status", "im_rejection_remark",
         "pic_status", "pic_status_ms2",
         "isdp_owner", "ibuy_owner",

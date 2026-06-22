@@ -49,6 +49,7 @@
   "subcon_completed_on",
   "subcon_remark",
   "section_pic",
+  "contract",
   "sqc_status",
   "pat_status",
   "im_rejection_remark",
@@ -349,6 +350,12 @@
    "label": "Invoice Tracking (PIC)"
   },
   {
+   "fieldname": "contract",
+   "fieldtype": "Link",
+   "label": "Contract",
+   "options": "Contract Model"
+  },
+  {
    "fieldname": "sqc_status",
    "fieldtype": "Data",
    "label": "SQC Status"
@@ -446,7 +453,7 @@
   },
   {
    "default": "0",
-   "description": "Read-only — set automatically on Sales Invoice submit.",
+   "description": "Read-only \u2014 set automatically on Sales Invoice submit.",
    "fieldname": "ms1_invoiced",
    "fieldtype": "Currency",
    "label": "MS1 Invoiced",
@@ -503,7 +510,7 @@
   },
   {
    "default": "0",
-   "description": "Read-only — set automatically on Sales Invoice submit.",
+   "description": "Read-only \u2014 set automatically on Sales Invoice submit.",
    "fieldname": "ms2_invoiced",
    "fieldtype": "Currency",
    "label": "MS2 Invoiced",
