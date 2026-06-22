@@ -3421,6 +3421,12 @@ def create_rollout_plans(payload):
                 flt(dispatch.qty or 0),
                 flt(doc.target_amount or 0),
             )
+            team_ids = [t["team"] for t in teams_payload if t.get("team")] if teams_payload else [target_team]
+            try:
+                from inet_app.api.notifications import notify_plan_assigned_to_tls
+                notify_plan_assigned_to_tls(doc.name, team_ids, dispatch_name)
+            except Exception:
+                frappe.log_error(frappe.get_traceback(), "create_rollout_plans: notify TLs failed")
         except Exception:
             frappe.log_error(frappe.get_traceback(), "create_rollout_plans: _sync_plan_teams (new) failed")
 

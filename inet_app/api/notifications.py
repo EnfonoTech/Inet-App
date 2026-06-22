@@ -232,15 +232,28 @@ def notify_im_pic_rejected(po_dispatch_name):
 # ---------------------------------------------------------------------------
 
 def on_rollout_plan_insert(doc, method=None):
-	im_user = frappe.db.get_value("IM Master", doc.im, "user") if doc.im else None
-	po = _po_info(doc.po_dispatch) if getattr(doc, "po_dispatch", None) else {}
-	label = _po_label(po) or doc.name
-	_make_notification(
-		im_user,
-		f"[INFO] Plan assigned — {label}",
-		"Rollout Plan", doc.name,
-		link="/pms/im-planning",
-	)
+	# Teams are synced AFTER insert via _sync_plan_teams() in command_center.
+	# Notification is sent explicitly from there via notify_plan_assigned_to_tls().
+	pass
+
+
+def notify_plan_assigned_to_tls(rollout_plan_name, team_ids, po_dispatch_name=None):
+	"""Send 'Plan assigned' notification to TL of each team. Called after teams are synced."""
+	po = _po_info(po_dispatch_name) if po_dispatch_name else {}
+	label = _po_label(po) or rollout_plan_name
+	notified = set()
+	for team_id in (team_ids or []):
+		if not team_id:
+			continue
+		tl_user = _tl_user_from_team(team_id)
+		if tl_user and tl_user not in notified:
+			notified.add(tl_user)
+			_make_notification(
+				tl_user,
+				f"[INFO] Plan assigned — {label}",
+				"Rollout Plan", rollout_plan_name,
+				link="/pms/im-planning",
+			)
 
 
 def on_rollout_plan_update(doc, method=None):

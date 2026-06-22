@@ -584,14 +584,20 @@ export default function ExecutionForm() {
     return parts.join("\n").trim();
   }
 
-  useEffect(() => { setAchievedQty(""); }, [id]);
+  const achievedQtyAutoFilledRef = useRef(false);
 
   useEffect(() => {
-    if (!plan || success) return;
+    setAchievedQty("");
+    achievedQtyAutoFilledRef.current = false;
+  }, [id]);
+
+  useEffect(() => {
+    if (!plan || success || achievedQtyAutoFilledRef.current) return;
     if (String(plan.name || "") !== String(id || "")) return;
-    if (String(achievedQty || "").trim() !== "") return;
+    achievedQtyAutoFilledRef.current = true;
     setAchievedQty(defaultAchievedQtyFromPlan(plan));
-  }, [plan, achievedQty, success, id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, success, id]);
 
   async function uploadAttachment(file) {
     if (!file) return;
