@@ -266,7 +266,7 @@ export default function IMIssuesRisks() {
       </div>
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
+          {loading && rows.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading issues…</div>
           ) : filteredRows.length === 0 ? (
             <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No issue/risk rows"}</h3></div>

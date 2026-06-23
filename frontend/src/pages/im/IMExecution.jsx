@@ -954,7 +954,7 @@ export default function IMExecution() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
+          {loading && executions.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
           ) : filteredExecutions.length === 0 ? (
             <div className="empty-state">

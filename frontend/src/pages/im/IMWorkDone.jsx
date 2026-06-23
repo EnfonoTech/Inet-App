@@ -498,7 +498,7 @@ export default function IMWorkDone() {
       </div>
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
+          {loading && rows.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading work done…</div>
           ) : filteredRows.length === 0 ? (
             <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No work done rows"}</h3></div>

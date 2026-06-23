@@ -1272,7 +1272,7 @@ export default function IMDispatch() {
         )}
 
         <DataTableWrapper>
-          {loading ? (
+          {loading && rows.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
               Loading dispatches...
             </div>
