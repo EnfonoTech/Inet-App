@@ -163,10 +163,10 @@
 }
 .dashboard .kpi-row-company .kpi-label { color: var(--text-secondary); }
 
-/* ── Bottom Grid (4 panels) ─────────────────────────────────── */
+/* ── Bottom Grid (3 panels) ─────────────────────────────────── */
 .dashboard .bottom-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 14px;
   margin-top: 8px;
 }
@@ -666,7 +666,239 @@
   .dashboard .bottom-grid { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 1000px) {
+  .dashboard .bottom-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 650px) {
+  .dashboard .bottom-grid { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 560px) {
   .dashboard { padding: 16px; }
   .dashboard .kpi-row { grid-template-columns: 1fr; }
+}
+
+/* ================================================================
+   REDESIGNED LAYOUT — Section Cards + 3-col grid
+   ================================================================ */
+
+/* ── Section Card ───────────────────────────────────────────────── */
+.dashboard .dash-section {
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.dashboard .dash-section-hd {
+  padding: 9px 14px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #fff;
+}
+.dashboard .dash-section-hd--ops     { background: linear-gradient(90deg, #0369a1, #0284c7); }
+.dashboard .dash-section-hd--inet    { background: linear-gradient(90deg, #1e40af, #2563eb); }
+.dashboard .dash-section-hd--sub     { background: linear-gradient(90deg, #047857, #059669); }
+.dashboard .dash-section-hd--backend { background: linear-gradient(90deg, #5b21b6, #7c3aed); }
+.dashboard .dash-section-hd--company { background: linear-gradient(90deg, #0f172a, #1e293b); }
+.dashboard .dash-section-hd--teams   { background: linear-gradient(90deg, #4338ca, #6366f1); }
+.dashboard .dash-section-hd--im      { background: linear-gradient(90deg, #0e7490, #0891b2); }
+.dashboard .dash-section-hd--status  { background: linear-gradient(90deg, #047857, #10b981); }
+.dashboard .dash-section-hd--watch   { background: linear-gradient(90deg, #b45309, #f59e0b); }
+
+.dashboard .dash-section-bd {
+  padding: 12px;
+}
+
+/* ── Compact stat grid ──────────────────────────────────────────── */
+.dashboard .dash-kpi-grid {
+  display: grid;
+  gap: 8px;
+}
+.dashboard .dash-kpi-grid--2 { grid-template-columns: repeat(2, 1fr); }
+.dashboard .dash-kpi-grid--3 { grid-template-columns: repeat(3, 1fr); }
+.dashboard .dash-kpi-grid--4 { grid-template-columns: repeat(4, 1fr); }
+.dashboard .dash-kpi-grid--7 { grid-template-columns: repeat(7, 1fr); }
+
+/* Individual compact stat */
+.dashboard .dash-stat {
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+}
+.dashboard .dash-stat.clickable {
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+  position: relative;
+}
+/* Arrow badge top-right corner for clickable stats */
+.dashboard .dash-stat.clickable::after {
+  content: "↗";
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #2563eb;
+  opacity: 0.65;
+  background: rgba(59, 130, 246, 0.10);
+  border-radius: 3px;
+  padding: 1px 4px;
+  line-height: 1.4;
+  transition: opacity 0.12s, background 0.12s;
+}
+.dashboard .dash-stat.clickable:hover {
+  background: #eff6ff;
+  border-color: var(--blue-border);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.12);
+}
+.dashboard .dash-stat.clickable:hover::after {
+  opacity: 1;
+  background: rgba(59, 130, 246, 0.18);
+}
+.dashboard .dash-stat-label {
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dashboard .dash-stat-value {
+  font-size: 1.0rem;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.dashboard .dash-stat-sub {
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+/* Section divider */
+.dashboard .dash-divider {
+  height: 1px;
+  background: var(--border-light);
+  margin: 10px 0;
+}
+
+/* Inline section metric (Active Teams header row) */
+.dashboard .dash-section-metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 2px 10px;
+  border-bottom: 1px solid var(--border-light);
+  margin-bottom: 10px;
+}
+.dashboard .dash-section-metric-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+.dashboard .dash-section-metric-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── 3-col middle grid ──────────────────────────────────────────── */
+.dashboard .dash-mid-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+  align-items: stretch;
+}
+/* Sections inside the grid stretch full height */
+.dashboard .dash-mid-grid > .dash-section {
+  height: 100%;
+}
+
+/* ── Progress bar ───────────────────────────────────────────────── */
+.dashboard .dash-progress {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+}
+.dashboard .dash-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+.dashboard .dash-progress-track {
+  height: 6px;
+  background: #f1f5f9;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.dashboard .dash-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.7s ease;
+  background: linear-gradient(90deg, #1e40af, #3b82f6);
+}
+.dashboard .dash-progress-fill.green { background: linear-gradient(90deg, #059669, #10b981); }
+.dashboard .dash-progress-fill.amber { background: linear-gradient(90deg, #d97706, #f59e0b); }
+.dashboard .dash-progress-fill.red   { background: linear-gradient(90deg, #dc2626, #ef4444); }
+
+/* ── Bottom grid equal height ───────────────────────────────────── */
+.dashboard .bottom-grid {
+  align-items: stretch;
+}
+.dashboard .bottom-grid .panel {
+  min-height: 220px;
+}
+/* Bottom grid sections stretch and fill height */
+.dashboard .bottom-grid .dash-section {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+}
+.dashboard .bottom-grid .dash-section .dash-section-bd {
+  flex: 1;
+  overflow: auto;
+}
+
+/* ── Responsive overrides for new layout ───────────────────────── */
+@media (max-width: 1200px) {
+  .dashboard .dash-kpi-grid--7 { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 1000px) {
+  .dashboard .dash-mid-grid { grid-template-columns: 1fr 1fr; }
+  .dashboard .dash-kpi-grid--7 { grid-template-columns: repeat(3, 1fr); }
+  .dashboard .dash-kpi-grid--4 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 720px) {
+  .dashboard .dash-mid-grid { grid-template-columns: 1fr; }
+  .dashboard .dash-kpi-grid--7 { grid-template-columns: repeat(2, 1fr); }
+  .dashboard .dash-kpi-grid--4 { grid-template-columns: repeat(2, 1fr); }
+  .dashboard .dash-kpi-grid--3 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .dashboard { padding: 12px 12px 32px; }
+  .dashboard .dash-kpi-grid--7 { grid-template-columns: repeat(2, 1fr); }
+  .dashboard .dash-kpi-grid--4 { grid-template-columns: repeat(2, 1fr); }
+  .dashboard .dash-kpi-grid--2 { grid-template-columns: 1fr; }
+  .dashboard .dash-section-value { font-size: 0.9rem; }
 }

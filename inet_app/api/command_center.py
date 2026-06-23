@@ -6443,14 +6443,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         row["team_cost"] = flt(row.get("cost") or 0)
 
     # ---- Team status summary -----------------------------------------------
-    in_progress_count = frappe.db.sql(
-        """
-        SELECT COUNT(DISTINCT team) AS cnt FROM `tabDaily Execution`
-        WHERE execution_date = %s AND execution_status = 'In Progress'
-        """,
-        (today_str,),
-        as_dict=True,
-    )[0].cnt or 0
+    # Teams that have any Daily Execution today (started or completed work)
+    in_progress_count = len(active_team_ids)
 
     planned_today = frappe.db.sql(
         """

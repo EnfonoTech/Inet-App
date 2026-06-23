@@ -41,21 +41,32 @@ export function BarChart({ bars = [] }) {
  *   value — 0-100 percentage
  *   label — text below the percentage
  */
-export function DonutChart({ value = 0, label = "" }) {
+export function DonutChart({ value = 0, label = "", size = "md" }) {
   const clamped = Math.min(100, Math.max(0, value));
   const degrees = (clamped / 100) * 360;
 
-  // Use conic-gradient for the donut ring
   const bg =
     clamped === 0
       ? "rgba(10, 22, 40, 0.5)"
       : `conic-gradient(var(--blue-bright) 0deg, var(--blue) ${degrees}deg, rgba(10, 22, 40, 0.5) ${degrees}deg)`;
 
+  const sm = size === "sm";
+  const outerSize = sm ? 96 : 120;
+  const innerSize = sm ? 58 : 72;
+
   return (
-    <div className="donut" style={{ background: bg }}>
-      <div className="donut-inner">
-        <span className="donut-value">{clamped}%</span>
-        <span className="donut-label">{label}</span>
+    <div className="donut" style={{
+      background: bg,
+      width: outerSize,
+      height: outerSize,
+      minWidth: outerSize,
+    }}>
+      <div className="donut-inner" style={{
+        width: innerSize,
+        height: innerSize,
+      }}>
+        <span className="donut-value" style={sm ? { fontSize: "0.9rem" } : {}}>{clamped}%</span>
+        <span className="donut-label" style={sm ? { fontSize: "0.52rem" } : {}}>{label}</span>
       </div>
     </div>
   );
