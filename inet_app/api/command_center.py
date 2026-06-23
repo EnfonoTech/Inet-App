@@ -2473,7 +2473,7 @@ def _next_visit_number_for_dispatch(po_dispatch_name):
     try:
         row = frappe.db.sql(
             "SELECT COALESCE(MAX(visit_number), 0) AS max_v, COUNT(*) AS cnt "
-            "FROM `tabRollout Plan` WHERE po_dispatch = %s AND plan_status != 'Cancelled'",
+            "FROM `tabRollout Plan` WHERE po_dispatch = %s",
             (po_dispatch_name,),
             as_dict=True,
         )
@@ -3292,84 +3292,6 @@ def create_rollout_plans(payload):
                     poid_value or dispatch_name, plan_date, target_team, window,
                 ))
 
-        # Reuse-instead-of-recreate: when this dispatch's latest plan was
-        # created from an issue (Planning-with-Issue placeholder, or a
-        # previously-planned issue plan still pre-execution), don't allocate
-        # a NEW visit_number — repurpose that plan as the actionable target.
-        # This keeps visit_number aligned with the physical attempt count
-        # (1, 2, 2, 3, …) and lets "Create Plans from I&R" be clicked
-        # repeatedly without each click incrementing the visit.
-        latest_plan = frappe.db.sql(
-            """
-            SELECT name, visit_number, plan_status,
-                   IFNULL(issue_category, '') AS issue_category,
-                   IFNULL(visit_type, '') AS visit_type
-            FROM `tabRollout Plan`
-            WHERE po_dispatch = %s
-            ORDER BY IFNULL(visit_number, 0) DESC, modified DESC
-            LIMIT 1
-            """,
-            (dispatch_name,),
-            as_dict=True,
-        )
-        latest = latest_plan[0] if latest_plan else None
-        # Reuse the latest plan when it's an open issue placeholder of any kind:
-        # currently in Planning with Issue, or already Planned but originated
-        # from a re-plan (visit_type = Re-Visit, or has an issue_category set).
-        reusable = bool(
-            latest and (
-                latest.plan_status == "Planning with Issue"
-                or (
-                    latest.plan_status == "Planned"
-                    and (latest.issue_category or latest.visit_type == "Re-Visit")
-                )
-            )
-        )
-        if reusable:
-            # Move it into "Planned" so it shows up on the Planning page
-            # alongside other actionable plans, while the I&R row stays
-            # visible (issue_category is preserved).
-            updates = {
-                "team": target_team,
-                "plan_date": plan_date,
-                "plan_end_date": plan_end_date,
-                "access_time": access_time,
-                "access_period": access_period or None,
-                "visit_type": visit_type,
-                "plan_status": "Planned",
-            }
-            if frappe.db.has_column("Rollout Plan", "qc_required"):
-                updates["qc_required"] = qc_required
-            if frappe.db.has_column("Rollout Plan", "ciag_required"):
-                updates["ciag_required"] = ciag_required
-            if payload.get("issue_category"):
-                updates["issue_category"] = str(payload["issue_category"])[:140]
-            if payload.get("issue_remarks") and frappe.db.has_column("Rollout Plan", "issue_remarks"):
-                updates["issue_remarks"] = str(payload["issue_remarks"])[:2000]
-            frappe.db.set_value(
-                "Rollout Plan", latest.name, updates, update_modified=True
-            )
-            try:
-                _sync_plan_teams(
-                    latest.name, teams_payload, target_team,
-                    flt(dispatch.qty or 0),
-                    flt(dispatch.line_amount or 0) * visit_multiplier,
-                )
-            except Exception:
-                frappe.log_error(frappe.get_traceback(), "create_rollout_plans: _sync_plan_teams (reuse) failed")
-            disp_updates = {"dispatch_status": "Planned"}
-            disp_updates.update(remark_updates)
-            frappe.db.set_value(
-                "PO Dispatch",
-                dispatch_name,
-                disp_updates,
-                update_modified=False,
-            )
-            frappe.db.commit()
-            created += 1
-            names.append(latest.name)
-            continue
-
         doc = frappe.new_doc("Rollout Plan")
         doc.po_dispatch = dispatch_name
         doc.team = target_team
@@ -3401,6 +3323,26 @@ def create_rollout_plans(payload):
 
         doc.insert(ignore_permissions=True)
         frappe.db.commit()
+
+        # When creating a Re-Visit plan, find the source plan that raised the
+        # issue (issue_status = 'Reported') and advance it to 'Re-Planned'.
+        # Also link source_rollout_plan on the new Re-Visit plan.
+        if visit_type == "Re-Visit" and frappe.db.has_column("Rollout Plan", "issue_status"):
+            source_issue_rows = frappe.db.sql(
+                """SELECT name FROM `tabRollout Plan`
+                   WHERE po_dispatch = %s AND IFNULL(issue_status,'') = 'Reported'
+                   ORDER BY IFNULL(visit_number,0) DESC LIMIT 1""",
+                (dispatch_name,), as_dict=True,
+            )
+            if source_issue_rows:
+                source_rp_name = source_issue_rows[0].name
+                frappe.db.set_value(
+                    "Rollout Plan", source_rp_name, "issue_status", "Re-Planned", update_modified=True
+                )
+                if frappe.db.has_column("Rollout Plan", "source_rollout_plan"):
+                    frappe.db.set_value(
+                        "Rollout Plan", doc.name, "source_rollout_plan", source_rp_name, update_modified=False
+                    )
 
         # Backstop: ensure qc_required / ciag_required reflect the
         # request even if the Document class wasn't reloaded after the
@@ -3586,6 +3528,21 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
 
     if updates:
         frappe.db.set_value("Rollout Plan", rollout_plan, updates)
+
+    # When a Re-Visit plan's DE starts or completes, advance the source plan's
+    # issue_status from 'Re-Planned' → 'In Execution'.
+    # Catches both: IM sets In Progress first (plan → In Execution), and IM
+    # sets Completed directly (plan → Completed, skipping In Execution).
+    if (
+        updates.get("plan_status") in ("In Execution", "Completed")
+        and frappe.db.has_column("Rollout Plan", "issue_status")
+        and frappe.db.has_column("Rollout Plan", "source_rollout_plan")
+    ):
+        source_rp = frappe.db.get_value("Rollout Plan", rollout_plan, "source_rollout_plan")
+        if source_rp:
+            src_issue_status = frappe.db.get_value("Rollout Plan", source_rp, "issue_status")
+            if src_issue_status == "Re-Planned":
+                frappe.db.set_value("Rollout Plan", source_rp, "issue_status", "In Execution", update_modified=True)
 
 
 _ALLOWED_DAILY_EXECUTION_STATUSES = frozenset(
@@ -4578,6 +4535,17 @@ def generate_work_done(execution_name):
 
     wd.insert(ignore_permissions=True)
     frappe.db.commit()
+
+    # Resolve all open issues for this dispatch — Work Done is the final signal.
+    if dispatch_name and frappe.db.has_column("Rollout Plan", "issue_status"):
+        frappe.db.sql(
+            """UPDATE `tabRollout Plan`
+               SET issue_status = 'Resolved', modified = NOW()
+               WHERE po_dispatch = %s
+               AND IFNULL(issue_status,'') NOT IN ('','Resolved')""",
+            (dispatch_name,),
+        )
+        frappe.db.commit()
 
     # Mark PO Dispatch and PO Intake Line as Completed
     if dispatch_name and frappe.db.exists("PO Dispatch", dispatch_name):
@@ -5853,34 +5821,33 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
     ciag_sel_ir = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL AS ciag_status"
     lim_ir = _portal_row_limit(limit, 1000)
 
-    # I&R = "open issue per dispatch". The row stays visible across the full
-    # lifecycle of the issue: from re-plan → date/team filled in → execution
-    # → and only disappears when (a) a Work Done is created for the
-    # dispatch, or (b) another re-plan supersedes it with a higher visit.
+    # I&R = open issues tracked by issue_status. A plan appears when
+    # issue_status is set and not yet 'Resolved'. The row disappears only
+    # when Work Done is created (which sets issue_status = 'Resolved') or
+    # the NOT EXISTS Work Done guard catches it.
     #
-    # Conditions:
-    #   1. Show only the latest plan per dispatch (NOT EXISTS higher visit).
-    #   2. The dispatch has an unresolved issue — any of these persistent
-    #      markers signals that this plan was created from a re-plan flow:
-    #        - visit_type = 'Re-Visit' (always set by reopen_rollout_for_revisit)
-    #        - issue_category is set
-    #        - plan_status is currently or was historically 'Planning with Issue'
-    #   3. No Work Done exists for the dispatch yet.
+    # Backward-compat fallback: old rows without issue_status set still
+    # surface via visit_type / plan_status markers, using the original
+    # NOT EXISTS(higher visit) guard so only the latest plan shows.
     wheres = [
-        "NOT EXISTS ("
-        " SELECT 1 FROM `tabRollout Plan` rp_later"
-        " WHERE rp_later.po_dispatch = rp.po_dispatch"
-        " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)"
-        ")",
         "("
-        " rp.visit_type = 'Re-Visit'"
-        " OR IFNULL(rp.issue_category,'') != ''"
-        " OR rp.plan_status = 'Planning with Issue'"
-        " OR EXISTS ("
-        "   SELECT 1 FROM `tabRollout Plan` rp_pwi"
-        "   WHERE rp_pwi.po_dispatch = rp.po_dispatch"
-        "   AND rp_pwi.plan_status = 'Planning with Issue'"
-        " )"
+        # New data: tracked by issue_status
+        "  IFNULL(rp.issue_status,'') NOT IN ('','Resolved')"
+        "  OR ("
+        # Old data backward compat: no issue_status but plan is in issue state
+        # Note: visit_type='Re-Visit' is NOT used here — new Re-Visit plans
+        # created from I&R are real execution plans, not issue-tracking rows.
+        "    IFNULL(rp.issue_status,'') = ''"
+        "    AND ("
+        "      rp.plan_status = 'Planning with Issue'"
+        "      OR IFNULL(rp.issue_category,'') != ''"
+        "    )"
+        "    AND NOT EXISTS ("
+        "      SELECT 1 FROM `tabRollout Plan` rp_later"
+        "      WHERE rp_later.po_dispatch = rp.po_dispatch"
+        "      AND IFNULL(rp_later.visit_number,0) > IFNULL(rp.visit_number,0)"
+        "    )"
+        "  )"
         ")",
         "NOT EXISTS ("
         " SELECT 1 FROM `tabWork Done` wd_ir"
@@ -5965,6 +5932,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             rp.po_dispatch,
             COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
             rp.plan_status,
+            IFNULL(rp.issue_status,'') AS issue_status,
             rp.issue_category,
             rp.issue_remarks,
             rp.visit_number,
@@ -6028,6 +5996,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
                 "po_dispatch": r.get("po_dispatch"),
                 "poid": r.get("poid"),
                 "plan_status": r.get("plan_status"),
+                "issue_status": r.get("issue_status") or "",
                 "issue_category": r.get("issue_category"),
                 "issue_remarks": r.get("issue_remarks"),
                 "visit_number": r.get("visit_number"),
@@ -6798,6 +6767,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                rp.completion_pct, rp.plan_status,
                rp.cancel_request_status, rp.cancel_reason,
                rp.cancel_requested_at, rp.cancel_responded_at, rp.cancel_pm_remark,
+               IFNULL(rp.reschedule_count, 0) AS reschedule_count,
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                pd.customer AS customer, pd.item_description, pd.is_dummy_po,
@@ -6978,10 +6948,15 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         {rp_im_join_ex}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         WHERE pd.im IN ({ph}){status_clause}{portal_clause}
+        AND NOT (rp.plan_status = 'Planned' AND rp.plan_date > CURDATE())
         AND NOT EXISTS (
             SELECT 1 FROM `tabRollout Plan` rp_later
             WHERE rp_later.po_dispatch = rp.po_dispatch
             AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)
+        )
+        AND NOT (
+            IFNULL(rp.issue_status,'') = 'Reported'
+            OR (IFNULL(rp.issue_status,'') = '' AND rp.plan_status = 'Planning with Issue')
         )
         ORDER BY de.execution_date DESC, de.modified DESC
         {_sql_limit_suffix(lim_de)}
@@ -7071,101 +7046,119 @@ def get_duid_overview(duid=None, po_no=None):
 @frappe.whitelist()
 def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route=None, issue_remarks=None):
     """
-    Re-visit workflow: move job back to planning with issue.
-    Non-completed executions for this plan are cancelled.
+    Report Issue: mark the source plan and its DEs as needing a Re-Visit.
+    No new plan is created here — IM creates the Re-Visit plan from Issues & Risks.
     """
     if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
         frappe.throw("Invalid Rollout Plan")
 
-    # Route selection removed: all re-plans are tracked as issue/risk.
-    new_status = "Planning with Issue"
-
-    source = frappe.get_doc("Rollout Plan", rollout_plan)
-    existing_revisit = frappe.db.get_value(
-        "Rollout Plan",
-        {
-            "po_dispatch": source.po_dispatch,
-            "visit_type": "Re-Visit",
-            "plan_status": ["in", ["Planned", "Planning with Issue", "In Execution"]],
-        },
-        "name",
-    )
-
-    if existing_revisit and existing_revisit != rollout_plan:
-        # Re-stamp the existing re-visit with the new issue context so it
-        # reappears on Issues & Risks. Also force plan_status back to
-        # "Planning with Issue" in case it was moved elsewhere.
-        revisit_name = existing_revisit
-        restamp = {
-            "plan_status": "Planning with Issue",
-            "issue_category": (issue_category or "")[:140],
-        }
-        if frappe.db.has_column("Rollout Plan", "issue_remarks") and issue_remarks:
-            restamp["issue_remarks"] = str(issue_remarks)[:2000]
-        frappe.db.set_value(
-            "Rollout Plan", existing_revisit, restamp, update_modified=True
-        )
-    else:
-        revisit = frappe.new_doc("Rollout Plan")
-        revisit.po_dispatch = source.po_dispatch
-        revisit.im = source.im
-        revisit.team = source.team
-        revisit.plan_date = nowdate()
-        if hasattr(revisit, "plan_end_date"):
-            revisit.plan_end_date = nowdate()
-        if hasattr(revisit, "access_time"):
-            revisit.access_time = getattr(source, "access_time", None)
-        if hasattr(revisit, "access_period"):
-            revisit.access_period = getattr(source, "access_period", None)
-        revisit.visit_type = "Re-Visit"
-        revisit.visit_number = _next_visit_number_for_dispatch(source.po_dispatch)
-        pd_reg = frappe.db.get_value(
-            "PO Dispatch", source.po_dispatch, ["region_type", "center_area"], as_dict=True
-        ) or {}
-        if hasattr(revisit, "region_type"):
-            revisit.region_type = pd_reg.get("region_type") or region_type_from_center_area(
-                pd_reg.get("center_area")
-            )
-        rev_mult = flt(
-            frappe.db.get_value("Visit Multiplier Master", "Re-Visit", "multiplier") or 0.5
-        )
-        revisit.visit_multiplier = rev_mult
-        tgt_src = flt(source.target_amount or 0)
-        revisit.target_amount = tgt_src * rev_mult if tgt_src > 0 else 0
-        revisit.plan_status = new_status
-        revisit.issue_category = (issue_category or "")[:140]
-        if hasattr(revisit, "issue_remarks") and issue_remarks:
-            revisit.issue_remarks = str(issue_remarks)[:2000]
-        if hasattr(revisit, "source_rollout_plan"):
-            revisit.source_rollout_plan = rollout_plan
-        revisit.insert(ignore_permissions=True)
-        revisit_name = revisit.name
-
-    # Keep source plan as historical record; do not overwrite to Re-Visit.
-    source_updates = {"issue_category": (issue_category or "")[:140]}
+    source_updates = {
+        "plan_status": "Planning with Issue",
+        "issue_status": "Reported",
+        "issue_category": (issue_category or "")[:140],
+    }
     if frappe.db.has_column("Rollout Plan", "issue_remarks") and issue_remarks:
         source_updates["issue_remarks"] = str(issue_remarks)[:2000]
-    frappe.db.set_value(
-        "Rollout Plan",
-        rollout_plan,
-        source_updates,
-        update_modified=True,
-    )
+    frappe.db.set_value("Rollout Plan", rollout_plan, source_updates, update_modified=True)
 
-    for row in frappe.get_all(
-        "Daily Execution",
-        filters={"rollout_plan": rollout_plan, "execution_status": ["not in", ["Completed", "Cancelled"]]},
-        pluck="name",
-    ):
-        frappe.db.set_value("Daily Execution", row, "execution_status", "Cancelled", update_modified=True)
+    if frappe.db.has_column("Daily Execution", "revisit_flag"):
+        for de_name in frappe.get_all(
+            "Daily Execution",
+            filters={"rollout_plan": rollout_plan},
+            pluck="name",
+        ):
+            frappe.db.set_value("Daily Execution", de_name, "revisit_flag", 1, update_modified=False)
 
     frappe.db.commit()
     return {
         "ok": True,
         "source_rollout_plan": rollout_plan,
-        "revisit_rollout_plan": revisit_name,
-        "plan_status": new_status,
+        "plan_status": "Planning with Issue",
+        "issue_status": "Reported",
     }
+
+
+@frappe.whitelist()
+def reschedule_rollout_plan(rollout_plan, new_date, reason, im_note=None):
+    """
+    Reschedule a plan that did not execute (Not Attended / Cancelled / Overdue / Hold).
+    Does NOT create a new plan and does NOT increment visit_number.
+    Resets plan_date and plan_status to 'Planned', logs the event in reschedule_log.
+    """
+    if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
+        frappe.throw("Invalid Rollout Plan")
+    if not new_date:
+        frappe.throw("New date is required")
+
+    doc = frappe.get_doc("Rollout Plan", rollout_plan)
+    if doc.plan_status == "Completed":
+        frappe.throw("Cannot reschedule a completed plan.")
+    wd_exists = frappe.db.sql(
+        """SELECT 1 FROM `tabWork Done` wd
+           JOIN `tabDaily Execution` de ON de.name = wd.execution
+           WHERE de.rollout_plan = %s LIMIT 1""",
+        (rollout_plan,),
+    )
+    if wd_exists:
+        frappe.throw("Cannot reschedule: Work Done already exists for this plan.")
+
+    tl_snap = frappe.db.get_value(
+        "Daily Execution",
+        {"rollout_plan": rollout_plan},
+        "tl_status",
+        order_by="modified desc",
+    ) or ""
+
+    doc.append("reschedule_log", {
+        "original_date": doc.plan_date,
+        "new_date": new_date,
+        "reason": reason or "Other",
+        "tl_status_at_time": tl_snap,
+        "im_note": (im_note or "")[:2000],
+        "rescheduled_by": frappe.session.user,
+        "rescheduled_at": frappe.utils.now(),
+    })
+    doc.reschedule_count = cint(doc.reschedule_count or 0) + 1
+    doc.plan_date = new_date
+    # Advance plan_end_date if it would be before the new plan_date
+    if doc.plan_end_date and getdate(doc.plan_end_date) < getdate(new_date):
+        doc.plan_end_date = new_date
+    doc.plan_status = "Planned"
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return {"ok": True, "reschedule_count": doc.reschedule_count}
+
+
+@frappe.whitelist()
+def get_reschedule_logs(rollout_plan):
+    """Return reschedule_log child rows + reschedule_count for a Rollout Plan."""
+    if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
+        frappe.throw("Invalid Rollout Plan")
+    reschedule_count = frappe.db.get_value("Rollout Plan", rollout_plan, "reschedule_count") or 0
+    logs = frappe.db.get_all(
+        "Rollout Plan Reschedule Log",
+        filters={"parent": rollout_plan},
+        fields=["original_date", "new_date", "reason", "tl_status_at_time", "im_note",
+                "rescheduled_by", "rescheduled_at"],
+        order_by="rescheduled_at asc",
+    )
+    return {"reschedule_count": reschedule_count, "logs": logs}
+
+
+def auto_mark_overdue_plans():
+    """Scheduled daily: mark Planned rollout plans past their plan_date as Overdue."""
+    frappe.db.sql("""
+        UPDATE `tabRollout Plan`
+        SET plan_status = 'Overdue', modified = NOW(), modified_by = 'Administrator'
+        WHERE plan_status = 'Planned'
+        AND plan_date < CURDATE()
+        AND NOT EXISTS (
+            SELECT 1 FROM `tabWork Done` wd
+            JOIN `tabDaily Execution` de ON de.name = wd.execution
+            WHERE de.rollout_plan = `tabRollout Plan`.name
+        )
+    """)
+    frappe.db.commit()
 
 
 def _cascade_im_on_dispatch(dispatch_name, new_im):

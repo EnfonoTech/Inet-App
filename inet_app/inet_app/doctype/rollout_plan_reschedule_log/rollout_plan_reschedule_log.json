@@ -1,0 +1,68 @@
+{
+ "actions": [],
+ "creation": "2026-06-23 10:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "original_date",
+  "new_date",
+  "reason",
+  "tl_status_at_time",
+  "im_note",
+  "rescheduled_by",
+  "rescheduled_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "original_date",
+   "fieldtype": "Date",
+   "label": "Original Plan Date"
+  },
+  {
+   "fieldname": "new_date",
+   "fieldtype": "Date",
+   "label": "Rescheduled To"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Select",
+   "label": "Reason",
+   "options": "TL Not Attended\nExecution Cancelled\nExecution Postponed\nExecution on Hold\nPlan Overdue\nOther"
+  },
+  {
+   "fieldname": "tl_status_at_time",
+   "fieldtype": "Data",
+   "label": "TL Status (at reschedule)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "im_note",
+   "fieldtype": "Small Text",
+   "label": "IM Note"
+  },
+  {
+   "fieldname": "rescheduled_by",
+   "fieldtype": "Link",
+   "label": "Rescheduled By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rescheduled_at",
+   "fieldtype": "Datetime",
+   "label": "Rescheduled At",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-23 10:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Rollout Plan Reschedule Log",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

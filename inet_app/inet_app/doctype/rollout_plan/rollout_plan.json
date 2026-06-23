@@ -22,6 +22,7 @@
   "achieved_amount",
   "completion_pct",
   "plan_status",
+  "issue_status",
   "section_teams",
   "teams",
   "plan_team_members",
@@ -36,7 +37,10 @@
   "cancel_requested_at",
   "cancel_responded_by",
   "cancel_responded_at",
-  "cancel_pm_remark"
+  "cancel_pm_remark",
+  "section_reschedule",
+  "reschedule_count",
+  "reschedule_log"
  ],
  "fields": [
   {
@@ -150,7 +154,14 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Planned\nPlanning with Issue\nIn Execution\nCompleted\nCancelled"
+   "options": "Planned\nPlanning with Issue\nIn Execution\nOverdue\nCompleted\nCancelled"
+  },
+  {
+   "fieldname": "issue_status",
+   "fieldtype": "Select",
+   "label": "Issue Status",
+   "options": "\nReported\nRe-Planned\nIn Execution\nResolved",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_dtdy",
@@ -237,6 +248,25 @@
    "fieldtype": "Small Text",
    "label": "PM Remark",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_reschedule",
+   "fieldtype": "Section Break",
+   "label": "Reschedule History"
+  },
+  {
+   "default": "0",
+   "fieldname": "reschedule_count",
+   "fieldtype": "Int",
+   "label": "Times Rescheduled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reschedule_log",
+   "fieldtype": "Table",
+   "label": "Reschedule Log",
+   "options": "Rollout Plan Reschedule Log"
   }
  ],
  "index_web_pages_for_search": 1,

@@ -15,6 +15,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import RemarksCell from "../../components/RemarksCell";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import IMNoteCallout from "../../components/IMNoteCallout";
+import RescheduleModal from "../../components/RescheduleModal";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -45,7 +46,7 @@ function DetailItem({ label, value }) {
 
 function canImExecuteFromPlan(status) {
   const s = (status || "").trim();
-  return ["Planned", "In Execution", "Planning with Issue", "Ready for Execution"].includes(s);
+  return ["Planned", "In Execution", "Planning with Issue", "Ready for Execution", "Overdue"].includes(s);
 }
 
 /** All selected plans that are in an executable status. */
@@ -59,7 +60,7 @@ export default function IMPlanning() {
   const { rowLimit } = useTableRowLimit();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState(["Planned"]);
+  const [statusFilter, setStatusFilter] = useState(["Planned", "Overdue"]);
   const [visitFilter, setVisitFilter] = useState([]);
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState([]);
@@ -84,9 +85,28 @@ export default function IMPlanning() {
   const [mapLinesLoading, setMapLinesLoading] = useState(false);
   const [mapSuccessMsg, setMapSuccessMsg] = useState(null);
 
+  const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
+  const [rescheduleSuccessMsg, setRescheduleSuccessMsg] = useState(null);
+  const [rescheduleLogs, setRescheduleLogs] = useState(null);
+  const [rescheduleLogsLoading, setRescheduleLogsLoading] = useState(false);
+
   const [refreshKey, setRefreshKey] = useState(0);
 
   const loadPlans = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  useEffect(() => {
+    if (!detailRow) { setRescheduleLogs(null); return; }
+    let cancelled = false;
+    setRescheduleLogsLoading(true);
+    pmApi.getRescheduleLogs(detailRow.name).then((res) => {
+      if (!cancelled) setRescheduleLogs(Array.isArray(res?.logs) ? res.logs : []);
+    }).catch(() => {
+      if (!cancelled) setRescheduleLogs([]);
+    }).finally(() => {
+      if (!cancelled) setRescheduleLogsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [detailRow]);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,6 +202,12 @@ export default function IMPlanning() {
   const executionSelectionOk = eligiblePlans.length > 0;
   const skippedCount = selected.size - eligiblePlans.length;
 
+  const reschedulablePlans = useMemo(
+    () => plans.filter((p) => selected.has(p.name) && p.plan_status === "Overdue"),
+    [plans, selected]
+  );
+  const rescheduleDefaultReason = "Plan Overdue";
+
   function recordExecutionTitle() {
     if (selected.size === 0) return "Select plans using the checkboxes";
     if (eligiblePlans.length === 0) return "None of the selected plans are in an executable status";
@@ -271,6 +297,12 @@ export default function IMPlanning() {
           <button type="button" onClick={() => setMapSuccessMsg(null)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#166534", lineHeight: 1, marginLeft: 12 }}>&times;</button>
         </div>
       )}
+      {rescheduleSuccessMsg && (
+        <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "10px 16px", margin: "0 0 12px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.84rem", color: "#1d4ed8" }}>
+          <span>{rescheduleSuccessMsg}</span>
+          <button type="button" onClick={() => setRescheduleSuccessMsg(null)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#1d4ed8", lineHeight: 1, marginLeft: 12 }}>&times;</button>
+        </div>
+      )}
 
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -284,7 +316,7 @@ export default function IMPlanning() {
               border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,
             }}
           />
-          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={["Planned", "Planning with Issue", "In Execution", "Completed", "Cancelled"]} placeholder="All Statuses" minWidth={150} />
+          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={["Planned", "Planning with Issue", "In Execution", "Overdue", "Completed", "Cancelled"]} placeholder="All Statuses" minWidth={150} />
           <SearchableSelect multi value={visitFilter} onChange={setVisitFilter} options={visitTypes} placeholder="All Visit Types" minWidth={160} />
           <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
           <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
@@ -317,6 +349,15 @@ export default function IMPlanning() {
             <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
               {selected.size} selected · SAR {fmt.format(selectedAmt)}
             </span>
+          )}
+          {reschedulablePlans.length > 0 && (
+            <button
+              type="button"
+              style={{ fontSize: "0.84rem", padding: "6px 14px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}
+              onClick={() => setRescheduleModalOpen(true)}
+            >
+              Reschedule ({reschedulablePlans.length})
+            </button>
           )}
           <button
             type="button"
@@ -410,10 +451,17 @@ export default function IMPlanning() {
                     <td>{p.visit_type}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{p.visit_number != null ? p.visit_number : "—"}</td>
                     <td>
-                      <span className={`status-badge ${(p.plan_status || "").toLowerCase().replace(/\s/g, "-")}`}>
-                        <span className="status-dot" />
-                        {p.plan_status}
-                      </span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap" }}>
+                        <span className={`status-badge ${(p.plan_status || "").toLowerCase().replace(/\s/g, "-")}`}>
+                          <span className="status-dot" />
+                          {p.plan_status}
+                        </span>
+                        {p.reschedule_count > 0 && (
+                          <span title={`Rescheduled ${p.reschedule_count} time${p.reschedule_count !== 1 ? "s" : ""}`} style={{ fontSize: "0.66rem", fontWeight: 700, color: "#7c3aed", background: "#ede9fe", border: "1px solid #c4b5fd", borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
+                            ↺ {p.reschedule_count}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td style={{ textAlign: "right" }}>{fmt.format(p.target_amount || 0)}</td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.general_remark} tone="general" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.general_remark = v; }} /></td>
@@ -440,13 +488,16 @@ export default function IMPlanning() {
                         <span style={{ color: "#cbd5e1", fontSize: "0.72rem" }}>—</span>
                       )}
                     </td>
-                    <td onClick={(e) => e.stopPropagation()} style={{ minWidth: 175, width: 175, whiteSpace: "nowrap" }}>
+                    <td onClick={(e) => e.stopPropagation()} style={{ minWidth: 200, width: 200, whiteSpace: "nowrap" }}>
                       <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                         <button
                           type="button"
                           className="btn-secondary"
                           style={{ fontSize: "0.72rem", padding: "4px 10px" }}
-                          onClick={() => setDetailRow(p)}
+                          onClick={() => {
+                            setRescheduleLogs(null);
+                            setDetailRow(p);
+                          }}
                         >
                           View
                         </button>
@@ -630,9 +681,74 @@ export default function IMPlanning() {
                 rolloutPlan={detailRow.name}
                 currentPlanName={detailRow.name}
               />
+              <div style={{ marginTop: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.05em" }}>Reschedule History</span>
+                  {detailRow.reschedule_count > 0 && (
+                    <span style={{ fontSize: "0.66rem", fontWeight: 700, color: "#7c3aed", background: "#ede9fe", border: "1px solid #c4b5fd", borderRadius: 999, padding: "1px 7px" }}>
+                      ↺ {detailRow.reschedule_count}
+                    </span>
+                  )}
+                </div>
+                {rescheduleLogsLoading ? (
+                  <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>Loading…</div>
+                ) : !rescheduleLogs || rescheduleLogs.length === 0 ? (
+                  <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>No reschedules recorded.</div>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>From</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>To</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>Reason</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>TL Status</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>IM Note</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>By / At</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rescheduleLogs.map((log, i) => (
+                          <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "5px 8px", color: "#64748b" }}>{log.original_date || "—"}</td>
+                            <td style={{ padding: "5px 8px", fontWeight: 600, color: "#0f172a" }}>{log.new_date || "—"}</td>
+                            <td style={{ padding: "5px 8px" }}>{log.reason || "—"}</td>
+                            <td style={{ padding: "5px 8px", color: "#64748b" }}>{log.tl_status_at_time || "—"}</td>
+                            <td style={{ padding: "5px 8px", color: "#475569", maxWidth: 160, wordBreak: "break-word" }}>{log.im_note || "—"}</td>
+                            <td style={{ padding: "5px 8px", color: "#64748b", whiteSpace: "nowrap" }}>
+                              {(log.rescheduled_by || "").split("@")[0] || "—"}
+                              {log.rescheduled_at ? <><br /><span style={{ fontSize: "0.7rem" }}>{log.rescheduled_at.split(" ")[0]}</span></> : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
+      )}
+
+      {rescheduleModalOpen && reschedulablePlans.length > 0 && (
+        <RescheduleModal
+          rolloutPlans={reschedulablePlans.map((p) => p.name)}
+          defaultReason={rescheduleDefaultReason}
+          onClose={() => setRescheduleModalOpen(false)}
+          onSuccess={(results) => {
+            setRescheduleModalOpen(false);
+            const ok = results.filter((r) => r.ok).length;
+            const fail = results.filter((r) => !r.ok).length;
+            setRescheduleSuccessMsg(
+              fail
+                ? `${ok} rescheduled, ${fail} failed.`
+                : `${ok} plan${ok !== 1 ? "s" : ""} rescheduled.`
+            );
+            setSelected(new Set());
+            loadPlans();
+          }}
+        />
       )}
     </div>
   );

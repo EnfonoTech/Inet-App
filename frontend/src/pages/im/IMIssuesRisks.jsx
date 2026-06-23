@@ -67,6 +67,24 @@ function StatusPill({ value }) {
   );
 }
 
+const ISSUE_STATUS_TONES = {
+  "Reported":     { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" },
+  "Re-Planned":   { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" },
+  "In Execution": { bg: "#f0fdf4", fg: "#15803d", dot: "#22c55e" },
+  "Resolved":     { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8" },
+};
+
+function IssueStatusPill({ value }) {
+  if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
+  const tone = ISSUE_STATUS_TONES[value] || { bg: "#f8fafc", fg: "#334155", dot: "#64748b" };
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", background: tone.bg, color: tone.fg }}>
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: tone.dot }} />
+      {value}
+    </span>
+  );
+}
+
 export default function IMIssuesRisks() {
   const { imName } = useAuth();
   const { rowLimit } = useTableRowLimit();
@@ -297,6 +315,7 @@ export default function IMIssuesRisks() {
                   <th>TL Status</th>
                   <th>QC</th>
                   <th>CIAG</th>
+                  <th>Issue Status</th>
                   <th>Issue Category</th>
                   <th>Issue Remarks</th>
                   <th>Execution Remarks</th>
@@ -331,6 +350,7 @@ export default function IMIssuesRisks() {
                     <td><StatusPill value={r.tl_status} /></td>
                     <td><StatusPill value={r.qc_status} /></td>
                     <td><StatusPill value={r.ciag_status} /></td>
+                    <td><IssueStatusPill value={r.issue_status} /></td>
                     <td><StatusPill value={r.issue_category} /></td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.issue_remarks || ""}>{r.issue_remarks || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.execution_remarks || ""}>{r.execution_remarks || "—"}</td>

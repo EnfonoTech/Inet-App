@@ -221,6 +221,15 @@ export const pmApi = {
       issue_category: issueCategory || "",
       issue_remarks: issueRemarks || "",
     }),
+  rescheduleRolloutPlan: (rolloutPlan, newDate, reason, imNote) =>
+    call("inet_app.api.command_center.reschedule_rollout_plan", {
+      rollout_plan: rolloutPlan,
+      new_date: newDate,
+      reason,
+      im_note: imNote || "",
+    }),
+  getRescheduleLogs: (rolloutPlan) =>
+    call("inet_app.api.command_center.get_reschedule_logs", { rollout_plan: rolloutPlan }),
   createIMDummyPODispatch: (payload) =>
     call("inet_app.api.command_center.create_im_dummy_po_dispatch", {
       payload: JSON.stringify(payload || {}),

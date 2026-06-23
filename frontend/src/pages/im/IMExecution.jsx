@@ -16,9 +16,25 @@ import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import IMNoteCallout from "../../components/IMNoteCallout";
+import RescheduleModal from "../../components/RescheduleModal";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const CIAG_STATUS_OPTIONS = ["Open", "Approved", "Not Applicable"];
+
+const RESCHEDULE_TL_STATUSES = new Set(["Not Attended", "Hold", "Cancelled", "Postponed"]);
+const RESCHEDULE_EXEC_STATUSES = new Set(["Cancelled", "Postponed", "Hold"]);
+
+function isRescheduleExec(row) {
+  return RESCHEDULE_TL_STATUSES.has(row.tl_status) || RESCHEDULE_EXEC_STATUSES.has(row.execution_status);
+}
+
+function defaultRescheduleReason(row) {
+  if (row.tl_status === "Not Attended") return "TL Not Attended";
+  if (row.execution_status === "Cancelled" || row.tl_status === "Cancelled") return "Execution Cancelled";
+  if (row.execution_status === "Postponed" || row.tl_status === "Postponed") return "Execution Postponed";
+  if (row.execution_status === "Hold" || row.tl_status === "Hold") return "Execution on Hold";
+  return "";
+}
 
 // Backend Check fields can come back as 0/false/"0" depending on the
 // transport, so accept all of them as the not-required signal.
@@ -192,6 +208,9 @@ export default function IMExecution() {
   const [mapLinesLoading, setMapLinesLoading] = useState(false);
   const [mapSuccessMsg, setMapSuccessMsg] = useState(null);
 
+  const [rescheduleExecOpen, setRescheduleExecOpen] = useState(false);
+  const [rescheduleSuccessMsg, setRescheduleSuccessMsg] = useState(null);
+
   const [refreshKey, setRefreshKey] = useState(0);
 
   const loadExecutions = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -290,6 +309,16 @@ export default function IMExecution() {
     () => executions.filter((e) => selectedExecs.has(e.name)),
     [executions, selectedExecs],
   );
+
+  const reschedulableExecs = useMemo(
+    () => selectedRows.filter((e) => !e.work_done && isRescheduleExec(e)),
+    [selectedRows],
+  );
+  const bulkRescheduleDefaultReason = useMemo(() => {
+    if (!reschedulableExecs.length) return "";
+    const reasons = new Set(reschedulableExecs.map(defaultRescheduleReason));
+    return reasons.size === 1 ? [...reasons][0] : "";
+  }, [reschedulableExecs]);
 
   // QC breakdown: which selected rows are applicable vs. already N/A
   const qcWillUpdate = useMemo(
@@ -568,6 +597,13 @@ export default function IMExecution() {
         <div style={{ background: "#dcfce7", border: "1px solid #86efac", borderRadius: 8, padding: "10px 16px", margin: "0 0 12px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.84rem", color: "#166534" }}>
           <span>{mapSuccessMsg}</span>
           <button type="button" onClick={() => setMapSuccessMsg(null)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#166534", lineHeight: 1, marginLeft: 12 }}>&times;</button>
+        </div>
+      )}
+
+      {rescheduleSuccessMsg && (
+        <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "10px 16px", margin: "0 0 12px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.84rem", color: "#1d4ed8" }}>
+          <span>{rescheduleSuccessMsg}</span>
+          <button type="button" onClick={() => setRescheduleSuccessMsg(null)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#1d4ed8", lineHeight: 1, marginLeft: 12 }}>&times;</button>
         </div>
       )}
 
@@ -939,6 +975,15 @@ export default function IMExecution() {
               onClick={() => { setBulkExecErr(null); setBulkExecPick("Completed"); setBulkExecOpen(true); }}>
               Bulk Exec Status
             </button>
+            {reschedulableExecs.length > 0 && (
+              <button
+                type="button"
+                style={{ fontSize: "0.78rem", padding: "4px 12px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}
+                onClick={() => setRescheduleExecOpen(true)}
+              >
+                Reschedule ({reschedulableExecs.length})
+              </button>
+            )}
             <button type="button" className="btn-primary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
               disabled={wdBusy === "bulk"}
               onClick={() => setWdConfirmOpen(true)}>
@@ -1156,10 +1201,10 @@ export default function IMExecution() {
                           <button
                             type="button"
                             className="btn-secondary"
-                            style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}
+                            style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0, background: "#fffbeb", color: "#92400e", border: "1px solid #f59e0b" }}
                             onClick={() => setReopenFor(e.rollout_plan)}
                           >
-                            Re-plan
+                            Report Issue
                           </button>
                         )}
                         {e.is_dummy_po ? (
@@ -1298,6 +1343,26 @@ export default function IMExecution() {
             </div>
           </div>
         </div>
+      )}
+
+      {rescheduleExecOpen && reschedulableExecs.length > 0 && (
+        <RescheduleModal
+          rolloutPlans={reschedulableExecs.map((e) => e.rollout_plan)}
+          defaultReason={bulkRescheduleDefaultReason}
+          onClose={() => setRescheduleExecOpen(false)}
+          onSuccess={(results) => {
+            setRescheduleExecOpen(false);
+            const ok = results.filter((r) => r.ok).length;
+            const fail = results.filter((r) => !r.ok).length;
+            setRescheduleSuccessMsg(
+              fail
+                ? `${ok} rescheduled, ${fail} failed.`
+                : `${ok} plan${ok !== 1 ? "s" : ""} rescheduled.`
+            );
+            setSelectedExecs(new Set());
+            loadExecutions();
+          }}
+        />
       )}
     </div>
   );

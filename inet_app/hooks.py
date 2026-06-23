@@ -214,6 +214,9 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
+	"daily": [
+		"inet_app.api.command_center.auto_mark_overdue_plans",
+	],
 	"cron": {
 		"0 8 * * *": ["inet_app.api.notifications.send_dummy_po_reminder"],
 	},
