@@ -392,6 +392,8 @@ export const pmApi = {
     call("inet_app.api.command_center.stop_execution_timer", { log_name }),
   getRunningExecutionTimer:   () =>
     call("inet_app.api.command_center.get_running_execution_timer"),
+  getServerNow:               () =>
+    call("inet_app.api.command_center.get_server_now"),
   listExecutionTimeLogs:      (filters, limit, offset) =>
     call("inet_app.api.command_center.list_execution_time_logs", {
       filters: JSON.stringify(filters || {}),

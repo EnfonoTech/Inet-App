@@ -98,9 +98,8 @@
   },
   {
    "fieldname": "access_time",
-   "fieldtype": "Data",
-   "label": "Access Time",
-   "description": "Planned access time or window (e.g. hours or time range)"
+   "fieldtype": "Time",
+   "label": "Access Time"
   },
   {
    "fieldname": "access_period",

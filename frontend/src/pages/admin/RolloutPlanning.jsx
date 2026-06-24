@@ -839,10 +839,9 @@ export default function RolloutPlanning() {
                 <div>
                   <label style={labelStyle}>Access time</label>
                   <input
-                    type="text"
+                    type="time"
                     value={accessTime}
                     onChange={(e) => setAccessTime(e.target.value)}
-                    placeholder="e.g. 08:00 or hours"
                     style={fieldStyle}
                   />
                 </div>

@@ -17,6 +17,7 @@ import { isNotRequired } from "../../utils/qcCiagFlags";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -381,6 +382,7 @@ export default function ExecutionMonitor() {
                   <th>Team</th>
                   <th>IM</th>
                   <th>Plan Date</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Access</th>
                   <th>Visit Type</th>
                   <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
                   <th style={{ textAlign: "right" }}>Target</th>
@@ -418,6 +420,17 @@ export default function ExecutionMonitor() {
                       <td>{row.team_name || row.team || "—"}</td>
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.plan_date}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {(() => {
+                          const badge = accessTimeBadge(row.access_time, row.access_period, row.timer_start_ms, row.tl_status);
+                          if (!badge) return <span style={{ color: "#94a3b8" }}>—</span>;
+                          return (
+                            <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 700, background: badge.bg, color: badge.color }}>
+                              {badge.label}
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td>{row.visit_type}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
                       <td style={{ textAlign: "right" }}>{fmt.format(target)}</td>

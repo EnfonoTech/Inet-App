@@ -1012,7 +1012,7 @@ export default function IMDispatch() {
           </div>
           <div>
             <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Access time</label>
-            <input type="text" value={accessTime} onChange={(e) => setAccessTime(e.target.value)} placeholder="e.g. 08:00 or hours" style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }} />
+            <input type="time" value={accessTime} onChange={(e) => setAccessTime(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }} />
           </div>
           <div>
             <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Access period</label>

@@ -385,7 +385,7 @@ export default function IMIssuesRisks() {
                 </select>
               </div>
               <div className="form-group"><label>Visit Type</label><input value={visitType} readOnly disabled style={{ background: "#f1f5f9", cursor: "not-allowed" }} /></div>
-              <div className="form-group"><label>Access Time</label><input value={accessTime} onChange={(e) => setAccessTime(e.target.value)} placeholder="e.g. 08:00-12:00" /></div>
+              <div className="form-group"><label>Access Time</label><input type="time" value={accessTime} onChange={(e) => setAccessTime(e.target.value)} /></div>
               <div className="form-group">
                 <label>Access Period</label>
                 <select value={accessPeriod} onChange={(e) => setAccessPeriod(e.target.value)}>

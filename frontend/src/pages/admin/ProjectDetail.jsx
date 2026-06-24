@@ -187,7 +187,7 @@ function RolloutDuidModal({ group, onClose, onOpenDetail }) {
     { key: "achieved_amount", label: "Achieved", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
     { key: "completion_pct", label: "Completion", align: "right", render: (v) => (v != null ? `${v}%` : "\u2014") },
     { key: "plan_status", label: "Status", render: (v) => <Badge value={v} /> },
-    { key: "access_time", label: "Access time" },
+    { key: "access_time", label: "Access time", render: (v) => v ? v.slice(0, 5) : "—" },
     { key: "access_period", label: "Access period" },
     { key: "region_type", label: "Region" },
     { key: "issue_category", label: "Issue" },

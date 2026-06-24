@@ -16,6 +16,7 @@ import RemarksCell from "../../components/RemarksCell";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import RescheduleModal from "../../components/RescheduleModal";
+import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -430,6 +431,7 @@ export default function IMPlanning() {
                   <th>Team</th>
                   <th>IM</th>
                   <th>Plan Date</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Access</th>
                   <th>End Date</th>
                   <th>Visit</th>
                   <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
@@ -471,6 +473,17 @@ export default function IMPlanning() {
                     <td style={{ fontSize: "0.82rem" }}>{p.team_name || p.team || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{p.im_full_name || p.dispatch_im || "—"}</td>
                     <td>{p.plan_date}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {(() => {
+                        const badge = accessTimeBadge(p.access_time, p.access_period, p.timer_start_ms, p.tl_status);
+                        if (!badge) return <span style={{ color: "#94a3b8" }}>—</span>;
+                        return (
+                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 700, background: badge.bg, color: badge.color }}>
+                            {badge.label}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {p.plan_end_date || "—"}
                     </td>

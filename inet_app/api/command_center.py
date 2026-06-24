@@ -4965,6 +4965,33 @@ def list_execution_monitor_rows(filters=None, limit=500):
     team_name_map = _batch_inet_team_names(team_ids)
     im_name_map = _batch_im_master_full_names(im_keys)
 
+    # Batch-fetch earliest timer start per DUID (site_code) for today.
+    # All plans at the same physical site share the TL's first arrival time.
+    timer_start_map = {}
+    if plan_names and frappe.db.exists("DocType", "Execution Time Log"):
+        site_for_plan = {
+            p.name: (dispatch_map.get(p.po_dispatch) or {}).get("site_code") or ""
+            for p in plans
+        }
+        site_codes = list({s for s in site_for_plan.values() if s})
+        if site_codes:
+            ph_s = ", ".join(["%s"] * len(site_codes))
+            t_rows = frappe.db.sql(
+                f"SELECT pd2.site_code, MIN(etl.start_time) AS timer_start "
+                f"FROM `tabExecution Time Log` etl "
+                f"INNER JOIN `tabRollout Plan` rp2 ON rp2.name = etl.rollout_plan "
+                f"INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch "
+                f"WHERE pd2.site_code IN ({ph_s}) AND DATE(etl.start_time) = CURDATE() "
+                f"GROUP BY pd2.site_code",
+                tuple(site_codes),
+                as_dict=True,
+            )
+            site_timer_map = {r.site_code: _frappe_dt_to_epoch_ms(r.timer_start) for r in t_rows}
+            timer_start_map = {
+                p_name: site_timer_map.get(site_for_plan.get(p_name))
+                for p_name in plan_names
+            }
+
     out = []
     for p in plans:
         ex = latest_exec_by_plan.get(p.name)
@@ -5021,6 +5048,9 @@ def list_execution_monitor_rows(filters=None, limit=500):
                     if d and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
                     else None
                 ),
+                "access_time": str(p.access_time) if p.get("access_time") else None,
+                "access_period": p.get("access_period") or None,
+                "timer_start_ms": timer_start_map.get(p.name),
             }
         )
     if out:
@@ -6776,6 +6806,12 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                rp.cancel_request_status, rp.cancel_reason,
                rp.cancel_requested_at, rp.cancel_responded_at, rp.cancel_pm_remark,
                IFNULL(rp.reschedule_count, 0) AS reschedule_count,
+               rp.access_time, rp.access_period,
+               (SELECT MIN(etl.start_time) FROM `tabExecution Time Log` etl
+                INNER JOIN `tabRollout Plan` rp2 ON rp2.name = etl.rollout_plan
+                INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
+                WHERE pd2.site_code = pd.site_code AND DATE(etl.start_time) = CURDATE()
+               ) AS timer_start,
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                pd.customer AS customer, pd.item_description, pd.is_dummy_po,
@@ -6799,6 +6835,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         act_map = _batch_item_activity_types(rows)
         for r in rows:
             r["activity_type"] = act_map.get(r.get("item_code") or "")
+            r["timer_start_ms"] = _frappe_dt_to_epoch_ms(r.get("timer_start"))
         _apply_dummy_description(rows)
     return rows or []
 
@@ -6929,6 +6966,11 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
                rp.visit_number, rp.visit_type, rp.plan_date, rp.plan_end_date, rp.plan_status AS plan_status,
                IFNULL(rp.reschedule_count, 0) AS reschedule_count,
+               (SELECT MIN(etl.start_time) FROM `tabExecution Time Log` etl
+                INNER JOIN `tabRollout Plan` rp2 ON rp2.name = etl.rollout_plan
+                INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
+                WHERE pd2.site_code = pd.site_code AND DATE(etl.start_time) = CURDATE()
+               ) AS timer_start,
                de.team, de.execution_date,
                de.execution_status, de.tl_status, de.issue_category,
                de.achieved_qty, de.achieved_amount, de.gps_location,
@@ -6977,6 +7019,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         act_map = _batch_item_activity_types(rows)
         for r in rows:
             r["activity_type"] = act_map.get(r.get("item_code") or "")
+            r["timer_start_ms"] = _frappe_dt_to_epoch_ms(r.get("timer_start"))
         _apply_dummy_description(rows)
     return rows or []
 
@@ -8501,6 +8544,74 @@ def _frappe_dt_to_epoch_ms(value):
     return int(get_datetime(value).timestamp() * 1000)
 
 
+def _auto_create_daily_execution(rollout_plan, team_id):
+    """
+    Create a minimal Daily Execution when the TL starts a timer.
+    Mirrors the new-DE path in update_execution so field validation flags
+    (qc_required / ciag_required / region_type) are stamped correctly.
+    """
+    rp = frappe.db.get_value(
+        "Rollout Plan", rollout_plan, ["po_dispatch", "team", "region_type"], as_dict=True
+    )
+    de = frappe.new_doc("Daily Execution")
+    de.rollout_plan = rollout_plan
+    de.system_id = rp.get("po_dispatch") if rp else None
+    de.team = team_id
+    de.tl_status = "In Progress"
+    de.execution_status = "In Progress"
+
+    pd_name = rp.get("po_dispatch") if rp else None
+    if pd_name:
+        im_v = frappe.db.get_value("PO Dispatch", pd_name, "im")
+        if im_v and hasattr(de, "im"):
+            de.im = im_v
+
+    rp_flag_cols = []
+    if frappe.db.has_column("Rollout Plan", "qc_required"):
+        rp_flag_cols.append("qc_required")
+    if frappe.db.has_column("Rollout Plan", "ciag_required"):
+        rp_flag_cols.append("ciag_required")
+    if rp_flag_cols:
+        rp_flags = frappe.db.get_value("Rollout Plan", rollout_plan, rp_flag_cols, as_dict=True) or {}
+        if rp_flags.get("qc_required") == 0 and hasattr(de, "qc_status"):
+            de.qc_status = "Not Applicable"
+        if rp_flags.get("ciag_required") == 0 and hasattr(de, "ciag_status"):
+            de.ciag_status = "Not Applicable"
+
+    if hasattr(de, "region_type"):
+        de.region_type = (rp.get("region_type") if rp else None) or None
+        if not de.region_type and pd_name:
+            pd_row = frappe.db.get_value(
+                "PO Dispatch", pd_name, ["region_type", "center_area"], as_dict=True
+            )
+            if pd_row:
+                de.region_type = pd_row.get("region_type") or region_type_from_center_area(
+                    pd_row.get("center_area")
+                )
+        if not de.region_type:
+            de.region_type = "Standard"
+
+    de.insert(ignore_permissions=True)
+
+
+@frappe.whitelist()
+def get_server_now():
+    """Return server epoch ms and UTC offset so browsers can compute server-timezone-aware times."""
+    from datetime import datetime
+    server_now = now_datetime()
+    now_ms = _frappe_dt_to_epoch_ms(server_now)
+    utc_offset_ms = 0
+    try:
+        from zoneinfo import ZoneInfo
+        tzname = frappe.db.get_single_value("System Settings", "time_zone") or "UTC"
+        tz = ZoneInfo(tzname)
+        offset_sec = tz.utcoffset(datetime.now()).total_seconds()
+        utc_offset_ms = int(offset_sec * 1000)
+    except Exception:
+        pass
+    return {"server_now_ms": now_ms, "utc_offset_ms": utc_offset_ms}
+
+
 def _session_inet_field_team_id():
     """INET Team.team_id for the logged-in field user, if any.
 
@@ -8624,6 +8735,16 @@ def start_execution_timer(rollout_plan):
 
     if plan_status in ("Planned", "Planning with Issue"):
         frappe.db.set_value("Rollout Plan", rollout_plan, "plan_status", "In Execution", update_modified=False)
+
+    # Auto-create a Daily Execution so IM/PM monitors can track progress immediately.
+    # If the IM already created one for this team, leave it alone.
+    existing_de = frappe.db.get_value(
+        "Daily Execution",
+        {"rollout_plan": rollout_plan, "team": team_id},
+        "name",
+    )
+    if not existing_de:
+        _auto_create_daily_execution(rollout_plan, team_id)
 
     frappe.db.commit()
 
