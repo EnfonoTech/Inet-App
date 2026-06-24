@@ -243,19 +243,22 @@ export default function CommandDashboard() {
       <DashboardSwitcher />
 
       {/* ── Header ──────────────────────────────────────────────── */}
-      <div className="dash-header" style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 20px" }}>
-        <div style={{ flex: 1 }}>
+      <div className="dash-header" style={{ display: "flex", alignItems: "center", padding: "12px 20px" }}>
+        <div style={{ flex: 1 }} />
+        <div style={{ textAlign: "center" }}>
           <h1 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800, letterSpacing: "-0.2px" }}>
             Command Dashboard
           </h1>
-          <div className="subtitle" style={{ justifyContent: "flex-start", marginTop: 3 }}>
+          <div className="subtitle" style={{ justifyContent: "center", marginTop: 3 }}>
             <span className="live-dot" />
             <span className="dash-timestamp">
               Last updated: {last_updated ? fmtTimestamp(last_updated) : "—"}
             </span>
           </div>
         </div>
-        <DateRangePicker value={range} onChange={(r) => setRange({ from: r.from, to: r.to })} />
+        <div style={{ flex: 1, display: "flex", justifyContent: "flex-end" }}>
+          <DateRangePicker value={range} onChange={(r) => setRange({ from: r.from, to: r.to })} />
+        </div>
       </div>
 
       {/* ── Company Financial Summary ────────────────────────────── */}
