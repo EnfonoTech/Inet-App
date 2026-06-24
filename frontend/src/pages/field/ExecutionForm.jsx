@@ -12,6 +12,7 @@ import { defaultAchievedQtyFromPlan } from "../../utils/planDefaultQty";
 import { TL_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import IMNoteCallout from "../../components/IMNoteCallout";
+import AttachmentsSection, { parseFileList } from "../../components/AttachmentsSection";
 
 // Treat 0/false/"0"/"false" as the not-required signal. null/undefined
 // (legacy plans without the flag) defaults to required.
@@ -21,27 +22,6 @@ function isNotRequired(v) {
   return false;
 }
 
-function parsePhotoList(raw) {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw.filter(Boolean).map((v) => String(v).trim()).filter(Boolean);
-  const text = String(raw).trim();
-  if (!text) return [];
-  if (text.startsWith("[")) {
-    try {
-      const arr = JSON.parse(text);
-      if (Array.isArray(arr)) return arr.filter(Boolean).map((v) => String(v).trim()).filter(Boolean);
-    } catch { /* fallthrough */ }
-  }
-  return text.split(/\r?\n|,/).map((v) => v.trim()).filter(Boolean);
-}
-
-function buildUploadForm(file) {
-  const form = new FormData();
-  form.append("file", file, file.name);
-  form.append("is_private", "1");
-  form.append("folder", "Home");
-  return form;
-}
 
 function statusBadgeClass(s) {
   const v = (s || "").toLowerCase().replace(/\s+/g, "-");
@@ -407,12 +387,7 @@ export default function ExecutionForm() {
 
   const [existingExec, setExistingExec] = useState(null);
   const [materialUsage, setMaterialUsage] = useState([]);
-  const [attachments, setAttachments] = useState([]);        // uploaded URLs
-  const [pendingUploads, setPendingUploads] = useState([]);  // [{id, preview}] in-flight
-  const [attachmentBusy, setAttachmentBusy] = useState(false);
-  const [attachmentErr, setAttachmentErr] = useState(null);
-  // map uploaded URL → local blob URL for preview
-  const previewMapRef = useRef({});
+  const [attachments, setAttachments] = useState([]);        // uploaded file URLs
 
   // ── Inline expense tracking ────────────────────────────────────────────────
   const [expenseTypes, setExpenseTypes] = useState([]);
@@ -486,7 +461,7 @@ export default function ExecutionForm() {
       if (cancelled) return;
       setExistingExec(ex || null);
       if (ex) {
-        setAttachments(parsePhotoList(ex.photos));
+        setAttachments(parseFileList(ex.photos));
         // Pre-fill QC / CIAG selects from existing execution so a return
         // visit doesn't overwrite values silently.
         if (ex.qc_status) setQcStatus(ex.qc_status);
@@ -597,63 +572,12 @@ export default function ExecutionForm() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, success, id]);
 
-  async function uploadAttachment(file) {
-    if (!file) return;
-    setAttachmentErr(null);
-
-    // Immediate local preview while uploading
-    const previewUrl = URL.createObjectURL(file);
-    const pendingId = `p-${Date.now()}-${Math.random()}`;
-    setPendingUploads((prev) => [...prev, { id: pendingId, preview: previewUrl }]);
-    setAttachmentBusy(true);
-
-    try {
-      await fetchPortalSession().catch(() => {});
-      let token = getCsrf();
-      const doFetch = (body) =>
-        fetch("/api/method/upload_file", {
-          method: "POST", credentials: "include",
-          headers: { "X-Frappe-CSRF-Token": token }, body,
-        });
-      let res = await doFetch(buildUploadForm(file));
-      let json = await res.json();
-      const errText = `${json.message || ""} ${json.exc || ""}`.toLowerCase();
-      if ((!res.ok || json.exc) && (errText.includes("invalid request") || errText.includes("csrf"))) {
-        await fetchPortalSession().catch(() => {});
-        token = getCsrf();
-        res = await doFetch(buildUploadForm(file));
-        json = await res.json();
-      }
-      if (!res.ok || json.exc) throw new Error(json.message || "Upload failed");
-      const fileUrl = json.message?.file_url;
-      if (!fileUrl) throw new Error("No file URL received");
-      // Keep the blob URL as a local preview for this uploaded file
-      previewMapRef.current[fileUrl] = previewUrl;
-      setAttachments((prev) => [...prev, fileUrl]);
-    } catch (err) {
-      URL.revokeObjectURL(previewUrl);
-      setAttachmentErr(err.message || "Upload failed");
-    } finally {
-      setPendingUploads((prev) => prev.filter((p) => p.id !== pendingId));
-      setAttachmentBusy(false);
-    }
-  }
-
   function removePhoto(idx) {
     setAttachments((prev) => {
-      const url = prev[idx];
-      if (previewMapRef.current[url]) {
-        URL.revokeObjectURL(previewMapRef.current[url]);
-        delete previewMapRef.current[url];
-      }
       return prev.filter((_, i) => i !== idx);
     });
   }
 
-  // Revoke all blob URLs on unmount
-  useEffect(() => () => {
-    Object.values(previewMapRef.current).forEach((u) => URL.revokeObjectURL(u));
-  }, []);
 
   async function handleStartTimer() {
     if (!id || !isFieldPortal) return;
@@ -1118,6 +1042,14 @@ export default function ExecutionForm() {
               {/* IM's "Note for field team" — set on PO Dispatch
                   (manager_remark). Highlighted so the TL doesn't miss it. */}
               <IMNoteCallout note={plan.manager_remark} style={{ marginTop: 10 }} />
+              {parseFileList(plan.plan_documents).length > 0 && (
+                <AttachmentsSection
+                  urls={parseFileList(plan.plan_documents)}
+                  title="Planning Documents"
+                  readOnly
+                  noCamera
+                />
+              )}
               {/* IM-confirmed status — read-only badge so the field user
                   knows whether the IM has signed off or not. */}
               <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem" }}>
@@ -1391,88 +1323,11 @@ export default function ExecutionForm() {
             </div>
           )}
 
-          {/* ── Photos ───────────────────────────────────────── */}
-          <div className="exec-section">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <div className="exec-section-title" style={{ marginBottom: 0 }}>Photos</div>
-              {(attachments.length + pendingUploads.length) > 0 && (
-                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", fontWeight: 600 }}>
-                  {attachments.length + pendingUploads.length} photo{(attachments.length + pendingUploads.length) !== 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-
-            {/* Camera + Gallery buttons */}
-            <div className="photo-action-row">
-              <label className="photo-add-btn photo-add-btn--camera" title="Take a photo with camera">
-                <IconCamera />
-                <span>Camera</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={(e) => { uploadAttachment(e.target.files?.[0]); e.target.value = ""; }}
-                  disabled={attachmentBusy}
-                />
-              </label>
-              <label className="photo-add-btn photo-add-btn--gallery" title="Choose from gallery">
-                <svg viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
-                  <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
-                </svg>
-                <span>Gallery</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={(e) => {
-                    Array.from(e.target.files || []).forEach((f) => uploadAttachment(f));
-                    e.target.value = "";
-                  }}
-                  disabled={attachmentBusy}
-                />
-              </label>
-            </div>
-
-            {/* Upload error */}
-            {attachmentErr && (
-              <div className="notice error" style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
-                <IconWarn /> {attachmentErr}
-              </div>
-            )}
-
-            {/* Photo grid: pending + uploaded */}
-            {(pendingUploads.length > 0 || attachments.length > 0) && (
-              <div className="photo-thumb-grid" style={{ marginTop: 12 }}>
-                {/* In-flight uploads with spinner overlay */}
-                {pendingUploads.map((p) => (
-                  <div key={p.id} className="photo-thumb photo-thumb--uploading">
-                    <img src={p.preview} alt="uploading" />
-                    <div className="photo-upload-overlay">
-                      <div className="photo-upload-spinner" />
-                    </div>
-                  </div>
-                ))}
-                {/* Uploaded photos with actual previews */}
-                {attachments.map((url, idx) => (
-                  <div key={`${url}-${idx}`} className="photo-thumb">
-                    <img
-                      src={previewMapRef.current[url] || url}
-                      alt={`Photo ${idx + 1}`}
-                      onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
-                    />
-                    <span className="photo-thumb-fallback">{url.split("/").pop()}</span>
-                    <button
-                      type="button"
-                      className="photo-thumb-remove"
-                      onClick={() => removePhoto(idx)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* ── Documents / Photos ───────────────────────────── */}
+          <AttachmentsSection
+            urls={attachments}
+            onChange={setAttachments}
+          />
 
           {/* Notices */}
           {submitError && (

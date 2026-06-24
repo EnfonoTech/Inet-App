@@ -9,6 +9,7 @@ import RemarksCell from "../../components/RemarksCell";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import AttachmentsSection from "../../components/AttachmentsSection";
 import DateRangePicker from "../../components/DateRangePicker";
 import useFilterOptions from "../../hooks/useFilterOptions";
 
@@ -111,6 +112,7 @@ export default function IMIssuesRisks() {
   const [accessPeriod, setAccessPeriod] = useState("");
   const [visitType, setVisitType] = useState("Re-Visit");
   const [issueRemarks, setIssueRemarks] = useState("");
+  const [planDocUrls, setPlanDocUrls] = useState([]);
   const [teamsList, setTeamsList] = useState([]);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
@@ -228,6 +230,7 @@ export default function IMIssuesRisks() {
         access_period: accessPeriod,
         visit_type: visitType || "Re-Visit",
         issue_remarks: issueRemarks || undefined,
+        plan_documents: planDocUrls.length ? JSON.stringify(planDocUrls) : undefined,
       });
       setSelected(new Set());
       setShowModal(false);
@@ -277,7 +280,7 @@ export default function IMIssuesRisks() {
         )}
         <div className="toolbar-actions">
           {selected.size > 0 && <span style={{ fontSize: "0.78rem", color: "#64748b" }}>{selected.size} selected</span>}
-          <button className="btn-primary" disabled={selected.size === 0} onClick={() => setShowModal(true)}>
+          <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setPlanDocUrls([]); setShowModal(true); }}>
             Create Plans ({selected.size})
           </button>
         </div>
@@ -403,6 +406,12 @@ export default function IMIssuesRisks() {
                 style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.84rem", resize: "vertical" }}
               />
             </div>
+            <AttachmentsSection
+              urls={planDocUrls}
+              onChange={setPlanDocUrls}
+              title="Planning Documents"
+              noCamera
+            />
             {createError && <div className="notice error" style={{ marginTop: 10 }}>{createError}</div>}
             <div style={{ marginTop: 14 }}>
               <button className="btn-primary" disabled={creating} onClick={createPlansFromIssues}>{creating ? "Creating..." : "Create"}</button>

@@ -17,6 +17,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import RescheduleModal from "../../components/RescheduleModal";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
+import AttachmentsSection, { parseFileList } from "../../components/AttachmentsSection";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -97,6 +98,9 @@ export default function IMPlanning() {
   const [extendBusy, setExtendBusy] = useState(false);
   const [extendError, setExtendError] = useState(null);
 
+  const [planDocUrls, setPlanDocUrls] = useState([]);
+  const [planDocSaving, setPlanDocSaving] = useState(false);
+
   const [refreshKey, setRefreshKey] = useState(0);
 
   const loadPlans = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -113,6 +117,10 @@ export default function IMPlanning() {
       if (!cancelled) setRescheduleLogsLoading(false);
     });
     return () => { cancelled = true; };
+  }, [detailRow]);
+
+  useEffect(() => {
+    setPlanDocUrls(parseFileList(detailRow?.plan_documents));
   }, [detailRow]);
 
   useEffect(() => {
@@ -272,6 +280,16 @@ export default function IMPlanning() {
     setCancelError(null);
     setCancelReason("");
     setCancelTarget(p);
+  }
+
+  async function handlePlanDocsChange(newUrls) {
+    setPlanDocUrls(newUrls);
+    if (!detailRow) return;
+    setPlanDocSaving(true);
+    try {
+      await pmApi.saveRolloutPlanDocuments(detailRow.name, newUrls);
+    } catch { /* non-fatal */ }
+    finally { setPlanDocSaving(false); }
   }
 
   async function submitCancelPlan() {
@@ -719,6 +737,12 @@ export default function IMPlanning() {
                 poDispatch={detailRow.po_dispatch}
                 rolloutPlan={detailRow.name}
                 currentPlanName={detailRow.name}
+              />
+              <AttachmentsSection
+                urls={planDocUrls}
+                onChange={handlePlanDocsChange}
+                title={planDocSaving ? "Planning Documents (saving…)" : "Planning Documents"}
+                noCamera
               />
               <div style={{ marginTop: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>

@@ -3316,6 +3316,8 @@ def create_rollout_plans(payload):
             doc.issue_category = str(payload["issue_category"])[:140]
         if payload.get("issue_remarks") and hasattr(doc, "issue_remarks"):
             doc.issue_remarks = str(payload["issue_remarks"])[:2000]
+        if payload.get("plan_documents") and frappe.db.has_column("Rollout Plan", "plan_documents"):
+            doc.plan_documents = str(payload["plan_documents"])[:8000]
         if hasattr(doc, "region_type"):
             doc.region_type = dispatch.get("region_type") or region_type_from_center_area(
                 dispatch.get("center_area")
@@ -3755,6 +3757,8 @@ def get_rollout_plan_details(rollout_plan):
         rp_cols_list.append("qc_required")
     if frappe.db.has_column("Rollout Plan", "ciag_required"):
         rp_cols_list.append("ciag_required")
+    if frappe.db.has_column("Rollout Plan", "plan_documents"):
+        rp_cols_list.append("plan_documents")
     rp_cols = ", ".join(rp_cols_list)
     rp_rows = frappe.db.sql(
         f"SELECT {rp_cols} FROM `tabRollout Plan` WHERE name = %s LIMIT 1",
@@ -4738,6 +4742,8 @@ def list_execution_monitor_rows(filters=None, limit=500):
         rp_fields.append("access_time")
     if frappe.db.has_column("Rollout Plan", "access_period"):
         rp_fields.append("access_period")
+    if frappe.db.has_column("Rollout Plan", "plan_documents"):
+        rp_fields.append("plan_documents")
     lim = _portal_row_limit(limit, 500)
 
     wheres = ["1=1"]
@@ -5050,6 +5056,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 ),
                 "access_time": str(p.access_time) if p.get("access_time") else None,
                 "access_period": p.get("access_period") or None,
+                "plan_documents": p.get("plan_documents") or None,
                 "timer_start_ms": timer_start_map.get(p.name),
             }
         )
@@ -6807,6 +6814,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                rp.cancel_requested_at, rp.cancel_responded_at, rp.cancel_pm_remark,
                IFNULL(rp.reschedule_count, 0) AS reschedule_count,
                rp.access_time, rp.access_period,
+               rp.plan_documents,
                (SELECT MIN(etl.start_time) FROM `tabExecution Time Log` etl
                 INNER JOIN `tabRollout Plan` rp2 ON rp2.name = etl.rollout_plan
                 INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
@@ -8542,6 +8550,26 @@ def _frappe_dt_to_epoch_ms(value):
     except Exception:
         pass
     return int(get_datetime(value).timestamp() * 1000)
+
+
+@frappe.whitelist()
+def save_rollout_plan_documents(rollout_plan, documents):
+    """Save newline-separated file URLs to Rollout Plan.plan_documents."""
+    rollout_plan = (rollout_plan or "").strip()
+    if not rollout_plan:
+        frappe.throw("rollout_plan is required")
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+    if not (
+        "INET IM" in roles or "INET Admin" in roles
+        or "System Manager" in roles or "Administrator" in roles
+    ):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if isinstance(documents, list):
+        documents = "\n".join(str(u) for u in documents if u)
+    frappe.db.set_value("Rollout Plan", rollout_plan, "plan_documents", documents or "", update_modified=False)
+    frappe.db.commit()
+    return {"ok": True}
 
 
 def _auto_create_daily_execution(rollout_plan, team_id):

@@ -394,6 +394,8 @@ export const pmApi = {
     call("inet_app.api.command_center.get_running_execution_timer"),
   getServerNow:               () =>
     call("inet_app.api.command_center.get_server_now"),
+  saveRolloutPlanDocuments:   (rollout_plan, documents) =>
+    call("inet_app.api.command_center.save_rollout_plan_documents", { rollout_plan, documents: JSON.stringify(documents) }),
   listExecutionTimeLogs:      (filters, limit, offset) =>
     call("inet_app.api.command_center.list_execution_time_logs", {
       filters: JSON.stringify(filters || {}),

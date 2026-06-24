@@ -41,7 +41,8 @@
   "cancel_pm_remark",
   "section_reschedule",
   "reschedule_count",
-  "reschedule_log"
+  "reschedule_log",
+  "plan_documents"
  ],
  "fields": [
   {
@@ -273,6 +274,11 @@
    "fieldtype": "Table",
    "label": "Reschedule Log",
    "options": "Rollout Plan Reschedule Log"
+  },
+  {
+   "fieldname": "plan_documents",
+   "fieldtype": "Small Text",
+   "label": "Plan Documents"
   }
  ],
  "index_web_pages_for_search": 1,

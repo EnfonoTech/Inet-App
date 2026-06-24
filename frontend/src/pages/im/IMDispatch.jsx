@@ -10,6 +10,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import AttachmentsSection from "../../components/AttachmentsSection";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
@@ -197,6 +198,7 @@ export default function IMDispatch() {
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [visitType, setVisitType] = useState("Execution");
   const [managerRemark, setManagerRemark] = useState("");
+  const [planDocUrls, setPlanDocUrls] = useState([]);
   const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
   const [createError, setCreateError] = useState(null);
@@ -572,6 +574,7 @@ export default function IMDispatch() {
     setQcRequired(true);
     setCiagRequired(true);
     setManagerRemark("");
+    setPlanDocUrls([]);
     setShowModal(true);
   }
 
@@ -616,6 +619,7 @@ export default function IMDispatch() {
         ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType,
         manager_remark: managerRemark || undefined,
+        plan_documents: planDocUrls.length ? JSON.stringify(planDocUrls) : undefined,
       });
       const count = result?.created ?? dispatches.length;
       setSuccessMsg(`Created ${count} rollout plan${count !== 1 ? "s" : ""}. View them under Planning.`);
@@ -1061,6 +1065,12 @@ export default function IMDispatch() {
             style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: "0.86rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical", minHeight: 60 }}
           />
         </div>
+        <AttachmentsSection
+          urls={planDocUrls}
+          onChange={setPlanDocUrls}
+          title="Planning Documents"
+          noCamera
+        />
       </Modal>
 
       <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.poid ? ` · ${detailRow.poid}` : detailRow?.name ? ` · ${detailRow.name}` : ""}`} width={760}>
