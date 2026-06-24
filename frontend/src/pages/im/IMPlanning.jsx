@@ -46,7 +46,7 @@ function DetailItem({ label, value }) {
 
 function canImExecuteFromPlan(status) {
   const s = (status || "").trim();
-  return ["Planned", "In Execution", "Planning with Issue", "Ready for Execution", "Overdue"].includes(s);
+  return ["Planned", "In Execution", "Planning with Issue", "Ready for Execution", "Overdue", "Not Attended"].includes(s);
 }
 
 /** All selected plans that are in an executable status. */
@@ -60,7 +60,7 @@ export default function IMPlanning() {
   const { rowLimit } = useTableRowLimit();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState(["Planned", "Overdue"]);
+  const [statusFilter, setStatusFilter] = useState(["Planned", "Overdue", "Not Attended"]);
   const [visitFilter, setVisitFilter] = useState([]);
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState([]);
@@ -203,10 +203,12 @@ export default function IMPlanning() {
   const skippedCount = selected.size - eligiblePlans.length;
 
   const reschedulablePlans = useMemo(
-    () => plans.filter((p) => selected.has(p.name) && p.plan_status === "Overdue"),
+    () => plans.filter((p) => selected.has(p.name) && ["Overdue", "Not Attended"].includes(p.plan_status)),
     [plans, selected]
   );
-  const rescheduleDefaultReason = "Plan Overdue";
+  const rescheduleDefaultReason = reschedulablePlans.some((p) => p.plan_status === "Not Attended")
+    ? "TL Not Attended"
+    : "Plan Overdue";
 
   function recordExecutionTitle() {
     if (selected.size === 0) return "Select plans using the checkboxes";
@@ -316,7 +318,7 @@ export default function IMPlanning() {
               border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,
             }}
           />
-          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={["Planned", "Planning with Issue", "In Execution", "Overdue", "Completed", "Cancelled"]} placeholder="All Statuses" minWidth={150} />
+          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={["Planned", "Planning with Issue", "In Execution", "Overdue", "Not Attended", "Completed", "Cancelled"]} placeholder="All Statuses" minWidth={150} />
           <SearchableSelect multi value={visitFilter} onChange={setVisitFilter} options={visitTypes} placeholder="All Visit Types" minWidth={160} />
           <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
           <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />

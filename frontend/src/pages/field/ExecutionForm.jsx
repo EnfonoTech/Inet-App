@@ -9,7 +9,7 @@ import {
   makeSkewMs,
 } from "../../utils/executionTimerDisplay";
 import { defaultAchievedQtyFromPlan } from "../../utils/planDefaultQty";
-import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
+import { TL_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import IMNoteCallout from "../../components/IMNoteCallout";
 
@@ -702,6 +702,10 @@ export default function ExecutionForm() {
     if (!id) { setSubmitError("No rollout plan selected."); return; }
     setSubmitting(true); setSubmitError(null);
     try {
+      // "Not Attended" — no execution happened, mark plan directly, skip DE creation.
+      if (execStatus === "Not Attended") {
+        await pmApi.markPlanNotAttended(id, buildTlRemark());
+      } else {
       // Field (Team Lead) submits tl_status, achieved qty, GPS, photos,
       // remarks, and — when marking Completed — QC + CIAG in one shot.
       // The IM's confirmation is a separate edit (sets execution_status)
@@ -737,8 +741,9 @@ export default function ExecutionForm() {
       if (tlRemarkPicked.size > 0) {
         pmApi.bumpFieldRemarkTemplateUsage(Array.from(tlRemarkPicked)).catch(() => {});
       }
+      } // end else (not "Not Attended")
       // Create expense claim if lines were added — same submit, one claim per execution.
-      if (expenseLines.length > 0 && plan?.po_dispatch) {
+      if (execStatus !== "Not Attended" && expenseLines.length > 0 && plan?.po_dispatch) {
         try {
           await pmApi.createProjectExpenseClaim({
             date: new Date().toISOString().slice(0, 10),
@@ -1155,7 +1160,9 @@ export default function ExecutionForm() {
                 onChange={(e) => setExecStatus(e.target.value)}
                 required
               >
-                {EXECUTION_STATUS_OPTIONS.map((s) => (
+                {TL_STATUS_OPTIONS.filter(
+                  (s) => s !== "Not Attended" || parseFloat(existingExec?.achieved_qty || 0) === 0
+                ).map((s) => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>

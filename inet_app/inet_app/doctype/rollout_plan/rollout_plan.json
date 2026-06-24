@@ -23,6 +23,7 @@
   "completion_pct",
   "plan_status",
   "issue_status",
+  "not_attended_remark",
   "section_teams",
   "teams",
   "plan_team_members",
@@ -154,13 +155,19 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Planned\nPlanning with Issue\nIn Execution\nOverdue\nCompleted\nCancelled"
+   "options": "Planned\nPlanning with Issue\nIn Execution\nOverdue\nNot Attended\nCompleted\nCancelled"
   },
   {
    "fieldname": "issue_status",
    "fieldtype": "Select",
    "label": "Issue Status",
    "options": "\nReported\nRe-Planned\nIn Execution\nResolved",
+   "read_only": 1
+  },
+  {
+   "fieldname": "not_attended_remark",
+   "fieldtype": "Small Text",
+   "label": "Not Attended Reason",
    "read_only": 1
   },
   {

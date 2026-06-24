@@ -552,10 +552,22 @@
   border: 1px solid var(--green-border);
 }
 
+.status-badge.planning-with-issue {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
 .status-badge.overdue {
   background: var(--red-bg);
   color: var(--red);
   border: 1px solid var(--red-border);
+}
+
+.status-badge.not-attended {
+  background: #fdf4ff;
+  color: #7e22ce;
+  border: 1px solid #e9d5ff;
 }
 
 .status-badge.cancelled {

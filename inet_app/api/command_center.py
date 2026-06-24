@@ -3465,9 +3465,13 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         r["tl_status"] == "Postponed" or r["execution_status"] == "Postponed"
         for r in de_rows
     )
+    any_not_attended = any(r["tl_status"] == "Not Attended" for r in de_rows)
     any_in_progress_like = any(
-        r["execution_status"] in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE
-        or r["tl_status"] in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE
+        (
+            r["execution_status"] in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE
+            or r["tl_status"] in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE
+        )
+        and r["tl_status"] != "Not Attended"
         for r in de_rows
     )
 
@@ -3477,6 +3481,8 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         effective = "Cancelled"
     elif any_postponed:
         effective = "Postponed"
+    elif any_not_attended:
+        effective = "Not Attended"
     elif any_in_progress_like:
         effective = "In Progress"
     else:
@@ -3525,6 +3531,8 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         updates["plan_status"] = "Cancelled"
     elif effective == "Postponed":
         updates["plan_status"] = "Planned"
+    elif effective == "Not Attended":
+        updates["plan_status"] = "Not Attended"
 
     if updates:
         frappe.db.set_value("Rollout Plan", rollout_plan, updates)
@@ -7896,7 +7904,7 @@ def get_field_team_dashboard(team_id=None):
         WHERE {team_match_clause}
         AND rp.plan_date = %s
         -- Hard excludes (plan-wide terminal states the team can't act on).
-        AND rp.plan_status NOT IN ('Cancelled', 'Planning with Issue')
+        AND rp.plan_status NOT IN ('Cancelled', 'Planning with Issue', 'Not Attended')
         -- Per-team actionability: hide when THIS team's own DE is done.
         AND NOT EXISTS (
           SELECT 1 FROM `tabDaily Execution` de
@@ -11680,3 +11688,26 @@ def admin_update_team(name, payload=None):
         "members_replaced": members_changed,
         "member_count": len(clean) if members_changed else None,
     }
+
+
+@frappe.whitelist()
+def mark_plan_not_attended(rollout_plan, reason=None):
+    """
+    TL marks a plan as Not Attended (team did not show up).
+    Sets plan_status = 'Not Attended' and stores the reason directly on the
+    Rollout Plan. No Daily Execution record is created or updated.
+    """
+    if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
+        frappe.throw("Invalid Rollout Plan")
+
+    cur_status = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
+    if cur_status in ("Completed", "Cancelled"):
+        frappe.throw(f"Cannot mark as Not Attended: plan is already {cur_status}.")
+
+    updates = {"plan_status": "Not Attended"}
+    if frappe.db.has_column("Rollout Plan", "not_attended_remark"):
+        updates["not_attended_remark"] = str(reason or "")[:500]
+
+    frappe.db.set_value("Rollout Plan", rollout_plan, updates, update_modified=True)
+    frappe.db.commit()
+    return {"ok": True, "plan_status": "Not Attended"}

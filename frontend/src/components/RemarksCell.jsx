@@ -122,12 +122,13 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
   const editable = canEditRemark(role, tone);
   const clickable = editable && !!poDispatch;
   const [open, setOpen] = useState(false);
+  const [savedValue, setSavedValue] = useState(value || "");
   const [draft, setDraft] = useState(value || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const textareaRef = useRef(null);
 
-  useEffect(() => { setDraft(value || ""); }, [value]);
+  useEffect(() => { setSavedValue(value || ""); setDraft(value || ""); }, [value]);
 
   useEffect(() => {
     if (!open) return;
@@ -137,7 +138,7 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
     return () => document.removeEventListener("keydown", onKey);
   }, [open, busy]);
 
-  const text = (value || "").toString().trim();
+  const text = (savedValue || "").toString().trim();
   const t = TONES[tone] || TONES.general;
   const remarkType = tone;
   // Multiple remarks (TL flow) are stored newline-separated. The
@@ -153,6 +154,7 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
     setError(null);
     try {
       await pmApi.updatePoRemark(poDispatch, remarkType, draft);
+      setSavedValue(draft);
       setOpen(false);
       onSaved?.(draft);
     } catch (err) {
@@ -292,11 +294,11 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
               <button
                 type="button"
                 onClick={doSave}
-                disabled={busy || draft === (value || "")}
+                disabled={busy || draft === savedValue}
                 style={{
                   padding: "7px 18px", fontSize: "0.82rem", borderRadius: 7,
                   border: "1px solid #2563eb",
-                  background: busy || draft === (value || "") ? "#94a3b8" : "#2563eb",
+                  background: busy || draft === savedValue ? "#94a3b8" : "#2563eb",
                   color: "#fff", cursor: busy ? "default" : "pointer", fontWeight: 700,
                 }}
               >

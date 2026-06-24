@@ -230,6 +230,11 @@ export const pmApi = {
     }),
   getRescheduleLogs: (rolloutPlan) =>
     call("inet_app.api.command_center.get_reschedule_logs", { rollout_plan: rolloutPlan }),
+  markPlanNotAttended: (rolloutPlan, reason) =>
+    call("inet_app.api.command_center.mark_plan_not_attended", {
+      rollout_plan: rolloutPlan,
+      reason: reason || "",
+    }),
   createIMDummyPODispatch: (payload) =>
     call("inet_app.api.command_center.create_im_dummy_po_dispatch", {
       payload: JSON.stringify(payload || {}),
