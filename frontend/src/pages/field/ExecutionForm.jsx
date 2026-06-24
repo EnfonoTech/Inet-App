@@ -400,7 +400,6 @@ export default function ExecutionForm() {
   const [submittedPlanStatus, setSubmittedPlanStatus] = useState(null);
 
   const [runningHere, setRunningHere] = useState(null);
-  const [runningElsewhere, setRunningElsewhere] = useState(null);
   const [timerBusy, setTimerBusy] = useState(false);
   const [timerError, setTimerError] = useState(null);
   const [, timerTick] = useState(0);
@@ -429,21 +428,20 @@ export default function ExecutionForm() {
   }, []);
 
   useEffect(() => {
-    const src = runningHere || runningElsewhere;
-    if (src?.server_time_ms != null) timerSkewMsRef.current = makeSkewMs(src.server_time_ms);
-  }, [runningHere?.log_name, runningElsewhere?.log_name, runningHere?.server_time_ms, runningElsewhere?.server_time_ms]);
+    if (runningHere?.server_time_ms != null) timerSkewMsRef.current = makeSkewMs(runningHere.server_time_ms);
+  }, [runningHere?.log_name, runningHere?.server_time_ms]);
 
   useEffect(() => {
     if (!id || !isFieldPortal || !teamId) return;
     let cancelled = false;
     (async () => {
       try {
-        const r = await pmApi.getRunningExecutionTimer();
+        const res = await pmApi.getRunningExecutionTimer();
         if (cancelled) return;
-        if (!r?.log_name) { setRunningHere(null); setRunningElsewhere(null); return; }
-        if (r.rollout_plan === id) { setRunningHere(r); setRunningElsewhere(null); }
-        else { setRunningHere(null); setRunningElsewhere(r); }
-      } catch { if (!cancelled) { setRunningHere(null); setRunningElsewhere(null); } }
+        const list = Array.isArray(res) ? res : (res?.log_name ? [res] : []);
+        const here = list.find((r) => r.rollout_plan === id) || null;
+        setRunningHere(here);
+              } catch { if (!cancelled) { setRunningHere(null); ; } }
     })();
     return () => { cancelled = true; };
   }, [id, teamId, success, isFieldPortal]);
@@ -663,11 +661,13 @@ export default function ExecutionForm() {
     try {
       await pmApi.startExecutionTimer(id);
       window.dispatchEvent(new Event("inet-timer-changed"));
-      const [r, refreshed] = await Promise.all([
+      const [res, refreshed] = await Promise.all([
         pmApi.getRunningExecutionTimer(),
         pmApi.getRolloutPlanDetails(id),
       ]);
-      if (r?.rollout_plan === id) { setRunningHere(r); setRunningElsewhere(null); }
+      const list = Array.isArray(res) ? res : (res?.log_name ? [res] : []);
+      const here = list.find((r) => r.rollout_plan === id) || null;
+      setRunningHere(here); ;
       if (refreshed) setPlan(refreshed);
     } catch (e) { setTimerError(e.message || "Could not start timer"); }
     finally { setTimerBusy(false); }
@@ -678,7 +678,7 @@ export default function ExecutionForm() {
     setTimerBusy(true); setTimerError(null);
     try {
       await pmApi.stopExecutionTimer(logName);
-      setRunningHere(null); setRunningElsewhere(null);
+      setRunningHere(null); ;
       window.dispatchEvent(new Event("inet-timer-changed"));
     } catch (e) { setTimerError(e.message || "Could not stop timer"); }
     finally { setTimerBusy(false); }
@@ -989,24 +989,6 @@ export default function ExecutionForm() {
                       onClick={() => handleStopTimer(runningHere.log_name)}
                     >
                       <IconStop /> {timerBusy ? "Stopping…" : "Stop Timer"}
-                    </button>
-                  </div>
-                </>
-              ) : runningElsewhere ? (
-                <>
-                  <div className="exec-timer-label">Timer</div>
-                  <div className="exec-timer-elsewhere">
-                    A timer is running on plan{" "}
-                    <span style={{ fontFamily: "monospace" }}>{runningElsewhere.rollout_plan}</span>.
-                  </div>
-                  <div className="exec-timer-actions">
-                    <button
-                      type="button"
-                      className="exec-timer-stop-btn"
-                      disabled={timerBusy}
-                      onClick={() => handleStopTimer(runningElsewhere.log_name)}
-                    >
-                      <IconStop /> Stop that timer
                     </button>
                   </div>
                 </>

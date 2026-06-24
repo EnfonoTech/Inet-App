@@ -7,100 +7,49 @@ import {
   makeSkewMs,
 } from "../utils/executionTimerDisplay";
 
-export default function FieldGlobalTimerBar({ role }) {
+function SingleTimerStrip({ timer, onStop }) {
   const navigate = useNavigate();
-  const [running, setRunning] = useState(null);
   const [stopping, setStopping] = useState(false);
   const skewRef = useRef(0);
   const [, tick] = useState(0);
-  const baseElapsedRef = useRef(0);
-  const baseAtRef = useRef(0);
 
   useEffect(() => {
-    if (role !== "field") return;
-    let cancelled = false;
-
-    async function poll() {
-      try {
-        const r = await pmApi.getRunningExecutionTimer();
-        if (cancelled) return;
-        if (r?.log_name) {
-          if (r.server_time_ms != null) skewRef.current = makeSkewMs(r.server_time_ms);
-          if (typeof r.elapsed_seconds === "number") {
-            baseElapsedRef.current = r.elapsed_seconds;
-            baseAtRef.current = Date.now();
-          } else {
-            baseElapsedRef.current = 0;
-            baseAtRef.current = Date.now();
-          }
-          setRunning(r);
-        } else {
-          setRunning(null);
-        }
-      } catch {
-        if (!cancelled) setRunning(null);
-      }
-    }
-
-    poll();
-    const iv = setInterval(poll, 30000);
-    const onChanged = () => poll();
-    const onVis = () => { if (document.visibilityState === "visible") poll(); };
-    window.addEventListener("inet-timer-changed", onChanged);
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      cancelled = true;
-      clearInterval(iv);
-      window.removeEventListener("inet-timer-changed", onChanged);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [role]);
+    if (timer?.server_time_ms != null) skewRef.current = makeSkewMs(timer.server_time_ms);
+  }, [timer?.log_name, timer?.server_time_ms]);
 
   useEffect(() => {
-    if (!running?.log_name) return;
+    if (!timer?.log_name) return;
     const id = setInterval(() => tick((x) => x + 1), 1000);
     return () => clearInterval(id);
-  }, [running?.log_name]);
+  }, [timer?.log_name]);
 
   async function handleStop(e) {
     e.stopPropagation();
-    if (!running?.log_name || stopping) return;
+    if (stopping) return;
     setStopping(true);
     try {
-      await pmApi.stopExecutionTimer(running.log_name);
-      setRunning(null);
+      await pmApi.stopExecutionTimer(timer.log_name);
+      onStop(timer.log_name);
       window.dispatchEvent(new Event("inet-timer-changed"));
     } catch { /* ignore */ }
     finally { setStopping(false); }
   }
 
-  if (role !== "field" || !running?.log_name) return null;
+  const sec = timer?.start_time_ms != null
+    ? elapsedSecondsFromServerEpoch(timer.start_time_ms, skewRef.current)
+    : (timer?.elapsed_seconds ?? 0);
 
-  const sec =
-    running?.start_time_ms != null
-      ? elapsedSecondsFromServerEpoch(running.start_time_ms, skewRef.current)
-      : baseElapsedRef.current + Math.max(0, Math.floor((Date.now() - baseAtRef.current) / 1000));
-
-  const label = running.item_description || running.rollout_plan || "";
+  const label = timer.item_description || timer.rollout_plan || "";
 
   return (
     <div
       className="field-timer-strip"
-      onClick={() => navigate(`/field-execute/${encodeURIComponent(running.rollout_plan)}`)}
+      onClick={() => navigate(`/field-execute/${encodeURIComponent(timer.rollout_plan)}`)}
       title={`Go to execution · ${label}`}
     >
-      {/* Pulsing live dot */}
       <span className="field-timer-dot" />
-
-      {/* Clock */}
       <span className="field-timer-clock">{formatElapsedSeconds(sec)}</span>
-
-      {/* Description — fills available space */}
-      {label && (
-        <span className="field-timer-label">{label}</span>
-      )}
-
-      {/* Stop button */}
+      {label && <span className="field-timer-label">{label}</span>}
       <button
         type="button"
         className="field-timer-stop"
@@ -119,5 +68,50 @@ export default function FieldGlobalTimerBar({ role }) {
         )}
       </button>
     </div>
+  );
+}
+
+export default function FieldGlobalTimerBar({ role }) {
+  const [timers, setTimers] = useState([]);
+
+  useEffect(() => {
+    if (role !== "field") return;
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const res = await pmApi.getRunningExecutionTimer();
+        if (!cancelled) setTimers(Array.isArray(res) ? res : (res?.log_name ? [res] : []));
+      } catch {
+        if (!cancelled) setTimers([]);
+      }
+    }
+
+    poll();
+    const iv = setInterval(poll, 30000);
+    const onChanged = () => poll();
+    const onVis = () => { if (document.visibilityState === "visible") poll(); };
+    window.addEventListener("inet-timer-changed", onChanged);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+      window.removeEventListener("inet-timer-changed", onChanged);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [role]);
+
+  function handleStop(logName) {
+    setTimers((prev) => prev.filter((t) => t.log_name !== logName));
+  }
+
+  if (role !== "field" || timers.length === 0) return null;
+
+  return (
+    <>
+      {timers.map((t) => (
+        <SingleTimerStrip key={t.log_name} timer={t} onStop={handleStop} />
+      ))}
+    </>
   );
 }

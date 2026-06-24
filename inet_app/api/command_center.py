@@ -8603,14 +8603,15 @@ def start_execution_timer(rollout_plan):
 
     existing = frappe.get_all(
         "Execution Time Log",
-        filters={"user": user, "is_running": 1},
-        fields=["name", "rollout_plan"],
+        filters={"user": user, "rollout_plan": rollout_plan, "is_running": 1},
+        fields=["name"],
         limit=1,
         ignore_permissions=True,
     )
     if existing:
+        rp_label = rollout_plan
         frappe.throw(
-            f"You already have a running timer ({existing[0].name}). Stop it first."
+            f"A timer is already running for {rp_label} ({existing[0].name}). Stop it first."
         )
 
     log = frappe.new_doc("Execution Time Log")
@@ -8675,51 +8676,60 @@ def stop_execution_timer(log_name):
 
 @frappe.whitelist()
 def get_running_execution_timer():
-    """Current user's running Execution Time Log, if any."""
+    """All running Execution Time Logs for the current user (array)."""
     user = frappe.session.user
     if not user or user == "Guest":
-        return None
+        return []
 
     running = frappe.get_all(
         "Execution Time Log",
         filters={"user": user, "is_running": 1},
         fields=["name", "rollout_plan", "start_time", "team_id"],
-        limit=1,
+        order_by="start_time asc",
         ignore_permissions=True,
     )
     if not running:
-        return None
-    r = running[0]
-    desc = frappe.db.get_value(
-        "Rollout Plan",
-        r.rollout_plan,
-        ["po_dispatch"],
-        as_dict=True,
-    )
-    item_hint = ""
-    if desc and desc.po_dispatch:
-        item_hint = frappe.db.get_value("PO Dispatch", desc.po_dispatch, "item_description") or ""
+        return []
 
     server_now = now_datetime()
-    elapsed_seconds = None
-    try:
-        now_ms = _frappe_dt_to_epoch_ms(server_now)
+    server_now_ms = _frappe_dt_to_epoch_ms(server_now)
+    server_time_str = str(server_now)
+
+    # Batch-fetch item descriptions to avoid N+1
+    plan_names = list({r.rollout_plan for r in running if r.rollout_plan})
+    dispatch_map = {}
+    if plan_names:
+        ph = ", ".join(["%s"] * len(plan_names))
+        rows = frappe.db.sql(
+            f"SELECT rp.name, pd.item_description FROM `tabRollout Plan` rp "
+            f"LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+            f"WHERE rp.name IN ({ph})",
+            tuple(plan_names),
+            as_dict=True,
+        )
+        dispatch_map = {r.name: (r.item_description or "") for r in rows}
+
+    result = []
+    for r in running:
         st_ms = _frappe_dt_to_epoch_ms(r.start_time)
-        if now_ms is not None and st_ms is not None:
-            elapsed_seconds = int(max(0, (now_ms - st_ms) // 1000))
-    except Exception:
         elapsed_seconds = None
-    return {
-        "log_name": r.name,
-        "rollout_plan": r.rollout_plan,
-        "start_time": str(r.start_time) if r.start_time else None,
-        "server_time": str(server_now),
-        "start_time_ms": _frappe_dt_to_epoch_ms(r.start_time),
-        "server_time_ms": _frappe_dt_to_epoch_ms(server_now),
-        "elapsed_seconds": elapsed_seconds,
-        "team_id": r.team_id,
-        "item_description": item_hint,
-    }
+        try:
+            if server_now_ms is not None and st_ms is not None:
+                elapsed_seconds = int(max(0, (server_now_ms - st_ms) // 1000))
+        except Exception:
+            pass
+        result.append({
+            "log_name": r.name,
+            "rollout_plan": r.rollout_plan,
+            "start_time": str(r.start_time) if r.start_time else None,
+            "server_time": server_time_str,
+            "start_time_ms": st_ms,
+            "server_time_ms": server_now_ms,
+            "elapsed_seconds": elapsed_seconds,
+            "team_id": r.team_id,
+            "item_description": dispatch_map.get(r.rollout_plan, ""),
+        })
+    return result
 
 
 @frappe.whitelist()

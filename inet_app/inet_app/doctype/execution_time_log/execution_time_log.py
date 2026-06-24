@@ -14,10 +14,12 @@ class ExecutionTimeLog(Document):
     def validate_running_timer(self):
         if not self.is_running:
             return
+        # Allow multiple concurrent timers — one per rollout plan per user.
         existing = frappe.get_all(
             "Execution Time Log",
             filters={
                 "user": self.user,
+                "rollout_plan": self.rollout_plan,
                 "is_running": 1,
                 "name": ["!=", self.name or ""],
             },
@@ -26,7 +28,7 @@ class ExecutionTimeLog(Document):
         )
         if existing:
             frappe.throw(
-                f"You already have a running timer ({existing[0].name}). Stop it before starting a new one."
+                f"A timer is already running for this plan ({existing[0].name}). Stop it first."
             )
 
     def calculate_duration(self):

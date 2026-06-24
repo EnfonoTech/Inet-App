@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
@@ -85,9 +85,8 @@ export default function Timesheet() {
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(null);
+  const [runningTimers, setRunningTimers] = useState([]);
   const [, tick] = useState(0);
-  const timerSkewMsRef = useRef(0);
 
   const [planned, setPlanned] = useState([]);
   const [manualPlan, setManualPlan] = useState("");
@@ -105,23 +104,17 @@ export default function Timesheet() {
   function loadLogs() { setRefreshKey((k) => k + 1); }
 
   useEffect(() => {
-    if (!running?.log_name) return;
+    if (runningTimers.length === 0) return;
     const id = setInterval(() => tick((x) => x + 1), 1000);
     return () => clearInterval(id);
-  }, [running?.log_name]);
-
-  useEffect(() => {
-    if (running?.server_time_ms != null) timerSkewMsRef.current = makeSkewMs(running.server_time_ms);
-  }, [running?.log_name, running?.server_time_ms]);
+  }, [runningTimers.length]);
 
   async function refreshRunning() {
     try {
-      const r = await pmApi.getRunningExecutionTimer();
-      if (r?.log_name && r.start_time_ms != null && r.server_time_ms != null) {
-        timerSkewMsRef.current = makeSkewMs(r.server_time_ms);
-        setRunning(r);
-      } else { setRunning(null); }
-    } catch { setRunning(null); }
+      const res = await pmApi.getRunningExecutionTimer();
+      const list = Array.isArray(res) ? res : (res?.log_name ? [res] : []);
+      setRunningTimers(list);
+    } catch { setRunningTimers([]); }
   }
 
   useEffect(() => {
@@ -160,12 +153,12 @@ export default function Timesheet() {
     }).catch(() => setPlanned([]));
   }, [teamId]);
 
-  async function stopRunning() {
-    if (!running?.log_name) return;
+  async function stopRunning(logName) {
+    if (!logName) return;
     setError(null);
     try {
-      await pmApi.stopExecutionTimer(running.log_name);
-      setRunning(null);
+      await pmApi.stopExecutionTimer(logName);
+      setRunningTimers((prev) => prev.filter((t) => t.log_name !== logName));
       window.dispatchEvent(new Event("inet-timer-changed"));
       loadLogs();
     } catch (e) { setError(e.message || "Stop failed"); }
@@ -223,37 +216,39 @@ export default function Timesheet() {
         </div>
       )}
 
-      {/* ── Running timer card ──────────────────────────────── */}
-      {running && (
-        <div style={{ padding: "0 14px 12px" }}>
-          <div className="field-running-timer-card">
-            <div className="field-running-timer-info">
-              <div className="field-running-timer-label">
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", animation: "timer-pulse 1.2s ease-in-out infinite", display: "inline-block" }} />
-                Running Timer
+      {/* ── Running timer cards ─────────────────────────────── */}
+      {runningTimers.length > 0 && (
+        <div style={{ padding: "0 14px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+          {runningTimers.map((timer) => (
+            <div key={timer.log_name} className="field-running-timer-card">
+              <div className="field-running-timer-info">
+                <div className="field-running-timer-label">
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", animation: "timer-pulse 1.2s ease-in-out infinite", display: "inline-block" }} />
+                  Running Timer
+                </div>
+                <div className="field-running-timer-clock">
+                  {formatElapsedSeconds(
+                    elapsedSecondsFromServerEpoch(timer.start_time_ms, makeSkewMs(timer.server_time_ms))
+                  )}
+                </div>
+                <div className="field-running-timer-plan">
+                  {timer.rollout_plan}
+                  {timer.item_description ? ` · ${timer.item_description}` : ""}
+                </div>
               </div>
-              <div className="field-running-timer-clock">
-                {formatElapsedSeconds(
-                  elapsedSecondsFromServerEpoch(running.start_time_ms, timerSkewMsRef.current)
-                )}
-              </div>
-              <div className="field-running-timer-plan">
-                {running.rollout_plan}
-                {running.item_description ? ` · ${running.item_description}` : ""}
-              </div>
+              <button
+                type="button"
+                style={{
+                  background: "#dc2626", border: "none", borderRadius: "var(--radius)",
+                  color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: "0.85rem",
+                  cursor: "pointer", flexShrink: 0,
+                }}
+                onClick={() => stopRunning(timer.log_name)}
+              >
+                Stop
+              </button>
             </div>
-            <button
-              type="button"
-              style={{
-                background: "#dc2626", border: "none", borderRadius: "var(--radius)",
-                color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: "0.85rem",
-                cursor: "pointer", flexShrink: 0,
-              }}
-              onClick={stopRunning}
-            >
-              Stop
-            </button>
-          </div>
+          ))}
         </div>
       )}
 
