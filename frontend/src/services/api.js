@@ -230,6 +230,12 @@ export const pmApi = {
     }),
   getRescheduleLogs: (rolloutPlan) =>
     call("inet_app.api.command_center.get_reschedule_logs", { rollout_plan: rolloutPlan }),
+  extendPlanEndDate: (rolloutPlan, newEndDate, imNote) =>
+    call("inet_app.api.command_center.extend_plan_end_date", {
+      rollout_plan: rolloutPlan,
+      new_end_date: newEndDate,
+      im_note: imNote || "",
+    }),
   markPlanNotAttended: (rolloutPlan, reason) =>
     call("inet_app.api.command_center.mark_plan_not_attended", {
       rollout_plan: rolloutPlan,

@@ -27,7 +27,7 @@
    "fieldname": "reason",
    "fieldtype": "Select",
    "label": "Reason",
-   "options": "TL Not Attended\nExecution Cancelled\nExecution Postponed\nExecution on Hold\nPlan Overdue\nOther"
+   "options": "TL Not Attended\nExecution Cancelled\nExecution Postponed\nExecution on Hold\nPlan Overdue\nEnd Date Extension\nOther"
   },
   {
    "fieldname": "tl_status_at_time",

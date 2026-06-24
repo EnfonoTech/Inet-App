@@ -162,6 +162,8 @@ export default function IMExecution() {
   const [reopenBusy, setReopenBusy] = useState(false);
   const [reopenErr, setReopenErr] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
+  const [detailRescheduleLogs, setDetailRescheduleLogs] = useState(null);
+  const [detailRescheduleLoading, setDetailRescheduleLoading] = useState(false);
   const [qcFor, setQcFor] = useState(null);
   const [qcDecision, setQcDecision] = useState("Pass");
   const [qcIssueCategory, setQcIssueCategory] = useState("");
@@ -199,6 +201,11 @@ export default function IMExecution() {
   const [bulkExecBusy, setBulkExecBusy] = useState(false);
   const [bulkExecErr, setBulkExecErr] = useState(null);
   const [wdConfirmOpen, setWdConfirmOpen] = useState(false);
+  const [extendOpen, setExtendOpen] = useState(false);
+  const [extendNewDate, setExtendNewDate] = useState("");
+  const [extendNote, setExtendNote] = useState("");
+  const [extendBusy, setExtendBusy] = useState(false);
+  const [extendError, setExtendError] = useState(null);
 
   const [mapForRow, setMapForRow] = useState(null);
   const [mapLines, setMapLines] = useState([]);
@@ -312,6 +319,18 @@ export default function IMExecution() {
 
   const reschedulableExecs = useMemo(
     () => selectedRows.filter((e) => !e.work_done && isRescheduleExec(e)),
+    [selectedRows],
+  );
+  const extendableExecs = useMemo(
+    () => {
+      const seenPlans = new Set();
+      return selectedRows.filter((e) => {
+        if (!e.rollout_plan || ["Completed", "Cancelled"].includes(e.plan_status)) return false;
+        if (seenPlans.has(e.rollout_plan)) return false;
+        seenPlans.add(e.rollout_plan);
+        return true;
+      });
+    },
     [selectedRows],
   );
   const bulkRescheduleDefaultReason = useMemo(() => {
@@ -553,6 +572,18 @@ export default function IMExecution() {
     }).finally(() => { if (!cancelled) setMapLinesLoading(false); });
     return () => { cancelled = true; };
   }, [mapForRow]);
+
+  useEffect(() => {
+    if (!detailRow?.rollout_plan) { setDetailRescheduleLogs(null); return; }
+    let cancelled = false;
+    setDetailRescheduleLoading(true);
+    pmApi.getRescheduleLogs(detailRow.rollout_plan).then((res) => {
+      if (!cancelled) setDetailRescheduleLogs(Array.isArray(res) ? res : (res?.logs || []));
+    }).catch(() => {
+      if (!cancelled) setDetailRescheduleLogs([]);
+    }).finally(() => { if (!cancelled) setDetailRescheduleLoading(false); });
+    return () => { cancelled = true; };
+  }, [detailRow?.rollout_plan]);
 
   async function submitMapDummy() {
     if (!mapForRow || !mapLineId) return;
@@ -984,6 +1015,15 @@ export default function IMExecution() {
                 Reschedule ({reschedulableExecs.length})
               </button>
             )}
+            {extendableExecs.length > 0 && (
+              <button
+                type="button"
+                style={{ fontSize: "0.78rem", padding: "4px 12px", background: "#faf5ff", color: "#6d28d9", border: "1px solid #ddd6fe", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}
+                onClick={() => { setExtendNewDate(extendableExecs[0]?.plan_end_date || ""); setExtendNote(""); setExtendError(null); setExtendOpen(true); }}
+              >
+                Extend End Date ({extendableExecs.length})
+              </button>
+            )}
             <button type="button" className="btn-primary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
               disabled={wdBusy === "bulk"}
               onClick={() => setWdConfirmOpen(true)}>
@@ -1042,7 +1082,8 @@ export default function IMExecution() {
                   <th>PO</th>
                   <th>Team</th>
                   <th>IM</th>
-                  <th>Date</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Plan Period</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
                   <th>TL Status</th>
                   <th>Execution Status</th>
                   <th>Issue Category</th>
@@ -1091,7 +1132,12 @@ export default function IMExecution() {
                     <td>{e.po_no || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{e.team_name || e.team || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{e.im_full_name || e.dispatch_im || "—"}</td>
-                    <td>{e.execution_date}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {e.plan_end_date && e.plan_end_date !== e.plan_date
+                        ? `${e.plan_date} → ${e.plan_end_date}`
+                        : e.plan_date || "—"}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>{e.execution_date || "—"}</td>
                     <td>
                       <button
                         type="button"
@@ -1330,6 +1376,51 @@ export default function IMExecution() {
                 rolloutPlan={detailRow.rollout_plan}
                 currentPlanName={detailRow.rollout_plan}
               />
+              <div style={{ marginTop: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.05em" }}>Reschedule History</span>
+                  {detailRow.reschedule_count > 0 && (
+                    <span style={{ fontSize: "0.66rem", fontWeight: 700, color: "#7c3aed", background: "#ede9fe", border: "1px solid #c4b5fd", borderRadius: 999, padding: "1px 7px" }}>
+                      ↺ {detailRow.reschedule_count}
+                    </span>
+                  )}
+                </div>
+                {detailRescheduleLoading ? (
+                  <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>Loading…</div>
+                ) : !detailRescheduleLogs || detailRescheduleLogs.length === 0 ? (
+                  <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>No reschedules recorded.</div>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>From</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>To</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>Reason</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>TL Status</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>IM Note</th>
+                          <th style={{ textAlign: "left", padding: "4px 8px", color: "#64748b", fontWeight: 600 }}>By / At</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailRescheduleLogs.map((log, i) => (
+                          <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "5px 8px", color: "#64748b" }}>{log.original_date || "—"}</td>
+                            <td style={{ padding: "5px 8px", fontWeight: 600, color: "#0f172a" }}>{log.new_date || "—"}</td>
+                            <td style={{ padding: "5px 8px" }}>{log.reason || "—"}</td>
+                            <td style={{ padding: "5px 8px", color: "#64748b" }}>{log.tl_status_at_time || "—"}</td>
+                            <td style={{ padding: "5px 8px", color: "#475569", maxWidth: 160, wordBreak: "break-word" }}>{log.im_note || "—"}</td>
+                            <td style={{ padding: "5px 8px", color: "#64748b", whiteSpace: "nowrap" }}>
+                              {(log.rescheduled_by || "").split("@")[0] || "—"}
+                              {log.rescheduled_at ? <><br /><span style={{ fontSize: "0.7rem" }}>{log.rescheduled_at.split(" ")[0]}</span></> : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
               {parseAttachments(detailRow.photos).length > 0 && (
                 <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>
@@ -1363,6 +1454,57 @@ export default function IMExecution() {
             loadExecutions();
           }}
         />
+      )}
+
+      {/* ── Extend End Date modal ─────────────────────────────── */}
+      {extendOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setExtendOpen(false); setExtendError(null); } }}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 28, width: 380, maxWidth: "92vw", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+            <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 4 }}>Extend End Date</div>
+            <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: 20 }}>
+              Applying to <strong>{extendableExecs.length} plan{extendableExecs.length !== 1 ? "s" : ""}</strong>
+            </div>
+            <label style={{ fontSize: "0.82rem", fontWeight: 600, display: "block", marginBottom: 4 }}>New End Date *</label>
+            <input
+              type="date"
+              value={extendNewDate}
+              onChange={(e) => setExtendNewDate(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", marginBottom: 14, boxSizing: "border-box" }}
+            />
+            <label style={{ fontSize: "0.82rem", fontWeight: 600, display: "block", marginBottom: 4 }}>Note (optional)</label>
+            <textarea
+              value={extendNote}
+              onChange={(e) => setExtendNote(e.target.value)}
+              placeholder="Reason for extension…"
+              rows={2}
+              style={{ width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.84rem", resize: "vertical", boxSizing: "border-box", marginBottom: 16 }}
+            />
+            {extendError && <div style={{ color: "#b91c1c", fontSize: "0.8rem", marginBottom: 10 }}>{extendError}</div>}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button type="button" className="btn-secondary" onClick={() => { setExtendOpen(false); setExtendError(null); }}>Cancel</button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={extendBusy || !extendNewDate}
+                onClick={async () => {
+                  if (!extendNewDate) { setExtendError("Please pick a new end date."); return; }
+                  setExtendBusy(true); setExtendError(null);
+                  try {
+                    await Promise.all(extendableExecs.map((e) => pmApi.extendPlanEndDate(e.rollout_plan, extendNewDate, extendNote)));
+                    setExtendOpen(false); setExtendNote(""); setExtendNewDate("");
+                    setSelectedExecs(new Set());
+                    loadExecutions();
+                  } catch (err) {
+                    setExtendError(err.message || "Extension failed.");
+                  } finally {
+                    setExtendBusy(false);
+                  }
+                }}
+              >{extendBusy ? "Saving…" : `Confirm Extension (${extendableExecs.length})`}</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

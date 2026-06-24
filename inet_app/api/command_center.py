@@ -6770,7 +6770,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         f"""
         SELECT rp.name, rp.po_dispatch AS system_id, rp.po_dispatch,
                COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
-               rp.team, rp.plan_date, rp.visit_type,
+               rp.team, rp.plan_date, rp.plan_end_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount, rp.achieved_amount,
                rp.completion_pct, rp.plan_status,
                rp.cancel_request_status, rp.cancel_reason,
@@ -6927,7 +6927,8 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         f"""
         SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan,
                COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
-               rp.visit_number, rp.visit_type,
+               rp.visit_number, rp.visit_type, rp.plan_date, rp.plan_end_date, rp.plan_status AS plan_status,
+               IFNULL(rp.reschedule_count, 0) AS reschedule_count,
                de.team, de.execution_date,
                de.execution_status, de.tl_status, de.issue_category,
                de.achieved_qty, de.achieved_amount, de.gps_location,
@@ -7897,12 +7898,14 @@ def get_field_team_dashboard(team_id=None):
     team_params = (team_id, team_id) if has_rpt else (team_id,)
     plans = frappe.db.sql(
         f"""
-        SELECT rp.name, rp.po_dispatch, rp.plan_date, rp.visit_type,
+        SELECT rp.name, rp.po_dispatch, rp.plan_date, rp.plan_end_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount,
                rp.achieved_amount, rp.completion_pct, rp.plan_status{extra_cols}
         FROM `tabRollout Plan` rp
         WHERE {team_match_clause}
-        AND rp.plan_date = %s
+        -- Multi-day plans: show on every day from plan_date through plan_end_date.
+        AND rp.plan_date <= %s
+        AND IFNULL(rp.plan_end_date, rp.plan_date) >= %s
         -- Hard excludes (plan-wide terminal states the team can't act on).
         AND rp.plan_status NOT IN ('Cancelled', 'Planning with Issue', 'Not Attended')
         -- Per-team actionability: hide when THIS team's own DE is done.
@@ -7915,7 +7918,7 @@ def get_field_team_dashboard(team_id=None):
         )
         ORDER BY rp.name
         """,
-        (*team_params, today_str, team_id),
+        (*team_params, today_str, today_str, team_id),
         as_dict=True,
     )
 
@@ -11711,3 +11714,50 @@ def mark_plan_not_attended(rollout_plan, reason=None):
     frappe.db.set_value("Rollout Plan", rollout_plan, updates, update_modified=True)
     frappe.db.commit()
     return {"ok": True, "plan_status": "Not Attended"}
+
+
+@frappe.whitelist()
+def extend_plan_end_date(rollout_plan, new_end_date, im_note=None):
+    """
+    IM extends the end date of a multi-day plan that couldn't be completed in time.
+    Updates plan_end_date, resets Overdue → In Execution if applicable, and logs the
+    extension in the reschedule_log child table for full audit history.
+    """
+    if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
+        frappe.throw("Invalid Rollout Plan")
+    if not new_end_date:
+        frappe.throw("New end date is required")
+
+    doc = frappe.get_doc("Rollout Plan", rollout_plan)
+    if doc.plan_status in ("Completed", "Cancelled"):
+        frappe.throw(f"Cannot extend: plan is already {doc.plan_status}.")
+
+    old_end_date = doc.plan_end_date or doc.plan_date
+
+    # Log extension in reschedule_log (same child table used for reschedules).
+    tl_snap = frappe.db.get_value(
+        "Daily Execution",
+        {"rollout_plan": rollout_plan},
+        "tl_status",
+        order_by="modified desc",
+    ) or ""
+
+    doc.append("reschedule_log", {
+        "original_date": old_end_date,
+        "new_date": new_end_date,
+        "reason": "End Date Extension",
+        "tl_status_at_time": tl_snap,
+        "im_note": (im_note or "")[:2000],
+        "rescheduled_by": frappe.session.user,
+        "rescheduled_at": frappe.utils.now(),
+    })
+    doc.reschedule_count = cint(doc.reschedule_count or 0) + 1
+    doc.plan_end_date = new_end_date
+
+    # If plan went Overdue because end date passed, bring it back to In Execution.
+    if doc.plan_status == "Overdue":
+        doc.plan_status = "In Execution"
+
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return {"ok": True, "plan_end_date": new_end_date, "reschedule_count": doc.reschedule_count}

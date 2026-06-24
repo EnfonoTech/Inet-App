@@ -197,6 +197,28 @@ function WorkCard({ plan, onClick }) {
             )}
           </div>
         )}
+        {plan.plan_end_date && (() => {
+          const today = new Date().toISOString().slice(0, 10);
+          const daysLeft = Math.round((new Date(plan.plan_end_date) - new Date(today)) / 86400000);
+          const isMultiDay = plan.plan_end_date !== plan.plan_date;
+          return (
+            <div className="meta-row">
+              <svg className="meta-svg-icon" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
+              </svg>
+              <span>
+                {isMultiDay ? `${plan.plan_date} → ${plan.plan_end_date}` : `Ends ${plan.plan_end_date}`}
+                {" · "}
+                {daysLeft > 0
+                  ? <strong style={{ color: daysLeft <= 1 ? "#b91c1c" : "var(--text)" }}>{daysLeft} day{daysLeft !== 1 ? "s" : ""} left</strong>
+                  : daysLeft === 0
+                    ? <strong style={{ color: "#b91c1c" }}>Last day</strong>
+                    : <strong style={{ color: "#b91c1c" }}>Overdue by {Math.abs(daysLeft)} day{Math.abs(daysLeft) !== 1 ? "s" : ""}</strong>
+                }
+              </span>
+            </div>
+          );
+        })()}
         {(plan.access_time || plan.access_period) && (
           <div className="meta-row">
             <svg className="meta-svg-icon" viewBox="0 0 20 20" fill="currentColor">

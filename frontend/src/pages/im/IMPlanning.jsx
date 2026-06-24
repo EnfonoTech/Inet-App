@@ -90,6 +90,12 @@ export default function IMPlanning() {
   const [rescheduleLogs, setRescheduleLogs] = useState(null);
   const [rescheduleLogsLoading, setRescheduleLogsLoading] = useState(false);
 
+  const [extendModalRow, setExtendModalRow] = useState(null);
+  const [extendNewDate, setExtendNewDate] = useState("");
+  const [extendNote, setExtendNote] = useState("");
+  const [extendBusy, setExtendBusy] = useState(false);
+  const [extendError, setExtendError] = useState(null);
+
   const [refreshKey, setRefreshKey] = useState(0);
 
   const loadPlans = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -209,6 +215,11 @@ export default function IMPlanning() {
   const rescheduleDefaultReason = reschedulablePlans.some((p) => p.plan_status === "Not Attended")
     ? "TL Not Attended"
     : "Plan Overdue";
+
+  const extendablePlans = useMemo(
+    () => plans.filter((p) => selected.has(p.name) && !["Completed", "Cancelled"].includes(p.plan_status)),
+    [plans, selected]
+  );
 
   function recordExecutionTitle() {
     if (selected.size === 0) return "Select plans using the checkboxes";
@@ -361,6 +372,15 @@ export default function IMPlanning() {
               Reschedule ({reschedulablePlans.length})
             </button>
           )}
+          {extendablePlans.length > 0 && (
+            <button
+              type="button"
+              style={{ fontSize: "0.84rem", padding: "6px 14px", background: "#faf5ff", color: "#6d28d9", border: "1px solid #ddd6fe", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}
+              onClick={() => { setExtendModalRow({ _plans: extendablePlans, poid: `${extendablePlans.length} plan(s)`, plan_end_date: extendablePlans[0]?.plan_end_date || "" }); setExtendNewDate(extendablePlans[0]?.plan_end_date || ""); setExtendNote(""); setExtendError(null); }}
+            >
+              Extend End Date ({extendablePlans.length})
+            </button>
+          )}
           <button
             type="button"
             className="btn-primary"
@@ -410,6 +430,7 @@ export default function IMPlanning() {
                   <th>Team</th>
                   <th>IM</th>
                   <th>Plan Date</th>
+                  <th>End Date</th>
                   <th>Visit</th>
                   <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
                   <th>Status</th>
@@ -450,6 +471,9 @@ export default function IMPlanning() {
                     <td style={{ fontSize: "0.82rem" }}>{p.team_name || p.team || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{p.im_full_name || p.dispatch_im || "—"}</td>
                     <td>{p.plan_date}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {p.plan_end_date || "—"}
+                    </td>
                     <td>{p.visit_type}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{p.visit_number != null ? p.visit_number : "—"}</td>
                     <td>
@@ -751,6 +775,60 @@ export default function IMPlanning() {
             loadPlans();
           }}
         />
+      )}
+
+      {/* ── Extend End Date modal ─────────────────────────────── */}
+      {extendModalRow && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setExtendModalRow(null); setExtendError(null); } }}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 28, width: 380, maxWidth: "92vw", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+            <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 4 }}>Extend End Date</div>
+            <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: 20 }}>
+              {extendModalRow.poid || extendModalRow.name} · current end: <strong>{extendModalRow.plan_end_date || extendModalRow.plan_date}</strong>
+            </div>
+            <label style={{ fontSize: "0.82rem", fontWeight: 600, display: "block", marginBottom: 4 }}>New End Date *</label>
+            <input
+              type="date"
+              value={extendNewDate}
+              min={extendModalRow.plan_end_date || extendModalRow.plan_date}
+              onChange={(e) => setExtendNewDate(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", marginBottom: 14, boxSizing: "border-box" }}
+            />
+            <label style={{ fontSize: "0.82rem", fontWeight: 600, display: "block", marginBottom: 4 }}>Note (optional)</label>
+            <textarea
+              value={extendNote}
+              onChange={(e) => setExtendNote(e.target.value)}
+              placeholder="Reason for extension…"
+              rows={2}
+              style={{ width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.84rem", resize: "vertical", boxSizing: "border-box", marginBottom: 16 }}
+            />
+            {extendError && <div style={{ color: "#b91c1c", fontSize: "0.8rem", marginBottom: 10 }}>{extendError}</div>}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button type="button" className="btn-secondary" onClick={() => { setExtendModalRow(null); setExtendError(null); }}>Cancel</button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={extendBusy || !extendNewDate}
+                onClick={async () => {
+                  if (!extendNewDate) { setExtendError("Please pick a new end date."); return; }
+                  setExtendBusy(true); setExtendError(null);
+                  try {
+                    const plans = extendModalRow._plans || [extendModalRow];
+                    await Promise.all(plans.map((p) => pmApi.extendPlanEndDate(p.name, extendNewDate, extendNote)));
+                    setExtendModalRow(null); setExtendNote(""); setExtendNewDate("");
+                    setRescheduleSuccessMsg(`End date extended to ${extendNewDate} for ${plans.length} plan${plans.length !== 1 ? "s" : ""}.`);
+                    setSelected(new Set());
+                    loadPlans();
+                  } catch (err) {
+                    setExtendError(err.message || "Extension failed.");
+                  } finally {
+                    setExtendBusy(false);
+                  }
+                }}
+              >{extendBusy ? "Saving…" : "Confirm Extension"}</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
