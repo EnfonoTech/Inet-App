@@ -248,13 +248,16 @@ export default function ExecutionMonitor() {
   // Distinct values across ALL Rollout Plans / PO Dispatches — not row-limited.
   const { options: planOpts } = useFilterOptions("Rollout Plan", ["visit_type"]);
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
-  const { options: teamOpts } = useFilterOptions("INET Team", ["team_id", "team_name"]);
   const visitTypes = planOpts.visit_type || [];
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  // Preserve { id, label } shape so existing JSX doesn't need to change
+  const [teamOptions, setTeamOptions] = useState([]);
+  useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamOptions(opts);
+    }).catch(() => {});
+  }, []);
   const [knownImOptions, setKnownImOptions] = useState([]);
-  const [teamNameMap, setTeamNameMap] = useState({});
   useEffect(() => {
     if (!rows.length) return;
     setKnownImOptions((prev) => {
@@ -262,13 +265,7 @@ export default function ExecutionMonitor() {
       for (const r of rows) { if (r.im) seen.set(r.im, r.im_full_name || r.im); }
       return Array.from(seen.entries()).map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
     });
-    setTeamNameMap((prev) => {
-      const next = { ...prev };
-      for (const r of rows) { if (r.team && r.team_name) next[r.team] = r.team_name; }
-      return next;
-    });
   }, [rows]);
-  const teamOptions = (teamOpts.team_id || []).map((tid) => ({ id: tid, label: teamNameMap[tid] || tid }));
 
   const hasFilters = !!(searchDebounced || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || imFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 

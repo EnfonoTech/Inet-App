@@ -75,7 +75,7 @@ export default function IMBackend() {
       if (searchDebounced.trim()) params.search = searchDebounced.trim();
       if (projectFilter.length) params.project_code = projectFilter;
       if (duidFilter.length) params.site_code = duidFilter;
-      if (teamFilter.length) params.subcon_team = teamFilter;
+      if (teamFilter.length) params.backend_team = teamFilter;
       const res = await pmApi.listBackendDispatches(params);
       setRows(Array.isArray(res) ? res : []);
       setSelected(new Set());
@@ -88,11 +88,15 @@ export default function IMBackend() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Filter options sourced from PO Dispatch (same data the rows come from).
-  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "subcon_team"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const teamOptions = dispOpts.subcon_team || [];
+  const [teamOptions, setTeamOptions] = useState([]);
+  useEffect(() => {
+    pmApi.getBackendTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamOptions(opts);
+    }).catch(() => {});
+  }, []);
 
   const hasFilters = !!(search || projectFilter.length || duidFilter.length || teamFilter.length);
 
@@ -332,7 +336,7 @@ export default function IMBackend() {
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.line_amount || 0)}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.site_name || ""}>{r.site_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={r.center_area || ""}>{r.center_area || "—"}</td>
-                      <td style={{ fontSize: "0.82rem" }}>{r.subcon_team_name || r.subcon_team || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{r.backend_team_name || r.backend_team || "—"}</td>
                       <td><StatusPill value={r.subcon_status} /></td>
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
                         {r.subcon_completed_on ? String(r.subcon_completed_on).slice(0, 10) : "—"}

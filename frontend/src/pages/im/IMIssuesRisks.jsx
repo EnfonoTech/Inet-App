@@ -165,11 +165,12 @@ export default function IMIssuesRisks() {
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const teamEntries = useMemo(() => {
-    const m = new Map();
-    rows.forEach((r) => { if (r.team) m.set(r.team, r.team_name || r.team); });
-    return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
-  }, [rows]);
+  const [teamEntries, setTeamEntries] = useState([]);
+  useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamEntries(opts.map((o) => [o.id, o.label]));
+    }).catch(() => {});
+  }, []);
   const hasFilters = !!(search || issueCatFilter.length || execStatusFilter.length || tlStatusFilter.length || qcFilter.length || ciagFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   useEffect(() => {

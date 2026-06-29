@@ -343,12 +343,13 @@ export default function WorkDone() {
 
   const hasFilters = !!(searchDebounced || billingFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
-  const { options: teamOpts } = useFilterOptions("INET Team", ["team_id"]);
+  const [teams, setTeams] = useState([]);
+  useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeams(opts);
+    }).catch(() => {});
+  }, []);
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
-  const teams = (teamOpts.team_id || []).map((tid) => {
-    const hit = rows.find((r) => r.team === tid);
-    return { id: tid, label: hit?.team_name || tid };
-  });
   const projects = dispOpts.project_code || [];
   const duids = dispOpts.site_code || [];
   const [knownImOptions, setKnownImOptions] = useState([]);

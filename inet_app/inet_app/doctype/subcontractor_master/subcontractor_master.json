@@ -48,6 +48,7 @@
   {
    "fieldname": "contract_model",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Contract Model",
    "options": "Contract Model"
   },

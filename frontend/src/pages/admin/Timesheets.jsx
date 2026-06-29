@@ -6,6 +6,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -32,7 +33,13 @@ export default function Timesheets() {
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [teamFilter, setTeamFilter] = useState("");
+  const [teamFilter, setTeamFilter] = useState([]);
+  const [teamOptions, setTeamOptions] = useState([]);
+  useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamOptions(opts);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +49,7 @@ export default function Timesheets() {
         const filters = {};
         if (dateFrom) filters.from_date = dateFrom;
         if (dateTo) filters.to_date = dateTo;
-        if (teamFilter.trim()) filters.team_id = teamFilter.trim();
+        if (teamFilter.length) filters.team_id = teamFilter;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
         if (!cancelled) {
@@ -59,7 +66,7 @@ export default function Timesheets() {
   }, [dateFrom, dateTo, teamFilter, rowLimit, searchDebounced]);
 
   const totalHours = logs.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
-  const hasFilters = dateFrom || dateTo || teamFilter || search;
+  const hasFilters = dateFrom || dateTo || teamFilter.length || search;
 
   return (
     <div>
@@ -100,18 +107,13 @@ export default function Timesheets() {
             minWidth: 200,
           }}
         />
-        <input
-          type="text"
-          placeholder="Team ID filter"
+        <SearchableSelect
+          multi
           value={teamFilter}
-          onChange={(e) => setTeamFilter(e.target.value)}
-          style={{
-            padding: "7px 12px",
-            borderRadius: 8,
-            border: "1px solid #e2e8f0",
-            fontSize: "0.84rem",
-            width: 140,
-          }}
+          onChange={setTeamFilter}
+          options={teamOptions}
+          placeholder="All Teams"
+          minWidth={150}
         />
         <DateRangePicker value={{ from: dateFrom, to: dateTo }} onChange={({ from, to }) => { setDateFrom(from); setDateTo(to); }} />
         {hasFilters && (
@@ -121,7 +123,7 @@ export default function Timesheets() {
             onClick={() => {
               setDateFrom("");
               setDateTo("");
-              setTeamFilter("");
+              setTeamFilter([]);
               setSearch("");
             }}
           >

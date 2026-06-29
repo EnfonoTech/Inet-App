@@ -144,20 +144,15 @@ export default function IssuesRisks() {
   const [knownImOptions, setKnownImOptions] = useState([]);
   const [knownTeamOptions, setKnownTeamOptions] = useState([]);
   useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setKnownTeamOptions(opts);
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
     if (!rows.length) return;
     setKnownImOptions((prev) => {
       const seen = new Map(prev.map((o) => [o.id, o.label]));
       for (const r of rows) { if (r.im) seen.set(r.im, r.im_full_name || r.im); }
-      return Array.from(seen.entries()).map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
-    });
-    setKnownTeamOptions((prev) => {
-      const seen = new Map(prev.map((o) => [o.id, o.label]));
-      for (const r of rows) {
-        if (r.team) {
-          const name = r.team_name || r.team;
-          if (!seen.has(r.team) || (r.team_name && seen.get(r.team) === r.team)) seen.set(r.team, name);
-        }
-      }
       return Array.from(seen.entries()).map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
     });
   }, [rows]);

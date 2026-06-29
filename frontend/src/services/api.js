@@ -479,6 +479,10 @@ export const pmApi = {
     call("inet_app.api.pic.get_po_dispatch_pic_attachments", { po_dispatch }),
   rejectPicLine: (po_dispatch, remark) =>
     call("inet_app.api.pic.reject_pic_line", { po_dispatch, remark }),
+  getTeamOptions: () =>
+    callCached("inet_app.api.command_center.get_team_options", {}, 300_000),
+  getBackendTeamOptions: () =>
+    callCached("inet_app.api.command_center.get_backend_team_options", {}, 300_000),
   getDistinctFieldValues: (doctype, fields) =>
     callCached(
       "inet_app.api.command_center.get_distinct_field_values",
@@ -585,7 +589,7 @@ export const pmApi = {
   listBackendTeamsForPicker: (search) => call("inet_app.api.command_center.list_backend_teams_for_picker", { search: search || "", limit: 200 }),
   assignBackend: (po_dispatches, backend_team, remark) => call("inet_app.api.command_center.assign_backend", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
-    subcon_team: backend_team,
+    backend_team: backend_team,
     remark: remark || "",
   }),
   markBackendWorkDone: (po_dispatches, completed_on, remark) => call("inet_app.api.command_center.mark_backend_work_done", {
@@ -595,9 +599,9 @@ export const pmApi = {
   }),
   listBackendDispatches: (params) => {
     const args = { ...(params || {}) };
-    // The PO Dispatch column itself stays subcon_team (vendor-side concept);
+    // The PO Dispatch column itself stays backend_team (vendor-side concept);
     // we just renamed the user-facing terminology.
-    ["project_code", "site_code", "subcon_team"].forEach((k) => {
+    ["project_code", "site_code", "backend_team"].forEach((k) => {
       if (Array.isArray(args[k])) args[k] = JSON.stringify(args[k]);
     });
     return call("inet_app.api.command_center.list_backend_dispatches", args);

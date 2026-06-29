@@ -8,6 +8,7 @@ import RecordDetailView from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { useDebounced } from "../../hooks/useDebounced";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -60,7 +61,15 @@ export default function IMTimesheets() {
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
+  const [teamFilter, setTeamFilter] = useState([]);
+  const [teamOptions, setTeamOptions] = useState([]);
   const [detailRow, setDetailRow] = useState(null);
+
+  useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamOptions(opts);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +85,7 @@ export default function IMTimesheets() {
         const filters = { im: imName };
         if (dateFrom) filters.from_date = dateFrom;
         if (dateTo) filters.to_date = dateTo;
+        if (teamFilter.length) filters.team_id = teamFilter;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
         if (!cancelled) {
@@ -89,10 +99,10 @@ export default function IMTimesheets() {
       }
     })();
     return () => { cancelled = true; };
-  }, [dateFrom, dateTo, imName, rowLimit, searchDebounced]);
+  }, [dateFrom, dateTo, imName, rowLimit, searchDebounced, teamFilter]);
 
   const totalHours = logs.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
-  const hasFilters = dateFrom || dateTo || search;
+  const hasFilters = dateFrom || dateTo || search || teamFilter.length;
 
   return (
     <div>
@@ -122,6 +132,14 @@ export default function IMTimesheets() {
             minWidth: 200,
           }}
         />
+        <SearchableSelect
+          multi
+          value={teamFilter}
+          onChange={setTeamFilter}
+          options={teamOptions}
+          placeholder="All Teams"
+          minWidth={150}
+        />
         <DateRangePicker value={{ from: dateFrom, to: dateTo }} onChange={({ from, to }) => { setDateFrom(from); setDateTo(to); }} />
         {hasFilters && (
           <button
@@ -131,6 +149,7 @@ export default function IMTimesheets() {
               setDateFrom("");
               setDateTo("");
               setSearch("");
+              setTeamFilter([]);
             }}
           >
             Clear

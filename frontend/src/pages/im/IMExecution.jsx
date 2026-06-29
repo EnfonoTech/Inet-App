@@ -272,14 +272,12 @@ export default function IMExecution() {
   // Distinct master values — so dropdowns are complete regardless of row limit.
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
-  const teamEntries = useMemo(() => {
-    const m = new Map();
-    executions.forEach((e) => {
-      if (!e.team) return;
-      m.set(e.team, e.team_name || e.team);
-    });
-    return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
-  }, [executions]);
+  const [teamEntries, setTeamEntries] = useState([]);
+  useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamEntries(opts.map((o) => [o.id, o.label]));
+    }).catch(() => {});
+  }, []);
   const duidOptions = dispOpts.site_code || [];
 
   const filteredExecutions = useMemo(() => {

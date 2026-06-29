@@ -511,10 +511,14 @@ export default function IMDispatch() {
   const planableRows = visibleRows.filter(planable);
   // Distinct values across ALL dispatches — so dropdowns stay complete under any row limit.
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
-  const { options: teamOpts } = useFilterOptions("INET Team", ["team_id"]);
+  const [teamOptions, setTeamOptions] = useState([]);
+  useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamOptions(opts);
+    }).catch(() => {});
+  }, []);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const teamOptions = teamOpts.team_id || [];
   const hasFilters = !!(search || modeFilter !== "all" || dummyFilter !== "all" || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
   function toggleRow(name) {
@@ -568,7 +572,7 @@ export default function IMDispatch() {
       const summary = res?.summary || {};
       const okN = summary.updated_count ?? 0;
       const errN = summary.error_count ?? 0;
-      const teamLbl = summary.subcon_team_name || backendTeamId;
+      const teamLbl = summary.backend_team_name || backendTeamId;
       if (errN === 0) {
         setShowBackendModal(false);
         setSuccessMsg(`Assigned ${okN} POID${okN !== 1 ? "s" : ""} to backend team ${teamLbl}.`);

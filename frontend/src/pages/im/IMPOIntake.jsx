@@ -154,7 +154,7 @@ export default function IMPOIntake() {
       const summary = res?.summary || {};
       const okN = summary.updated_count ?? 0;
       const errN = summary.error_count ?? 0;
-      const teamLbl = summary.subcon_team_name || backendTeamId;
+      const teamLbl = summary.backend_team_name || backendTeamId;
       if (errN === 0) {
         setShowBackendModal(false);
         setToastMsg(`Assigned ${okN} POID${okN !== 1 ? "s" : ""} to backend team ${teamLbl}.`);

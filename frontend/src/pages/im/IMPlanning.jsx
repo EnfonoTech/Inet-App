@@ -165,14 +165,12 @@ export default function IMPlanning() {
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const visitTypes = planOpts.visit_type || [];
   const projectOptions = dispOpts.project_code || [];
-  const teamEntries = useMemo(() => {
-    const m = new Map();
-    plans.forEach((p) => {
-      if (!p.team) return;
-      m.set(p.team, p.team_name || p.team);
-    });
-    return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" }));
-  }, [plans]);
+  const [teamEntries, setTeamEntries] = useState([]);
+  useEffect(() => {
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamEntries(opts.map((o) => [o.id, o.label]));
+    }).catch(() => {});
+  }, []);
   const duidOptions = dispOpts.site_code || [];
 
   const filteredPlans = useMemo(() => {

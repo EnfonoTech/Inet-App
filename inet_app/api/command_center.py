@@ -4738,6 +4738,40 @@ def _batch_inet_team_names(team_ids):
     return out
 
 
+@frappe.whitelist()
+def get_team_options(team_type=None):
+    """Return [{id, label}] for INET Teams. team_type: 'Backend Team' | 'Field Team' | None (all)."""
+    filters = {}
+    if team_type:
+        filters["team_type"] = team_type
+    rows = frappe.get_all(
+        "INET Team",
+        filters=filters,
+        fields=["name", "team_name"],
+        order_by="team_name asc",
+        limit_page_length=500,
+        ignore_permissions=True,
+    )
+    return [
+        {"id": r.name, "label": r.team_name or r.name}
+        for r in rows
+    ]
+
+
+@frappe.whitelist()
+def get_backend_team_options():
+    """Return [{id, label}] for teams assigned as backend (subcon) teams on PO Dispatches."""
+    rows = frappe.db.sql("""
+        SELECT DISTINCT pd.backend_team AS id,
+               COALESCE(NULLIF(t.team_name,''), t.team_id, pd.backend_team) AS label
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team
+        WHERE pd.backend_team IS NOT NULL AND pd.backend_team != ''
+        ORDER BY label
+    """, as_dict=True)
+    return [{"id": r.id, "label": r.label or r.id} for r in rows]
+
+
 def _batch_im_master_full_names(im_ids):
     ids = list({n for n in (im_ids or []) if n})
     if not ids:
@@ -5478,7 +5512,7 @@ def _synthesize_subcon_workdone_rows(filters):
         billing_status, from_date / to_date, team, project_code, site_code, im, search.
     Subcon dispatches don't carry a billing_status; if the caller filtered to a
     specific real billing_status (Confirmed/Submitted/etc.), they're excluded.
-    The ``team`` filter is matched against ``pd.subcon_team`` (not the rollout team).
+    The ``team`` filter is matched against ``pd.backend_team`` (not the rollout team).
     """
     f = filters or {}
 
@@ -5495,7 +5529,7 @@ def _synthesize_subcon_workdone_rows(filters):
     for col, key in (
         ("pd.project_code", "project_code"),
         ("pd.site_code", "site_code"),
-        ("pd.subcon_team", "team"),
+        ("pd.backend_team", "team"),
     ):
         c, p = _sql_in_or_eq(col, f.get(key))
         if c:
@@ -5538,13 +5572,13 @@ def _synthesize_subcon_workdone_rows(filters):
         "pd.project_code, pd.site_code, pd.site_name, pd.center_area, pd.region_type, "
         "pd.item_code, pd.item_description, pd.customer, pd.line_amount, "
         "pd.dispatch_status, pd.im, "
-        "pd.subcon_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark, "
+        "pd.backend_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark, "
         f"{sub_sub_col}, "
         f"{_remark_select()}, "
-        "t.team_id AS subcon_team_id, t.team_name AS subcon_team_name, "
+        "t.team_id AS backend_team_id, t.team_name AS backend_team_name, "
         "pd.modified "
         "FROM `tabPO Dispatch` pd "
-        "LEFT JOIN `tabINET Team` t ON t.name = pd.subcon_team "
+        "LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team "
         f"WHERE {' AND '.join(where)} "
         "ORDER BY pd.subcon_completed_on DESC, pd.modified DESC"
     )
@@ -5588,8 +5622,8 @@ def _synthesize_subcon_workdone_rows(filters):
             "site_name": r.get("site_name"),
             "center_area": r.get("center_area"),
             "region_type": r.get("region_type"),
-            "team": r.get("subcon_team"),
-            "team_name": r.get("subcon_team_name") or r.get("subcon_team_id") or r.get("subcon_team"),
+            "team": r.get("backend_team"),
+            "team_name": r.get("backend_team_name") or r.get("backend_team_id") or r.get("backend_team"),
             "im": r.get("im"),
             "im_full_name": im_name_map.get(r.get("im")),
             "item_code": r.get("item_code"),
@@ -9012,16 +9046,19 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
 
     # Role scoping
     if is_desk_admin:
-        if filters.get("team_id"):
-            db_filters["team_id"] = filters["team_id"]
+        tid = filters.get("team_id")
+        if tid:
+            db_filters["team_id"] = ["in", tid] if isinstance(tid, list) else tid
         if filters.get("user"):
             db_filters["user"] = filters["user"]
     elif is_im:
         team_ids = _im_team_ids_for_filter(filters.get("im"))
-        if filters.get("team_id"):
-            if filters["team_id"] not in team_ids:
+        tid = filters.get("team_id")
+        if tid:
+            allowed = [t for t in (tid if isinstance(tid, list) else [tid]) if t in set(team_ids)]
+            if not allowed:
                 return {"logs": [], "total": 0}
-            db_filters["team_id"] = filters["team_id"]
+            db_filters["team_id"] = ["in", allowed] if len(allowed) > 1 else allowed[0]
         else:
             if not team_ids:
                 return {"logs": [], "total": 0}
@@ -9828,7 +9865,7 @@ def _assign_backend_one(role, im_identifiers, name, team, remark):
     """Stamp subcon fields on a single PO Dispatch. Returns (ok, info_or_error)."""
     pd = frappe.db.get_value(
         "PO Dispatch", name,
-        ["name", "im", "dispatch_status", "subcon_status", "subcon_team", "is_dummy_po", "poid"],
+        ["name", "im", "dispatch_status", "subcon_status", "backend_team", "is_dummy_po", "poid"],
         as_dict=True,
     ) or {}
     if not pd.get("name"):
@@ -9851,7 +9888,7 @@ def _assign_backend_one(role, im_identifiers, name, team, remark):
             return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Not assigned to you."}
 
     updates = {
-        "subcon_team": team["name"],
+        "backend_team": team["name"],
         "subcon_status": "Pending",
         "subcon_completed_on": None,
         "dispatch_status": "Backend Assigned",
@@ -9862,22 +9899,22 @@ def _assign_backend_one(role, im_identifiers, name, team, remark):
     return True, {
         "po_dispatch": name,
         "poid": pd.get("poid") or name,
-        "subcon_team": team["name"],
-        "subcon_team_name": team.get("team_name") or team.get("team_id"),
+        "backend_team": team["name"],
+        "backend_team_name": team.get("team_name") or team.get("team_id"),
         "subcon_status": "Pending",
         "dispatch_status": "Backend Assigned",
     }
 
 
 @frappe.whitelist()
-def assign_backend(po_dispatch=None, po_dispatches=None, subcon_team=None, remark=None):
+def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, remark=None):
     """Sub-contract one or many PO Dispatches to a non-field team.
 
     Accepts either ``po_dispatch`` (single name) or ``po_dispatches`` (list / JSON
     array). The list form is preferred for bulk actions from the UI.
 
     Side-effects per dispatch:
-        subcon_team           = <team>
+        backend_team           = <team>
         subcon_status         = 'Pending'
         subcon_completed_on   = NULL
         dispatch_status       = 'Backend Assigned'
@@ -9890,8 +9927,8 @@ def assign_backend(po_dispatch=None, po_dispatches=None, subcon_team=None, remar
     role = _user_role_class()
     if role not in ("pm", "im"):
         frappe.throw("Not permitted", frappe.PermissionError)
-    if not subcon_team:
-        frappe.throw("subcon_team is required")
+    if not backend_team:
+        frappe.throw("backend_team is required")
 
     raw = po_dispatches if po_dispatches not in (None, "", []) else po_dispatch
     if isinstance(raw, str):
@@ -9911,12 +9948,12 @@ def assign_backend(po_dispatch=None, po_dispatches=None, subcon_team=None, remar
         frappe.throw("po_dispatch is required")
 
     team = frappe.db.get_value(
-        "INET Team", subcon_team,
+        "INET Team", backend_team,
         ["name", "team_id", "team_name", "team_category", "status"],
         as_dict=True,
     )
     if not team:
-        frappe.throw(f"INET Team not found: {subcon_team}")
+        frappe.throw(f"INET Team not found: {backend_team}")
     if (team.get("team_category") or "Field Team") != "Backend Team":
         frappe.throw("Backend assignment is only allowed to teams with category 'Backend Team'.")
     if (team.get("status") or "Active") != "Active":
@@ -9966,8 +10003,8 @@ def assign_backend(po_dispatch=None, po_dispatches=None, subcon_team=None, remar
             "total": len(candidates),
             "updated_count": len(updated),
             "error_count": len(errors),
-            "subcon_team": team["name"],
-            "subcon_team_name": team.get("team_name") or team.get("team_id"),
+            "backend_team": team["name"],
+            "backend_team_name": team.get("team_name") or team.get("team_id"),
         },
     }
 
@@ -9975,7 +10012,7 @@ def assign_backend(po_dispatch=None, po_dispatches=None, subcon_team=None, remar
 def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
     pd = frappe.db.get_value(
         "PO Dispatch", name,
-        ["name", "im", "dispatch_status", "subcon_status", "subcon_team", "subcon_remark", "poid"],
+        ["name", "im", "dispatch_status", "subcon_status", "backend_team", "subcon_remark", "poid"],
         as_dict=True,
     ) or {}
     if not pd.get("name"):
@@ -10081,13 +10118,13 @@ def mark_backend_work_done(po_dispatch=None, po_dispatches=None, completed_on=No
 @frappe.whitelist()
 def list_backend_dispatches(
     im=None, search=None, status="all", limit=300,
-    project_code=None, site_code=None, subcon_team=None,
+    project_code=None, site_code=None, backend_team=None,
 ):
     """Sub-Contract list feed.
 
     status: "all" | "pending" | "done"
     Visible to PM (all IMs) and IM (own POIDs only).
-    Optional filters ``project_code``, ``site_code`` and ``subcon_team`` accept
+    Optional filters ``project_code``, ``site_code`` and ``backend_team`` accept
     a single value or a JSON-array / comma-separated list.
     """
     role = _user_role_class()
@@ -10117,7 +10154,7 @@ def list_backend_dispatches(
     elif s in ("done", "work_done"):
         where.append("pd.subcon_status = 'Work Done'")
 
-    for col, raw in (("project_code", project_code), ("site_code", site_code), ("subcon_team", subcon_team)):
+    for col, raw in (("project_code", project_code), ("site_code", site_code), ("backend_team", backend_team)):
         clause, in_params = _sql_in_or_eq(f"pd.{col}", raw)
         if clause:
             where.append(clause)
@@ -10142,12 +10179,12 @@ def list_backend_dispatches(
                pd.project_code, pd.customer, pd.im,
                pd.site_code, pd.site_name, pd.center_area, pd.region_type,
                pd.dispatch_status, pd.target_month,
-               pd.subcon_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark,
-               t.team_id   AS subcon_team_id,
-               t.team_name AS subcon_team_name,
+               pd.backend_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark,
+               t.team_id   AS backend_team_id,
+               t.team_name AS backend_team_name,
                pd.modified
         FROM `tabPO Dispatch` pd
-        LEFT JOIN `tabINET Team` t ON t.name = pd.subcon_team
+        LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team
         WHERE {' AND '.join(where)}
         ORDER BY pd.modified DESC
         LIMIT {limit_int}

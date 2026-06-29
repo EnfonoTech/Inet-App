@@ -3,7 +3,6 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
-import useFilterOptions from "../../hooks/useFilterOptions";
 import ExportExcelButton from "../../components/ExportExcelButton";
 
 // ≥90 green, ≥75 light-green, ≥60 yellow, <60 red, 0 neutral
@@ -99,8 +98,7 @@ export default function Reports() {
   const [dateRange, setDateRange] = useState(DEFAULT_RANGE);
   const [selectedMonth, setSelectedMonth] = useState(DEFAULT_MONTH);
 
-  const { options: teamOpts } = useFilterOptions("INET Team", ["team_id", "team_name"]);
-  const [teamNameMap, setTeamNameMap] = useState({});
+  const [teamOptions, setTeamOptions] = useState([]);
   const [imOptions, setImOptions] = useState([]);
 
   const active = useMemo(
@@ -108,19 +106,11 @@ export default function Reports() {
     [activeKey]
   );
 
-  // Build team options with id → name mapping
   useEffect(() => {
-    const map = {};
-    (teamOpts.team_id || []).forEach((tid, i) => {
-      map[tid] = (teamOpts.team_name || [])[i] || tid;
-    });
-    setTeamNameMap(map);
-  }, [teamOpts]);
-
-  const teamOptions = (teamOpts.team_id || []).map((tid) => ({
-    id: tid,
-    label: teamNameMap[tid] || tid,
-  }));
+    pmApi.getTeamOptions().then((opts) => {
+      if (Array.isArray(opts)) setTeamOptions(opts);
+    }).catch(() => {});
+  }, []);
 
   // Load IM options once
   useEffect(() => {
