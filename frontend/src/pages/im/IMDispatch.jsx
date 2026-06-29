@@ -210,7 +210,9 @@ export default function IMDispatch() {
   const [projectsForDummy, setProjectsForDummy] = useState([]);
   const [duidsForDummy, setDuidsForDummy] = useState([]);
   const [duidSearch, setDuidSearch] = useState("");
-  const [dummyForm, setDummyForm] = useState({ project_code: "", target_month: "", site_code: "", manager_remark: "" });
+  const [itemsForDummy, setItemsForDummy] = useState([]);
+  const [itemSearch, setItemSearch] = useState("");
+  const [dummyForm, setDummyForm] = useState({ project_code: "", target_month: "", site_code: "", duid_text: "", item_code: "", item_description: "", manager_remark: "" });
   const [mapForRow, setMapForRow] = useState(null);
   const [mapLines, setMapLines] = useState([]);
   const [mapLineId, setMapLineId] = useState("");
@@ -364,10 +366,15 @@ export default function IMDispatch() {
       project_code: Array.isArray(projectFilter) ? (projectFilter[0] || "") : (projectFilter || ""),
       target_month: todayMonth(),
       site_code: "",
+      duid_text: "",
+      item_code: "",
+      item_description: "",
       manager_remark: "",
     });
     setDuidsForDummy([]);
     setDuidSearch("");
+    setItemsForDummy([]);
+    setItemSearch("");
     setShowDummyModal(true);
     if (!imName) {
       setProjectsForDummy([]);
@@ -414,6 +421,21 @@ export default function IMDispatch() {
     return () => { cancelled = true; };
   }, [showDummyModal, duidSearch]);
 
+  useEffect(() => {
+    if (!showDummyModal) return undefined;
+    let cancelled = false;
+    const q = (itemSearch || "").trim();
+    (async () => {
+      try {
+        const rows = await pmApi.searchPOItems(q);
+        if (!cancelled) setItemsForDummy(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (!cancelled) setItemsForDummy([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showDummyModal, itemSearch]);
+
   async function submitDummyPo() {
     if (!dummyForm.project_code) {
       setDummyErr("Select a project.");
@@ -425,7 +447,9 @@ export default function IMDispatch() {
       await pmApi.createIMDummyPODispatch({
         project_code: dummyForm.project_code,
         target_month: dummyForm.target_month || undefined,
-        site_code: dummyForm.site_code || undefined,
+        site_code: dummyForm.site_code || dummyForm.duid_text || undefined,
+        item_code: dummyForm.item_code || undefined,
+        item_description: dummyForm.item_description || undefined,
         manager_remark: dummyForm.manager_remark || undefined,
       });
       setShowDummyModal(false);
@@ -1172,12 +1196,47 @@ export default function IMDispatch() {
           </select>
         </div>
         <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Item Code</label>
+          <SearchableSelect
+            value={dummyForm.item_code || ""}
+            onChange={(v) => {
+              const picked = itemsForDummy.find((i) => i.item_code === v);
+              setDummyForm((f) => ({
+                ...f,
+                item_code: v || "",
+                item_description: picked?.description || f.item_description,
+              }));
+            }}
+            onSearch={setItemSearch}
+            options={itemsForDummy.map((i) => ({
+              id: i.item_code,
+              label: i.item_name && i.item_name !== i.item_code ? `${i.item_code} — ${i.item_name}` : i.item_code,
+            }))}
+            placeholder="Search item…"
+            allLabel="None"
+            style={{ display: "block", width: "100%" }}
+            minWidth={0}
+            triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.88rem" }}
+            panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
+          />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Item Description</label>
+          <textarea
+            value={dummyForm.item_description || ""}
+            onChange={(e) => setDummyForm((f) => ({ ...f, item_description: e.target.value }))}
+            rows={2}
+            placeholder="Description of the work…"
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontFamily: "inherit", fontSize: "0.84rem", resize: "vertical" }}
+          />
+        </div>
+        <div style={{ marginBottom: 16 }}>
           <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>
             DUID
           </label>
           <SearchableSelect
             value={dummyForm.site_code || ""}
-            onChange={(v) => setDummyForm((f) => ({ ...f, site_code: v || "" }))}
+            onChange={(v) => setDummyForm((f) => ({ ...f, site_code: v || "", duid_text: "" }))}
             onSearch={setDuidSearch}
             options={duidsForDummy.map((d) => ({
               id: d.name,
@@ -1194,6 +1253,18 @@ export default function IMDispatch() {
               width: "100%", minWidth: 0, maxWidth: "none", right: 0,
             }}
           />
+          {!dummyForm.site_code && (
+            <>
+              <div style={{ fontSize: "0.72rem", color: "#94a3b8", margin: "6px 0 4px", fontWeight: 500 }}>Or enter Site Code directly</div>
+              <input
+                type="text"
+                placeholder="Site Code (e.g. TABUK-001)"
+                value={dummyForm.duid_text || ""}
+                onChange={(e) => setDummyForm((f) => ({ ...f, duid_text: e.target.value }))}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontSize: "0.86rem" }}
+              />
+            </>
+          )}
         </div>
         <div style={{ marginBottom: 20 }}>
           <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>

@@ -241,6 +241,8 @@ export const pmApi = {
       rollout_plan: rolloutPlan,
       reason: reason || "",
     }),
+  searchPOItems: (query) =>
+    call("inet_app.api.command_center.search_po_items", { query: query || "" }),
   createIMDummyPODispatch: (payload) =>
     call("inet_app.api.command_center.create_im_dummy_po_dispatch", {
       payload: JSON.stringify(payload || {}),

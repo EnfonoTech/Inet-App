@@ -232,7 +232,7 @@ def _apply_dummy_description(rows):
     manager_remark so every list view shows the IM's note instead of the
     placeholder text set at creation time."""
     for r in rows:
-        if r.get("is_dummy_po"):
+        if r.get("is_dummy_po") and not (r.get("item_description") or "").strip():
             r["item_description"] = r.get("manager_remark") or ""
     return rows
 
@@ -2144,6 +2144,44 @@ def _pcc_im_allows_project(project_code, im_identifiers):
 
 
 @frappe.whitelist()
+@frappe.whitelist()
+def search_po_items(query=""):
+    """Search Item master by item_code or item_name. Open to any logged-in user."""
+    if not frappe.session.user or frappe.session.user == "Guest":
+        frappe.throw("Not permitted", frappe.PermissionError)
+    q = (query or "").strip()
+    base_filters = [["disabled", "=", 0], ["item_group", "=", "Telecom Services"]]
+    if q:
+        rows = frappe.db.get_all(
+            "Item",
+            filters=base_filters + [["item_code", "like", f"%{q}%"]],
+            fields=["item_code", "item_name", "description"],
+            order_by="item_code asc",
+            limit=30,
+            ignore_permissions=True,
+        )
+        if not rows:
+            rows = frappe.db.get_all(
+                "Item",
+                filters=base_filters + [["item_name", "like", f"%{q}%"]],
+                fields=["item_code", "item_name", "description"],
+                order_by="item_code asc",
+                limit=30,
+                ignore_permissions=True,
+            )
+    else:
+        rows = frappe.db.get_all(
+            "Item",
+            filters=base_filters,
+            fields=["item_code", "item_name", "description"],
+            order_by="item_code asc",
+            limit=30,
+            ignore_permissions=True,
+        )
+    return rows
+
+
+@frappe.whitelist()
 def create_im_dummy_po_dispatch(payload=None):
     """
     Dummy PO Dispatch: only project is required at create time.
@@ -2180,22 +2218,43 @@ def create_im_dummy_po_dispatch(payload=None):
     # execution form (PO Dispatch.manager_remark already flows through).
     manager_remark = (payload.get("manager_remark") or payload.get("note") or "").strip()
 
-    # Optional DUID — IM may pick a real DUID Master row up-front; otherwise
-    # we allocate a DUMMY-* placeholder that the map step replaces later.
+    # Optional item_code — IM picks the activity item up-front.
+    # Description: pulled from Item master when item_code given; otherwise
+    # caller may supply a free-text description.
+    item_code_input = (payload.get("item_code") or "").strip()
+    item_code_val = None
+    item_description_val = (payload.get("item_description") or "").strip()
+    if item_code_input:
+        if not frappe.db.exists("Item", item_code_input):
+            frappe.throw(frappe._(f"Item {item_code_input} not found"))
+        item_code_val = item_code_input
+        master_desc = (frappe.db.get_value("Item", item_code_input, "description") or "").strip()
+        if master_desc:
+            item_description_val = master_desc
+
+    # Optional DUID — IM may pick a real DUID Master row up-front, type a
+    # known DUID code directly (auto-created if new), or leave blank for a
+    # DUMMY-* placeholder that the map step replaces later.
     requested_site_code = (payload.get("site_code") or "").strip()
     site_code = None
     site_name = None
     center_area = None
     if requested_site_code:
-        if not frappe.db.exists("DUID Master", requested_site_code):
-            frappe.throw(f"DUID Master {requested_site_code} not found")
-        site_code = requested_site_code
-        d = frappe.db.get_value(
-            "DUID Master", requested_site_code,
-            ["site_name", "center_area"], as_dict=True,
-        ) or {}
-        site_name = d.get("site_name") or requested_site_code
-        center_area = d.get("center_area")
+        if frappe.db.exists("DUID Master", requested_site_code):
+            d = frappe.db.get_value(
+                "DUID Master", requested_site_code,
+                ["site_name", "center_area"], as_dict=True,
+            ) or {}
+            site_code = requested_site_code
+            site_name = d.get("site_name") or requested_site_code
+            center_area = d.get("center_area")
+        else:
+            # Auto-create a DUID Master entry for the typed code.
+            ok_duid, err_duid = ensure_duid_master(requested_site_code, site_name=requested_site_code)
+            if not ok_duid:
+                frappe.throw(err_duid or f"Could not create DUID Master for {requested_site_code}")
+            site_code = requested_site_code
+            site_name = requested_site_code
     else:
         for _attempt in range(40):
             candidate = f"DUMMY-{frappe.generate_hash(length=14)}"
@@ -2235,10 +2294,10 @@ def create_im_dummy_po_dispatch(payload=None):
     doc.im = _im_resolved
     doc.po_no = po_no
     doc.po_line_no = 1
-    # item_code intentionally left blank for dummies (Link validation
-    # would reject any placeholder string). Filled in during map step.
-    if item_description:
-        doc.item_description = item_description
+    if item_code_val:
+        doc.item_code = item_code_val
+    if item_description_val:
+        doc.item_description = item_description_val
     doc.qty = qty
     doc.rate = rate
     doc.line_amount = line_amount
