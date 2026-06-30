@@ -364,6 +364,19 @@ export default function IMExecution() {
     () => selectedRows.filter((e) => !eligibleNames.has(e.name)),
     [selectedRows, eligibleNames],
   );
+  // Plans already handled by a selected eligible DE (multi-team companion rows)
+  const coveredBySelectedEligible = useMemo(
+    () => new Set(selectedEligible.map((e) => e.rollout_plan).filter(Boolean)),
+    [selectedEligible],
+  );
+  const selectedNonEligibleBlocked = useMemo(
+    () => selectedNonEligible.filter((e) => !e.rollout_plan || !coveredBySelectedEligible.has(e.rollout_plan)),
+    [selectedNonEligible, coveredBySelectedEligible],
+  );
+  const selectedMultiTeamCompanions = useMemo(
+    () => selectedNonEligible.filter((e) => e.rollout_plan && coveredBySelectedEligible.has(e.rollout_plan)),
+    [selectedNonEligible, coveredBySelectedEligible],
+  );
 
   function workDoneBlockReason(e) {
     if (e.is_dummy_po) return "Dummy PO — must be mapped to a real PO before Work Done can be created";
@@ -908,21 +921,24 @@ export default function IMExecution() {
                   Will create Work Done ({selectedEligible.length}):
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                  {selectedEligible.map((e) => (
-                    <span key={e.name} style={{ fontSize: 11, background: "#dcfce7", color: "#15803d", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
-                      {e.poid || e.system_id || e.name} · {e.site_code || "—"}
-                    </span>
-                  ))}
+                  {selectedEligible.map((e) => {
+                    const extras = selectedMultiTeamCompanions.filter((c) => c.rollout_plan && c.rollout_plan === e.rollout_plan).length;
+                    return (
+                      <span key={e.name} style={{ fontSize: 11, background: "#dcfce7", color: "#15803d", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
+                        {e.poid || e.system_id || e.name} · {e.site_code || "—"}{extras > 0 && <span style={{ opacity: 0.7 }}> · {extras + 1} executions</span>}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             )}
-            {selectedNonEligible.length > 0 && (
+            {selectedNonEligibleBlocked.length > 0 && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>
-                  Will NOT create ({selectedNonEligible.length}) — reasons below:
+                  Will NOT create ({selectedNonEligibleBlocked.length}) — reasons below:
                 </div>
                 <div style={{ fontSize: 11, borderRadius: 6, background: "#fef2f2", padding: "6px 8px" }}>
-                  {selectedNonEligible.map((e) => (
+                  {selectedNonEligibleBlocked.map((e) => (
                     <div key={e.name} style={{ display: "flex", gap: 6, padding: "3px 0", borderBottom: "1px solid #fee2e2", flexWrap: "wrap" }}>
                       <span style={{ fontFamily: "monospace", color: "#991b1b", fontWeight: 600 }}>{e.poid || e.system_id || e.name}</span>
                       <span style={{ color: "#6b7280" }}>·</span>
@@ -1026,7 +1042,7 @@ export default function IMExecution() {
             <button type="button" className="btn-primary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
               disabled={wdBusy === "bulk"}
               onClick={() => setWdConfirmOpen(true)}>
-              {wdBusy === "bulk" ? "Creating…" : `Create Work Done (${selectedEligible.length} / ${selectedExecs.size})`}
+              {wdBusy === "bulk" ? "Creating…" : `Create Work Done (${selectedEligible.length} / ${selectedExecs.size - selectedMultiTeamCompanions.length})`}
             </button>
             <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
               onClick={() => setSelectedExecs(new Set())}>

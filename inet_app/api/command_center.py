@@ -7012,25 +7012,35 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         portal_clause += " AND de.execution_date <= %s"
         params.append(pf["to_date"])
 
-    # Once an execution is fully closed (Completed + Pass + Approved) AND has
-    # been converted to Work Done, drop it — the IM has nothing left to do.
-    # The OR short-circuit on each gate honours per-plan _required flags:
-    # when qc_required = 0 for that plan, qc_status = Pass isn't required.
+    # Hide a DE once the IM has nothing left to do with it. Two rules (OR):
+    # 1. Lead-DE rule: this DE's own QC/CIAG is done AND a WD exists for the plan.
+    # 2. Companion-DE rule (multi-team): WD was created through a *different* DE in the
+    #    same plan — this DE is a secondary team row and the plan is already closed.
     ciag_col_hide = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
     qc_req_col2 = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
     ciag_req_col2 = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
-    # Multi-team: Work Done lives at PLAN level (one WD per plan, even
-    # with multiple team DEs). Hide every team's DE row once a WD exists
-    # for ANY DE of that plan — not just the trigger DE.
     portal_clause += (
         " AND NOT ("
         " de.execution_status = 'Completed'"
-        f" AND ({qc_req_col2} = 0 OR IFNULL(de.qc_status,'') IN ('Pass', 'Not Applicable'))"
-        f" AND ({ciag_req_col2} = 0 OR IFNULL({ciag_col_hide},'') IN ('Approved', 'Not Applicable'))"
-        " AND EXISTS ("
-        "   SELECT 1 FROM `tabWork Done` wd0"
-        "   INNER JOIN `tabDaily Execution` de_wd0 ON de_wd0.name = wd0.execution"
-        "   WHERE de_wd0.rollout_plan = de.rollout_plan"
+        " AND ("
+        # Rule 1: lead DE — own QC/CIAG complete + any WD exists for this plan
+        "   ("
+        f"    ({qc_req_col2} = 0 OR IFNULL(de.qc_status,'') IN ('Pass', 'Not Applicable'))"
+        f"    AND ({ciag_req_col2} = 0 OR IFNULL({ciag_col_hide},'') IN ('Approved', 'Not Applicable'))"
+        "    AND EXISTS ("
+        "      SELECT 1 FROM `tabWork Done` wd0"
+        "      INNER JOIN `tabDaily Execution` de_wd0 ON de_wd0.name = wd0.execution"
+        "      WHERE de_wd0.rollout_plan = de.rollout_plan"
+        "    )"
+        "   )"
+        "   OR"
+        # Rule 2: companion DE — WD was created through a DIFFERENT DE in the same plan
+        "   EXISTS ("
+        "     SELECT 1 FROM `tabWork Done` wd1"
+        "     INNER JOIN `tabDaily Execution` de_wd1 ON de_wd1.name = wd1.execution"
+        "     WHERE de_wd1.rollout_plan = de.rollout_plan"
+        "     AND de_wd1.name != de.name"
+        "   )"
         " )"
         ")"
     )
