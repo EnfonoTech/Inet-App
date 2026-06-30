@@ -11773,10 +11773,18 @@ _ADMIN_TEAM_EDITABLE_FIELDS = [
 
 
 @frappe.whitelist()
-def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500):
-    """List all INET Teams with current active project/domain for the PM admin Teams page."""
+def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None):
+    """List all INET Teams with active project/domain for the PM admin Teams page.
+
+    for_date: ISO date string (YYYY-MM-DD).  Defaults to today when omitted.
+    """
     if not _is_pm_role():
         frappe.throw("Not permitted", frappe.PermissionError)
+
+    import re as _re
+    if for_date and not _re.match(r"^\d{4}-\d{2}-\d{2}$", str(for_date)):
+        frappe.throw("Invalid for_date format")
+    date_val = str(for_date) if for_date else None  # None → CURDATE() in SQL
 
     lim = min(int(limit or 500), 1000)
     wheres = []
@@ -11800,6 +11808,18 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
         params.extend([pat, pat, pat])
 
     where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+
+    # Date placeholder: use the supplied date literal or fall back to CURDATE()
+    date_expr = "%s" if date_val else "CURDATE()"
+    if date_val:
+        # Inject 5 copies of date_val (domains, projects, today_status ×2, active_plan_count date)
+        params_date = [date_val] * 5
+    else:
+        params_date = []
+
+    # Build full param list: date params interleaved with where params
+    # Query uses date params first (in subqueries), then where params last
+    full_params = params_date + params
 
     rows = frappe.db.sql(
         f"""
@@ -11827,8 +11847,8 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                 INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
                 LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
                 WHERE rp.team = it.name
-                  AND rp.plan_status IN ('Planned','In Execution')
-                  AND rp.plan_date = CURDATE()
+                  AND rp.plan_status IN ('Planned','In Execution','Completed')
+                  AND rp.plan_date = {date_expr}
                   AND IFNULL(pcc.project_domain,'') != ''
             ) AS current_domains,
             (
@@ -11836,8 +11856,8 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                 FROM `tabRollout Plan` rp2
                 INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
                 WHERE rp2.team = it.name
-                  AND rp2.plan_status IN ('Planned','In Execution')
-                  AND rp2.plan_date = CURDATE()
+                  AND rp2.plan_status IN ('Planned','In Execution','Completed')
+                  AND rp2.plan_date = {date_expr}
                   AND IFNULL(pd2.project_code,'') != ''
             ) AS current_projects,
             (
@@ -11845,6 +11865,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                 FROM `tabRollout Plan` rpa
                 WHERE rpa.team = it.name
                   AND rpa.plan_status IN ('Planned','In Execution')
+                  AND rpa.plan_date = {date_expr}
             ) AS active_plan_count,
             (
                 CASE
@@ -11852,14 +11873,14 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                     WHEN EXISTS (
                         SELECT 1 FROM `tabDaily Execution` de_s
                         WHERE de_s.team = it.name
-                          AND de_s.execution_date = CURDATE()
+                          AND de_s.execution_date = {date_expr}
                           AND de_s.execution_status NOT IN ('Cancelled')
                     ) THEN 'In Execution'
                     WHEN EXISTS (
                         SELECT 1 FROM `tabRollout Plan` rp_s
                         WHERE rp_s.team = it.name
-                          AND rp_s.plan_status IN ('Planned', 'In Execution')
-                          AND rp_s.plan_date = CURDATE()
+                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Completed')
+                          AND rp_s.plan_date = {date_expr}
                     ) THEN 'Planned'
                     ELSE 'Idle'
                 END
@@ -11870,7 +11891,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
         ORDER BY it.team_category, it.team_name
         LIMIT {lim}
         """,
-        tuple(params) if params else (),
+        tuple(full_params) if full_params else (),
         as_dict=True,
     )
     return rows or []

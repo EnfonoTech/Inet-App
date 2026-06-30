@@ -100,7 +100,10 @@ export default function Teams() {
   const [categoryFilter, setCategoryFilter] = useState(() => location.state?.teamFilters?.categoryFilter || []);
   const [imFilter, setImFilter] = useState(() => location.state?.teamFilters?.imFilter || []);
   const [statFilter, setStatFilter] = useState(() => location.state?.teamFilters?.statFilter || null);
+  const [dateFilter, setDateFilter] = useState(() => new Date().toISOString().slice(0, 10));
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const today = new Date().toISOString().slice(0, 10);
 
   const [knownImOptions, setKnownImOptions] = useState([]);
 
@@ -144,6 +147,7 @@ export default function Teams() {
         if (categoryFilter.length === 1) filters.team_category = categoryFilter[0];
         if (imFilter.length === 1) filters.im = imFilter[0];
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        if (dateFilter) filters.for_date = dateFilter;
         const res = await pmApi.listAdminTeams(filters);
         if (!cancelled) setRows(Array.isArray(res) ? res : []);
       } catch {
@@ -153,7 +157,7 @@ export default function Teams() {
       }
     })();
     return () => { cancelled = true; };
-  }, [searchDebounced, statusFilter, typeFilter, categoryFilter, imFilter, refreshKey]);
+  }, [searchDebounced, statusFilter, typeFilter, categoryFilter, imFilter, dateFilter, refreshKey]);
 
   // Accumulate IM options
   useEffect(() => {
@@ -301,7 +305,7 @@ export default function Teams() {
     }));
   }
 
-  const hasFilters = !!(search || statusFilter.length || typeFilter.length || categoryFilter.length || imFilter.length || statFilter);
+  const hasFilters = !!(search || statusFilter.length || typeFilter.length || categoryFilter.length || imFilter.length || statFilter || dateFilter !== today);
 
   // Stats always computed from raw rows — never affected by filters
   const stats = useMemo(() => {
@@ -371,9 +375,18 @@ export default function Teams() {
           options={["Field Team", "Backend Team"]} placeholder="All Categories" minWidth={150} />
         <SearchableSelect multi value={imFilter} onChange={setImFilter}
           options={knownImOptions} placeholder="All IMs" minWidth={150} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600, whiteSpace: "nowrap" }}>Date</span>
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", color: dateFilter !== today ? "#1d4ed8" : undefined, fontWeight: dateFilter !== today ? 600 : undefined }}
+          />
+        </div>
         {hasFilters && (
           <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setStatusFilter([]); setTypeFilter([]); setCategoryFilter([]); setImFilter([]); setStatFilter(null); }}>
+            onClick={() => { setSearch(""); setStatusFilter([]); setTypeFilter([]); setCategoryFilter([]); setImFilter([]); setStatFilter(null); setDateFilter(today); }}>
             Clear
           </button>
         )}
@@ -410,7 +423,9 @@ export default function Teams() {
           {/* Right group: Field today */}
           <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, display: "flex", alignItems: "center", overflow: "hidden", flex: "0 0 auto" }}>
             <div style={{ padding: "6px 14px", display: "flex", flexDirection: "column", justifyContent: "center", borderRight: "1px solid #f1f5f9", background: "#f8fafc", alignSelf: "stretch" }}>
-              <div style={{ fontSize: 9.5, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>Field Today</div>
+              <div style={{ fontSize: 9.5, color: dateFilter !== today ? "#1d4ed8" : "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>
+                {dateFilter !== today ? dateFilter : "Field Today"}
+              </div>
             </div>
             <StatItem label="Active Field" value={stats.field} color="#6d28d9" accent="#8b5cf6"
               onClick={() => clickStat("team_category", "Field Team")}
