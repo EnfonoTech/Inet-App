@@ -334,7 +334,7 @@ export const pmApi = {
   createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
   updateExecution:      (payload)   => call("inet_app.api.command_center.update_execution", { payload: JSON.stringify(payload) }),
   bulkUpdateExecutionField: (names, field, value) => call("inet_app.api.command_center.bulk_update_execution_field", { names: JSON.stringify(names), field, value }),
-  generateWorkDone:     (execution_name) => call("inet_app.api.command_center.generate_work_done", { execution_name }),
+  generateWorkDone:     (execution_name, issue_flag) => call("inet_app.api.command_center.generate_work_done", { execution_name, issue_flag: issue_flag || "" }),
   getFieldExecutionForRollout: (rollout_plan) =>
     call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),
   getRolloutPlanDetails: (rollout_plan) =>
@@ -421,6 +421,7 @@ export const pmApi = {
   getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
   updateWorkDoneSubmission: (name, submission_status, note) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status, note }),
+  updateWorkDoneIssue: (name, issue_flag) => call("inet_app.api.command_center.update_work_done_issue", { name, issue_flag }),
   updateSubconSubmission: (po_dispatch, submission_status, note) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status, note }),
   getWorkDoneAttachments: (name) => call("inet_app.api.command_center.get_work_done_attachments", { name }),
   getWorkDoneAttachmentsByDispatch: (po_dispatch) => call("inet_app.api.pic.get_work_done_attachments_for_dispatch", { po_dispatch }),

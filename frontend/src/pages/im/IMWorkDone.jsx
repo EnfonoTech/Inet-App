@@ -181,6 +181,33 @@ function fmtTimestamp(ts) {
   return s;
 }
 
+const ISSUE_FLAG_PALETTE = {
+  "POD/PPT required":               { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
+  "TFM Check list":                 { bg: "#f5f3ff", fg: "#6d28d9", bd: "#ddd6fe" },
+  "Spare part return":              { bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
+  "PAT/HO Final Approval":          { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" },
+  "FPDC/FM Survey report Approval": { bg: "#f0f9ff", fg: "#0369a1", bd: "#bae6fd" },
+  "Partial Work done":              { bg: "#fff1f2", fg: "#be123c", bd: "#fecdd3" },
+};
+
+function IssueFlagCell({ flag, onClick }) {
+  if (!flag) {
+    return (
+      <button type="button" onClick={onClick}
+        style={{ fontSize: "0.7rem", padding: "3px 8px", background: "none", color: "#94a3b8", border: "1px dashed #e2e8f0", borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap" }}>
+        + flag
+      </button>
+    );
+  }
+  const p = ISSUE_FLAG_PALETTE[flag] || { bg: "#f1f5f9", fg: "#334155", bd: "#e2e8f0" };
+  return (
+    <button type="button" onClick={onClick}
+      style={{ fontSize: "0.7rem", padding: "3px 9px", whiteSpace: "nowrap", background: p.bg, color: p.fg, border: `1px solid ${p.bd}`, borderRadius: 6, cursor: "pointer", fontWeight: 700 }}>
+      {flag}
+    </button>
+  );
+}
+
 export default function IMWorkDone() {
   const { imName } = useAuth();
   const { rowLimit } = useTableRowLimit();
@@ -219,6 +246,60 @@ export default function IMWorkDone() {
   const [attachLoading, setAttachLoading] = useState(false);
   const [detailAttachments, setDetailAttachments] = useState([]);
   const [detailAttachLoading, setDetailAttachLoading] = useState(false);
+  const [issueFlagFor, setIssueFlagFor] = useState(null);
+  const [issueFlagPick, setIssueFlagPick] = useState("");
+  const [issueFlagBusy, setIssueFlagBusy] = useState(false);
+  const [issueFlagErr, setIssueFlagErr] = useState(null);
+  const [issueFlagFilter, setIssueFlagFilter] = useState([]);
+  const [bulkIssueFlagOpen, setBulkIssueFlagOpen] = useState(false);
+  const [bulkIssueFlagPick, setBulkIssueFlagPick] = useState("");
+  const [bulkIssueFlagBusy, setBulkIssueFlagBusy] = useState(false);
+  const [bulkIssueFlagErr, setBulkIssueFlagErr] = useState(null);
+  const [bulkIssueFlagResult, setBulkIssueFlagResult] = useState(null);
+
+  const WD_ISSUE_OPTIONS = [
+    "", "POD/PPT required", "TFM Check list", "Spare part return",
+    "PAT/HO Final Approval", "FPDC/FM Survey report Approval", "Partial Work done",
+  ];
+
+  function openIssueFlagModal(r) {
+    setIssueFlagErr(null);
+    setIssueFlagPick(r.issue_flag || "");
+    setIssueFlagFor(r);
+  }
+
+  async function submitIssueFlag() {
+    if (!issueFlagFor) return;
+    setIssueFlagBusy(true);
+    setIssueFlagErr(null);
+    try {
+      await pmApi.updateWorkDoneIssue(issueFlagFor.name, issueFlagPick);
+      setIssueFlagFor(null);
+      loadData();
+    } catch (err) {
+      setIssueFlagErr(err.message || "Failed to update issue flag");
+    } finally {
+      setIssueFlagBusy(false);
+    }
+  }
+
+  async function submitBulkIssueFlag() {
+    setBulkIssueFlagBusy(true);
+    setBulkIssueFlagErr(null);
+    let updated = 0;
+    const errors = [];
+    for (const name of selectedRows) {
+      try {
+        await pmApi.updateWorkDoneIssue(name, bulkIssueFlagPick);
+        updated++;
+      } catch (err) {
+        errors.push({ name, error: err.message || "Failed" });
+      }
+    }
+    setBulkIssueFlagResult({ updated, errors });
+    setBulkIssueFlagBusy(false);
+    if (updated > 0) loadData();
+  }
 
   function openSubmissionModal(r) {
     setSubmissionErr(null);
@@ -383,8 +464,14 @@ export default function IMWorkDone() {
       if (!match) return false;
     }
     if (execStatusFilter.length && !execStatusFilter.includes(r.execution_status || "")) return false;
+    if (issueFlagFilter.length) {
+      const wantsNone = issueFlagFilter.includes("__NONE__");
+      const nonNone = issueFlagFilter.filter((v) => v !== "__NONE__");
+      const flag = r.issue_flag || "";
+      if (!((wantsNone && !flag) || nonNone.includes(flag))) return false;
+    }
     return true;
-  }), [rows, submissionFilter, execStatusFilter]);
+  }), [rows, submissionFilter, execStatusFilter, issueFlagFilter]);
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
   const bulkActTypes = [...new Set(filteredRows.filter((r) => selectedRows.has(r.name)).map((r) => r.activity_type).filter(Boolean))];
@@ -393,7 +480,7 @@ export default function IMWorkDone() {
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
 
   const totals = filteredRows.reduce(
     (acc, r) => ({
@@ -433,6 +520,14 @@ export default function IMWorkDone() {
         />
         <SearchableSelect
           multi
+          value={issueFlagFilter}
+          onChange={setIssueFlagFilter}
+          options={[{ id: "__NONE__", label: "No flag" }, ...WD_ISSUE_OPTIONS.filter(Boolean).map((o) => ({ id: o, label: o }))]}
+          placeholder="All Issue Flags"
+          minWidth={150}
+        />
+        <SearchableSelect
+          multi
           value={billingFilter}
           onChange={setBillingFilter}
           options={["Pending", "Invoiced", "Closed"]}
@@ -454,7 +549,7 @@ export default function IMWorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setSubmissionFilter([]); setExecStatusFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -465,6 +560,15 @@ export default function IMWorkDone() {
               {selectedRows.size} selected
             </span>
           )}
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={selectedRows.size === 0}
+            style={selectedRows.size > 0 ? { borderColor: "#f59e0b", color: "#b45309", background: "#fffbeb" } : {}}
+            onClick={() => { setBulkIssueFlagPick(""); setBulkIssueFlagErr(null); setBulkIssueFlagResult(null); setBulkIssueFlagOpen(true); }}
+          >
+            Issue Flag{selectedRows.size > 0 ? ` (${selectedRows.size})` : ""}
+          </button>
           <button
             type="button"
             className="btn-primary"
@@ -547,6 +651,7 @@ export default function IMWorkDone() {
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Billing Status</th>
                   <th>Submission Status</th>
+                  <th>Issue Flag</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -595,6 +700,9 @@ export default function IMWorkDone() {
                     <td title={r.pic_status ? `PIC status: ${r.pic_status}` : ""}><StatusPill value={r.billing_status} /></td>
                     <td><StatusPill value={r.submission_status} /></td>
                     <td onClick={(e) => e.stopPropagation()}>
+                      <IssueFlagCell flag={r.issue_flag} onClick={() => openIssueFlagModal(r)} />
+                    </td>
+                    <td onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
                         className="btn-secondary"
@@ -611,9 +719,9 @@ export default function IMWorkDone() {
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                   <td />
                   <td style={{ fontSize: "0.75rem", fontWeight: 700, color: "#64748b", padding: "8px 12px", whiteSpace: "nowrap" }}>
-                    {rows.length} rows
+                    {filteredRows.length} rows
                   </td>
-                  <td /><td /><td /><td />
+                  <td /><td /><td /><td /><td /><td /><td /><td />
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
                     {money.format(totals.lineAmount)}
                   </td>
@@ -621,7 +729,7 @@ export default function IMWorkDone() {
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
                     {fmt.format(totals.revenue)}
                   </td>
-                  <td /><td /><td />
+                  <td /><td /><td /><td />
                 </tr>
               </tfoot>
             </table>
@@ -674,6 +782,104 @@ export default function IMWorkDone() {
                 <AttachmentSlotList attachments={detailAttachments} docReq={DOC_REQUIREMENTS[detailRow?.activity_type]} />
               </div>
             ) : null}
+          </div>
+        </div>
+      )}
+
+      {issueFlagFor && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !issueFlagBusy && setIssueFlagFor(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(400px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Set Issue Flag</h3>
+              <button type="button" onClick={() => setIssueFlagFor(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }} disabled={issueFlagBusy}>&times;</button>
+            </div>
+            <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 14 }}>
+              {issueFlagFor.poid || issueFlagFor.po_dispatch || issueFlagFor.name}
+            </div>
+            {issueFlagErr && <div className="notice error" style={{ marginBottom: 12 }}>{issueFlagErr}</div>}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Issue Flag</label>
+              <select
+                value={issueFlagPick}
+                onChange={(e) => setIssueFlagPick(e.target.value)}
+                style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.9rem", width: "100%" }}
+                disabled={issueFlagBusy}
+              >
+                {WD_ISSUE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>{opt || "— None —"}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" className="btn-secondary" onClick={() => setIssueFlagFor(null)} disabled={issueFlagBusy}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitIssueFlag} disabled={issueFlagBusy}>
+                {issueFlagBusy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkIssueFlagOpen && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !bulkIssueFlagBusy && setBulkIssueFlagOpen(false)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(420px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Set Issue Flag — {selectedRows.size} rows</h3>
+              <button type="button" onClick={() => setBulkIssueFlagOpen(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }} disabled={bulkIssueFlagBusy}>&times;</button>
+            </div>
+            {bulkIssueFlagResult ? (
+              <div>
+                <div style={{ padding: "12px 14px", background: "#ecfdf5", border: "1px solid #bbf7d0", borderRadius: 8, marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, color: "#047857", marginBottom: 4 }}>Updated {bulkIssueFlagResult.updated} row{bulkIssueFlagResult.updated !== 1 ? "s" : ""}</div>
+                  {bulkIssueFlagResult.errors?.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>Failed ({bulkIssueFlagResult.errors.length}):</div>
+                      {bulkIssueFlagResult.errors.map((e, i) => (
+                        <div key={i} style={{ fontSize: "0.75rem", color: "#991b1b" }}>{e.name}: {e.error}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-primary" onClick={() => setBulkIssueFlagOpen(false)}>Close</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {bulkIssueFlagErr && <div className="notice error" style={{ marginBottom: 12 }}>{bulkIssueFlagErr}</div>}
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Issue Flag</label>
+                  <select
+                    value={bulkIssueFlagPick}
+                    onChange={(e) => setBulkIssueFlagPick(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.9rem", width: "100%" }}
+                    disabled={bulkIssueFlagBusy}
+                  >
+                    {WD_ISSUE_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>{opt || "— None (clear flag) —"}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button type="button" className="btn-secondary" onClick={() => setBulkIssueFlagOpen(false)} disabled={bulkIssueFlagBusy}>Cancel</button>
+                  <button type="button" className="btn-primary" onClick={submitBulkIssueFlag} disabled={bulkIssueFlagBusy}>
+                    {bulkIssueFlagBusy ? "Saving…" : `Apply to ${selectedRows.size} rows`}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

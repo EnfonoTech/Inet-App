@@ -20,7 +20,8 @@
   "margin_sar",
   "inet_margin_pct",
   "submission_status",
-  "billing_status"
+  "billing_status",
+  "issue_flag"
  ],
  "fields": [
   {
@@ -119,6 +120,12 @@
   {
    "fieldname": "column_break_wrgw",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "issue_flag",
+   "fieldtype": "Select",
+   "label": "Issue Flag",
+   "options": "\nPOD/PPT required\nTFM Check list\nSpare part return\nPAT/HO Final Approval\nFPDC/FM Survey report Approval\nPartial Work done"
   }
  ],
  "index_web_pages_for_search": 1,

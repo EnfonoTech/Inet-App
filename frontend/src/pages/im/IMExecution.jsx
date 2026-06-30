@@ -188,6 +188,7 @@ export default function IMExecution() {
   const [issueCatErr, setIssueCatErr] = useState(null);
   const [wdBusy, setWdBusy] = useState("");
   const [wdErr, setWdErr] = useState(null);
+  const [wdIssueFlag, setWdIssueFlag] = useState("");
   const [selectedExecs, setSelectedExecs] = useState(new Set());
   const [bulkQcOpen, setBulkQcOpen] = useState(false);
   const [bulkQcPick, setBulkQcPick] = useState("Pass");
@@ -436,7 +437,7 @@ export default function IMExecution() {
       for (const row of selectedEligible) {
         // Sequentially create to keep error attribution simple.
         // eslint-disable-next-line no-await-in-loop
-        await pmApi.generateWorkDone(row.name);
+        await pmApi.generateWorkDone(row.name, wdIssueFlag);
       }
       setSelectedExecs(new Set());
       await loadExecutions();
@@ -950,6 +951,22 @@ export default function IMExecution() {
                 </div>
               </div>
             )}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>Issue Flag (optional)</label>
+              <select
+                value={wdIssueFlag}
+                onChange={(e) => setWdIssueFlag(e.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", width: "100%" }}
+              >
+                <option value="">— None —</option>
+                <option>POD/PPT required</option>
+                <option>TFM Check list</option>
+                <option>Spare part return</option>
+                <option>PAT/HO Final Approval</option>
+                <option>FPDC/FM Survey report Approval</option>
+                <option>Partial Work done</option>
+              </select>
+            </div>
             <button
               className="btn-primary"
               disabled={selectedEligible.length === 0 || wdBusy === "bulk"}
@@ -957,7 +974,7 @@ export default function IMExecution() {
             >
               {wdBusy === "bulk" ? "Creating…" : `Confirm — Create ${selectedEligible.length} Work Done`}
             </button>
-            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setWdConfirmOpen(false)}>Cancel</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => { setWdConfirmOpen(false); setWdIssueFlag(""); }}>Cancel</button>
           </div>
         </div>
       )}

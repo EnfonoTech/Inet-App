@@ -4433,8 +4433,14 @@ def bulk_update_execution_field(names, field, value):
     return {"updated": updated, "errors": errors}
 
 
+_ALLOWED_WD_ISSUE_FLAGS = frozenset((
+    "", "POD/PPT required", "TFM Check list", "Spare part return",
+    "PAT/HO Final Approval", "FPDC/FM Survey report Approval", "Partial Work done",
+))
+
+
 @frappe.whitelist()
-def generate_work_done(execution_name):
+def generate_work_done(execution_name, issue_flag=None):
     """
     Create a Work Done record from a completed Daily Execution.
 
@@ -4528,7 +4534,7 @@ def generate_work_done(execution_name):
     dispatch = frappe.db.get_value(
         "PO Dispatch",
         dispatch_name,
-        ["item_code", "center_area", "region_type", "project_code", "customer", "rate"],
+        ["item_code", "center_area", "region_type", "project_code", "customer", "rate", "qty", "line_amount"],
         as_dict=True,
     )
     if not dispatch:
@@ -4538,21 +4544,20 @@ def generate_work_done(execution_name):
     center_area = dispatch.center_area or ""
     team_id = rp.team
 
-    # Billing rate always comes from PO Dispatch — it is the contracted per-unit rate
     billing_rate = flt(dispatch.rate or 0)
 
-    # Aggregate executed_qty across team Daily Executions — multi-team
-    # plans bill on the combined work, not just the trigger DE.
+    # Work Done = fully executed: use the contracted qty and line_amount directly.
+    # This ensures revenue_sar always equals line_amount regardless of what
+    # achieved_qty the TL entered on the Daily Execution.
+    executed_qty = flt(dispatch.qty) or 1.0
+    revenue = flt(dispatch.line_amount) or (billing_rate * executed_qty)
+
+    # Still aggregate DE rows for team-cost calculation (multi-team support).
     plan_de_rows = frappe.db.sql(
         "SELECT name, team, IFNULL(achieved_qty, 0) AS achieved_qty "
         "FROM `tabDaily Execution` WHERE rollout_plan = %s",
         (rp_name,), as_dict=True,
     ) or []
-    if plan_de_rows:
-        executed_qty = flt(sum(flt(r["achieved_qty"] or 0) for r in plan_de_rows))
-    else:
-        executed_qty = flt(exec_doc.achieved_qty or 0)
-    revenue = billing_rate * executed_qty
 
     # Team cost: sum across every participating team. The lead team's
     # team_type / subcontractor still drives subcontract-cost / margin
@@ -4627,6 +4632,9 @@ def generate_work_done(execution_name):
     wd.margin_sar = margin
     wd.inet_margin_pct = inet_margin_pct
     wd.billing_status = "Pending"
+    clean_flag = (issue_flag or "").strip()
+    if clean_flag and clean_flag in _ALLOWED_WD_ISSUE_FLAGS and frappe.db.has_column("Work Done", "issue_flag"):
+        wd.issue_flag = clean_flag
 
     wd.insert(ignore_permissions=True)
     frappe.db.commit()
@@ -5218,6 +5226,8 @@ def list_work_done_rows(filters=None, limit=500):
         wd_fields.append("region_type")
     if frappe.db.has_column("Work Done", "submission_status"):
         wd_fields.append("submission_status")
+    if frappe.db.has_column("Work Done", "issue_flag"):
+        wd_fields.append("issue_flag")
     lim = _portal_row_limit(limit, 500)
 
     wheres = ["1=1"]
@@ -5526,6 +5536,9 @@ def list_work_done_rows(filters=None, limit=500):
             key=lambda r: (r.get("execution_date") or "", r.get("modified") or ""),
             reverse=True,
         )
+    # Re-apply the row limit after combining regular + subcon rows so the total
+    # never exceeds the caller's requested limit.
+    out = out[:lim]
     _enrich_with_project_fields(out)
     _apply_dummy_description(out)
     return out
@@ -5883,6 +5896,22 @@ def update_work_done_submission(name, submission_status, note=None):
     if pic_warning:
         result["pic_warning"] = pic_warning
     return result
+
+
+@frappe.whitelist()
+def update_work_done_issue(name, issue_flag):
+    """IM / PM sets the issue flag on a Work Done record."""
+    name = (name or "").strip()
+    flag = (issue_flag or "").strip()
+    if not name:
+        frappe.throw("name is required")
+    if flag not in _ALLOWED_WD_ISSUE_FLAGS:
+        frappe.throw("Invalid issue_flag value")
+    if not frappe.db.exists("Work Done", name):
+        frappe.throw(f"Work Done not found: {name}")
+    frappe.db.set_value("Work Done", name, "issue_flag", flag, update_modified=True)
+    frappe.db.commit()
+    return {"name": name, "issue_flag": flag}
 
 
 @frappe.whitelist()

@@ -168,6 +168,33 @@ function StatusPill({ value }) {
   );
 }
 
+const ISSUE_FLAG_PALETTE = {
+  "POD/PPT required":               { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
+  "TFM Check list":                 { bg: "#f5f3ff", fg: "#6d28d9", bd: "#ddd6fe" },
+  "Spare part return":              { bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
+  "PAT/HO Final Approval":          { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" },
+  "FPDC/FM Survey report Approval": { bg: "#f0f9ff", fg: "#0369a1", bd: "#bae6fd" },
+  "Partial Work done":              { bg: "#fff1f2", fg: "#be123c", bd: "#fecdd3" },
+};
+
+function IssueFlagCell({ flag, onClick }) {
+  if (!flag) {
+    return (
+      <button type="button" onClick={onClick}
+        style={{ fontSize: "0.7rem", padding: "3px 8px", background: "none", color: "#94a3b8", border: "1px dashed #e2e8f0", borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap" }}>
+        + flag
+      </button>
+    );
+  }
+  const p = ISSUE_FLAG_PALETTE[flag] || { bg: "#f1f5f9", fg: "#334155", bd: "#e2e8f0" };
+  return (
+    <button type="button" onClick={onClick}
+      style={{ fontSize: "0.7rem", padding: "3px 9px", whiteSpace: "nowrap", background: p.bg, color: p.fg, border: `1px solid ${p.bd}`, borderRadius: 6, cursor: "pointer", fontWeight: 700 }}>
+      {flag}
+    </button>
+  );
+}
+
 function DetailItem({ label, value }) {
   const txt = String(value || "");
   const isStatus = /status/i.test(label);
@@ -225,7 +252,13 @@ export default function WorkDone() {
   const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
   const [excludeBackend, setExcludeBackend] = useState(_navWD?.excludeBackend ?? false);
   const [detailRow, setDetailRow] = useState(null);
-  const [selectedRow, setSelectedRow] = useState(null);
+  const [selectedRows, setSelectedRows] = useState(new Set());
+  const [issueFlagFilter, setIssueFlagFilter] = useState([]);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkErr, setBulkErr] = useState(null);
+  const [bulkResult, setBulkResult] = useState(null);
   const [submissionFor, setSubmissionFor] = useState(null);
   const [submissionPick, setSubmissionPick] = useState("");
   const [submissionBusy, setSubmissionBusy] = useState(false);
@@ -237,6 +270,59 @@ export default function WorkDone() {
   const [imNote, setImNote] = useState("");
   const [existingAttachments, setExistingAttachments] = useState([]);
   const [attachLoading, setAttachLoading] = useState(false);
+  const [issueFlagFor, setIssueFlagFor] = useState(null);
+  const [bulkIssueFlagOpen, setBulkIssueFlagOpen] = useState(false);
+  const [bulkIssueFlagPick, setBulkIssueFlagPick] = useState("");
+  const [bulkIssueFlagBusy, setBulkIssueFlagBusy] = useState(false);
+  const [bulkIssueFlagErr, setBulkIssueFlagErr] = useState(null);
+  const [bulkIssueFlagResult, setBulkIssueFlagResult] = useState(null);
+  const [issueFlagPick, setIssueFlagPick] = useState("");
+  const [issueFlagBusy, setIssueFlagBusy] = useState(false);
+  const [issueFlagErr, setIssueFlagErr] = useState(null);
+
+  const WD_ISSUE_OPTIONS = [
+    "", "POD/PPT required", "TFM Check list", "Spare part return",
+    "PAT/HO Final Approval", "FPDC/FM Survey report Approval", "Partial Work done",
+  ];
+
+  function openIssueFlagModal(r) {
+    setIssueFlagErr(null);
+    setIssueFlagPick(r.issue_flag || "");
+    setIssueFlagFor(r);
+  }
+
+  async function submitIssueFlag() {
+    if (!issueFlagFor) return;
+    setIssueFlagBusy(true);
+    setIssueFlagErr(null);
+    try {
+      await pmApi.updateWorkDoneIssue(issueFlagFor.name, issueFlagPick);
+      setIssueFlagFor(null);
+      loadData();
+    } catch (err) {
+      setIssueFlagErr(err.message || "Failed to update issue flag");
+    } finally {
+      setIssueFlagBusy(false);
+    }
+  }
+
+  async function submitBulkIssueFlag() {
+    setBulkIssueFlagBusy(true);
+    setBulkIssueFlagErr(null);
+    let updated = 0;
+    const errors = [];
+    for (const name of selectedRows) {
+      try {
+        await pmApi.updateWorkDoneIssue(name, bulkIssueFlagPick);
+        updated++;
+      } catch (err) {
+        errors.push({ name, error: err.message || "Failed" });
+      }
+    }
+    setBulkIssueFlagResult({ updated, errors });
+    setBulkIssueFlagBusy(false);
+    if (updated > 0) loadData();
+  }
 
   function openSubmissionModal(r) {
     setSubmissionErr(null);
@@ -310,6 +396,29 @@ export default function WorkDone() {
   const [refreshKey, setRefreshKey] = useState(0);
   const loadData = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  async function submitBulk() {
+    setBulkBusy(true);
+    setBulkErr(null);
+    let updated = 0;
+    const errors = [];
+    const selectedList = filteredRows.filter((r) => selectedRows.has(r.name));
+    for (const row of selectedList) {
+      try {
+        if (row.is_subcon) {
+          await pmApi.updateSubconSubmission(row.po_dispatch || row.poid, bulkStatus, undefined);
+        } else {
+          await pmApi.updateWorkDoneSubmission(row.name, bulkStatus, undefined);
+        }
+        updated++;
+      } catch (err) {
+        errors.push({ name: row.poid || row.name, error: err.message || "Failed" });
+      }
+    }
+    setBulkResult({ updated, errors });
+    setBulkBusy(false);
+    if (updated > 0) { setSelectedRows(new Set()); loadData(); }
+  }
+
   // Single useEffect with cancellation guard. Replaces the older
   // useResetOnRowLimitChange + separate-load pattern that left the table
   // blank when going from a higher to a lower row limit.
@@ -341,7 +450,19 @@ export default function WorkDone() {
     return () => { cancelled = true; };
   }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, excludeBackend, refreshKey]);
 
-  const hasFilters = !!(searchDebounced || billingFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
+  const filteredRows = useMemo(() => {
+    if (!issueFlagFilter.length) return rows;
+    const wantsNone = issueFlagFilter.includes("__NONE__");
+    const nonNone = issueFlagFilter.filter((v) => v !== "__NONE__");
+    return rows.filter((r) => {
+      const flag = r.issue_flag || "";
+      return (wantsNone && !flag) || nonNone.includes(flag);
+    });
+  }, [rows, issueFlagFilter]);
+
+  const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
+
+  const hasFilters = !!(searchDebounced || billingFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || issueFlagFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const [teams, setTeams] = useState([]);
   useEffect(() => {
@@ -362,7 +483,7 @@ export default function WorkDone() {
     });
   }, [rows]);
 
-  const totals = rows.reduce(
+  const totals = filteredRows.reduce(
     (acc, r) => ({
       qty: acc.qty + (parseFloat(r.executed_qty) || 0),
       revenue: acc.revenue + (parseFloat(r.revenue_sar || r.revenue || r.line_amount) || 0),
@@ -437,6 +558,14 @@ export default function WorkDone() {
           placeholder="All DUIDs"
           minWidth={150}
         />
+        <SearchableSelect
+          multi
+          value={issueFlagFilter}
+          onChange={setIssueFlagFilter}
+          options={[{ id: "__NONE__", label: "No flag" }, ...["POD/PPT required","TFM Check list","Spare part return","PAT/HO Final Approval","FPDC/FM Survey report Approval","Partial Work done"].map((o) => ({ id: o, label: o }))]}
+          placeholder="All Issue Flags"
+          minWidth={150}
+        />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         <button
           type="button"
@@ -457,24 +586,40 @@ export default function WorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); setExcludeBackend(false); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setIssueFlagFilter([]); setFromDate(""); setToDate(""); setExcludeBackend(false); }}
           >
             Clear
           </button>
         )}
         <div className="toolbar-actions">
-          {selectedRow && (
+          {selectedRows.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
-              {selectedRow.poid || selectedRow.po_dispatch} selected
+              {selectedRows.size} selected
             </span>
           )}
           <button
             type="button"
-            className="btn-primary"
-            disabled={!selectedRow}
-            onClick={() => openSubmissionModal(selectedRow)}
+            className="btn-secondary"
+            disabled={selectedRows.size === 0}
+            style={selectedRows.size > 0 ? { borderColor: "#f59e0b", color: "#b45309", background: "#fffbeb" } : {}}
+            onClick={() => { setBulkIssueFlagPick(""); setBulkIssueFlagErr(null); setBulkIssueFlagResult(null); setBulkIssueFlagOpen(true); }}
           >
-            Update Submission
+            Issue Flag{selectedRows.size > 0 ? ` (${selectedRows.size})` : ""}
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={selectedRows.size === 0}
+            onClick={() => {
+              if (selectedRows.size === 1 && selectedRow) {
+                openSubmissionModal(selectedRow);
+              } else {
+                setBulkErr(null); setBulkStatus(""); setBulkResult(null);
+                setBulkModalOpen(true);
+              }
+            }}
+          >
+            Update Submission{selectedRows.size > 1 ? ` (${selectedRows.size})` : ""}
           </button>
         </div>
       </div>
@@ -491,7 +636,7 @@ export default function WorkDone() {
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading work done records…
             </div>
-          ) : rows.length === 0 ? (
+          ) : filteredRows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">✅</div>
               <h3>{hasFilters ? "No results match your filters" : "No completed work records"}</h3>
@@ -508,9 +653,13 @@ export default function WorkDone() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={selectedRow != null}
-                      onChange={() => setSelectedRow(null)}
-                      title="Clear selection"
+                      checked={filteredRows.length > 0 && filteredRows.every((r) => selectedRows.has(r.name))}
+                      ref={(el) => { if (el) el.indeterminate = selectedRows.size > 0 && !filteredRows.every((r) => selectedRows.has(r.name)); }}
+                      onChange={() => {
+                        const allSel = filteredRows.every((r) => selectedRows.has(r.name));
+                        setSelectedRows(allSel ? new Set() : new Set(filteredRows.map((r) => r.name)));
+                      }}
+                      title={filteredRows.every((r) => selectedRows.has(r.name)) ? "Deselect all" : "Select all"}
                     />
                   </th>
                   <th>POID</th>
@@ -532,6 +681,7 @@ export default function WorkDone() {
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Submission Status</th>
+                  <th>Issue Flag</th>
                   <th>Billing Status</th>
                   <th title="Remark set by PM">General</th>
                   <th title="Remark set by IM">Manager</th>
@@ -540,19 +690,19 @@ export default function WorkDone() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
+                {filteredRows.map((row) => {
                   const revenue = parseFloat(row.revenue_sar || row.revenue || row.line_amount) || 0;
                   return (
                     <tr key={row.name}
-                      className={selectedRow?.name === row.name ? "row-selected" : ""}
+                      className={selectedRows.has(row.name) ? "row-selected" : ""}
                       style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}), cursor: "pointer" }}
-                      onClick={() => setSelectedRow((prev) => prev?.name === row.name ? null : row)}
+                      onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(row.name) ? next.delete(row.name) : next.add(row.name); return next; })}
                     >
                       <td onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
-                          checked={selectedRow?.name === row.name}
-                          onChange={() => setSelectedRow((prev) => prev?.name === row.name ? null : row)}
+                          checked={selectedRows.has(row.name)}
+                          onChange={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(row.name) ? next.delete(row.name) : next.add(row.name); return next; })}
                         />
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
@@ -578,6 +728,9 @@ export default function WorkDone() {
                       <td style={{ textAlign: "right" }}>{row.executed_qty}</td>
                       <td style={{ textAlign: "right", color: "var(--green)" }}>{fmt.format(revenue)}</td>
                       <td><StatusPill value={row.submission_status} /></td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <IssueFlagCell flag={row.issue_flag} onClick={() => openIssueFlagModal(row)} />
+                      </td>
                       <td title={row.pic_status ? `PIC status: ${row.pic_status}` : ""}><StatusPill value={row.billing_status} /></td>
                       <td><RemarksCell value={row.general_remark} tone="general" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.general_remark = v; }} /></td>
                       <td><RemarksCell value={row.manager_remark} tone="manager" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.manager_remark = v; }} /></td>
@@ -599,15 +752,14 @@ export default function WorkDone() {
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
                   <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
-                    {rows.length} rows
+                    {filteredRows.length} rows
                   </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
-                  <td style={{ textAlign: "right", padding: "8px 16px" }} />
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
                   <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                     {fmt.format(totals.revenue)}
                   </td>
-                  <td /><td /><td /><td /><td /><td />
+                  <td /><td /><td /><td /><td /><td /><td />
                 </tr>
               </tfoot>
             </table>
@@ -615,8 +767,8 @@ export default function WorkDone() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={rows.length}
+          loadedCount={filteredRows.length}
+          filteredCount={filteredRows.length}
           filterActive={!!hasFilters}
         />
       </div>
@@ -625,6 +777,160 @@ export default function WorkDone() {
         <div style={{ margin: "12px 0", padding: "10px 14px", background: "#fffbeb", border: "1px solid #fbbf24", borderRadius: 8, color: "#92400e", fontSize: "0.85rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <span>{submissionWarn}</span>
           <button type="button" onClick={() => setSubmissionWarn(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#92400e", fontWeight: 700, flexShrink: 0 }}>✕</button>
+        </div>
+      )}
+
+      {bulkIssueFlagOpen && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !bulkIssueFlagBusy && setBulkIssueFlagOpen(false)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(420px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Set Issue Flag — {selectedRows.size} rows</h3>
+              <button type="button" onClick={() => setBulkIssueFlagOpen(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }} disabled={bulkIssueFlagBusy}>&times;</button>
+            </div>
+            {bulkIssueFlagResult ? (
+              <div>
+                <div style={{ padding: "12px 14px", background: "#ecfdf5", border: "1px solid #bbf7d0", borderRadius: 8, marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, color: "#047857", marginBottom: 4 }}>Updated {bulkIssueFlagResult.updated} row{bulkIssueFlagResult.updated !== 1 ? "s" : ""}</div>
+                  {bulkIssueFlagResult.errors?.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>Failed ({bulkIssueFlagResult.errors.length}):</div>
+                      {bulkIssueFlagResult.errors.map((e, i) => (
+                        <div key={i} style={{ fontSize: "0.75rem", color: "#991b1b" }}>{e.name}: {e.error}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-primary" onClick={() => setBulkIssueFlagOpen(false)}>Close</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {bulkIssueFlagErr && <div className="notice error" style={{ marginBottom: 12 }}>{bulkIssueFlagErr}</div>}
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Issue Flag</label>
+                  <select
+                    value={bulkIssueFlagPick}
+                    onChange={(e) => setBulkIssueFlagPick(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.9rem", width: "100%" }}
+                    disabled={bulkIssueFlagBusy}
+                  >
+                    {WD_ISSUE_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>{opt || "— None (clear flag) —"}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button type="button" className="btn-secondary" onClick={() => setBulkIssueFlagOpen(false)} disabled={bulkIssueFlagBusy}>Cancel</button>
+                  <button type="button" className="btn-primary" onClick={submitBulkIssueFlag} disabled={bulkIssueFlagBusy}>
+                    {bulkIssueFlagBusy ? "Saving…" : `Apply to ${selectedRows.size} rows`}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {bulkModalOpen && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !bulkBusy && setBulkModalOpen(false)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(440px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Update Submission — {selectedRows.size} rows</h3>
+              <button type="button" onClick={() => setBulkModalOpen(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }} disabled={bulkBusy}>&times;</button>
+            </div>
+            {bulkResult ? (
+              <div>
+                <div style={{ padding: "12px 14px", background: "#ecfdf5", border: "1px solid #bbf7d0", borderRadius: 8, marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, color: "#047857", marginBottom: 4 }}>Updated {bulkResult.updated} row{bulkResult.updated !== 1 ? "s" : ""}</div>
+                  {bulkResult.errors?.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>Failed ({bulkResult.errors.length}):</div>
+                      {bulkResult.errors.map((e, i) => (
+                        <div key={i} style={{ fontSize: "0.75rem", color: "#991b1b" }}>{e.name}: {e.error}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-primary" onClick={() => setBulkModalOpen(false)}>Close</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {bulkErr && <div className="notice error" style={{ marginBottom: 12 }}>{bulkErr}</div>}
+                <div className="form-group" style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Status</label>
+                  <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} style={{ padding: "8px 10px", width: "100%", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.9rem" }} disabled={bulkBusy}>
+                    <option value="">— Not set —</option>
+                    <option value="Ready for Confirmation">Ready for Confirmation</option>
+                    <option value="Confirmation Done">Confirmation Done</option>
+                  </select>
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#64748b", marginBottom: 16 }}>
+                  Note: file attachments are not uploaded in bulk. For &quot;Confirmation Done&quot; rows requiring documents, open each row individually.
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button type="button" className="btn-secondary" onClick={() => setBulkModalOpen(false)} disabled={bulkBusy}>Cancel</button>
+                  <button type="button" className="btn-primary" onClick={submitBulk} disabled={bulkBusy || !bulkStatus}>
+                    {bulkBusy ? "Saving…" : `Apply to ${selectedRows.size} rows`}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {issueFlagFor && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !issueFlagBusy && setIssueFlagFor(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(400px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Set Issue Flag</h3>
+              <button type="button" onClick={() => setIssueFlagFor(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }} disabled={issueFlagBusy}>&times;</button>
+            </div>
+            <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 14 }}>
+              {issueFlagFor.poid || issueFlagFor.po_dispatch || issueFlagFor.name}
+            </div>
+            {issueFlagErr && <div className="notice error" style={{ marginBottom: 12 }}>{issueFlagErr}</div>}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Issue Flag</label>
+              <select
+                value={issueFlagPick}
+                onChange={(e) => setIssueFlagPick(e.target.value)}
+                style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.9rem", width: "100%" }}
+                disabled={issueFlagBusy}
+              >
+                {WD_ISSUE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>{opt || "— None —"}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" className="btn-secondary" onClick={() => setIssueFlagFor(null)} disabled={issueFlagBusy}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitIssueFlag} disabled={issueFlagBusy}>
+                {issueFlagBusy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
