@@ -224,13 +224,18 @@
   white-space: nowrap;
 }
 
-/* TablePro: narrow fixed row-select column */
-.data-table.data-table--tablepro > thead > tr:first-child > th:first-child:has(input[type="checkbox"]),
-.data-table.data-table--tablepro > tbody > tr > td:first-child:has(input[type="checkbox"]) {
-  box-sizing: border-box;
-  padding: 8px 6px;
-  text-align: center;
-  vertical-align: middle;
+/* Narrow row-select checkbox column — applies before AND after DataTablePro
+   initialises. !important overrides the async-gap flash (table-layout:fixed +
+   min-width:60px on th) and any stale saved width from DataTablePro prefs. */
+.data-table > thead > tr:first-child > th:first-child:has(> input[type="checkbox"]),
+.data-table > tbody > tr > td:first-child:has(> input[type="checkbox"]) {
+  width: 44px !important;
+  min-width: 44px !important;
+  max-width: 44px !important;
+  box-sizing: border-box !important;
+  padding: 6px !important;
+  text-align: center !important;
+  vertical-align: middle !important;
 }
 
 .data-table th {

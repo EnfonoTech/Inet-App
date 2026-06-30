@@ -344,6 +344,10 @@ export const pmApi = {
       po_dispatch: po_dispatch || "",
       rollout_plan: rollout_plan || "",
     }),
+  getDispatchPlanSummaries: (po_dispatches) =>
+    call("inet_app.api.command_center.get_dispatch_plan_summaries", {
+      po_dispatches: JSON.stringify(po_dispatches || []),
+    }),
   listFieldTeamActionablePlans: (team_id) =>
     call("inet_app.api.command_center.list_field_team_actionable_plans", { team_id }),
   listFieldRemarkTemplates: () =>

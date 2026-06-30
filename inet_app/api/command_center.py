@@ -2415,6 +2415,13 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             "(IFNULL(original_dummy_poid, '') != '' AND IFNULL(is_dummy_po, 0) = 0"
             " AND TRIM(original_dummy_poid) != IFNULL(TRIM(name), '')))"
         )
+    elif dummy_preset == "dummy_any":
+        # Both open dummies (is_dummy_po=1) AND mapped-from-dummy rows
+        wheres.append(
+            "(IFNULL(is_dummy_po, 0) = 1 OR IFNULL(was_dummy_po, 0) = 1"
+            " OR (IFNULL(original_dummy_poid, '') != ''"
+            " AND TRIM(original_dummy_poid) != IFNULL(TRIM(name), '')))"
+        )
 
     # has_target_month: "yes" (target_month set), "no" (null/empty), "any" / "" (no filter)
     htm = (pf.get("has_target_month") or "").strip().lower()
@@ -4024,6 +4031,50 @@ def list_dispatch_visits(po_dispatch=None, rollout_plan=None):
         for p in plans:
             p["is_current"] = (p["visit_number"] == max_visit)
     return plans
+
+
+@frappe.whitelist()
+def get_dispatch_plan_summaries(po_dispatches):
+    """Bulk plan summary for a list of PO Dispatch names.
+
+    Returns a dict keyed by po_dispatch name with the current (highest
+    visit_number, non-cancelled) plan's summary per POID.
+    """
+    import json as _json
+    names = _json.loads(po_dispatches) if isinstance(po_dispatches, str) else list(po_dispatches or [])
+    if not names:
+        return {}
+
+    rows = frappe.db.sql(
+        """
+        SELECT
+            rp.po_dispatch,
+            rp.name AS plan_name,
+            rp.plan_date,
+            rp.plan_status,
+            rp.team,
+            IFNULL(it.team_name, rp.team) AS team_name,
+            IFNULL(rp.visit_number, 1) AS visit_number,
+            IFNULL(rp.completion_pct, 0) AS completion_pct,
+            (SELECT wd.name FROM `tabWork Done` wd
+             INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
+             WHERE de.rollout_plan = rp.name LIMIT 1) AS work_done
+        FROM `tabRollout Plan` rp
+        LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        WHERE rp.po_dispatch IN %(names)s
+          AND rp.plan_status != 'Cancelled'
+        ORDER BY rp.po_dispatch, IFNULL(rp.visit_number, 0) DESC, rp.modified DESC
+        """,
+        {"names": tuple(names)},
+        as_dict=True,
+    ) or []
+
+    result = {}
+    for row in rows:
+        pd = row.get("po_dispatch")
+        if pd and pd not in result:
+            result[pd] = row
+    return result
 
 
 @frappe.whitelist()
