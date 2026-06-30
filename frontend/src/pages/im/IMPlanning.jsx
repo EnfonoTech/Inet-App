@@ -441,6 +441,8 @@ export default function IMPlanning() {
                   <th>Description</th>
                   <th>Activity Type</th>
                   <th>DUID</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>Center area</th>
                   <th>Region</th>
                   <th>PO</th>
@@ -481,6 +483,8 @@ export default function IMPlanning() {
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.item_description || ""}>{p.item_description || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{p.activity_type || "—"}</td>
                     <td>{p.site_code || "—"}</td>
+                    <td>{p.project_domain || "—"}</td>
+                    <td>{p.huawei_im || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={p.center_area || ""}>
                       {p.center_area || "—"}
                     </td>

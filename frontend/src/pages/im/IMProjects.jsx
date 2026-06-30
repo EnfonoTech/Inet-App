@@ -7,6 +7,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import RecordDetailView from "../../components/RecordDetailView";
 import { pmApi } from "../../services/api";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import SearchableSelect from "../../components/SearchableSelect";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -61,8 +62,16 @@ export default function IMProjects() {
   const searchDebounced = useDebounced(search, 300);
   const [statusFilter, setStatusFilter] = useState("");
   const [domainFilter, setDomainFilter] = useState("");
+  const [huaweiImFilter, setHuaweiImFilter] = useState("");
   const [detailRow, setDetailRow] = useState(null);
   const [metaProjects, setMetaProjects] = useState([]);
+  const [allDomains, setAllDomains] = useState([]);
+  const [huaweiIms, setHuaweiIms] = useState([]);
+
+  useEffect(() => {
+    pmApi.listProjectDomains().then(res => setAllDomains(res || [])).catch(() => {});
+    pmApi.listHuaweiIMs().then(res => setHuaweiIms(res || [])).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!imName) {
@@ -96,6 +105,7 @@ export default function IMProjects() {
           search: searchDebounced.trim() || undefined,
           status: statusFilter || undefined,
           domain: domainFilter || undefined,
+          huawei_im: huaweiImFilter || undefined,
         });
         if (!cancelled) setProjects(Array.isArray(list) ? list : []);
       } catch {
@@ -105,11 +115,10 @@ export default function IMProjects() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, rowLimit, searchDebounced, statusFilter, domainFilter]);
+  }, [imName, rowLimit, searchDebounced, statusFilter, domainFilter, huaweiImFilter]);
 
   const statuses = [...new Set(metaProjects.map((p) => p.project_status).filter(Boolean))].sort();
-  const domains = [...new Set(metaProjects.map((p) => p.project_domain).filter(Boolean))].sort();
-  const hasFilters = search || statusFilter || domainFilter;
+  const hasFilters = search || statusFilter || domainFilter || huaweiImFilter;
 
   return (
     <div>
@@ -150,21 +159,25 @@ export default function IMProjects() {
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <select
+        <SearchableSelect
           value={domainFilter}
-          onChange={(e) => setDomainFilter(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem" }}
-        >
-          <option value="">All Domains</option>
-          {domains.map((d) => (
-            <option key={d} value={d}>{d}</option>
-          ))}
-        </select>
+          onChange={setDomainFilter}
+          options={allDomains.map(d => ({ id: d.name, label: d.name }))}
+          placeholder="All Domains"
+          minWidth={160}
+        />
+        <SearchableSelect
+          value={huaweiImFilter}
+          onChange={setHuaweiImFilter}
+          options={huaweiIms.map(h => ({ id: h.name, label: h.full_name || h.name }))}
+          placeholder="All Huawei IMs"
+          minWidth={170}
+        />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setStatusFilter(""); setDomainFilter(""); }}
+            onClick={() => { setSearch(""); setStatusFilter(""); setDomainFilter(""); setHuaweiImFilter(""); }}
           >
             Clear
           </button>
@@ -205,6 +218,7 @@ export default function IMProjects() {
                   <th>Project Name</th>
                   <th>Customer</th>
                   <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>Status</th>
                   <th style={{ textAlign: "right" }}>Completion</th>
                   <th style={{ textAlign: "right" }}>Budget</th>
@@ -218,6 +232,7 @@ export default function IMProjects() {
                     <td style={{ fontWeight: 600 }}>{p.project_name}</td>
                     <td>{p.customer}</td>
                     <td>{p.project_domain}</td>
+                    <td>{p.huawei_im || "—"}</td>
                     <td>
                       <span
                         style={{
@@ -264,7 +279,7 @@ export default function IMProjects() {
           placement="tableCard"
           loadedCount={projects.length}
           filteredCount={projects.length}
-          filterActive={!!(search || statusFilter || domainFilter)}
+          filterActive={!!hasFilters}
         />
       </div>
       {detailRow && (

@@ -373,6 +373,8 @@ export default function ExecutionMonitor() {
                   <th>Description</th>
                   <th>Activity Type</th>
                   <th>Project</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -409,6 +411,8 @@ export default function ExecutionMonitor() {
                       <td style={{ fontSize: "0.82rem", maxWidth: 220 }}>{row.item_description || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
                       <td>{row.project_code || "—"}</td>
+                      <td>{row.project_domain || "—"}</td>
+                      <td>{row.huawei_im || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={row.site_name || ""}>{row.site_code || "—"}</td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 120 }} title={row.center_area || ""}>
                         {row.center_area || "—"}

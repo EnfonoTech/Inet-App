@@ -344,6 +344,7 @@ function EditOverview({ project, onSave, onCancel }) {
     project_name: project.project_name || "",
     customer: project.customer || "",
     implementation_manager: project.implementation_manager || "",
+    huawei_im: project.huawei_im || "",
     center_area: project.center_area || "",
     project_domain: project.project_domain || "",
     budget_amount: project.budget_amount || "",
@@ -353,6 +354,7 @@ function EditOverview({ project, onSave, onCancel }) {
     ibuy_owner: project.ibuy_owner || "",
   });
   const [ims, setIms] = useState([]);
+  const [huaweiIms, setHuaweiIms] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [domains, setDomains] = useState([]);
   const [isdpOwners, setIsdpOwners] = useState([]);
@@ -364,6 +366,7 @@ function EditOverview({ project, onSave, onCancel }) {
     pmApi.listIMMasters({ status: "Active" }).then(res => {
       setIms(res || []);
     }).catch(() => {});
+    pmApi.listHuaweiIMs().then(res => setHuaweiIms(res || [])).catch(() => {});
     pmApi.listCustomers({ limit: 200 }).then(res => setCustomers(res || [])).catch(() => {});
     pmApi.listProjectDomains().then(res => setDomains(res || [])).catch(() => {});
     pmApi.listISDPOwners().then(res => setIsdpOwners(res || [])).catch(() => {});
@@ -388,6 +391,7 @@ function EditOverview({ project, onSave, onCancel }) {
         project_name: form.project_name,
         customer: form.customer || undefined,
         implementation_manager: form.implementation_manager || undefined,
+        huawei_im: form.huawei_im || undefined,
         center_area: form.center_area || undefined,
         project_domain: form.project_domain || undefined,
         budget_amount: form.budget_amount ? parseFloat(form.budget_amount) : undefined,
@@ -464,6 +468,17 @@ function EditOverview({ project, onSave, onCancel }) {
               onChange={(v) => setField("implementation_manager", v)}
               options={ims.map(im => ({ id: im.name, label: `${im.full_name}${im.email ? ` (${im.email})` : ""}` }))}
               placeholder="-- Select --"
+              style={{ width: "100%" }}
+              minWidth={0}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Huawei IM</label>
+            <SearchableSelect
+              value={form.huawei_im}
+              onChange={(v) => setField("huawei_im", v)}
+              options={huaweiIms.map(h => ({ id: h.name, label: `${h.full_name || h.name}${h.email ? ` (${h.email})` : ""}` }))}
+              placeholder="-- Select Huawei IM --"
               style={{ width: "100%" }}
               minWidth={0}
             />

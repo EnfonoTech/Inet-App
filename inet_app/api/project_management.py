@@ -26,6 +26,7 @@ def list_projects(
     domain=None,
     area=None,
     implementation_manager=None,
+    huawei_im=None,
 ):
     """List projects; ``limit=0`` loads all rows (no cap). Other limits are clamped to 1..10000."""
     filters = {}
@@ -35,6 +36,8 @@ def list_projects(
         filters["project_domain"] = domain
     if area:
         filters["center_area"] = area
+    if huawei_im:
+        filters["huawei_im"] = huawei_im
     im = (implementation_manager or "").strip()
     if im:
         filters["implementation_manager"] = im
@@ -59,6 +62,7 @@ def list_projects(
         "budget_amount",
         "actual_cost",
         "completion_percentage",
+        "huawei_im",
         "modified",
     ]
     if frappe.db.has_column("Project Control Center", "region_type"):

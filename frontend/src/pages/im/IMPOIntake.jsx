@@ -337,6 +337,8 @@ export default function IMPOIntake() {
                   <th>Mode</th>
                   <th>PO No</th>
                   <th>Project</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>Item</th>
                   <th>Description</th>
                   <th>Activity Type</th>
@@ -373,6 +375,8 @@ export default function IMPOIntake() {
                     </td>
                     <td>{row.po_no || "—"}</td>
                     <td>{row.project_code || "—"}</td>
+                    <td>{row.project_domain || "—"}</td>
+                    <td>{row.huawei_im || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.item_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>
                       {row.item_description || "—"}

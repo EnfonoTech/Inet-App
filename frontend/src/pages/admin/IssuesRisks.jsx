@@ -299,6 +299,8 @@ export default function IssuesRisks() {
                   <th>Item Code</th>
                   <th>Description</th>
                   <th>Project</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>DUID</th>
                   <th>Team</th>
                   <th>IM</th>
@@ -334,6 +336,8 @@ export default function IssuesRisks() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
                     <td>{r.project_code || "—"}</td>
+                    <td>{r.project_domain || "—"}</td>
+                    <td>{r.huawei_im || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.site_code || "—"}</td>
                     <td>{r.team_name || r.team || "—"}</td>
                     <td>{r.im_full_name || r.im || "—"}</td>

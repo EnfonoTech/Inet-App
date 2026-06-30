@@ -2106,6 +2106,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         if imn:
             line["dispatched_im_full_name"] = im_fn_map.get(imn)
 
+    _enrich_with_project_fields(lines)
     return lines
 
 
@@ -2516,6 +2517,7 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
         imn = r.get("im")
         r["im_full_name"] = im_labels.get(imn) if imn else None
         r["activity_type"] = act_map.get(r.get("item_code") or "")
+    _enrich_with_project_fields(rows)
     _apply_dummy_description(rows)
     return rows
 
@@ -2561,6 +2563,28 @@ def _batch_item_activity_types(rows, item_key="item_code"):
     except Exception:
         return {}
     return {r.name: r.activity_type for r in item_rows}
+
+
+def _enrich_with_project_fields(rows, code_key="project_code"):
+    """Batch-fetch project_domain and huawei_im from Project Control Center."""
+    codes = list({r.get(code_key) for r in rows if r.get(code_key)} - {None, ""})
+    if not codes:
+        return
+    ph = ", ".join(["%s"] * len(codes))
+    try:
+        pcc = frappe.db.sql(
+            f"SELECT name AS project_code, project_domain, huawei_im "
+            f"FROM `tabProject Control Center` WHERE name IN ({ph})",
+            tuple(codes),
+            as_dict=True,
+        )
+    except Exception:
+        return
+    pcc_map = {r.project_code: r for r in pcc}
+    for row in rows:
+        info = pcc_map.get(row.get(code_key)) or {}
+        row["project_domain"] = info.get("project_domain") or ""
+        row["huawei_im"] = info.get("huawei_im") or ""
 
 
 @frappe.whitelist()
@@ -5157,6 +5181,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
         act_map = _batch_item_activity_types(out)
         for r in out:
             r["activity_type"] = act_map.get(r.get("item_code") or "")
+        _enrich_with_project_fields(out)
         _apply_dummy_description(out)
     return out
 
@@ -5501,6 +5526,7 @@ def list_work_done_rows(filters=None, limit=500):
             key=lambda r: (r.get("execution_date") or "", r.get("modified") or ""),
             reverse=True,
         )
+    _enrich_with_project_fields(out)
     _apply_dummy_description(out)
     return out
 
@@ -6168,6 +6194,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
                 "modified": r.get("modified"),
             }
         )
+    _enrich_with_project_fields(out)
     _apply_dummy_description(out)
     return out
 
@@ -6937,6 +6964,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         for r in rows:
             r["activity_type"] = act_map.get(r.get("item_code") or "")
             r["timer_start_ms"] = _frappe_dt_to_epoch_ms(r.get("timer_start"))
+        _enrich_with_project_fields(rows)
         _apply_dummy_description(rows)
     return rows or []
 
@@ -7121,6 +7149,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         for r in rows:
             r["activity_type"] = act_map.get(r.get("item_code") or "")
             r["timer_start_ms"] = _frappe_dt_to_epoch_ms(r.get("timer_start"))
+        _enrich_with_project_fields(rows)
         _apply_dummy_description(rows)
     return rows or []
 
@@ -10189,7 +10218,9 @@ def list_backend_dispatches(
         ORDER BY pd.modified DESC
         LIMIT {limit_int}
     """
-    return frappe.db.sql(sql, tuple(params), as_dict=True)
+    rows = frappe.db.sql(sql, tuple(params), as_dict=True)
+    _enrich_with_project_fields(rows)
+    return rows
 
 
 # ──────────────────────────────────────────────────────────────────────

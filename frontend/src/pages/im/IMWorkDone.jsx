@@ -520,6 +520,8 @@ export default function IMWorkDone() {
                   </th>
                   <th>Project Code</th>
                   <th>Project Name</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>POID</th>
                   <th>DUID</th>
                   <th>Item Code</th>
@@ -527,7 +529,7 @@ export default function IMWorkDone() {
                   <th>Activity Type</th>
                   <th style={{ textAlign: "right" }}>Line Amount</th>
                   <th>Region</th>
-                  <th>Huawei IM</th>
+                  <th>INET IM</th>
                   <th>Planning Timestamp</th>
                   <th style={{ textAlign: "right" }}>Dispatch Seq</th>
                   <th>Plan Date</th>
@@ -565,6 +567,8 @@ export default function IMWorkDone() {
                     </td>
                     <td>{r.project_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.project_name || ""}>{r.project_name || "—"}</td>
+                    <td>{r.project_domain || "—"}</td>
+                    <td>{r.huawei_im || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.site_code || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{r.item_code || "—"}</td>

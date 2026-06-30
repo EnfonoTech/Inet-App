@@ -262,14 +262,17 @@ export default function Projects() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [domainFilter, setDomainFilter] = useState("");
+  const [huaweiImFilter, setHuaweiImFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [allDomains, setAllDomains] = useState([]);
+  const [huaweiIms, setHuaweiIms] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
   function loadProjects() { setRefreshKey((k) => k + 1); }
 
   useEffect(() => {
     pmApi.listProjectDomains().then(res => setAllDomains(res || [])).catch(() => {});
+    pmApi.listHuaweiIMs().then(res => setHuaweiIms(res || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -282,6 +285,7 @@ export default function Projects() {
           search: search || undefined,
           status: statusFilter || undefined,
           domain: domainFilter || undefined,
+          huawei_im: huaweiImFilter || undefined,
         });
         if (!cancelled) setProjects(res || []);
       } catch {
@@ -291,7 +295,7 @@ export default function Projects() {
       }
     })();
     return () => { cancelled = true; };
-  }, [search, statusFilter, domainFilter, rowLimit, refreshKey]);
+  }, [search, statusFilter, domainFilter, huaweiImFilter, rowLimit, refreshKey]);
 
   return (
     <div>
@@ -341,6 +345,13 @@ export default function Projects() {
           placeholder="All Domains"
           minWidth={170}
         />
+        <SearchableSelect
+          value={huaweiImFilter}
+          onChange={setHuaweiImFilter}
+          options={huaweiIms.map(h => ({ id: h.name, label: h.full_name || h.name }))}
+          placeholder="All Huawei IMs"
+          minWidth={170}
+        />
       </div>
 
       {/* Table — scrollable on narrow viewports (data-table-wrapper) */}
@@ -357,6 +368,7 @@ export default function Projects() {
                 <th>Code</th>
                 <th>Project Name</th>
                 <th>Domain</th>
+                <th>Huawei IM</th>
                 <th>Status</th>
                 <th>IM</th>
                 <th>Area</th>
@@ -372,6 +384,7 @@ export default function Projects() {
                   <td style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: 12 }}>{p.project_code}</td>
                   <td style={{ fontWeight: 600, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.project_name}</td>
                   <td>{p.project_domain || "\u2014"}</td>
+                  <td>{p.huawei_im || "\u2014"}</td>
                   <td><StatusBadge status={p.project_status} /></td>
                   <td style={{ fontSize: 13 }}>{p.implementation_manager || "\u2014"}</td>
                   <td style={{ fontSize: 13 }}>{p.center_area || "\u2014"}</td>

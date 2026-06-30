@@ -296,6 +296,8 @@ export default function IMBackend() {
                   <th>POID</th>
                   <th>PO No</th>
                   <th>Project</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>Item</th>
                   <th>Description</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
@@ -328,6 +330,8 @@ export default function IMBackend() {
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch}</td>
                       <td>{r.po_no || "—"}</td>
                       <td>{r.project_code || "—"}</td>
+                      <td>{r.project_domain || "—"}</td>
+                      <td>{r.huawei_im || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>
                         {r.item_description || "—"}

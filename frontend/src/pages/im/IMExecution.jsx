@@ -1075,6 +1075,8 @@ export default function IMExecution() {
                   <th>Description</th>
                   <th>Activity Type</th>
                   <th>Project</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -1124,6 +1126,8 @@ export default function IMExecution() {
                     <td style={{ fontSize: "0.82rem", maxWidth: 200 }}>{e.item_description || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{e.activity_type || "—"}</td>
                     <td>{e.project_code || "—"}</td>
+                    <td>{e.project_domain || "—"}</td>
+                    <td>{e.huawei_im || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={e.site_name || ""}>{e.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={e.center_area || ""}>
                       {e.center_area || "—"}

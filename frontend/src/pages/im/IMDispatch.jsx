@@ -1390,6 +1390,8 @@ export default function IMDispatch() {
                   <th>Dummy POID</th>
                   <th>PO No</th>
                   <th>Project</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>Item</th>
                   <th>Description</th>
                   <th>Activity Type</th>
@@ -1485,6 +1487,8 @@ export default function IMDispatch() {
                       </td>
                       <td>{row.po_no}</td>
                       <td>{row.project_code}</td>
+                      <td>{row.project_domain || "—"}</td>
+                      <td>{row.huawei_im || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.item_code}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>

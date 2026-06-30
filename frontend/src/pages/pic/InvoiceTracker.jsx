@@ -89,6 +89,17 @@ export default function InvoiceTracker() {
     });
   }, [selectedRows]);
 
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.name));
+  const someSelected = rows.some((r) => selected.has(r.name));
+
+  function toggleAll() {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(rows.map((r) => r.name)));
+    }
+  }
+
   function toggleRow(name) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -282,7 +293,13 @@ export default function InvoiceTracker() {
               <thead>
                 <tr>
                   <th style={{ width: 32 }}>
-                    <input type="checkbox" onChange={() => {}} checked={false} style={{ visibility: "hidden" }} />
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                      onChange={toggleAll}
+                      title="Select all"
+                    />
                   </th>
                   <th>Subcontractor</th>
                   <th>Contract Model</th>

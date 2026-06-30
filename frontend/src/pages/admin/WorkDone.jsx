@@ -520,6 +520,8 @@ export default function WorkDone() {
                   <th>Description</th>
                   <th>Activity Type</th>
                   <th>Project</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>Site</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -562,6 +564,8 @@ export default function WorkDone() {
                       <td>{row.item_description || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
                       <td>{row.project_code}</td>
+                      <td>{row.project_domain || "—"}</td>
+                      <td>{row.huawei_im || "—"}</td>
                       <td>{row.site_name || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>
                         {row.center_area || "—"}

@@ -565,6 +565,8 @@ export default function PODispatch() {
                   <th style={{ textAlign: "right" }}>Rate</th>
                   <th style={{ textAlign: "right" }}>Amount</th>
                   <th>Project</th>
+                  <th>Domain</th>
+                  <th>Huawei IM</th>
                   <th>DUID</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -604,6 +606,8 @@ export default function PODispatch() {
                       <td style={{ textAlign: "right" }}>{fmt.format(row.rate || 0)}</td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmtAmt.format(row.line_amount || 0)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.project_code}</td>
+                      <td>{row.project_domain || "—"}</td>
+                      <td>{row.huawei_im || "—"}</td>
                       <td>{row.site_code}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>
                         {row.center_area || "—"}
