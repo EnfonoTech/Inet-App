@@ -697,6 +697,21 @@ def get_distinct_field_values(doctype, fields):
 
 
 @frappe.whitelist()
+def get_item_codes_for_project(project_code):
+    """Return sorted distinct item_codes in PO Intake Line for a given project."""
+    if not project_code:
+        return []
+    rows = frappe.db.sql(
+        "SELECT DISTINCT item_code FROM `tabPO Intake Line` "
+        "WHERE project_code = %s AND item_code IS NOT NULL AND item_code != '' "
+        "ORDER BY item_code LIMIT 1000",
+        project_code,
+        as_list=True,
+    )
+    return [r[0] for r in rows if r[0]]
+
+
+@frappe.whitelist()
 def get_all_table_preferences():
     """Return every saved table preference for the current user in one call.
 
@@ -1912,7 +1927,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
     def _portal_active():
         if not pf:
             return False
-        for k in ("search", "q", "project_code", "site_code", "dispatched_im", "im", "from_date", "to_date"):
+        for k in ("search", "q", "project_code", "site_code", "item_code", "dispatched_im", "im", "from_date", "to_date"):
             if (pf.get(k) or "").strip() if isinstance(pf.get(k), str) else pf.get(k):
                 return True
         return False
@@ -1938,7 +1953,8 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
             wheres.append("pil.po_line_status = %s")
             params.append(filters["po_line_status"])
         for col, key in (("IFNULL(pil.project_code,'')", "project_code"),
-                         ("IFNULL(pil.site_code,'')", "site_code")):
+                         ("IFNULL(pil.site_code,'')", "site_code"),
+                         ("IFNULL(pil.item_code,'')", "item_code")):
             c, p = _sql_in_or_eq(col, pf.get(key))
             if c:
                 wheres.append(c)
@@ -3103,14 +3119,18 @@ def convert_dispatch_mode(payload):
 
     scope = payload.get("scope", "lines")
     project_code = payload.get("project_code")
+    item_code = payload.get("item_code")
     line_names = payload.get("line_names") or []
     new_im = payload.get("new_im")
     target_mode = payload.get("target_mode", "Manual")
 
     if scope == "project" and project_code:
+        filters = {"project_code": project_code, "po_line_status": "Dispatched"}
+        if item_code:
+            filters["item_code"] = item_code
         line_names = frappe.get_all(
             "PO Intake Line",
-            filters={"project_code": project_code, "po_line_status": "Dispatched"},
+            filters=filters,
             pluck="name",
         )
 

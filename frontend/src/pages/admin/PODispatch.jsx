@@ -107,6 +107,7 @@ export default function PODispatch() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [imFilter, setImFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const [itemCodeFilter, setItemCodeFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
@@ -124,6 +125,8 @@ export default function PODispatch() {
   const [convertScope, setConvertScope] = useState(null);
   const [showProjectConvertModal, setShowProjectConvertModal] = useState(false);
   const [convertProject, setConvertProject] = useState("");
+  const [convertItemCode, setConvertItemCode] = useState("");
+  const [convertProjectItemCodes, setConvertProjectItemCodes] = useState([]);
   const [detailRow, setDetailRow] = useState(null);
 
   const [successMsg, setSuccessMsg] = useState(null);
@@ -155,6 +158,7 @@ export default function PODispatch() {
         if (projectFilter.length) portal.project_code = projectFilter;
         if (imFilter.length) portal.dispatched_im = imFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
+        if (itemCodeFilter.length) portal.item_code = itemCodeFilter;
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
         const [poLines, ims] = await Promise.all([
@@ -170,7 +174,14 @@ export default function PODispatch() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeTab, rowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [activeTab, rowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, itemCodeFilter, fromDate, toDate, refreshKey]);
+
+  useEffect(() => {
+    if (!convertProject) { setConvertProjectItemCodes([]); return; }
+    pmApi.getItemCodesForProject(convertProject)
+      .then((codes) => setConvertProjectItemCodes(Array.isArray(codes) ? codes : []))
+      .catch(() => setConvertProjectItemCodes([]));
+  }, [convertProject]);
 
   function switchTab(tab) { setActiveTab(tab); setSelected(new Set()); }
 
@@ -184,9 +195,10 @@ export default function PODispatch() {
 
   // Filter options come from distinct values across ALL PO Intake Lines, not
   // just the row-limited slice — so dropdowns stay complete regardless of limit.
-  const { options: filterOpts } = useFilterOptions("PO Intake Line", ["project_code", "site_code"]);
+  const { options: filterOpts } = useFilterOptions("PO Intake Line", ["project_code", "site_code", "item_code"]);
   const projectOptions = filterOpts.project_code || [];
   const duidOptions = filterOpts.site_code || [];
+  const itemCodeOptions = filterOpts.item_code || [];
   const imLabelById = useMemo(() => {
     const m = {};
     for (const im of imList) {
@@ -274,12 +286,14 @@ export default function PODispatch() {
       const res = await pmApi.convertDispatchMode({
         scope: "project",
         project_code: convertProject,
+        item_code: convertItemCode || undefined,
         target_mode: "Manual",
         new_im: convertIm || undefined,
       });
       const count = res?.converted ?? 0;
       showNotice("ok", `Converted ${count} record${count !== 1 ? "s" : ""} to Manual.`);
       setConvertProject("");
+      setConvertItemCode("");
       setConvertIm("");
       loadData(activeTab);
     } catch (err) {
@@ -356,15 +370,29 @@ export default function PODispatch() {
       </Modal>
 
       <Modal open={showProjectConvertModal} onClose={() => setShowProjectConvertModal(false)} title="Convert Project to Manual">
-        <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "0.88rem" }}>
-          Select one project. All auto-dispatched lines in that project will be converted to Manual.
+        <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "0.84rem" }}>
+          Item code is optional — leave blank to convert all items in the project.
         </p>
         <div style={{ marginBottom: 14 }}>
           <label style={labelStyle}>Project *</label>
-          <select style={inputStyle} value={convertProject} onChange={(e) => setConvertProject(e.target.value)}>
-            <option value="">Select project...</option>
-            {uniqueProjects.map((proj) => <option key={proj} value={proj}>{proj}</option>)}
-          </select>
+          <SearchableSelect
+            value={convertProject}
+            onChange={(v) => { setConvertProject(v || ""); setConvertItemCode(""); }}
+            options={uniqueProjects.map((p) => ({ id: p, label: p }))}
+            placeholder="Select project..."
+            style={{ display: "block", width: "100%" }}
+          />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Item Code (optional)</label>
+          <SearchableSelect
+            value={convertItemCode}
+            onChange={(v) => setConvertItemCode(v || "")}
+            options={convertProjectItemCodes.map((c) => ({ id: c, label: c }))}
+            placeholder="All item codes"
+            disabled={!convertProject}
+            style={{ display: "block", width: "100%" }}
+          />
         </div>
         <div style={{ marginBottom: 20 }}>
           <label style={labelStyle}>Re-assign IM (optional)</label>
@@ -378,7 +406,7 @@ export default function PODispatch() {
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button className="btn-secondary" onClick={() => setShowProjectConvertModal(false)}>Cancel</button>
           <button className="btn-primary" onClick={handleConvertByProject} disabled={!convertProject || converting}>
-            {converting ? "Converting..." : "Convert"}
+            {converting ? "Converting..." : `Convert${convertItemCode ? ` · ${convertItemCode}` : " All"}`}
           </button>
         </div>
       </Modal>
@@ -488,9 +516,10 @@ export default function PODispatch() {
           <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
           <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))} placeholder="All IMs" minWidth={170} />
           <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={160} />
+          <SearchableSelect multi value={itemCodeFilter} onChange={setItemCodeFilter} options={itemCodeOptions} placeholder="All Item Codes" minWidth={160} />
           <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {hasFilters && (
-            <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}>
+            <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setItemCodeFilter([]); setFromDate(""); setToDate(""); }}>
               Clear
             </button>
           )}
@@ -501,7 +530,7 @@ export default function PODispatch() {
           {activeTab === "Dispatched" && autoRows.length > 0 && (
             <>
               <button className="btn-primary" style={{ fontSize: "0.8rem" }}
-                onClick={() => { setConvertProject(""); setConvertIm(""); setShowProjectConvertModal(true); }} disabled={converting}>
+                onClick={() => { setConvertProject(""); setConvertItemCode(""); setConvertIm(""); setShowProjectConvertModal(true); }} disabled={converting}>
                 Convert by Project
               </button>
               {selected.size > 0 && (
@@ -657,7 +686,7 @@ export default function PODispatch() {
           placement="tableCard"
           loadedCount={rows.length}
           filteredCount={rows.length}
-          filterActive={!!tableSearch || !!projectFilter || !!imFilter || !!duidFilter || !!fromDate || !!toDate}
+          filterActive={!!tableSearch || !!projectFilter.length || !!imFilter.length || !!duidFilter.length || !!itemCodeFilter.length || !!fromDate || !!toDate}
         />
       </div>
     </div>

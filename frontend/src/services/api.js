@@ -543,6 +543,15 @@ export const pmApi = {
       limit_page_length: Number(limit) > 0 ? Math.min(Number(limit), 10000) : 200,
       order_by: orderBy,
     }),
+  genericListFiltered: (doctype, fields, filters, limit) =>
+    call("frappe.client.get_list", {
+      doctype,
+      fields: fields && fields.length ? fields : ["name"],
+      filters: filters || {},
+      limit_page_length: Number(limit) > 0 ? Math.min(Number(limit), 10000) : 500,
+    }),
+  getItemCodesForProject: (project_code) =>
+    call("inet_app.api.command_center.get_item_codes_for_project", { project_code }),
   genericCount: (doctype) => call("frappe.client.get_count", { doctype }),
 
   // POID-level remarks (general / manager / team_lead) — role-scoped
