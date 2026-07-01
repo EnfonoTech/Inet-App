@@ -41,6 +41,50 @@ function StatusBadge({ value, bg, fg, bd }) {
   );
 }
 
+function fmtFileSize(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function billingStatusFromPicStatus(picStatus) {
+  if (!picStatus) return null;
+  if (["Commercial Invoice Closed", "PO Line Canceled"].includes(picStatus)) return "Closed";
+  if (["Commercial Invoice Submitted", "Ready for Invoice", "Under I-BUY", "Under ISDP"].includes(picStatus)) return "Invoiced";
+  return "Pending";
+}
+
+function billingStatusColor(bs) {
+  if (bs === "Invoiced") return { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" };
+  if (bs === "Closed") return { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" };
+  return { bg: "#fef9c3", fg: "#92400e", bd: "#fde68a" };
+}
+
+function issueFlagColor(flag) {
+  if (!flag) return null;
+  if (/commercial|billing|invoice/i.test(flag)) return { bg: "#fff1f2", fg: "#be123c", bd: "#fecdd3" };
+  if (/technical|quality|qc/i.test(flag)) return { bg: "#fffbeb", fg: "#92400e", bd: "#fde68a" };
+  return { bg: "#fef2f2", fg: "#dc2626", bd: "#fca5a5" };
+}
+
+function dispatchStatusColor(status) {
+  const s = (status || "").toLowerCase().replace(/\s+/g, "-");
+  const map = {
+    "new": { bg: "#f1f5f9", fg: "#475569", bd: "#e2e8f0" },
+    "pending": { bg: "#f1f5f9", fg: "#475569", bd: "#e2e8f0" },
+    "dispatched": { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
+    "planned": { bg: "#f0f9ff", fg: "#0369a1", bd: "#bae6fd" },
+    "in-execution": { bg: "#f0fdf4", fg: "#15803d", bd: "#bbf7d0" },
+    "backend-assigned": { bg: "#faf5ff", fg: "#7c3aed", bd: "#ddd6fe" },
+    "completed": { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" },
+    "closed": { bg: "#f8fafc", fg: "#94a3b8", bd: "#e2e8f0" },
+    "cancelled": { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" },
+    "cancelled-(in-system)": { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" },
+  };
+  return map[s] || { bg: "#fefce8", fg: "#92400e", bd: "#fde68a" };
+}
+
 function planStatusColor(status) {
   const s = (status || "").toLowerCase();
   if (s === "completed") return { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" };
@@ -94,7 +138,7 @@ export default function IMPOIntake() {
   const { rowLimit } = useTableRowLimit();
 
   // ── Tab ─────────────────────────────────────────────────────────────────
-  const [tab, setTab] = useState("intake"); // "intake" | "dummy"
+  const [tab, setTab] = useState("intake"); // "intake" | "dummy" | "overview"
 
   // ── Intake tab state ─────────────────────────────────────────────────
   const [rows, setRows] = useState([]);
@@ -141,6 +185,26 @@ export default function IMPOIntake() {
   const [planSummaries, setPlanSummaries] = useState({});
   const [dummyTeamFilter, setDummyTeamFilter] = useState([]);
 
+  // ── Overview tab state ───────────────────────────────────────────────
+  const [ovRows, setOvRows] = useState([]);
+  const [ovLoading, setOvLoading] = useState(false);
+  const [ovError, setOvError] = useState(null);
+  const [ovSearch, setOvSearch] = useState("");
+  const ovSearchDebounced = useDebounced(ovSearch, 300);
+  const [ovProjectFilter, setOvProjectFilter] = useState([]);
+  const [ovDomainFilter, setOvDomainFilter] = useState([]);
+  const [ovStatusFilter, setOvStatusFilter] = useState([]);
+  const [ovModeFilter, setOvModeFilter] = useState("all"); // kept for API but hidden from UI
+  const [ovPlanStatusFilter, setOvPlanStatusFilter] = useState([]);
+  const [ovDuidFilter, setOvDuidFilter] = useState([]);
+  const [ovTeamFilter, setOvTeamFilter] = useState([]);
+  const [ovFromDate, setOvFromDate] = useState("");
+  const [ovToDate, setOvToDate] = useState("");
+  const [ovShowClosed, setOvShowClosed] = useState(true);
+  const [ovRefreshKey, setOvRefreshKey] = useState(0);
+  const loadOv = useCallback(() => setOvRefreshKey((k) => k + 1), []);
+  const [ovPlanSummaries, setOvPlanSummaries] = useState({});
+
   // Create dummy PO
   const [showCreateDummy, setShowCreateDummy] = useState(false);
   const [dummyBusy, setDummyBusy] = useState(false);
@@ -164,6 +228,8 @@ export default function IMPOIntake() {
   const [detailRow, setDetailRow] = useState(null);
   const [detailPlans, setDetailPlans] = useState([]);
   const [detailPlansLoading, setDetailPlansLoading] = useState(false);
+  const [detailExtras, setDetailExtras] = useState(null);
+  const [detailExtrasLoading, setDetailExtrasLoading] = useState(false);
 
   // ── Intake load ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -222,6 +288,42 @@ export default function IMPOIntake() {
     })();
     return () => { cancelled = true; };
   }, [imName, tab, rowLimit, dummyStatusFilter, dummySearchDebounced, dummyProjectFilter, dummyDomainFilter, dummyDuidFilter, dummyFromDate, dummyToDate, dummyRefreshKey]);
+
+  // ── Overview load ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!imName || tab !== "overview") return;
+    let cancelled = false;
+    setOvLoading(true);
+    setOvError(null);
+    (async () => {
+      try {
+        const filters = [["im", "=", imName]];
+        const portal = { dummy_preset: "all" };
+        if (ovSearchDebounced.trim()) portal.search = ovSearchDebounced.trim();
+        if (ovProjectFilter.length) portal.project_code = ovProjectFilter;
+        if (ovDuidFilter.length) portal.site_code = ovDuidFilter;
+        if (ovFromDate) portal.from_date = ovFromDate;
+        if (ovToDate) portal.to_date = ovToDate;
+        const res = await pmApi.listPODispatches(filters, rowLimit, portal);
+        if (!cancelled) setOvRows(Array.isArray(res) ? res : []);
+      } catch (err) {
+        if (!cancelled) setOvError(err.message || "Failed to load POIDs");
+      } finally {
+        if (!cancelled) setOvLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, tab, rowLimit, ovSearchDebounced, ovProjectFilter, ovDuidFilter, ovFromDate, ovToDate, ovRefreshKey]);
+
+  // ── Overview plan summaries ──────────────────────────────────────────
+  useEffect(() => {
+    if (!ovRows.length) { setOvPlanSummaries({}); return; }
+    let cancelled = false;
+    pmApi.getDispatchPlanSummaries(ovRows.map((r) => r.name)).then((res) => {
+      if (!cancelled) setOvPlanSummaries(res && typeof res === "object" ? res : {});
+    }).catch(() => { if (!cancelled) setOvPlanSummaries({}); });
+    return () => { cancelled = true; };
+  }, [ovRows]);
 
   // ── Backend capability check ─────────────────────────────────────────
   useEffect(() => {
@@ -287,16 +389,22 @@ export default function IMPOIntake() {
     return () => { cancelled = true; };
   }, [mapForRow]);
 
-  // ── Detail: load rollout plans when a dummy row is opened ─────────────
+  // ── Detail: load rollout plans + extras when a row is opened ──────────
   useEffect(() => {
-    if (!detailRow) { setDetailPlans([]); return; }
+    if (!detailRow) { setDetailPlans([]); setDetailExtras(null); return; }
     let cancelled = false;
     setDetailPlansLoading(true);
+    setDetailExtrasLoading(true);
     pmApi.listDispatchVisits(detailRow.name, "").then((res) => {
       if (!cancelled) setDetailPlans(Array.isArray(res) ? res : []);
     }).catch(() => {
       if (!cancelled) setDetailPlans([]);
     }).finally(() => { if (!cancelled) setDetailPlansLoading(false); });
+    pmApi.getPoidDetailExtras(detailRow.name).then((res) => {
+      if (!cancelled) setDetailExtras(res && typeof res === "object" ? res : null);
+    }).catch(() => {
+      if (!cancelled) setDetailExtras(null);
+    }).finally(() => { if (!cancelled) setDetailExtrasLoading(false); });
   }, [detailRow]);
 
   // ── Bulk plan summaries for dummy tab ─────────────────────────────────
@@ -458,6 +566,55 @@ export default function IMPOIntake() {
       .filter((o) => { if (seen.has(o.id)) return false; seen.add(o.id); return true; })
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [planSummaries]);
+
+  // ── Overview computed ────────────────────────────────────────────────
+  const ovDomainOptions = useMemo(() => {
+    const seen = new Set();
+    return ovRows.map((r) => r.project_domain).filter(Boolean)
+      .filter((d) => { if (seen.has(d)) return false; seen.add(d); return true; }).sort();
+  }, [ovRows]);
+
+  const ovStatusOptions = useMemo(() => {
+    const seen = new Set();
+    return ovRows.map((r) => r.dispatch_status || "Pending").filter(Boolean)
+      .filter((s) => { if (seen.has(s)) return false; seen.add(s); return true; }).sort()
+      .map((s) => ({ id: s, label: s }));
+  }, [ovRows]);
+
+  const ovDuidOptions = useMemo(() => {
+    const seen = new Set();
+    return ovRows.map((r) => r.site_code).filter(Boolean)
+      .filter((d) => { if (seen.has(d)) return false; seen.add(d); return true; }).sort()
+      .map((d) => ({ id: d, label: d }));
+  }, [ovRows]);
+
+  const ovTeamOptions = useMemo(() => {
+    const seen = new Set();
+    return Object.values(ovPlanSummaries)
+      .filter((ps) => ps?.team)
+      .map((ps) => ({ id: ps.team, label: ps.team_name || ps.team }))
+      .filter((o) => { if (seen.has(o.id)) return false; seen.add(o.id); return true; })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [ovPlanSummaries]);
+
+  const ovPlanStatusOptions = useMemo(() => {
+    const seen = new Set();
+    return Object.values(ovPlanSummaries)
+      .map((ps) => ps?.plan_status).filter(Boolean)
+      .filter((s) => { if (seen.has(s)) return false; seen.add(s); return true; }).sort()
+      .map((s) => ({ id: s, label: s }));
+  }, [ovPlanSummaries]);
+
+  const ovFilteredRows = useMemo(() => {
+    let r = ovRows;
+    if (ovDomainFilter.length) r = r.filter((x) => ovDomainFilter.includes(x.project_domain));
+    if (ovStatusFilter.length) r = r.filter((x) => ovStatusFilter.includes(x.dispatch_status || "Pending"));
+    if (ovTeamFilter.length) r = r.filter((x) => { const ps = ovPlanSummaries[x.name]; return ps && ovTeamFilter.includes(ps.team); });
+    if (ovPlanStatusFilter.length) r = r.filter((x) => { const ps = ovPlanSummaries[x.name]; return ps && ovPlanStatusFilter.includes(ps.plan_status); });
+    return r;
+  }, [ovRows, ovDomainFilter, ovStatusFilter, ovTeamFilter, ovPlanStatusFilter, ovPlanSummaries]);
+
+  const hasOvFilters = !!(ovSearch || ovProjectFilter.length || ovDomainFilter.length || ovStatusFilter.length || ovDuidFilter.length || ovTeamFilter.length || ovPlanStatusFilter.length || ovFromDate || ovToDate);
   const filteredDummyRows = useMemo(() => {
     let rows_ = dummyRows;
     if (dummyDomainFilter.length) rows_ = rows_.filter((r) => dummyDomainFilter.includes(r.project_domain));
@@ -497,11 +654,15 @@ export default function IMPOIntake() {
           <div className="page-subtitle">
             {tab === "intake"
               ? "Lines dispatched to you that still need a target month. Assign a month to move them to My Dispatches."
-              : "Create and manage dummy POs. Map them to real PO intake lines when available."}
+              : tab === "dummy"
+              ? "Create and manage dummy POs. Map them to real PO intake lines when available."
+              : "All your POIDs across every status — full overview."}
           </div>
         </div>
         <div className="page-actions">
           {tab === "intake" && <ExportExcelButton filename="im-po-intake" rows={rows} />}
+          {tab === "dummy" && <ExportExcelButton filename="dummy-pos" rows={filteredDummyRows} />}
+          {tab === "overview" && <ExportExcelButton filename="all-poids" rows={ovFilteredRows} />}
           {tab === "dummy" && (
             <button
               type="button"
@@ -512,8 +673,10 @@ export default function IMPOIntake() {
               + Dummy PO
             </button>
           )}
-          <button type="button" className="btn-secondary" onClick={tab === "dummy" ? loadDummy : load} disabled={tab === "intake" ? loading : dummyLoading}>
-            {(tab === "intake" ? loading : dummyLoading) ? "Loading…" : "Refresh"}
+          <button type="button" className="btn-secondary"
+            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : load}
+            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : ovLoading}>
+            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : ovLoading) ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
@@ -527,6 +690,7 @@ export default function IMPOIntake() {
             <span style={{ marginLeft: 6, background: "#fef3c7", color: "#92400e", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{dummyRows.length}</span>
           )}
         </button>
+        <button type="button" style={tabStyle(tab === "overview")} onClick={() => setTab("overview")}>All POIDs</button>
       </div>
 
       {toastMsg && (
@@ -607,23 +771,150 @@ export default function IMPOIntake() {
               Clear
             </button>
           )}
-          <div className="toolbar-actions">
-            <ExportExcelButton filename="dummy-pos" rows={filteredDummyRows} />
-          </div>
+        </div>
+      )}
+
+      {/* ── ALL POIDs TOOLBAR ─────────────────────────────────────────── */}
+      {tab === "overview" && (
+        <div className="toolbar" style={{ flexWrap: "wrap", rowGap: 6 }}>
+          <input type="search" placeholder="Search POID, PO No, item, DUID…" value={ovSearch} onChange={(e) => setOvSearch(e.target.value)} style={{ minWidth: 220 }} />
+          <SearchableSelect multi value={ovProjectFilter} onChange={setOvProjectFilter} options={projectOptions} placeholder="Project" minWidth={150} />
+          <SearchableSelect multi value={ovDomainFilter} onChange={setOvDomainFilter} options={ovDomainOptions} placeholder="Domain" minWidth={130} />
+          <SearchableSelect multi value={ovStatusFilter} onChange={setOvStatusFilter} options={ovStatusOptions} placeholder="Status" minWidth={140} />
+          <SearchableSelect multi value={ovDuidFilter} onChange={setOvDuidFilter} options={ovDuidOptions} placeholder="DUID" minWidth={120} />
+          {ovTeamOptions.length > 0 && (
+            <SearchableSelect multi value={ovTeamFilter} onChange={setOvTeamFilter} options={ovTeamOptions} placeholder="Team" minWidth={130} />
+          )}
+          {ovPlanStatusOptions.length > 0 && (
+            <SearchableSelect multi value={ovPlanStatusFilter} onChange={setOvPlanStatusFilter} options={ovPlanStatusOptions} placeholder="Plan Status" minWidth={140} />
+          )}
+          <DateRangePicker value={{ from: ovFromDate, to: ovToDate }} onChange={({ from, to }) => { setOvFromDate(from); setOvToDate(to); }} />
+          {hasOvFilters && (
+            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+              onClick={() => { setOvSearch(""); setOvProjectFilter([]); setOvDomainFilter([]); setOvStatusFilter([]); setOvDuidFilter([]); setOvTeamFilter([]); setOvPlanStatusFilter([]); setOvFromDate(""); setOvToDate(""); }}>
+              Clear filters
+            </button>
+          )}
         </div>
       )}
 
       {tab === "intake" && error && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {error}</div>}
       {tab === "dummy" && dummyError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {dummyError}</div>}
+      {tab === "overview" && ovError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {ovError}</div>}
 
       {/* ── ONE page-content always rendered (fixes tab-switch CSS) ────── */}
       <div className="page-content">
         <DataTableWrapper
-          loadedCount={tab === "intake" ? (loading ? null : rows.length) : (dummyLoading ? null : dummyRows.length)}
-          filteredCount={tab === "intake" ? rows.length : filteredDummyRows.length}
-          filterActive={tab === "intake" ? !!hasFilters : (hasDummyFilters || filteredDummyRows.length !== dummyRows.length)}
+          loadedCount={tab === "intake" ? (loading ? null : rows.length) : tab === "dummy" ? (dummyLoading ? null : dummyRows.length) : (ovLoading ? null : ovRows.length)}
+          filteredCount={tab === "intake" ? rows.length : tab === "dummy" ? filteredDummyRows.length : ovFilteredRows.length}
+          filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
         >
-          {tab === "intake" ? (
+          {tab === "overview" ? (
+            ovLoading ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+            ) : ovFilteredRows.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">📋</div>
+                <h3>{hasOvFilters ? "No POIDs match your filters" : "No POIDs found"}</h3>
+                <p>{ovShowClosed ? "No POIDs assigned to you." : "Try enabling 'All statuses' to include closed and cancelled POIDs."}</p>
+              </div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>POID</th>
+                    <th>Dispatch Status</th>
+                    <th>Billing Status</th>
+                    <th>Mode</th>
+                    <th>PO No</th>
+                    <th>Project</th>
+                    <th>Domain</th>
+                    <th>DUID</th>
+                    <th>Center Area</th>
+                    <th>Region</th>
+                    <th>Item Code</th>
+                    <th>Description</th>
+                    <th>Activity Type</th>
+                    <th style={{ textAlign: "right" }}>Qty</th>
+                    <th style={{ textAlign: "right" }}>Line Amount (SAR)</th>
+                    <th>Target Month</th>
+                    <th>Plan Status</th>
+                    <th>Plan Team</th>
+                    <th>Plan Date</th>
+                    <th>Issue Category</th>
+                    <th>Issue Flag</th>
+                    <th>PM Remark</th>
+                    <th>IM Remark</th>
+                    <th>TL Remark</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ovFilteredRows.map((row) => {
+                    const ps = ovPlanSummaries[row.name];
+                    const sc = dispatchStatusColor(row.dispatch_status);
+                    const isDummy = !!Number(row.is_dummy_po);
+                    const isClosed = ["Closed", "Cancelled", "Cancelled (in System)"].includes(row.dispatch_status || "");
+                    const billing = billingStatusFromPicStatus(row.pic_status);
+                    const bsc = billing ? billingStatusColor(billing) : null;
+                    const iflag = ps?.issue_flag || "";
+                    const ifsc = iflag ? issueFlagColor(iflag) : null;
+                    return (
+                      <tr key={row.name} style={{ opacity: isClosed ? 0.65 : 1, background: isDummy ? "#fffbeb" : undefined }}>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>
+                          {row.poid || row.name}
+                          {isDummy && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#fed7aa", color: "#92400e" }}>Dummy</span>}
+                        </td>
+                        <td>
+                          <StatusBadge value={row.dispatch_status || "Pending"} bg={sc.bg} fg={sc.fg} bd={sc.bd} />
+                        </td>
+                        <td>
+                          {bsc
+                            ? <StatusBadge value={billing} bg={bsc.bg} fg={bsc.fg} bd={bsc.bd} />
+                            : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
+                        </td>
+                        <td>
+                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.12)" : "rgba(100,116,139,0.12)", color: row.dispatch_mode === "Auto" ? "#6366f1" : "#475569" }}>
+                            {row.dispatch_mode || "Manual"}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: "0.82rem" }}>{row.po_no || "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{row.project_code || "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{row.project_domain || "—"}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
+                        <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>{row.center_area || "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.item_code || "—"}</td>
+                        <td style={{ fontSize: "0.82rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? fmt.format(row.qty) : "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.line_amount != null ? fmt.format(row.line_amount) : "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{row.target_month || "—"}</td>
+                        <td>
+                          {ps ? (() => { const { bg, fg, bd } = planStatusColor(ps.plan_status); return <StatusBadge value={ps.plan_status} bg={bg} fg={fg} bd={bd} />; })()
+                            : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
+                        </td>
+                        <td style={{ fontSize: "0.82rem", color: "#334155" }}>{ps ? (ps.team_name || ps.team || "—") : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{ps?.plan_date ? String(ps.plan_date).slice(0, 10) : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#92400e", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ps?.issue_category || ""}>{ps?.issue_category || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                        <td>
+                          {iflag
+                            ? <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, background: ifsc?.bg || "#fef2f2", color: ifsc?.fg || "#dc2626", border: `1px solid ${ifsc?.bd || "#fca5a5"}` }}>{iflag}</span>
+                            : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
+                        </td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.general_remark || ""}>{row.general_remark || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.manager_remark || ""}>{row.manager_remark || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.team_lead_remark || ""}>{row.team_lead_remark || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }} onClick={() => setDetailRow(row)}>View</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )
+          ) : tab === "intake" ? (
             loading ? (
               <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
             ) : rows.length === 0 ? (
@@ -912,19 +1203,24 @@ export default function IMPOIntake() {
       {detailRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
              onClick={() => setDetailRow(null)}>
-          <div style={{ background: "#fff", borderRadius: 14, width: "min(900px, 100%)", maxHeight: "88vh", display: "flex", flexDirection: "column", boxShadow: "0 25px 60px rgba(15,23,42,0.3)", overflow: "hidden" }}
+          <div style={{ background: "#fff", borderRadius: 14, width: "min(1100px, 100%)", height: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 25px 60px rgba(15,23,42,0.3)", overflow: "hidden" }}
                onClick={(e) => e.stopPropagation()}>
 
             {/* Detail header */}
             <div style={{ padding: "16px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 16, color: "#0f172a" }}>
+                <div style={{ fontWeight: 700, fontSize: 16, color: "#0f172a", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   {detailRow.poid || detailRow.name}
-                  {!!Number(detailRow.is_dummy_po)
-                    ? <span style={{ marginLeft: 10, padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa" }}>Open Dummy</span>
-                    : <span style={{ marginLeft: 10, padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#eef2ff", color: "#4338ca", border: "1px solid #c7d2fe" }}>Mapped</span>}
+                  {!!Number(detailRow.is_dummy_po) && (
+                    <span style={{ padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa" }}>Open Dummy</span>
+                  )}
+                  {!Number(detailRow.is_dummy_po) && !!Number(detailRow.was_dummy_po) && (
+                    <span style={{ padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#eef2ff", color: "#4338ca", border: "1px solid #c7d2fe" }}>Was Dummy</span>
+                  )}
+                  {detailRow.dispatch_status && (() => { const sc = dispatchStatusColor(detailRow.dispatch_status); return <span style={{ padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: sc.bg, color: sc.fg, border: `1px solid ${sc.bd}` }}>{detailRow.dispatch_status}</span>; })()}
+                  {billingStatusFromPicStatus(detailRow.pic_status) && (() => { const bs = billingStatusFromPicStatus(detailRow.pic_status); const bsc = billingStatusColor(bs); return <span style={{ padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: bsc.bg, color: bsc.fg, border: `1px solid ${bsc.bd}` }}>Billing: {bs}</span>; })()}
                 </div>
-                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{detailRow.project_code || "—"} · {detailRow.site_code || "—"}</div>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>{detailRow.project_code || "—"} · {detailRow.site_code || "—"} · {detailRow.project_domain || "—"} · {detailRow.target_month || "—"}</div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 {!!Number(detailRow.is_dummy_po) && (
@@ -940,7 +1236,8 @@ export default function IMPOIntake() {
               </div>
             </div>
 
-            <div style={{ overflowY: "auto", flex: 1, padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ overflowY: "auto", flex: "1 1 0px", minHeight: 0 }}>
+            <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
 
               {/* PO Info grid */}
               <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
@@ -970,6 +1267,59 @@ export default function IMPOIntake() {
                   )}
                 </div>
               </div>
+
+              {/* Billing & Financial */}
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: "9px 16px", borderBottom: "1px solid #f1f5f9", fontWeight: 700, fontSize: 13, color: "#475569", background: "#f8fafc" }}>Billing & Financial</div>
+                <div style={{ padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px,1fr))", gap: 14 }}>
+                  <FieldRow label="PIC Status">{detailRow.pic_status || "—"}</FieldRow>
+                  <FieldRow label="Billing Status">
+                    {billingStatusFromPicStatus(detailRow.pic_status)
+                      ? (() => { const bs = billingStatusFromPicStatus(detailRow.pic_status); const bsc = billingStatusColor(bs); return <span style={{ padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: bsc.bg, color: bsc.fg, border: `1px solid ${bsc.bd}` }}>{bs}</span>; })()
+                      : "—"}
+                  </FieldRow>
+                  <FieldRow label="Payment Terms">{detailRow.payment_terms || "—"}</FieldRow>
+                  <FieldRow label="Rate (SAR)">{detailRow.rate != null ? fmt.format(detailRow.rate) : "—"}</FieldRow>
+                  <FieldRow label="MS1 Amount">{detailRow.ms1_amount != null ? `SAR ${fmt.format(detailRow.ms1_amount)}` : "—"}</FieldRow>
+                  <FieldRow label="MS1 Invoiced">{detailRow.ms1_invoiced || "—"}</FieldRow>
+                  <FieldRow label="MS1 Invoice Month">{detailRow.ms1_invoice_month || "—"}</FieldRow>
+                  <FieldRow label="MS2 Amount">{detailRow.ms2_amount != null ? `SAR ${fmt.format(detailRow.ms2_amount)}` : "—"}</FieldRow>
+                  <FieldRow label="MS2 Invoiced">{detailRow.ms2_invoiced || "—"}</FieldRow>
+                  <FieldRow label="MS2 Invoice Month">{detailRow.ms2_invoice_month || "—"}</FieldRow>
+                  {detailRow.pic_detail_remark && (
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <FieldRow label="PIC Remark">{detailRow.pic_detail_remark}</FieldRow>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Remarks */}
+              {(detailRow.general_remark || detailRow.manager_remark || detailRow.team_lead_remark) && (
+                <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "9px 16px", borderBottom: "1px solid #f1f5f9", fontWeight: 700, fontSize: 13, color: "#475569", background: "#f8fafc" }}>Remarks</div>
+                  <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+                    {detailRow.general_remark && (
+                      <div>
+                        <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>PM Remark</div>
+                        <div style={{ fontSize: 13, color: "#0f172a", background: "#f8fafc", padding: "8px 12px", borderRadius: 6, border: "1px solid #e2e8f0", lineHeight: 1.5 }}>{detailRow.general_remark}</div>
+                      </div>
+                    )}
+                    {detailRow.manager_remark && (
+                      <div>
+                        <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>IM Remark</div>
+                        <div style={{ fontSize: 13, color: "#0f172a", background: "#eff6ff", padding: "8px 12px", borderRadius: 6, border: "1px solid #bfdbfe", lineHeight: 1.5 }}>{detailRow.manager_remark}</div>
+                      </div>
+                    )}
+                    {detailRow.team_lead_remark && (
+                      <div>
+                        <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>TL Remark</div>
+                        <div style={{ fontSize: 13, color: "#0f172a", background: "#f0fdf4", padding: "8px 12px", borderRadius: 6, border: "1px solid #bbf7d0", lineHeight: 1.5 }}>{detailRow.team_lead_remark}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Rollout Plans */}
               <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
@@ -1037,7 +1387,92 @@ export default function IMPOIntake() {
                 )}
               </div>
 
-            </div>
+              {/* Reschedule History */}
+              {detailExtrasLoading ? (
+                <div style={{ padding: "10px 0", color: "#94a3b8", fontSize: 12 }}>Loading history…</div>
+              ) : (detailExtras?.reschedule_history?.length > 0) && (
+                <div style={{ border: "1px solid #fde68a", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "9px 16px", borderBottom: "1px solid #fef3c7", fontWeight: 700, fontSize: 13, color: "#92400e", background: "#fffbeb", display: "flex", alignItems: "center", gap: 10 }}>
+                    Reschedule History
+                    <span style={{ padding: "1px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#fef3c7", color: "#92400e" }}>{detailExtras.reschedule_history.length}</span>
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: "#fffbeb" }}>
+                          <th style={{ padding: "6px 12px", textAlign: "left", color: "#92400e", fontWeight: 600 }}>Visit #</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", color: "#92400e", fontWeight: 600 }}>From</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", color: "#92400e", fontWeight: 600 }}>To</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", color: "#92400e", fontWeight: 600 }}>Reason</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", color: "#92400e", fontWeight: 600 }}>TL Status</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", color: "#92400e", fontWeight: 600 }}>IM Note</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", color: "#92400e", fontWeight: 600 }}>By</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", color: "#92400e", fontWeight: 600 }}>At</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailExtras.reschedule_history.map((r, i) => (
+                          <tr key={i} style={{ borderTop: "1px solid #fef3c7" }}>
+                            <td style={{ padding: "7px 12px", fontWeight: 700, color: "#92400e" }}>V{r.visit_number || "?"}</td>
+                            <td style={{ padding: "7px 12px", color: "#475569" }}>{r.original_date ? String(r.original_date).slice(0, 10) : "—"}</td>
+                            <td style={{ padding: "7px 12px", color: "#047857", fontWeight: 600 }}>{r.new_date ? String(r.new_date).slice(0, 10) : "—"}</td>
+                            <td style={{ padding: "7px 12px", color: "#475569" }}>{r.reason || "—"}</td>
+                            <td style={{ padding: "7px 12px", color: "#64748b" }}>{r.tl_status_at_time || "—"}</td>
+                            <td style={{ padding: "7px 12px", color: "#64748b", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.im_note || ""}>{r.im_note || "—"}</td>
+                            <td style={{ padding: "7px 12px", color: "#64748b", fontSize: 11 }}>{r.rescheduled_by || "—"}</td>
+                            <td style={{ padding: "7px 12px", color: "#94a3b8", fontSize: 11 }}>{r.rescheduled_at ? String(r.rescheduled_at).slice(0, 16) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Planning Attachments */}
+              {!detailExtrasLoading && (detailExtras?.planning_attachments?.length > 0) && (
+                <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "9px 16px", borderBottom: "1px solid #f1f5f9", fontWeight: 700, fontSize: 13, color: "#475569", background: "#f8fafc", display: "flex", alignItems: "center", gap: 10 }}>
+                    Planning Attachments
+                    <span style={{ padding: "1px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#eff6ff", color: "#1d4ed8" }}>{detailExtras.planning_attachments.length}</span>
+                  </div>
+                  <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+                    {detailExtras.planning_attachments.map((f, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderRadius: 6, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+                        <span style={{ fontSize: 18 }}>📎</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <a href={f.file_url} target="_blank" rel="noreferrer" style={{ fontWeight: 600, fontSize: 13, color: "#1d4ed8", textDecoration: "none", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file_name || f.file_url}</a>
+                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>{f.attached_to}{f.file_size ? ` · ${fmtFileSize(f.file_size)}` : ""}{f.creation ? ` · ${String(f.creation).slice(0, 10)}` : ""}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Submission Attachments */}
+              {!detailExtrasLoading && (detailExtras?.submission_attachments?.length > 0) && (
+                <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "9px 16px", borderBottom: "1px solid #f1f5f9", fontWeight: 700, fontSize: 13, color: "#475569", background: "#f8fafc", display: "flex", alignItems: "center", gap: 10 }}>
+                    Submission Attachments
+                    <span style={{ padding: "1px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#ecfdf5", color: "#047857" }}>{detailExtras.submission_attachments.length}</span>
+                  </div>
+                  <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+                    {detailExtras.submission_attachments.map((f, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderRadius: 6, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+                        <span style={{ fontSize: 18 }}>📄</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <a href={f.file_url} target="_blank" rel="noreferrer" style={{ fontWeight: 600, fontSize: 13, color: "#047857", textDecoration: "none", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file_name || f.file_url}</a>
+                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>{f.file_size ? fmtFileSize(f.file_size) : ""}{f.creation ? ` · ${String(f.creation).slice(0, 10)}` : ""}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </div>{/* end inner flex column */}
+            </div>{/* end scroll viewport */}
           </div>
         </div>
       )}

@@ -467,7 +467,6 @@ export default function Teams() {
                   <th>Current Domain</th>
                   <th>Active Plans</th>
                   <th style={{ textAlign: "right" }}>Members</th>
-                  <th style={{ textAlign: "right" }}>Daily Cost</th>
                 </tr>
               </thead>
               <tbody>
@@ -508,9 +507,6 @@ export default function Teams() {
                         : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
                     </td>
                     <td style={{ textAlign: "right", color: "#475569" }}>{r.member_count ?? "—"}</td>
-                    <td style={{ textAlign: "right", color: r.daily_cost_applies ? "#0f172a" : "#94a3b8" }}>
-                      {r.daily_cost_applies ? `SAR ${fmt.format(r.daily_cost)}` : "—"}
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -635,15 +631,6 @@ export default function Teams() {
                             <EditField label="ISDP Account">
                               <input style={inputStyle} value={form.isdp_account} onChange={(e) => setForm((f) => ({ ...f, isdp_account: e.target.value }))} />
                             </EditField>
-                            <EditField label="Daily Cost Applies">
-                              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                                <input type="checkbox" checked={!!form.daily_cost_applies} onChange={(e) => setForm((f) => ({ ...f, daily_cost_applies: e.target.checked }))} />
-                                <span style={{ fontSize: 13 }}>Applies</span>
-                              </label>
-                            </EditField>
-                            <EditField label="Daily Cost (SAR)">
-                              <input style={inputStyle} type="number" value={form.daily_cost} onChange={(e) => setForm((f) => ({ ...f, daily_cost: e.target.value }))} disabled={!form.daily_cost_applies} />
-                            </EditField>
                             <div style={{ gridColumn: "1 / -1" }}>
                               <EditField label="Note">
                                 <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
@@ -660,9 +647,6 @@ export default function Teams() {
                             <FieldRow label="Subcontractor">{detail.subcontractor || "—"}</FieldRow>
                             <FieldRow label="Field User">{detail.field_user || "—"}</FieldRow>
                             <FieldRow label="ISDP Account">{detail.isdp_account || "—"}</FieldRow>
-                            <FieldRow label="Daily Cost">
-                              {detail.daily_cost_applies ? `SAR ${fmt.format(detail.daily_cost)}` : "—"}
-                            </FieldRow>
                             <FieldRow label="Warehouse">{detail.warehouse || "—"}</FieldRow>
                             {detail.note && (
                               <div style={{ gridColumn: "1 / -1" }}>

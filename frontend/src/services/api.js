@@ -348,6 +348,8 @@ export const pmApi = {
     call("inet_app.api.command_center.get_dispatch_plan_summaries", {
       po_dispatches: JSON.stringify(po_dispatches || []),
     }),
+  getPoidDetailExtras: (po_dispatch) =>
+    call("inet_app.api.command_center.get_poid_detail_extras", { po_dispatch }),
   listFieldTeamActionablePlans: (team_id) =>
     call("inet_app.api.command_center.list_field_team_actionable_plans", { team_id }),
   listFieldRemarkTemplates: () =>
@@ -524,6 +526,7 @@ export const pmApi = {
   listAllCancelRequests: () => call("inet_app.api.command_center.list_pending_cancel_requests", {}),
   updateIMTeam:      (name, payload) => call("inet_app.api.command_center.update_im_team", { name, payload: JSON.stringify(payload || {}) }),
   listAdminTeams:    (filters) => call("inet_app.api.command_center.list_admin_teams", filters || {}),
+  listImTeams:       (filters) => call("inet_app.api.command_center.list_im_teams", filters || {}),
   adminGetTeamDetail: (name) => call("inet_app.api.command_center.admin_get_team_detail", { name }),
   adminUpdateTeam:   (name, payload) => call("inet_app.api.command_center.admin_update_team", { name, payload: JSON.stringify(payload || {}) }),
   adminListEmployeesForPicker: (search) => call("inet_app.api.command_center.admin_list_employees_for_picker", { search: search || "", limit: 100 }),

@@ -67,6 +67,7 @@ function detectTableDoctype(pathname, tIdx) {
     "/planning:1": "Rollout Plan",
     "/execution:1": "Rollout Plan",
     "/work-done:1": "Work Done",
+    "/im-po-intake:1": "PO Dispatch",
     "/im-dispatch:1": "PO Dispatch",
     "/im-planning:1": "Rollout Plan",
     "/im-execution:1": "Daily Execution",

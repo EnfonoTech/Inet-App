@@ -4056,9 +4056,15 @@ def get_dispatch_plan_summaries(po_dispatches):
             IFNULL(it.team_name, rp.team) AS team_name,
             IFNULL(rp.visit_number, 1) AS visit_number,
             IFNULL(rp.completion_pct, 0) AS completion_pct,
+            IFNULL(rp.issue_category, '') AS issue_category,
             (SELECT wd.name FROM `tabWork Done` wd
              INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
-             WHERE de.rollout_plan = rp.name LIMIT 1) AS work_done
+             WHERE de.rollout_plan = rp.name LIMIT 1) AS work_done,
+            (SELECT wd2.issue_flag FROM `tabWork Done` wd2
+             INNER JOIN `tabDaily Execution` de2 ON de2.name = wd2.execution
+             WHERE de2.rollout_plan = rp.name
+               AND IFNULL(wd2.issue_flag, '') != ''
+             LIMIT 1) AS issue_flag
         FROM `tabRollout Plan` rp
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
         WHERE rp.po_dispatch IN %(names)s
@@ -4075,6 +4081,129 @@ def get_dispatch_plan_summaries(po_dispatches):
         if pd and pd not in result:
             result[pd] = row
     return result
+
+
+@frappe.whitelist()
+def get_poid_detail_extras(po_dispatch):
+    """Return reschedule history + planning attachments + submission attachments for a POID.
+
+    Shape::
+        {
+            "reschedule_history": [
+                { plan_name, visit_number, plan_date, original_date, new_date,
+                  reason, tl_status_at_time, im_note, rescheduled_by, rescheduled_at }
+            ],
+            "planning_attachments": [
+                { file_name, file_url, file_size, attached_to, creation }
+            ],
+            "submission_attachments": [
+                { file_name, file_url, file_size, attached_to, creation }
+            ],
+        }
+    """
+    po_dispatch = (po_dispatch or "").strip()
+    if not po_dispatch:
+        return {"reschedule_history": [], "planning_attachments": [], "submission_attachments": []}
+
+    # ── 1. Rollout Plans for this POID ──────────────────────────────────
+    plans = frappe.db.sql(
+        """SELECT name, IFNULL(visit_number, 1) AS visit_number, plan_date
+           FROM `tabRollout Plan` WHERE po_dispatch = %s ORDER BY visit_number ASC""",
+        (po_dispatch,), as_dict=True,
+    ) or []
+    plan_names = [p.name for p in plans]
+    plan_meta = {p.name: p for p in plans}
+
+    # ── 2. Reschedule history across all plans ───────────────────────────
+    reschedule_history = []
+    if plan_names:
+        ph = ", ".join(["%s"] * len(plan_names))
+        rlog_rows = frappe.db.sql(
+            f"""SELECT parent AS plan_name, original_date, new_date, reason,
+                       tl_status_at_time, im_note, rescheduled_by, rescheduled_at
+                FROM `tabRollout Plan Reschedule Log`
+                WHERE parent IN ({ph})
+                ORDER BY rescheduled_at ASC""",
+            tuple(plan_names), as_dict=True,
+        ) or []
+        for row in rlog_rows:
+            pn = row.get("plan_name")
+            pm = plan_meta.get(pn, {})
+            reschedule_history.append({
+                "plan_name": pn,
+                "visit_number": pm.get("visit_number"),
+                "plan_date": pm.get("plan_date"),
+                "original_date": row.get("original_date"),
+                "new_date": row.get("new_date"),
+                "reason": row.get("reason"),
+                "tl_status_at_time": row.get("tl_status_at_time"),
+                "im_note": row.get("im_note"),
+                "rescheduled_by": row.get("rescheduled_by"),
+                "rescheduled_at": row.get("rescheduled_at"),
+            })
+
+    # ── 3. Planning attachments (PO Dispatch + Rollout Plans) ────────────
+    file_fields = ["name", "file_name", "file_url", "file_size", "attached_to_doctype",
+                   "attached_to_name", "creation"]
+    planning_attachments = []
+    # Files on PO Dispatch
+    pd_files = frappe.db.get_all(
+        "File",
+        filters={"attached_to_doctype": "PO Dispatch", "attached_to_name": po_dispatch},
+        fields=file_fields, order_by="creation asc",
+    ) or []
+    for f in pd_files:
+        planning_attachments.append({
+            "file_name": f.file_name, "file_url": f.file_url,
+            "file_size": f.file_size, "attached_to": "PO Dispatch", "creation": str(f.creation or ""),
+        })
+    # Files on Rollout Plans
+    if plan_names:
+        ph = ", ".join(["%s"] * len(plan_names))
+        rp_files = frappe.db.sql(
+            f"""SELECT f.file_name, f.file_url, f.file_size, f.attached_to_name, f.creation
+                FROM `tabFile` f
+                WHERE f.attached_to_doctype = 'Rollout Plan'
+                  AND f.attached_to_name IN ({ph})
+                ORDER BY f.creation ASC""",
+            tuple(plan_names), as_dict=True,
+        ) or []
+        for f in rp_files:
+            pn = f.get("attached_to_name", "")
+            pm = plan_meta.get(pn, {})
+            vn = pm.get("visit_number", "")
+            planning_attachments.append({
+                "file_name": f.file_name, "file_url": f.file_url,
+                "file_size": f.file_size,
+                "attached_to": f"Rollout Plan{' V' + str(vn) if vn else ''}",
+                "creation": str(f.creation or ""),
+            })
+
+    # ── 4. Submission attachments (Work Done docs) ───────────────────────
+    submission_attachments = []
+    wd_names = frappe.db.get_all("Work Done", {"system_id": po_dispatch}, pluck="name")
+    if wd_names:
+        ph = ", ".join(["%s"] * len(wd_names))
+        wd_files = frappe.db.sql(
+            f"""SELECT f.file_name, f.file_url, f.file_size, f.attached_to_name, f.creation
+                FROM `tabFile` f
+                WHERE f.attached_to_doctype = 'Work Done'
+                  AND f.attached_to_name IN ({ph})
+                ORDER BY f.creation ASC""",
+            tuple(wd_names), as_dict=True,
+        ) or []
+        for f in wd_files:
+            submission_attachments.append({
+                "file_name": f.file_name, "file_url": f.file_url,
+                "file_size": f.file_size, "attached_to": "Work Done",
+                "creation": str(f.creation or ""),
+            })
+
+    return {
+        "reschedule_history": reschedule_history,
+        "planning_attachments": planning_attachments,
+        "submission_attachments": submission_attachments,
+    }
 
 
 @frappe.whitelist()
@@ -11885,6 +12014,114 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             it.status,
             it.daily_cost,
             it.daily_cost_applies,
+            it.subcontractor,
+            it.field_user,
+            it.isdp_account,
+            it.warehouse,
+            it.department,
+            it.note,
+            (SELECT COUNT(*) FROM `tabINET Team Member` itm WHERE itm.parent = it.name) AS member_count,
+            (
+                SELECT GROUP_CONCAT(DISTINCT IFNULL(pcc.project_domain,'') ORDER BY pcc.project_domain SEPARATOR ', ')
+                FROM `tabRollout Plan` rp
+                INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+                LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+                WHERE rp.team = it.name
+                  AND rp.plan_status IN ('Planned','In Execution','Completed')
+                  AND rp.plan_date = {date_expr}
+                  AND IFNULL(pcc.project_domain,'') != ''
+            ) AS current_domains,
+            (
+                SELECT GROUP_CONCAT(DISTINCT IFNULL(pd2.project_code,'') ORDER BY pd2.project_code SEPARATOR ', ')
+                FROM `tabRollout Plan` rp2
+                INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
+                WHERE rp2.team = it.name
+                  AND rp2.plan_status IN ('Planned','In Execution','Completed')
+                  AND rp2.plan_date = {date_expr}
+                  AND IFNULL(pd2.project_code,'') != ''
+            ) AS current_projects,
+            (
+                SELECT COUNT(*)
+                FROM `tabRollout Plan` rpa
+                WHERE rpa.team = it.name
+                  AND rpa.plan_status IN ('Planned','In Execution')
+                  AND rpa.plan_date = {date_expr}
+            ) AS active_plan_count,
+            (
+                CASE
+                    WHEN IFNULL(it.team_category, '') = 'Backend Team' THEN NULL
+                    WHEN EXISTS (
+                        SELECT 1 FROM `tabDaily Execution` de_s
+                        WHERE de_s.team = it.name
+                          AND de_s.execution_date = {date_expr}
+                          AND de_s.execution_status NOT IN ('Cancelled')
+                    ) THEN 'In Execution'
+                    WHEN EXISTS (
+                        SELECT 1 FROM `tabRollout Plan` rp_s
+                        WHERE rp_s.team = it.name
+                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Completed')
+                          AND rp_s.plan_date = {date_expr}
+                    ) THEN 'Planned'
+                    ELSE 'Idle'
+                END
+            ) AS today_status
+        FROM `tabINET Team` it
+        LEFT JOIN `tabIM Master` im_m ON im_m.name = it.im
+        {where_sql}
+        ORDER BY it.team_category, it.team_name
+        LIMIT {lim}
+        """,
+        tuple(full_params) if full_params else (),
+        as_dict=True,
+    )
+    return rows or []
+
+
+@frappe.whitelist()
+def list_im_teams(im=None, status=None, team_type=None, team_category=None, search=None, limit=500, for_date=None):
+    """Same computed fields as list_admin_teams but accessible to IM role."""
+    import re as _re
+    if for_date and not _re.match(r"^\d{4}-\d{2}-\d{2}$", str(for_date)):
+        frappe.throw("Invalid for_date format")
+    date_val = str(for_date) if for_date else None
+
+    lim = min(int(limit or 500), 1000)
+    wheres = []
+    params = []
+
+    if im:
+        wheres.append("it.im = %s")
+        params.append(im)
+    if status:
+        wheres.append("it.status = %s")
+        params.append(status)
+    if team_type:
+        wheres.append("it.team_type = %s")
+        params.append(team_type)
+    if team_category:
+        wheres.append("it.team_category = %s")
+        params.append(team_category)
+    if search:
+        pat = f"%{(search or '').strip()}%"
+        wheres.append("(it.team_id LIKE %s OR it.team_name LIKE %s)")
+        params.extend([pat, pat])
+
+    where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+    date_expr = "%s" if date_val else "CURDATE()"
+    params_date = [date_val] * 5 if date_val else []
+    full_params = params_date + params
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT
+            it.name,
+            it.team_id,
+            it.team_name,
+            it.team_type,
+            it.team_category,
+            it.im,
+            IFNULL(im_m.full_name, it.im) AS im_name,
+            it.status,
             it.subcontractor,
             it.field_user,
             it.isdp_account,
