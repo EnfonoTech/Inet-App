@@ -4836,9 +4836,18 @@ def generate_work_done(execution_name, issue_flag=None):
     clean_flag = (issue_flag or "").strip()
     if clean_flag and clean_flag in _ALLOWED_WD_ISSUE_FLAGS and frappe.db.has_column("Work Done", "issue_flag"):
         wd.issue_flag = clean_flag
+    if subcontractor and frappe.db.has_column("Work Done", "subcontractor"):
+        wd.subcontractor = subcontractor
 
     wd.insert(ignore_permissions=True)
     frappe.db.commit()
+
+    # Snapshot the subcontractor on PO Dispatch (only if not already set — preserve archive import value).
+    if subcontractor and dispatch_name and frappe.db.exists("PO Dispatch", dispatch_name):
+        existing_contract = frappe.db.get_value("PO Dispatch", dispatch_name, "contract")
+        if not existing_contract:
+            frappe.db.set_value("PO Dispatch", dispatch_name, "contract", subcontractor, update_modified=False)
+            frappe.db.commit()
 
     # Resolve all open issues for this dispatch — Work Done is the final signal.
     if dispatch_name and frappe.db.has_column("Rollout Plan", "issue_status"):
@@ -10296,6 +10305,13 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
         "subcon_completed_on": completed,
         "dispatch_status": "Completed",
     }
+    # Snapshot the backend team's subcontractor onto pd.contract (only if not already set).
+    backend_team = pd.get("backend_team")
+    if backend_team:
+        team_subcon = frappe.db.get_value("INET Team", backend_team, "subcontractor")
+        existing_contract = frappe.db.get_value("PO Dispatch", name, "contract")
+        if team_subcon and not existing_contract:
+            updates["contract"] = team_subcon
     addition = (str(remark or "")).strip() if remark is not None else ""
     if addition:
         existing = (pd.get("subcon_remark") or "").strip()

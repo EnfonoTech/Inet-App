@@ -258,25 +258,25 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     if with_team_type:
         team_cols = (
             "plan.team_type AS team_type, "
-            "COALESCE(sm.subcontractor_name, sm_pd.subcontractor_name) AS subcontractor, "
-            "sm.sub_payout_pct AS subcontractor_payout_pct, "
-            "sm.inet_margin_pct AS subcontractor_margin_pct, "
-            "COALESCE(sm.contract_model, sm_pd.contract_model) AS contract_model"
+            "COALESCE(sm_pd.subcontractor_name, sm.subcontractor_name) AS subcontractor, "
+            "COALESCE(sm_pd.sub_payout_pct, sm.sub_payout_pct) AS subcontractor_payout_pct, "
+            "COALESCE(sm_pd.inet_margin_pct, sm.inet_margin_pct) AS subcontractor_margin_pct, "
+            "COALESCE(sm_pd.contract_model, sm.contract_model) AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN
     else:
         team_cols = (
             "NULL AS team_type, "
-            "COALESCE(sm_sub.subcontractor_name, sm_pd.subcontractor_name) AS subcontractor, "
+            "COALESCE(sm_pd.subcontractor_name, sm_sub.subcontractor_name) AS subcontractor, "
             "NULL AS subcontractor_payout_pct, "
             "NULL AS subcontractor_margin_pct, "
-            "COALESCE(sm_sub.contract_model, sm_pd.contract_model) AS contract_model"
+            "COALESCE(sm_pd.contract_model, sm_sub.contract_model) AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN_LEAN
 
     if subcon_vals:
         ph = ", ".join(["%s"] * len(subcon_vals))
-        sc_col = "COALESCE(sm.name, sm_pd.name)" if with_team_type else "COALESCE(sm_sub.name, sm_pd.name)"
+        sc_col = "COALESCE(sm_pd.name, sm.name)" if with_team_type else "COALESCE(sm_pd.name, sm_sub.name)"
         where.append(f"IFNULL({sc_col},'') IN ({ph})")
         params.extend(subcon_vals)
 
@@ -424,8 +424,8 @@ def pic_invoicing_summary(portal_filters=None):
       SUM(IFNULL(pd.ms1_amount,  0)) AS po_amount,
       SUM(IFNULL(pd.ms1_invoiced,0)) AS invoiced,
       SUM(IFNULL(pd.ms1_unbilled,0)) AS unbilled,
-      SUM(IFNULL(pd.ms1_amount,  0) * IFNULL(sm_sub.sub_payout_pct,   0)   / 100) AS subcon_amt,
-      SUM(IFNULL(pd.ms1_amount,  0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100) AS inet_amt
+      SUM(IFNULL(pd.ms1_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
+      SUM(IFNULL(pd.ms1_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt
     {_PIC_FROM_JOIN_LEAN}
     WHERE {' AND '.join(where_ms1)}
     GROUP BY ({_PIC_INITIAL_RULE_SQL.strip()})
@@ -440,8 +440,8 @@ def pic_invoicing_summary(portal_filters=None):
       SUM(IFNULL(pd.ms2_amount,  0)) AS po_amount,
       SUM(IFNULL(pd.ms2_invoiced,0)) AS invoiced,
       SUM(IFNULL(pd.ms2_unbilled,0)) AS unbilled,
-      SUM(IFNULL(pd.ms2_amount,  0) * IFNULL(sm_sub.sub_payout_pct,   0)   / 100) AS subcon_amt,
-      SUM(IFNULL(pd.ms2_amount,  0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100) AS inet_amt
+      SUM(IFNULL(pd.ms2_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
+      SUM(IFNULL(pd.ms2_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt
     {_PIC_FROM_JOIN_LEAN}
     WHERE {' AND '.join(where_ms2)}
     GROUP BY COALESCE(NULLIF(pd.pic_status_ms2, ''), 'Work Not Done')
@@ -1326,7 +1326,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
     subcon_vals = _ensure_list(filters.get("subcontractor"))
     if subcon_vals:
         ph = ", ".join(["%s"] * len(subcon_vals))
-        wheres.append(f"IFNULL(COALESCE(sm_inv.name, sm_pd_inv.name),'') IN ({ph})")
+        wheres.append(f"IFNULL(COALESCE(sm_pd_inv.name, sm_inv.name),'') IN ({ph})")
         params.extend(subcon_vals)
 
     if filters.get("search") or filters.get("q"):
@@ -1375,8 +1375,8 @@ def list_invoice_tracker_rows(filters=None, limit=500):
                {_sqc2}, {_pat2}, {_isdp2}, {_ibuy2},
                pd.payment_terms, pd.tax_rate,
                pd.ms1_payment_received_date, pd.ms2_payment_received_date,
-               COALESCE(sm_inv.subcontractor_name, sm_pd_inv.subcontractor_name) AS subcontractor,
-               COALESCE(sm_inv.contract_model, sm_pd_inv.contract_model) AS contract_model,
+               COALESCE(sm_pd_inv.subcontractor_name, sm_inv.subcontractor_name) AS subcontractor,
+               COALESCE(sm_pd_inv.contract_model, sm_inv.contract_model) AS contract_model,
                pd.modified,
                {si_cols}
         FROM `tabPO Dispatch` pd

@@ -381,7 +381,15 @@ export default function IMExecution() {
 
   function workDoneBlockReason(e) {
     if (e.is_dummy_po) return "Dummy PO — must be mapped to a real PO before Work Done can be created";
-    if (e.work_done) return "Work Done already exists";
+    if (e.work_done) {
+      const pending = [];
+      if (!isNotRequired(e.ciag_required) && !["Approved", "Not Applicable"].includes(e.ciag_status))
+        pending.push("CIAG approval");
+      if (!isNotRequired(e.qc_required) && !["Pass", "Not Applicable"].includes(e.qc_status))
+        pending.push("QC");
+      const suffix = pending.length ? ` — awaiting ${pending.join(" & ")}` : "";
+      return `Work Done already exists${suffix}`;
+    }
     if (e.execution_status !== "Completed") return `Not completed — ${e.execution_status || "—"}`;
     if (!isNotRequired(e.qc_required) && e.qc_status !== "Pass") return `QC not passed — ${e.qc_status || "Pending"}`;
     return "Duplicate plan (another execution covers this)";
