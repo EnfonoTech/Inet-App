@@ -41,6 +41,7 @@ export default function PICDashboard({ showSwitcher = false }) {
   const [error, setError] = useState(null);
   const [range, setRange] = useState({ from: "", to: "" });
   const [fetchedAt, setFetchedAt] = useState(null);
+  const [showAllMonthly, setShowAllMonthly] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -245,26 +246,39 @@ export default function PICDashboard({ showSwitcher = false }) {
           {monthly.length === 0 ? (
             <Empty>No invoicing dates set yet.</Empty>
           ) : (
-            <table className="data-table" style={{ width: "100%" }}>
-              <thead>
-                <tr>
-                  <th>Invoicing Month</th>
-                  <th style={{ textAlign: "right" }}>MS1 Invoiced</th>
-                  <th style={{ textAlign: "right" }}>MS2 Invoiced</th>
-                  <th style={{ textAlign: "right" }}>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthly.map((m) => (
-                  <tr key={m.invoice_month}>
-                    <td>{m.invoice_month}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms1_invoiced || 0)}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms2_invoiced || 0)}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmtMoney.format(m.total || 0)}</td>
+            <>
+              <table className="data-table" style={{ width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th>Invoicing Month</th>
+                    <th style={{ textAlign: "right" }}>MS1 Invoiced</th>
+                    <th style={{ textAlign: "right" }}>MS2 Invoiced</th>
+                    <th style={{ textAlign: "right" }}>Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(showAllMonthly ? monthly : monthly.slice(-6)).map((m) => (
+                    <tr key={m.invoice_month}>
+                      <td>{m.invoice_month}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms1_invoiced || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms2_invoiced || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmtMoney.format(m.total || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {monthly.length > 6 && (
+                <div style={{ padding: "8px 14px", borderTop: "1px solid #f1f5f9", textAlign: "center" }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllMonthly((v) => !v)}
+                    style={{ fontSize: "0.75rem", fontWeight: 600, color: "#4338ca", background: "none", border: "none", cursor: "pointer", padding: "2px 8px" }}
+                  >
+                    {showAllMonthly ? `Show less ▲` : `See all ${monthly.length} months ▼`}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </Section>
 

@@ -8,6 +8,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { useAuth } from "../../context/AuthContext";
+import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -162,6 +163,10 @@ export default function PICTracker() {
   const [picMs2Filter, setPicMs2Filter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const [dateRange, setDateRange] = useState({ from: "", to: "" });
+  const [subconFilter, setSubconFilter] = useState([]);
+  const [isdpOwnerFilter, setIsdpOwnerFilter] = useState([]);
+  const [ibuyOwnerFilter, setIbuyOwnerFilter] = useState([]);
 
   // Per-row edit popover
   const [editFor, setEditFor] = useState(null);
@@ -196,6 +201,11 @@ export default function PICTracker() {
         if (picMs2Filter.length) portal.pic_status_ms2 = picMs2Filter;
         if (projectFilter.length) portal.project_code = projectFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
+        if (dateRange.from) portal.from_date = dateRange.from;
+        if (dateRange.to) portal.to_date = dateRange.to;
+        if (subconFilter.length) portal.subcontractor = subconFilter;
+        if (isdpOwnerFilter.length) portal.isdp_owner = isdpOwnerFilter;
+        if (ibuyOwnerFilter.length) portal.ibuy_owner = ibuyOwnerFilter;
         const list = await pmApi.listPicRows(portal, rowLimit);
         if (cancelled) return;
         setRows(Array.isArray(list) ? list : []);
@@ -209,13 +219,16 @@ export default function PICTracker() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit, refreshKey]);
 
-  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "isdp_owner", "ibuy_owner", "contract"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
+  const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
+  const isdpOwnerOptions = (dispOpts.isdp_owner || []).filter(Boolean).map((v) => ({ id: v, label: v }));
+  const ibuyOwnerOptions = (dispOpts.ibuy_owner || []).filter(Boolean).map((v) => ({ id: v, label: v }));
 
-  const hasFilters = !!(search || picFilter.length || picMs2Filter.length || projectFilter.length || duidFilter.length);
+  const hasFilters = !!(search || picFilter.length || picMs2Filter.length || projectFilter.length || duidFilter.length || dateRange.from || dateRange.to || subconFilter.length || isdpOwnerFilter.length || ibuyOwnerFilter.length);
 
   // Totals row — sums numeric columns across the loaded rows. DataTablePro
   // reorders / hides tfoot cells the same way it does the body, so the totals
@@ -391,8 +404,12 @@ export default function PICTracker() {
         <SearchableSelect multi value={picMs2Filter} onChange={setPicMs2Filter} options={PIC_STATUSES} placeholder="All PIC Status (MS2)" minWidth={180} />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontractor" minWidth={160} />
+        <SearchableSelect multi value={isdpOwnerFilter} onChange={setIsdpOwnerFilter} options={isdpOwnerOptions} placeholder="ISDP Owner" minWidth={140} />
+        <SearchableSelect multi value={ibuyOwnerFilter} onChange={setIbuyOwnerFilter} options={ibuyOwnerOptions} placeholder="iBuy Owner" minWidth={140} />
+        {/* <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} /> */}
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setPicFilter([]); setPicMs2Filter([]); setProjectFilter([]); setDuidFilter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setPicFilter([]); setPicMs2Filter([]); setProjectFilter([]); setDuidFilter([]); setDateRange({ from: "", to: "" }); setSubconFilter([]); setIsdpOwnerFilter([]); setIbuyOwnerFilter([]); }}>
             Clear
           </button>
         )}

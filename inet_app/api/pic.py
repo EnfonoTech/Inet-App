@@ -221,6 +221,22 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     if not pf.get("remaining_milestone_pct") and not viewing_closed:
         where.append("(pd.ms1_unbilled + pd.ms2_unbilled) > 0")
 
+    isdp_vals = _ensure_list(pf.get("isdp_owner"))
+    if isdp_vals:
+        ph = ", ".join(["%s"] * len(isdp_vals))
+        where.append(f"IFNULL(pd.isdp_owner,'') IN ({ph})")
+        params.extend(isdp_vals)
+
+    ibuy_vals = _ensure_list(pf.get("ibuy_owner"))
+    if ibuy_vals:
+        ph = ", ".join(["%s"] * len(ibuy_vals))
+        where.append(f"IFNULL(pd.ibuy_owner,'') IN ({ph})")
+        params.extend(ibuy_vals)
+
+    # subcontractor filter — resolved after with_team_type is known so the
+    # correct join alias is used (sm vs sm_sub for the Rollout Plan branch).
+    subcon_vals = _ensure_list(pf.get("subcontractor"))
+
     search = pf.get("search") or pf.get("q") or ""
     if search:
         clause, like_params = _sql_search_clause(
@@ -257,6 +273,12 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             "COALESCE(sm_sub.contract_model, sm_pd.contract_model) AS contract_model"
         )
         from_clause = _PIC_FROM_JOIN_LEAN
+
+    if subcon_vals:
+        ph = ", ".join(["%s"] * len(subcon_vals))
+        sc_col = "COALESCE(sm.name, sm_pd.name)" if with_team_type else "COALESCE(sm_sub.name, sm_pd.name)"
+        where.append(f"IFNULL({sc_col},'') IN ({ph})")
+        params.extend(subcon_vals)
 
     sqc_expr = _po_dispatch_col_expr("sqc_status")
     pat_expr = _po_dispatch_col_expr("pat_status")
@@ -805,6 +827,10 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
         split_params = [td, td, td, td]
 
     # ── Acceptance buckets — count + 1st/2nd/total amounts per pic_status.
+    # Each dispatch line is counted once per DISTINCT bucket it contributes to.
+    # When MS1 and MS2 fall in the same bucket the line is counted once (not twice)
+    # and both amounts are merged into that single bucket row.
+    # When MS1 and MS2 are in different buckets the line appears in both.
     bucket_rows = frappe.db.sql(
         f"""
         SELECT bucket,
@@ -813,17 +839,40 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
                COALESCE(SUM(ms2_amount), 0) AS ms2_total,
                COALESCE(SUM(ms1_amount + ms2_amount), 0) AS total
         FROM (
+          -- MS1 row: always emitted.
+          -- If MS2 falls in the same bucket, absorb ms2_amount here so the
+          -- line is not double-counted in the UNION below.
           SELECT
             ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
-            pd.ms1_amount, pd.ms2_amount
+            pd.ms1_amount AS ms1_amount,
+            CASE
+              WHEN IFNULL(pd.ms2_amount, 0) > 0
+                   AND COALESCE(NULLIF(pd.pic_status_ms2,''),'Work Not Done')
+                       = ({_PIC_INITIAL_RULE_SQL.strip()})
+              THEN pd.ms2_amount
+              ELSE 0
+            END AS ms2_amount
           {_PIC_FROM_JOIN}
           WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+          {applied_clause}
+          UNION ALL
+          -- MS2 row: only emitted when ms2_amount > 0 AND its bucket differs
+          -- from the MS1 bucket (avoids the same-bucket double-count).
+          SELECT
+            COALESCE(NULLIF(pd.pic_status_ms2,''), 'Work Not Done') AS bucket,
+            0 AS ms1_amount,
+            pd.ms2_amount AS ms2_amount
+          {_PIC_FROM_JOIN}
+          WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+            AND IFNULL(pd.ms2_amount, 0) > 0
+            AND COALESCE(NULLIF(pd.pic_status_ms2,''),'Work Not Done')
+                != ({_PIC_INITIAL_RULE_SQL.strip()})
           {applied_clause}
         ) t
         GROUP BY bucket
         ORDER BY line_count DESC
         """,
-        tuple(applied_params),
+        tuple(applied_params) * 2,
         as_dict=True,
     )
 
@@ -1254,6 +1303,31 @@ def list_invoice_tracker_rows(filters=None, limit=500):
         if clause:
             wheres.append(clause)
             params.extend(p)
+
+    if filters.get("from_date"):
+        wheres.append("pd.ms1_applied_date >= %s")
+        params.append(filters["from_date"])
+    if filters.get("to_date"):
+        wheres.append("pd.ms1_applied_date <= %s")
+        params.append(filters["to_date"])
+
+    isdp_vals = _ensure_list(filters.get("isdp_owner"))
+    if isdp_vals:
+        ph = ", ".join(["%s"] * len(isdp_vals))
+        wheres.append(f"IFNULL(pd.isdp_owner,'') IN ({ph})")
+        params.extend(isdp_vals)
+
+    ibuy_vals = _ensure_list(filters.get("ibuy_owner"))
+    if ibuy_vals:
+        ph = ", ".join(["%s"] * len(ibuy_vals))
+        wheres.append(f"IFNULL(pd.ibuy_owner,'') IN ({ph})")
+        params.extend(ibuy_vals)
+
+    subcon_vals = _ensure_list(filters.get("subcontractor"))
+    if subcon_vals:
+        ph = ", ".join(["%s"] * len(subcon_vals))
+        wheres.append(f"IFNULL(COALESCE(sm_inv.name, sm_pd_inv.name),'') IN ({ph})")
+        params.extend(subcon_vals)
 
     if filters.get("search") or filters.get("q"):
         concat_expr = (

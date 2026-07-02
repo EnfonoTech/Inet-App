@@ -10294,11 +10294,7 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
     updates = {
         "subcon_status": "Work Done",
         "subcon_completed_on": completed,
-        # Keep dispatch_status='Backend Assigned' through the Work Done step. The
-        # subcon flow lives outside the rollout chain — same way regular rows
-        # keep dispatch_status='Planned' even after Daily Execution completes.
-        # Completion is conveyed by subcon_status='Work Done' and the execution
-        # status surfaced in the Work Done feed.
+        "dispatch_status": "Completed",
     }
     addition = (str(remark or "")).strip() if remark is not None else ""
     if addition:
@@ -10314,7 +10310,7 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
         "poid": pd.get("poid") or name,
         "subcon_status": "Work Done",
         "subcon_completed_on": str(completed),
-        "dispatch_status": "Backend Assigned",
+        "dispatch_status": "Completed",
     }
 
 

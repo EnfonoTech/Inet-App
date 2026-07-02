@@ -6,6 +6,7 @@ import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import DateRangePicker from "../../components/DateRangePicker";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
@@ -28,6 +29,10 @@ export default function InvoiceTracker() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [ms1StatusFilter, setMs1StatusFilter] = useState([]);
   const [ms2StatusFilter, setMs2StatusFilter] = useState([]);
+  const [dateRange, setDateRange] = useState({ from: "", to: "" });
+  const [subconFilter, setSubconFilter] = useState([]);
+  const [isdpOwnerFilter, setIsdpOwnerFilter] = useState([]);
+  const [ibuyOwnerFilter, setIbuyOwnerFilter] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceBusy, setInvoiceBusy] = useState(false);
@@ -44,6 +49,11 @@ export default function InvoiceTracker() {
       if (duidFilter.length) filters.site_code = duidFilter;
       if (ms1StatusFilter.length) filters.pic_status_ms1 = ms1StatusFilter;
       if (ms2StatusFilter.length) filters.pic_status_ms2 = ms2StatusFilter;
+      if (dateRange.from) filters.from_date = dateRange.from;
+      if (dateRange.to) filters.to_date = dateRange.to;
+      if (subconFilter.length) filters.subcontractor = subconFilter;
+      if (isdpOwnerFilter.length) filters.isdp_owner = isdpOwnerFilter;
+      if (ibuyOwnerFilter.length) filters.ibuy_owner = ibuyOwnerFilter;
       const list = await pmApi.listInvoiceTrackerRows(filters, rowLimit);
       setRows(Array.isArray(list) ? list : []);
     } catch (e) {
@@ -51,13 +61,16 @@ export default function InvoiceTracker() {
     } finally {
       setLoading(false);
     }
-  }, [searchDebounced, projectFilter, duidFilter, ms1StatusFilter, ms2StatusFilter, rowLimit]);
+  }, [searchDebounced, projectFilter, duidFilter, ms1StatusFilter, ms2StatusFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit]);
 
   useEffect(() => { load(); }, [load]);
 
-  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "isdp_owner", "ibuy_owner", "contract"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
+  const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
+  const isdpOptions = (dispOpts.isdp_owner || []).filter(Boolean).map((v) => ({ id: v, label: v }));
+  const ibuyOptions = (dispOpts.ibuy_owner || []).filter(Boolean).map((v) => ({ id: v, label: v }));
 
   const PIC_STATUS_OPTIONS = [
     { id: "Ready for Invoice",              label: "Ready for Invoice" },
@@ -65,7 +78,7 @@ export default function InvoiceTracker() {
     { id: "Commercial Invoice Closed",      label: "Invoice Closed" },
   ];
 
-  const hasFilters = !!(search || projectFilter.length || duidFilter.length || ms1StatusFilter.length || ms2StatusFilter.length);
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || ms1StatusFilter.length || ms2StatusFilter.length || dateRange.from || dateRange.to || subconFilter.length || isdpOwnerFilter.length || ibuyOwnerFilter.length);
 
   const selectedRows = useMemo(
     () => rows.filter((r) => selected.has(r.name)),
@@ -237,8 +250,12 @@ export default function InvoiceTracker() {
           <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
           <SearchableSelect multi value={ms1StatusFilter} onChange={setMs1StatusFilter} options={PIC_STATUS_OPTIONS} placeholder="MS1 Status" minWidth={150} />
           <SearchableSelect multi value={ms2StatusFilter} onChange={setMs2StatusFilter} options={PIC_STATUS_OPTIONS} placeholder="MS2 Status" minWidth={150} />
+          <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontractor" minWidth={160} />
+          <SearchableSelect multi value={isdpOwnerFilter} onChange={setIsdpOwnerFilter} options={isdpOptions} placeholder="ISDP Owner" minWidth={140} />
+          <SearchableSelect multi value={ibuyOwnerFilter} onChange={setIbuyOwnerFilter} options={ibuyOptions} placeholder="iBuy Owner" minWidth={140} />
+          {/* <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} /> */}
           {hasFilters && (
-            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setMs1StatusFilter([]); setMs2StatusFilter([]); }}>
+            <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setMs1StatusFilter([]); setMs2StatusFilter([]); setDateRange({ from: "", to: "" }); setSubconFilter([]); setIsdpOwnerFilter([]); setIbuyOwnerFilter([]); }}>
               Clear
             </button>
           )}
@@ -279,7 +296,7 @@ export default function InvoiceTracker() {
       </div>
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loadedCount={rows.length} filteredCount={rows.length} filterActive={hasFilters}>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
           ) : rows.length === 0 ? (
