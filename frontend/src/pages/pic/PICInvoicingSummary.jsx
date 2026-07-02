@@ -189,15 +189,16 @@ export default function PICInvoicingSummary() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filterOpts, setFilterOpts] = useState({ contract_models: [], invoice_months: [] });
+  const [filterOpts, setFilterOpts] = useState({ contract_models: [], invoice_months: [], subcontracts: [] });
 
   // Filters
-  const [contractFilter, setContractFilter] = useState([]);
-  const [ms1MonthFilter, setMs1Month]       = useState([]);
-  const [ms2MonthFilter, setMs2Month]       = useState([]);
-  const [refreshKey, setRefreshKey]         = useState(0);
+  const [contractFilter, setContractFilter]   = useState([]);
+  const [subcontractFilter, setSubcontract]   = useState([]);
+  const [ms1MonthFilter, setMs1Month]         = useState([]);
+  const [ms2MonthFilter, setMs2Month]         = useState([]);
+  const [refreshKey, setRefreshKey]           = useState(0);
 
-  const hasFilters = !!(contractFilter.length || ms1MonthFilter.length || ms2MonthFilter.length);
+  const hasFilters = !!(contractFilter.length || subcontractFilter.length || ms1MonthFilter.length || ms2MonthFilter.length);
 
   // Fetch filter options once
   useEffect(() => {
@@ -215,9 +216,10 @@ export default function PICInvoicingSummary() {
       setError(null);
       try {
         const portal = {};
-        if (contractFilter.length) portal.contract_model    = contractFilter;
-        if (ms1MonthFilter.length) portal.ms1_invoice_month = ms1MonthFilter;
-        if (ms2MonthFilter.length) portal.ms2_invoice_month = ms2MonthFilter;
+        if (contractFilter.length)    portal.contract_model    = contractFilter;
+        if (subcontractFilter.length) portal.subcontract        = subcontractFilter;
+        if (ms1MonthFilter.length)    portal.ms1_invoice_month = ms1MonthFilter;
+        if (ms2MonthFilter.length)    portal.ms2_invoice_month = ms2MonthFilter;
         const res = await pmApi.picInvoicingSummary(portal);
         if (!cancelled) setData(res);
       } catch (err) {
@@ -227,10 +229,11 @@ export default function PICInvoicingSummary() {
       }
     })();
     return () => { cancelled = true; };
-  }, [contractFilter, ms1MonthFilter, ms2MonthFilter, refreshKey]);
+  }, [contractFilter, subcontractFilter, ms1MonthFilter, ms2MonthFilter, refreshKey]);
 
-  const monthOptions = (filterOpts.invoice_months || []).map((m) => ({ id: m, label: m }));
-  const contractOptions = (filterOpts.contract_models || []).map((m) => ({ id: m, label: m }));
+  const monthOptions      = (filterOpts.invoice_months || []).map((m) => ({ id: m, label: m }));
+  const contractOptions   = (filterOpts.contract_models || []).map((m) => ({ id: m, label: m }));
+  const subcontractOptions = filterOpts.subcontracts || [];
 
   return (
     <div>
@@ -252,6 +255,10 @@ export default function PICInvoicingSummary() {
           options={contractOptions} placeholder="All Contracts" minWidth={180}
         />
         <SearchableSelect
+          multi value={subcontractFilter} onChange={setSubcontract}
+          options={subcontractOptions} placeholder="All Subcontracts" minWidth={200}
+        />
+        <SearchableSelect
           multi value={ms1MonthFilter} onChange={setMs1Month}
           options={monthOptions} placeholder="MS1 Month" minWidth={150}
         />
@@ -261,7 +268,7 @@ export default function PICInvoicingSummary() {
         />
         {hasFilters && (
           <button className="btn-secondary" onClick={() => {
-            setContractFilter([]); setMs1Month([]); setMs2Month([]);
+            setContractFilter([]); setSubcontract([]); setMs1Month([]); setMs2Month([]);
           }}>
             Clear
           </button>

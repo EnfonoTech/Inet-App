@@ -389,6 +389,12 @@ def pic_invoicing_summary(portal_filters=None):
         where_common.append(f"COALESCE(sm_sub.contract_model, 'Fix & Core') IN ({ph})")
         params_common.extend(cm_vals)
 
+    if pf.get("subcontract"):
+        sc_vals = _ensure_list(pf["subcontract"])
+        ph = ", ".join(["%s"] * len(sc_vals))
+        where_common.append(f"COALESCE(sm_pd.name, sm_sub.name) IN ({ph})")
+        params_common.extend(sc_vals)
+
     if pf.get("dispatch_status"):
         ds_vals = _ensure_list(pf["dispatch_status"])
         ph = ", ".join(["%s"] * len(ds_vals))
@@ -485,7 +491,7 @@ def pic_invoicing_summary(portal_filters=None):
 
 @frappe.whitelist()
 def get_pic_summary_filter_options():
-    """Distinct contract models and invoice months for the invoicing summary filters."""
+    """Distinct contract models, invoice months, and subcontracts for the invoicing summary filters."""
     _pic_role_or_throw()
     contract_models = frappe.db.sql(
         """
@@ -511,12 +517,21 @@ def get_pic_summary_filter_options():
         (),
         as_dict=True,
     )
+    subcontracts = frappe.db.sql(
+        """
+        SELECT name, IFNULL(subcontractor_name, name) AS label
+        FROM `tabSubcontract Master`
+        ORDER BY subcontractor_name, name
+        """,
+        as_dict=True,
+    )
     models = [r.contract_model for r in contract_models]
     if "Fix & Core" not in models:
         models.insert(0, "Fix & Core")
     return {
         "contract_models": models,
         "invoice_months":  [r.m for r in months],
+        "subcontracts":    [{"id": r.name, "label": r.label} for r in subcontracts],
     }
 
 
@@ -947,16 +962,16 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
         SELECT
           SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
               {split_ms1_cond}
-              THEN IFNULL(pd.ms1_amount, 0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms1,
+              THEN IFNULL(pd.ms1_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms1,
           SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
               {split_ms1_cond}
-              THEN IFNULL(pd.ms1_amount, 0) * IFNULL(sm_sub.sub_payout_pct, 0) / 100 ELSE 0 END) AS subcon_ms1,
+              THEN IFNULL(pd.ms1_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 ELSE 0 END) AS subcon_ms1,
           SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
               {split_ms2_cond}
-              THEN IFNULL(pd.ms2_amount, 0) * COALESCE(sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms2,
+              THEN IFNULL(pd.ms2_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms2,
           SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
               {split_ms2_cond}
-              THEN IFNULL(pd.ms2_amount, 0) * IFNULL(sm_sub.sub_payout_pct, 0) / 100 ELSE 0 END) AS subcon_ms2
+              THEN IFNULL(pd.ms2_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 ELSE 0 END) AS subcon_ms2
         {_PIC_FROM_JOIN_LEAN}
         WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
         """,
