@@ -14,6 +14,7 @@
   "user",
   "status",
   "can_assign_backend",
+  "can_direct_close",
   "section_break_cost",
   "monthly_cost_sar",
   "column_break_pozg",
@@ -77,6 +78,13 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Can Assign Backend Team"
+  },
+  {
+   "default": "0",
+   "fieldname": "can_direct_close",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Can Direct Close"
   },
   {
    "fieldname": "section_break_cost",

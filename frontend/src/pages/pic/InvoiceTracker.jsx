@@ -250,7 +250,7 @@ export default function InvoiceTracker() {
           <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
           <SearchableSelect multi value={ms1StatusFilter} onChange={setMs1StatusFilter} options={PIC_STATUS_OPTIONS} placeholder="MS1 Status" minWidth={150} />
           <SearchableSelect multi value={ms2StatusFilter} onChange={setMs2StatusFilter} options={PIC_STATUS_OPTIONS} placeholder="MS2 Status" minWidth={150} />
-          <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontractor" minWidth={160} />
+          <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
           <SearchableSelect multi value={isdpOwnerFilter} onChange={setIsdpOwnerFilter} options={isdpOptions} placeholder="ISDP Owner" minWidth={140} />
           <SearchableSelect multi value={ibuyOwnerFilter} onChange={setIbuyOwnerFilter} options={ibuyOptions} placeholder="iBuy Owner" minWidth={140} />
           {/* <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} /> */}
@@ -318,7 +318,7 @@ export default function InvoiceTracker() {
                       title="Select all"
                     />
                   </th>
-                  <th>Subcontractor</th>
+                  <th>Subcontract</th>
                   <th>Contract Model</th>
                   <th>POID</th>
                   <th>Customer</th>

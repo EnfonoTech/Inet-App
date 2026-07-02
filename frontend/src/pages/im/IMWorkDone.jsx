@@ -251,6 +251,7 @@ export default function IMWorkDone() {
   const [issueFlagBusy, setIssueFlagBusy] = useState(false);
   const [issueFlagErr, setIssueFlagErr] = useState(null);
   const [issueFlagFilter, setIssueFlagFilter] = useState([]);
+  const [sourceFilter, setSourceFilter] = useState([]);
   const [bulkIssueFlagOpen, setBulkIssueFlagOpen] = useState(false);
   const [bulkIssueFlagPick, setBulkIssueFlagPick] = useState("");
   const [bulkIssueFlagBusy, setBulkIssueFlagBusy] = useState(false);
@@ -470,8 +471,9 @@ export default function IMWorkDone() {
       const flag = r.issue_flag || "";
       if (!((wantsNone && !flag) || nonNone.includes(flag))) return false;
     }
+    if (sourceFilter.length && !sourceFilter.includes(r.source || "")) return false;
     return true;
-  }), [rows, submissionFilter, execStatusFilter, issueFlagFilter]);
+  }), [rows, submissionFilter, execStatusFilter, issueFlagFilter, sourceFilter]);
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
   const bulkActTypes = [...new Set(filteredRows.filter((r) => selectedRows.has(r.name)).map((r) => r.activity_type).filter(Boolean))];
@@ -480,7 +482,7 @@ export default function IMWorkDone() {
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
 
   const totals = filteredRows.reduce(
     (acc, r) => ({
@@ -545,11 +547,23 @@ export default function IMWorkDone() {
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
+        <SearchableSelect
+          multi
+          value={sourceFilter}
+          onChange={setSourceFilter}
+          options={[
+            { id: "Rollout Execution", label: "Rollout Execution" },
+            { id: "Backend", label: "Backend" },
+            { id: "Direct Close", label: "Direct Close" },
+          ]}
+          placeholder="All Sources"
+          minWidth={140}
+        />
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -651,6 +665,7 @@ export default function IMWorkDone() {
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Billing Status</th>
                   <th>Submission Status</th>
+                  <th>Source</th>
                   <th>Issue Flag</th>
                   <th>Actions</th>
                 </tr>
@@ -699,6 +714,12 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.revenue_sar || 0)}</td>
                     <td title={r.pic_status ? `PIC status: ${r.pic_status}` : ""}><StatusPill value={r.billing_status} /></td>
                     <td><StatusPill value={r.submission_status} /></td>
+                    <td>
+                      {r.source === "Direct Close" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0369a1", border: "1px solid #93c5fd", whiteSpace: "nowrap" }} title={r.direct_close_by ? `Closed by: ${r.direct_close_by_full_name || r.direct_close_by}` : ""}>Direct Close</span>}
+                      {r.source === "Backend" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#ede9fe", color: "#7c3aed", border: "1px solid #c4b5fd", whiteSpace: "nowrap" }}>Backend</span>}
+                      {r.source === "Rollout Execution" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dcfce7", color: "#16a34a", border: "1px solid #86efac", whiteSpace: "nowrap" }}>Rollout</span>}
+                      {!r.source && <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
+                    </td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <IssueFlagCell flag={r.issue_flag} onClick={() => openIssueFlagModal(r)} />
                     </td>
@@ -759,6 +780,12 @@ export default function IMWorkDone() {
               <div><strong>Item:</strong> {detailRow.item_code || "—"}</div>
               <div><strong>Lead Team:</strong> {detailRow.team_name || detailRow.team || "—"}</div>
               <div><strong>Revenue:</strong> {fmt.format(detailRow.revenue_sar || 0)}</div>
+              {detailRow.subcontractor && (
+                <div><strong>Subcontract:</strong> {detailRow.subcontractor}</div>
+              )}
+              {detailRow.source && (
+                <div><strong>Source:</strong> {detailRow.source}{detailRow.direct_close_by ? ` · ${detailRow.direct_close_by_full_name || detailRow.direct_close_by}` : ""}</div>
+              )}
             </div>
             {detailRow.pic_rejection_remark && (
               <div style={{ margin: "8px 0 12px", padding: "10px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, color: "#991b1b", fontSize: "0.85rem" }}>

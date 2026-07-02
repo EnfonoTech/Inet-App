@@ -533,7 +533,7 @@ export const pmApi = {
   listIMsForPicker:  (search) => call("inet_app.api.command_center.list_im_masters_for_picker", { search: search || "", limit: 200 }),
   listEmployeesForPicker: (search) => call("inet_app.api.command_center.list_employees_for_picker", { search: search || "", limit: 100 }),
   listFrappeUsers:   (search) => call("frappe.client.get_list", { doctype: "User", filters: search ? [["full_name", "like", `%${search}%`]] : [["enabled", "=", 1]], fields: ["name", "full_name", "email"], limit_page_length: 50, order_by: "full_name asc" }),
-  listSubcontractors: () => call("frappe.client.get_list", { doctype: "Subcontractor Master", filters: {}, fields: ["name", "subcontractor_name"], limit_page_length: 100 }),
+  listSubcontractors: () => call("frappe.client.get_list", { doctype: "Subcontract Master", filters: {}, fields: ["name", "subcontractor_name"], limit_page_length: 100 }),
   // Generic helpers used by the Masters page (and anywhere else needing a
   // robust, CSRF-retrying frappe.client.get_list / get_count).
   genericList: (doctype, fields, limit, orderBy = "modified desc") =>
@@ -603,6 +603,14 @@ export const pmApi = {
 
   // Backend-team assignment flow — IM-driven, lives outside the rollout chain
   getMyBackendCapability: (im) => call("inet_app.api.command_center.get_my_backend_capability", im ? { im } : {}),
+  getMyDirectCloseCapability: () => call("inet_app.api.command_center.get_my_direct_close_capability", {}),
+  getSubcontractorsByType: (close_type) => call("inet_app.api.command_center.get_subcontractors_by_type", { close_type }),
+  directCloseDispatches: (po_dispatches, close_type, subcontractor, note) => call("inet_app.api.command_center.direct_close_dispatches", {
+    po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
+    close_type,
+    subcontractor: subcontractor || "",
+    note: note || "",
+  }),
   listBackendTeamsForPicker: (search) => call("inet_app.api.command_center.list_backend_teams_for_picker", { search: search || "", limit: 200 }),
   assignBackend: (po_dispatches, backend_team, remark) => call("inet_app.api.command_center.assign_backend", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),

@@ -250,10 +250,10 @@ export default function WorkDone() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState(_navWD?.fromDate ?? "");
   const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
-  const [excludeBackend, setExcludeBackend] = useState(_navWD?.excludeBackend ?? false);
   const [detailRow, setDetailRow] = useState(null);
   const [selectedRows, setSelectedRows] = useState(new Set());
   const [issueFlagFilter, setIssueFlagFilter] = useState([]);
+  const [workTypeFilter, setWorkTypeFilter] = useState([]);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -436,7 +436,6 @@ export default function WorkDone() {
         if (duidFilter.length) filters.site_code = duidFilter;
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
-        if (excludeBackend) filters.exclude_backend = true;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const list = await pmApi.listWorkDoneRows(filters, rowLimit);
         if (cancelled) return;
@@ -448,21 +447,30 @@ export default function WorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, excludeBackend, refreshKey]);
+  }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
 
   const filteredRows = useMemo(() => {
-    if (!issueFlagFilter.length) return rows;
-    const wantsNone = issueFlagFilter.includes("__NONE__");
-    const nonNone = issueFlagFilter.filter((v) => v !== "__NONE__");
-    return rows.filter((r) => {
-      const flag = r.issue_flag || "";
-      return (wantsNone && !flag) || nonNone.includes(flag);
-    });
-  }, [rows, issueFlagFilter]);
+    let r = rows;
+    if (issueFlagFilter.length) {
+      const wantsNone = issueFlagFilter.includes("__NONE__");
+      const nonNone = issueFlagFilter.filter((v) => v !== "__NONE__");
+      r = r.filter((row) => {
+        const flag = row.issue_flag || "";
+        return (wantsNone && !flag) || nonNone.includes(flag);
+      });
+    }
+    if (workTypeFilter.length) {
+      r = r.filter((row) => {
+        const src = row.source || "Rollout Execution";
+        return workTypeFilter.includes(src);
+      });
+    }
+    return r;
+  }, [rows, issueFlagFilter, workTypeFilter]);
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
 
-  const hasFilters = !!(searchDebounced || billingFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || issueFlagFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || billingFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || issueFlagFilter.length || workTypeFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const [teams, setTeams] = useState([]);
   useEffect(() => {
@@ -567,26 +575,42 @@ export default function WorkDone() {
           minWidth={150}
         />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
-        <button
-          type="button"
-          onClick={() => setExcludeBackend(!excludeBackend)}
-          title={excludeBackend ? "Showing field work only — click to show all" : "Click to hide backend work"}
-          style={{
-            padding: "6px 12px", fontSize: "0.8rem", fontWeight: 600,
-            borderRadius: 7, cursor: "pointer", whiteSpace: "nowrap",
-            border: `1px solid ${excludeBackend ? "#1d4ed8" : "#e2e8f0"}`,
-            background: excludeBackend ? "#eff6ff" : "#f8fafc",
-            color: excludeBackend ? "#1d4ed8" : "#94a3b8",
-            transition: "all 0.12s",
-          }}
-        >
-          Field Only
-        </button>
-        {(hasFilters || excludeBackend) && (
+        <div style={{ display: "flex", gap: 5, alignItems: "center", flexShrink: 0 }}>
+          {[
+            { id: "Rollout Execution", label: "Field Work",    activeBg: "#16a34a", activeBd: "#15803d", inactiveBg: "#f0fdf4", inactiveBd: "#86efac", inactiveFg: "#15803d" },
+            { id: "Backend",           label: "Backend",       activeBg: "#7c3aed", activeBd: "#6d28d9", inactiveBg: "#faf5ff", inactiveBd: "#c4b5fd", inactiveFg: "#6d28d9" },
+            { id: "Direct Close",      label: "Direct Close",  activeBg: "#0369a1", activeBd: "#0284c7", inactiveBg: "#f0f9ff", inactiveBd: "#93c5fd", inactiveFg: "#0284c7" },
+          ].map((opt) => {
+            const active = workTypeFilter.includes(opt.id);
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setWorkTypeFilter((prev) =>
+                  prev.includes(opt.id) ? prev.filter((v) => v !== opt.id) : [...prev, opt.id]
+                )}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  padding: "4px 11px", fontSize: "0.76rem", fontWeight: 700,
+                  borderRadius: 999, cursor: "pointer", whiteSpace: "nowrap",
+                  border: `1.5px solid ${active ? opt.activeBd : opt.inactiveBd}`,
+                  background: active ? opt.activeBg : opt.inactiveBg,
+                  color: active ? "#fff" : opt.inactiveFg,
+                  boxShadow: active ? `0 1px 4px ${opt.activeBg}55` : "none",
+                  transition: "all 0.15s",
+                }}
+              >
+                {active && <span style={{ fontSize: "0.65rem", lineHeight: 1 }}>✓</span>}
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+        {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setIssueFlagFilter([]); setFromDate(""); setToDate(""); setExcludeBackend(false); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setIssueFlagFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -681,6 +705,7 @@ export default function WorkDone() {
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Submission Status</th>
+                  <th>Work Type</th>
                   <th>Issue Flag</th>
                   <th>Billing Status</th>
                   <th title="Remark set by PM">General</th>
@@ -728,6 +753,11 @@ export default function WorkDone() {
                       <td style={{ textAlign: "right" }}>{row.executed_qty}</td>
                       <td style={{ textAlign: "right", color: "var(--green)" }}>{fmt.format(revenue)}</td>
                       <td><StatusPill value={row.submission_status} /></td>
+                      <td>
+                        {row.source === "Direct Close" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0369a1", border: "1px solid #93c5fd", whiteSpace: "nowrap" }} title={row.direct_close_by ? `Closed by: ${row.direct_close_by_full_name || row.direct_close_by}` : ""}>Direct Close</span>}
+                        {row.source === "Backend" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#ede9fe", color: "#7c3aed", border: "1px solid #c4b5fd", whiteSpace: "nowrap" }}>Backend</span>}
+                        {(row.source === "Rollout Execution" || !row.source) && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dcfce7", color: "#16a34a", border: "1px solid #86efac", whiteSpace: "nowrap" }}>Field Work</span>}
+                      </td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <IssueFlagCell flag={row.issue_flag} onClick={() => openIssueFlagModal(row)} />
                       </td>
@@ -1087,6 +1117,7 @@ export default function WorkDone() {
                 { label: "Work Done", value: detailRow.name || "—", tone: "amber" },
                 detailRow.execution ? { label: "Execution", value: detailRow.execution, tone: "green" } : null,
                 detailRow.billing_status ? { label: "Billing", value: detailRow.billing_status, tone: /invoiced|closed/i.test(detailRow.billing_status) ? "green" : /pending/i.test(detailRow.billing_status) ? "amber" : "slate" } : null,
+                detailRow.source === "Direct Close" && detailRow.direct_close_by ? { label: "Closed By", value: detailRow.direct_close_by_full_name || detailRow.direct_close_by, tone: "blue" } : null,
               ].filter(Boolean)}
               hero={
                 <DetailHero>
@@ -1100,6 +1131,7 @@ export default function WorkDone() {
                 "executed_qty", "revenue_sar", "total_cost_sar", "margin_sar",
                 "billing_status",
                 "im", "im_full_name",
+                "direct_close_by", "direct_close_by_full_name",
               ]}
               keyOrder={[
                 "item_description",

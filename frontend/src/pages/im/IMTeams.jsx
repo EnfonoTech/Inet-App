@@ -762,7 +762,7 @@ export default function IMTeams() {
                         <FieldRow label="Category"><StatusPill value={detailData.team_category} /></FieldRow>
                         <FieldRow label="Area">{detailData.area || "—"}</FieldRow>
                         <FieldRow label="ISDP Account">{detailData.isdp_account || "—"}</FieldRow>
-                        <FieldRow label="Subcontractor">{detailData.subcontractor || "—"}</FieldRow>
+                        <FieldRow label="Subcontract">{detailData.subcontractor || "—"}</FieldRow>
                         <FieldRow label="Field User">{detailData.field_user || "—"}</FieldRow>
                         <FieldRow label="Warehouse">{detailData.warehouse || "—"}</FieldRow>
                         {detailData.note && (

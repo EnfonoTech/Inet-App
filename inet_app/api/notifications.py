@@ -504,6 +504,46 @@ def notify_im_cancel_plan_decided(rollout_plan_name, action):
 
 
 # ---------------------------------------------------------------------------
+# Work Done — daily summary for PM
+# ---------------------------------------------------------------------------
+
+def send_daily_work_done_summary():
+    """Runs once a day — sends PMs a single count-by-type summary of today's Work Done."""
+    rows = frappe.db.sql(
+        """
+        SELECT
+            IFNULL(source, 'Rollout Execution') AS source,
+            COUNT(*) AS cnt
+        FROM `tabWork Done`
+        WHERE DATE(creation) = CURDATE()
+        GROUP BY IFNULL(source, 'Rollout Execution')
+        """,
+        as_dict=True,
+    )
+    if not rows:
+        return
+
+    label_map = {
+        "Rollout Execution": "Field Work",
+        "Backend": "Backend",
+        "Direct Close": "Direct Close",
+    }
+    parts = []
+    total = 0
+    for r in rows:
+        src = r.get("source") or "Rollout Execution"
+        cnt = r.get("cnt") or 0
+        total += cnt
+        parts.append(f"{label_map.get(src, src)}: {cnt}")
+
+    summary = "  ·  ".join(parts)
+    subject = f"[INFO] {total} Work Done recorded today — {summary}"
+
+    for user in _users_by_role("INET Admin"):
+        _make_notification(user, subject, link="/pms/work-done")
+
+
+# ---------------------------------------------------------------------------
 # Scheduled tasks
 # ---------------------------------------------------------------------------
 

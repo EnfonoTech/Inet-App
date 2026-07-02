@@ -84,7 +84,8 @@
   "subcon_pct_ms1",
   "inet_pct_ms1",
   "subcon_pct_ms2",
-  "inet_pct_ms2"
+  "inet_pct_ms2",
+  "direct_close_by"
  ],
  "fields": [
   {
@@ -353,7 +354,7 @@
    "fieldname": "contract",
    "fieldtype": "Link",
    "label": "Subcontractor (Archive)",
-   "options": "Subcontractor Master"
+   "options": "Subcontract Master"
   },
   {
    "fieldname": "sqc_status",
@@ -561,11 +562,18 @@
    "fieldtype": "Percent",
    "label": "INET % MS2 (Archive)",
    "read_only": 1
+  },
+  {
+   "fieldname": "direct_close_by",
+   "fieldtype": "Link",
+   "label": "Direct Closed By",
+   "options": "IM Master",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-13 14:03:37.320840",
+ "modified": "2026-07-02 15:25:32.857119",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "PO Dispatch",

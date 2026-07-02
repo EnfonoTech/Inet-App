@@ -81,8 +81,8 @@ const MASTER_DOCTYPES = [
     displayCols: ["full_name", "email", "phone", "status"],
   },
   {
-    label: "Subcontractor",
-    doctype: "Subcontractor Master",
+    label: "Subcontract",
+    doctype: "Subcontract Master",
     description: "External subcontract partners",
     icon: "🔧",
     color: "#f59e0b",

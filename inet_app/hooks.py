@@ -219,6 +219,7 @@ scheduler_events = {
 	],
 	"cron": {
 		"0 8 * * *": ["inet_app.api.notifications.send_dummy_po_reminder"],
+		"0 18 * * *": ["inet_app.api.notifications.send_daily_work_done_summary"],
 	},
 }
 

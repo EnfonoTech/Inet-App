@@ -27,7 +27,7 @@ def import_control_center_xlsx(file_url):
 	counts = {
 		"Area Master": 0,
 		"INET Team": 0,
-		"Subcontractor Master": 0,
+		"Subcontract Master": 0,
 		"Project Control Center": 0,
 		"Customer Item Master": 0,
 		"Activity Cost Master": 0,
@@ -103,13 +103,13 @@ def import_control_center_xlsx(file_url):
 			subcontractor = str(subcontractor).strip()
 			if not subcontractor:
 				continue
-			if not frappe.db.exists("Subcontractor Master", subcontractor):
+			if not frappe.db.exists("Subcontract Master", subcontractor):
 				# Decimals in Excel (0.2 = 20%) → multiply by 100 for Percent fields
 				inet_margin_pct = flt(row[2]) * 100 if row[2] else 0
 				sub_payout_pct = flt(row[3]) * 100 if row[3] else 0
 
 				frappe.get_doc({
-					"doctype": "Subcontractor Master",
+					"doctype": "Subcontract Master",
 					"subcontractor": subcontractor,
 					"type": str(row[1]).strip() if row[1] else "",
 					"inet_margin_pct": inet_margin_pct,
@@ -117,7 +117,7 @@ def import_control_center_xlsx(file_url):
 					"contract_model": str(row[4]).strip() if row[4] else "",
 					"status": str(row[5]).strip() if row[5] else "",
 				}).insert(ignore_permissions=True)
-				counts["Subcontractor Master"] += 1
+				counts["Subcontract Master"] += 1
 
 	# ------------------------------------------------------------------ #
 	# 03_PROJECT_DOMAIN_MASTER: Row 3+                                     #

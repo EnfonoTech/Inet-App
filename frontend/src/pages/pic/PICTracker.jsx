@@ -45,7 +45,7 @@ const PIC_STATUSES = [
 // works with day-to-day. Dynamic doctype fields added via Manage Table aren't
 // included to keep the export deterministic.
 const CSV_COLUMNS = [
-  ["subcontractor", "Subcontractor"],
+  ["subcontractor", "Subcontract"],
   ["contract_model", "Contract Model"],
   ["poid", "POID"],
   ["po_no", "PO No"],
@@ -404,7 +404,7 @@ export default function PICTracker() {
         <SearchableSelect multi value={picMs2Filter} onChange={setPicMs2Filter} options={PIC_STATUSES} placeholder="All PIC Status (MS2)" minWidth={180} />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
-        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontractor" minWidth={160} />
+        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
         <SearchableSelect multi value={isdpOwnerFilter} onChange={setIsdpOwnerFilter} options={isdpOwnerOptions} placeholder="ISDP Owner" minWidth={140} />
         <SearchableSelect multi value={ibuyOwnerFilter} onChange={setIbuyOwnerFilter} options={ibuyOwnerOptions} placeholder="iBuy Owner" minWidth={140} />
         {/* <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} /> */}
@@ -461,7 +461,7 @@ export default function PICTracker() {
                   <th style={{ width: 36 }}>
                     <input type="checkbox" checked={rows.length > 0 && rows.every((r) => selected.has(r.po_dispatch))} onChange={toggleAll} />
                   </th>
-                  <th>Subcontractor</th>
+                  <th>Subcontract</th>
                   <th>Contract Model</th>
                   <th>POID</th>
                   <th>PO No</th>

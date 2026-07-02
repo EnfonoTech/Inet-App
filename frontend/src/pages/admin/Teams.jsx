@@ -609,12 +609,12 @@ export default function Teams() {
                                 minWidth={160}
                               />
                             </EditField>
-                            <EditField label="Subcontractor">
+                            <EditField label="Subcontract">
                               <SearchableSelect
                                 value={form.subcontractor}
                                 onChange={(id) => setForm((f) => ({ ...f, subcontractor: id }))}
                                 options={subOptions}
-                                placeholder="Search subcontractor…"
+                                placeholder="Search subcontract…"
                                 minWidth={160}
                               />
                             </EditField>
@@ -644,7 +644,7 @@ export default function Teams() {
                             <FieldRow label="Team Type"><StatusPill value={detail.team_type} /></FieldRow>
                             <FieldRow label="Category"><StatusPill value={detail.team_category} /></FieldRow>
                             <FieldRow label="IM">{detail.im_name || detail.im || "—"}</FieldRow>
-                            <FieldRow label="Subcontractor">{detail.subcontractor || "—"}</FieldRow>
+                            <FieldRow label="Subcontract">{detail.subcontractor || "—"}</FieldRow>
                             <FieldRow label="Field User">{detail.field_user || "—"}</FieldRow>
                             <FieldRow label="ISDP Account">{detail.isdp_account || "—"}</FieldRow>
                             <FieldRow label="Warehouse">{detail.warehouse || "—"}</FieldRow>

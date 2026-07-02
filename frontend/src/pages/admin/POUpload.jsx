@@ -556,10 +556,10 @@ export default function POUpload() {
 
                       {(archivePreview.missing_subcontractors?.length || 0) > 0 && (
                         <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(245,158,11,0.08)", border: "1px solid #fde68a", borderRadius: 6, fontSize: "0.78rem" }}>
-                          <strong style={{ color: "#b45309" }}>⚠ {archivePreview.missing_subcontractors.length} Subcontractor{archivePreview.missing_subcontractors.length !== 1 ? "s" : ""} not in master:</strong>{" "}
+                          <strong style={{ color: "#b45309" }}>⚠ {archivePreview.missing_subcontractors.length} Subcontract{archivePreview.missing_subcontractors.length !== 1 ? "s" : ""} not in master:</strong>{" "}
                           <span style={{ color: "#475569" }}>{archivePreview.missing_subcontractors.slice(0, 20).join(", ")}{archivePreview.missing_subcontractors.length > 20 ? `, +${archivePreview.missing_subcontractors.length - 20} more` : ""}</span>
                           <div style={{ marginTop: 4, color: "#78350f" }}>
-                            These <strong>Contract / Sub Contract</strong> values won&apos;t be linked on import. Create them under <strong>Subcontractor Master</strong> first if you need the link.
+                            These <strong>Contract / Sub Contract</strong> values won&apos;t be linked on import. Create them under <strong>Subcontract Master</strong> first if you need the link.
                           </div>
                         </div>
                       )}

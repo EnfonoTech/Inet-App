@@ -8,6 +8,8 @@
   "system_id",
   "execution",
   "subcontractor",
+  "source",
+  "direct_close_by",
   "region_type",
   "item_code",
   "executed_qty",
@@ -41,7 +43,21 @@
    "fieldname": "subcontractor",
    "fieldtype": "Link",
    "label": "Subcontractor",
-   "options": "Subcontractor Master",
+   "options": "Subcontract Master",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "Rollout Execution\nBackend\nDirect Close",
+   "read_only": 1
+  },
+  {
+   "fieldname": "direct_close_by",
+   "fieldtype": "Link",
+   "label": "Closed By IM",
+   "options": "IM Master",
    "read_only": 1
   },
   {
@@ -138,7 +154,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-08 12:08:05.874210",
+ "modified": "2026-07-02 15:25:32.623944",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "Work Done",

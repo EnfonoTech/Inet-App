@@ -8,6 +8,7 @@
  "field_order": [
   "subcontractor_name",
   "type",
+  "supplier",
   "inet_margin_pct",
   "sub_payout_pct",
   "contract_model",
@@ -32,6 +33,13 @@
    "label": "Type",
    "options": "INET\nSUB",
    "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.type === 'SUB'",
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
   },
   {
    "fieldname": "inet_margin_pct",
@@ -79,7 +87,7 @@
  "modified": "2026-04-30 09:36:43.833414",
  "modified_by": "Administrator",
  "module": "Inet App",
- "name": "Subcontractor Master",
+ "name": "Subcontract Master",
  "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [

@@ -168,6 +168,17 @@ export default function IMPOIntake() {
   const [backendBusy, setBackendBusy] = useState(false);
   const [backendError, setBackendError] = useState(null);
 
+  // ── Direct Close (intake tab) ────────────────────────────────────────
+  const [canDirectClose, setCanDirectClose] = useState(false);
+  const [showDcModal, setShowDcModal] = useState(false);
+  const [dcType, setDcType] = useState("INET");
+  const [dcSubcontractor, setDcSubcontractor] = useState("");
+  const [dcSubconOptions, setDcSubconOptions] = useState([]);
+  const [dcSubconLoading, setDcSubconLoading] = useState(false);
+  const [dcNote, setDcNote] = useState("");
+  const [dcBusy, setDcBusy] = useState(false);
+  const [dcError, setDcError] = useState(null);
+
   // ── Dummy tab state ──────────────────────────────────────────────────
   const [dummyRows, setDummyRows] = useState([]);
   const [dummyLoading, setDummyLoading] = useState(false);
@@ -201,6 +212,7 @@ export default function IMPOIntake() {
   const [ovFromDate, setOvFromDate] = useState("");
   const [ovToDate, setOvToDate] = useState("");
   const [ovShowClosed, setOvShowClosed] = useState(true);
+  const [ovDirectCloseOnly, setOvDirectCloseOnly] = useState(false);
   const [ovRefreshKey, setOvRefreshKey] = useState(0);
   const loadOv = useCallback(() => setOvRefreshKey((k) => k + 1), []);
   const [ovPlanSummaries, setOvPlanSummaries] = useState({});
@@ -330,6 +342,15 @@ export default function IMPOIntake() {
     let cancelled = false;
     pmApi.getMyBackendCapability().then((res) => {
       if (!cancelled) setCanBackend(!!res?.can_assign_backend);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Direct Close capability check ────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.getMyDirectCloseCapability().then((res) => {
+      if (!cancelled) setCanDirectClose(!!res?.can_direct_close);
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -525,6 +546,53 @@ export default function IMPOIntake() {
     }
   }
 
+  // ── Direct Close helpers ─────────────────────────────────────────────
+  async function loadDcSubcontractors(type) {
+    setDcSubconLoading(true);
+    setDcSubcontractor("");
+    try {
+      const opts = await pmApi.getSubcontractorsByType(type);
+      setDcSubconOptions(Array.isArray(opts) ? opts.map((o) => ({ id: o.name, label: o.label })) : []);
+    } catch {
+      setDcSubconOptions([]);
+    } finally {
+      setDcSubconLoading(false);
+    }
+  }
+
+  async function openDcModal() {
+    if (selected.size < 1) return;
+    setDcError(null);
+    setDcNote("");
+    setDcType("INET");
+    setDcSubcontractor("");
+    setShowDcModal(true);
+    await loadDcSubcontractors("INET");
+  }
+
+  async function submitDirectClose() {
+    if (!dcSubcontractor) return;
+    setDcBusy(true);
+    setDcError(null);
+    try {
+      const ids = Array.from(selected);
+      const res = await pmApi.directCloseDispatches(ids, dcType, dcSubcontractor, dcNote);
+      const upd = res?.updated?.length || 0;
+      const err = res?.errors?.length || 0;
+      setShowDcModal(false);
+      setSelected(new Set());
+      setDcNote("");
+      setDcSubcontractor("");
+      setToastMsg(`Direct Close: ${upd} POID${upd !== 1 ? "s" : ""} closed${err ? `, ${err} failed` : ""}.`);
+      setTimeout(() => setToastMsg(null), 4500);
+      await load();
+    } catch (e) {
+      setDcError(e.message || "Failed to direct-close");
+    } finally {
+      setDcBusy(false);
+    }
+  }
+
   async function submitAssign() {
     if (!assignMonth || selected.size === 0) return;
     setAssigning(true);
@@ -611,10 +679,11 @@ export default function IMPOIntake() {
     if (ovStatusFilter.length) r = r.filter((x) => ovStatusFilter.includes(x.dispatch_status || "Pending"));
     if (ovTeamFilter.length) r = r.filter((x) => { const ps = ovPlanSummaries[x.name]; return ps && ovTeamFilter.includes(ps.team); });
     if (ovPlanStatusFilter.length) r = r.filter((x) => { const ps = ovPlanSummaries[x.name]; return ps && ovPlanStatusFilter.includes(ps.plan_status); });
+    if (ovDirectCloseOnly) r = r.filter((x) => !!x.direct_close_by);
     return r;
-  }, [ovRows, ovDomainFilter, ovStatusFilter, ovTeamFilter, ovPlanStatusFilter, ovPlanSummaries]);
+  }, [ovRows, ovDomainFilter, ovStatusFilter, ovTeamFilter, ovPlanStatusFilter, ovPlanSummaries, ovDirectCloseOnly]);
 
-  const hasOvFilters = !!(ovSearch || ovProjectFilter.length || ovDomainFilter.length || ovStatusFilter.length || ovDuidFilter.length || ovTeamFilter.length || ovPlanStatusFilter.length || ovFromDate || ovToDate);
+  const hasOvFilters = !!(ovSearch || ovProjectFilter.length || ovDomainFilter.length || ovStatusFilter.length || ovDuidFilter.length || ovTeamFilter.length || ovPlanStatusFilter.length || ovFromDate || ovToDate || ovDirectCloseOnly);
   const filteredDummyRows = useMemo(() => {
     let rows_ = dummyRows;
     if (dummyDomainFilter.length) rows_ = rows_.filter((r) => dummyDomainFilter.includes(r.project_domain));
@@ -727,6 +796,11 @@ export default function IMPOIntake() {
                 Assign to Backend ({selected.size})
               </button>
             )}
+            {canDirectClose && (
+              <button type="button" className="btn-secondary" disabled={selected.size < 1} onClick={openDcModal} style={{ borderColor: "#0284c7", color: "#0369a1" }}>
+                Direct Close ({selected.size})
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -789,9 +863,17 @@ export default function IMPOIntake() {
             <SearchableSelect multi value={ovPlanStatusFilter} onChange={setOvPlanStatusFilter} options={ovPlanStatusOptions} placeholder="Plan Status" minWidth={140} />
           )}
           <DateRangePicker value={{ from: ovFromDate, to: ovToDate }} onChange={({ from, to }) => { setOvFromDate(from); setOvToDate(to); }} />
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ fontSize: "0.78rem", padding: "5px 12px", background: ovDirectCloseOnly ? "#dbeafe" : undefined, borderColor: ovDirectCloseOnly ? "#0369a1" : undefined, color: ovDirectCloseOnly ? "#0369a1" : undefined, fontWeight: ovDirectCloseOnly ? 700 : undefined }}
+            onClick={() => setOvDirectCloseOnly((v) => !v)}
+          >
+            {ovDirectCloseOnly ? "Direct Close ✓" : "Direct Close"}
+          </button>
           {hasOvFilters && (
             <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-              onClick={() => { setOvSearch(""); setOvProjectFilter([]); setOvDomainFilter([]); setOvStatusFilter([]); setOvDuidFilter([]); setOvTeamFilter([]); setOvPlanStatusFilter([]); setOvFromDate(""); setOvToDate(""); }}>
+              onClick={() => { setOvSearch(""); setOvProjectFilter([]); setOvDomainFilter([]); setOvStatusFilter([]); setOvDuidFilter([]); setOvTeamFilter([]); setOvPlanStatusFilter([]); setOvFromDate(""); setOvToDate(""); setOvDirectCloseOnly(false); }}>
               Clear filters
             </button>
           )}
@@ -824,6 +906,7 @@ export default function IMPOIntake() {
                   <tr>
                     <th>POID</th>
                     <th>Dispatch Status</th>
+                    <th>Closed Via</th>
                     <th>Billing Status</th>
                     <th>Mode</th>
                     <th>PO No</th>
@@ -867,6 +950,11 @@ export default function IMPOIntake() {
                         </td>
                         <td>
                           <StatusBadge value={row.dispatch_status || "Pending"} bg={sc.bg} fg={sc.fg} bd={sc.bd} />
+                        </td>
+                        <td>
+                          {row.direct_close_by
+                            ? <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0369a1", border: "1px solid #93c5fd", whiteSpace: "nowrap" }}>Direct Close</span>
+                            : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
                         </td>
                         <td>
                           {bsc
@@ -1513,6 +1601,63 @@ export default function IMPOIntake() {
               <button type="button" className="btn-secondary" onClick={() => setShowBackendModal(false)} disabled={backendBusy}>Cancel</button>
               <button type="button" className="btn-primary" onClick={submitBackend} disabled={backendBusy || !backendTeamId} style={{ background: "#7c3aed", borderColor: "#7c3aed" }}>
                 {backendBusy ? "Assigning…" : `Assign ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DIRECT CLOSE MODAL ───────────────────────────────────────────── */}
+      {showDcModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={dcBusy ? undefined : () => setShowDcModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Direct Close <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span></h3>
+              <button type="button" onClick={() => setShowDcModal(false)} disabled={dcBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            {selectedRows.length > 0 && (
+              <div style={{ fontSize: "0.76rem", color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12, maxHeight: 140, overflowY: "auto" }}>
+                {selectedRows.map((r) => (
+                  <div key={r.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#0f172a" }}>{r.poid || r.name}</span>
+                    <span style={{ color: "#64748b" }}>{r.po_no || "—"} · {r.item_code || "—"} · {r.site_code || "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Type *</label>
+              <div style={{ display: "inline-flex", gap: 0, background: "#f1f5f9", borderRadius: 8, padding: 3, border: "1px solid #e2e8f0" }}>
+                {["INET", "SUB"].map((t) => (
+                  <button key={t} type="button" disabled={dcBusy}
+                    onClick={() => { setDcType(t); loadDcSubcontractors(t); }}
+                    style={{ padding: "5px 18px", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: dcType === t ? 700 : 400, background: dcType === t ? "#0369a1" : "transparent", color: dcType === t ? "#fff" : "#64748b", transition: "all 0.15s" }}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Subcontract *</label>
+              <SearchableSelect
+                value={dcSubcontractor}
+                onChange={setDcSubcontractor}
+                options={dcSubconOptions}
+                placeholder={dcSubconLoading ? "Loading…" : "— Select subcontractor —"}
+                disabled={dcBusy || dcSubconLoading}
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Note (optional)</label>
+              <textarea rows={2} value={dcNote} onChange={(e) => setDcNote(e.target.value)} disabled={dcBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
+            </div>
+            {dcError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {dcError}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="btn-secondary" onClick={() => setShowDcModal(false)} disabled={dcBusy}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitDirectClose} disabled={dcBusy || !dcSubcontractor} style={{ background: "#0369a1", borderColor: "#0369a1" }}>
+                {dcBusy ? "Closing…" : `Close ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
               </button>
             </div>
           </div>

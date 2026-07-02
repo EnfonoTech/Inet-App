@@ -2414,6 +2414,10 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             ph = ", ".join(["%s"] * len(v))
             wheres.append(f"`{k}` IN ({ph})")
             params.extend(list(v))
+        elif op_l == "not in" and isinstance(v, (list, tuple)) and v:
+            ph = ", ".join(["%s"] * len(v))
+            wheres.append(f"IFNULL(`{k}`, '') NOT IN ({ph})")
+            params.extend(list(v))
         elif op_l == "between" and isinstance(v, (list, tuple)) and len(v) == 2:
             wheres.append(f"`{k}` BETWEEN %s AND %s")
             params.extend([v[0], v[1]])
@@ -4799,9 +4803,9 @@ def generate_work_done(execution_name, issue_flag=None):
         )
         subcontract_cost = flt(scc or 0)
 
-        # INET margin % from Subcontractor Master
+        # INET margin % from Subcontract Master
         margin_pct = frappe.db.get_value(
-            "Subcontractor Master", subcontractor, "inet_margin_pct"
+            "Subcontract Master", subcontractor, "inet_margin_pct"
         )
         inet_margin_pct = flt(margin_pct or 0)
 
@@ -4838,6 +4842,8 @@ def generate_work_done(execution_name, issue_flag=None):
         wd.issue_flag = clean_flag
     if subcontractor and frappe.db.has_column("Work Done", "subcontractor"):
         wd.subcontractor = subcontractor
+    if frappe.db.has_column("Work Done", "source"):
+        wd.source = "Rollout Execution"
 
     wd.insert(ignore_permissions=True)
     frappe.db.commit()
@@ -5438,6 +5444,12 @@ def list_work_done_rows(filters=None, limit=500):
         wd_fields.append("submission_status")
     if frappe.db.has_column("Work Done", "issue_flag"):
         wd_fields.append("issue_flag")
+    if frappe.db.has_column("Work Done", "subcontractor"):
+        wd_fields.append("subcontractor")
+    if frappe.db.has_column("Work Done", "source"):
+        wd_fields.append("source")
+    if frappe.db.has_column("Work Done", "direct_close_by"):
+        wd_fields.append("direct_close_by")
     lim = _portal_row_limit(limit, 500)
 
     wheres = ["1=1"]
@@ -5459,8 +5471,8 @@ def list_work_done_rows(filters=None, limit=500):
         billing_expr = "IFNULL(wd.billing_status, 'Pending')"
     for col, key in ((billing_expr, "billing_status"),
                      ("IFNULL(rp.team, de.team)", "team"),
-                     ("IFNULL(pd.project_code,'')", "project_code"),
-                     ("IFNULL(pd.site_code,'')", "site_code")):
+                     ("COALESCE(pd.project_code, pd_sys.project_code, '')", "project_code"),
+                     ("COALESCE(pd.site_code, pd_sys.site_code, '')", "site_code")):
         c, p = _sql_in_or_eq(col, filters.get(key))
         if c:
             wheres.append(c)
@@ -5470,16 +5482,16 @@ def list_work_done_rows(filters=None, limit=500):
         rp_im_col = frappe.db.has_column("Rollout Plan", "im")
         ph = ", ".join(["%s"] * len(im_vals))
         if rp_im_col:
-            wheres.append(f"(IFNULL(pd.im,'') IN ({ph}) OR IFNULL(rp.im,'') IN ({ph}))")
-            params.extend(im_vals + im_vals)
+            wheres.append(f"(IFNULL(pd.im,'') IN ({ph}) OR IFNULL(rp.im,'') IN ({ph}) OR IFNULL(pd_sys.im,'') IN ({ph}))")
+            params.extend(im_vals + im_vals + im_vals)
         else:
-            wheres.append(f"IFNULL(pd.im,'') IN ({ph})")
-            params.extend(im_vals)
+            wheres.append(f"(IFNULL(pd.im,'') IN ({ph}) OR IFNULL(pd_sys.im,'') IN ({ph}))")
+            params.extend(im_vals + im_vals)
     if filters.get("from_date"):
-        wheres.append("de.execution_date >= %s")
+        wheres.append("COALESCE(de.execution_date, DATE(wd.creation)) >= %s")
         params.append(filters["from_date"])
     if filters.get("to_date"):
-        wheres.append("de.execution_date <= %s")
+        wheres.append("COALESCE(de.execution_date, DATE(wd.creation)) <= %s")
         params.append(filters["to_date"])
     if filters.get("exclude_backend"):
         wheres.append("COALESCE(pd.dispatch_status, pd_sys.dispatch_status, '') != 'Backend Assigned'")
@@ -5531,11 +5543,10 @@ def list_work_done_rows(filters=None, limit=500):
     id_sql = (
         "SELECT wd.name AS wd_name "
         "FROM `tabWork Done` wd "
-        "INNER JOIN `tabDaily Execution` de ON de.name = wd.execution "
+        # LEFT JOIN so direct-close WDs (execution=NULL) are also included.
+        "LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution "
         "LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
         "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
-        # Direct fallback join for backend assignments where de.rollout_plan is NULL
-        # and the rp→pd chain gives no PO Dispatch context.
         "LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id "
         "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
         f"{rp_im_join_wd} {pd_im_join_wd} "
@@ -5641,6 +5652,9 @@ def list_work_done_rows(filters=None, limit=500):
         for rp in rp_map.values():
             if rp.get("im"):
                 im_prefetch.add(rp.im)
+    for r in rows:
+        if r.get("direct_close_by"):
+            im_prefetch.add(r["direct_close_by"])
     team_name_map_wd = _batch_inet_team_names(list(team_prefetch))
     im_name_map_wd = _batch_im_master_full_names(list(im_prefetch))
 
@@ -5726,6 +5740,10 @@ def list_work_done_rows(filters=None, limit=500):
                     if pd and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
                     else None
                 ),
+                "direct_close_by_full_name": (
+                    im_name_map_wd.get(r["direct_close_by"])
+                    if r.get("direct_close_by") else None
+                ),
             }
         )
     if out:
@@ -5742,10 +5760,13 @@ def list_work_done_rows(filters=None, limit=500):
     subcon_rows = [] if filters.get("exclude_backend") else _synthesize_subcon_workdone_rows(filters)
     if subcon_rows:
         out.extend(subcon_rows)
-        out.sort(
-            key=lambda r: (r.get("execution_date") or "", r.get("modified") or ""),
-            reverse=True,
-        )
+        def _wd_sort_key(r):
+            ex = r.get("execution_date")
+            # Direct-close and backend rows have no execution_date — use the
+            # date portion of modified so they sort chronologically with other rows.
+            date_str = str(ex) if ex else str(r.get("modified") or "")[:10]
+            return (date_str, str(r.get("modified") or ""))
+        out.sort(key=_wd_sort_key, reverse=True)
     # Re-apply the row limit after combining regular + subcon rows so the total
     # never exceeds the caller's requested limit.
     out = out[:lim]
@@ -5773,7 +5794,12 @@ def _synthesize_subcon_workdone_rows(filters):
         if not any(str(v).strip().lower() in accept for v in bs_vals):
             return []
 
-    where = ["IFNULL(pd.subcon_status,'') = 'Work Done'"]
+    where = [
+        "IFNULL(pd.subcon_status,'') = 'Work Done'",
+        # Exclude dispatches that already have a real Work Done record — they are
+        # returned by list_work_done_rows via the regular LEFT JOIN path.
+        "NOT EXISTS (SELECT 1 FROM `tabWork Done` wd WHERE wd.system_id = pd.name)",
+    ]
     params = []
     for col, key in (
         ("pd.project_code", "project_code"),
@@ -5906,6 +5932,7 @@ def _synthesize_subcon_workdone_rows(filters):
             "original_dummy_poid": None,
             "modified": r.get("modified"),
             "is_subcon": 1,
+            "source": "Backend",
         })
     return out
 
@@ -6684,11 +6711,11 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         )
         sub_target = flt(sub_tgt_rows[0].total if sub_tgt_rows else 0)
 
-    # Avg INET margin % from Subcontractor Master for active SUB teams → used for target margin
+    # Avg INET margin % from Subcontract Master for active SUB teams → used for target margin
     _sm_margin_rows = frappe.db.sql(
         """
         SELECT AVG(sm.inet_margin_pct) AS avg_pct
-        FROM `tabSubcontractor Master` sm
+        FROM `tabSubcontract Master` sm
         JOIN `tabINET Team` it ON it.subcontractor = sm.name
         WHERE it.status = 'Active'
         AND it.team_type = 'SUB'
@@ -10117,6 +10144,183 @@ def get_my_backend_capability(im=None):
 
 
 @frappe.whitelist()
+def get_my_direct_close_capability(im=None):
+    """Return whether the current session can directly close PO Dispatches.
+
+    PM/admin: always True. IM: True only if `IM Master.can_direct_close = 1`.
+    Field: never.
+    """
+    role = _user_role_class()
+    if role == "pm":
+        return {"role": role, "can_direct_close": True, "im": None}
+    if role != "im":
+        return {"role": role, "can_direct_close": False, "im": None}
+    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
+    if not im_identifiers:
+        return {"role": role, "can_direct_close": False, "im": None}
+    target = im_resolved if im_resolved and frappe.db.exists("IM Master", im_resolved) else None
+    if not target:
+        for ident in im_identifiers:
+            if frappe.db.exists("IM Master", ident):
+                target = ident
+                break
+    flag = 0
+    if target:
+        flag = cint(frappe.db.get_value("IM Master", target, "can_direct_close") or 0)
+    return {"role": role, "can_direct_close": bool(flag), "im": target}
+
+
+@frappe.whitelist()
+def get_subcontractors_by_type(close_type):
+    """Return subcontractors from Subcontract Master filtered by their own type field."""
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    sql = """
+        SELECT name, subcontractor_name AS label
+        FROM `tabSubcontract Master`
+        WHERE type = %s
+          AND IFNULL(status, 'Active') = 'Active'
+          AND IFNULL(approved_flag, 0) = 1
+        ORDER BY subcontractor_name
+    """
+    return frappe.db.sql(sql, (close_type,), as_dict=True) or []
+
+
+@frappe.whitelist()
+def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None):
+    """Bulk direct-close PO Dispatch lines: create Work Done + move to Completed.
+
+    Only available to IMs with `can_direct_close = 1` (or PM/admin).
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    # Check capability for IM
+    if role == "im":
+        cap = get_my_direct_close_capability()
+        if not cap.get("can_direct_close"):
+            frappe.throw("You do not have permission to Direct Close dispatches.", frappe.PermissionError)
+
+    if isinstance(po_dispatches, str):
+        po_dispatches = frappe.parse_json(po_dispatches)
+
+    im_resolved, im_identifiers, _ = resolve_im_for_session(None)
+    im_doc = im_resolved
+
+    updated = []
+    errors = []
+    for name in (po_dispatches or []):
+        ok, info = _direct_close_one(role, im_identifiers or [], im_doc, name,
+                                     close_type, subcontractor, (note or "").strip())
+        if ok:
+            updated.append(info)
+        else:
+            errors.append(info)
+
+    return {"updated": updated, "errors": errors}
+
+
+def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontractor, note):
+    """Create Work Done + complete one PO Dispatch directly. Returns (ok, info)."""
+    pd = frappe.db.get_value(
+        "PO Dispatch", name,
+        ["name", "im", "dispatch_status", "is_dummy_po", "poid", "item_code",
+         "center_area", "region_type", "qty", "rate", "line_amount", "contract",
+         "po_intake", "po_line_no"],
+        as_dict=True,
+    ) or {}
+    if not pd.get("name"):
+        return False, {"po_dispatch": name, "error": "PO Dispatch not found"}
+
+    poid = pd.get("poid") or name
+    if pd.get("is_dummy_po"):
+        return False, {"po_dispatch": name, "poid": poid, "error": "Cannot direct-close a dummy PO"}
+
+    cur_status = pd.get("dispatch_status") or ""
+    if cur_status in ("Completed", "Cancelled", "Closed"):
+        return False, {"po_dispatch": name, "poid": poid, "error": f"Already {cur_status}"}
+
+    if role == "im":
+        pd_im = pd.get("im") or ""
+        if pd_im and pd_im not in (im_identifiers or []):
+            return False, {"po_dispatch": name, "poid": poid, "error": "This POID belongs to a different IM"}
+
+    if frappe.db.exists("Work Done", {"system_id": name}):
+        return False, {"po_dispatch": name, "poid": poid, "error": "Work Done already exists for this POID"}
+
+    if not subcontractor:
+        return False, {"po_dispatch": name, "poid": poid, "error": "Subcontractor is required"}
+
+    # Resolve subcontract cost and margin (only for SUB type teams)
+    revenue = flt(pd.get("line_amount") or 0)
+    billing_rate = flt(pd.get("rate") or 0)
+    executed_qty = flt(pd.get("qty") or 0) or 1.0
+    if not revenue:
+        revenue = billing_rate * executed_qty
+
+    subcontract_cost = 0.0
+    inet_margin_pct = 0.0
+    if close_type == "SUB":
+        scc = frappe.db.get_value(
+            "Subcontract Cost Master",
+            {"subcontractor": subcontractor, "active_flag": 1},
+            "expected_cost_sar",
+        )
+        subcontract_cost = flt(scc or 0)
+        margin_pct = frappe.db.get_value("Subcontract Master", subcontractor, "inet_margin_pct")
+        inet_margin_pct = flt(margin_pct or 0)
+
+    margin = revenue - subcontract_cost
+
+    wd = frappe.new_doc("Work Done")
+    wd.system_id = name
+    wd.region_type = pd.get("region_type") or region_type_from_center_area(pd.get("center_area") or "")
+    wd.item_code = pd.get("item_code")
+    wd.executed_qty = executed_qty
+    wd.billing_rate_sar = billing_rate
+    wd.revenue_sar = revenue
+    wd.team_cost_sar = 0
+    wd.subcontract_cost_sar = subcontract_cost
+    wd.activity_cost_sar = 0
+    wd.total_cost_sar = subcontract_cost
+    wd.margin_sar = margin
+    wd.inet_margin_pct = inet_margin_pct
+    wd.billing_status = "Pending"
+    if frappe.db.has_column("Work Done", "subcontractor"):
+        wd.subcontractor = subcontractor
+    if frappe.db.has_column("Work Done", "source"):
+        wd.source = "Direct Close"
+    if frappe.db.has_column("Work Done", "direct_close_by"):
+        wd.direct_close_by = im_doc or frappe.session.user
+
+    wd.insert(ignore_permissions=True)
+    frappe.db.commit()
+
+    # Update PO Dispatch
+    pd_updates = {"dispatch_status": "Completed"}
+    if frappe.db.has_column("PO Dispatch", "direct_close_by"):
+        pd_updates["direct_close_by"] = im_doc or frappe.session.user
+    existing_contract = pd.get("contract") or ""
+    if subcontractor and not existing_contract:
+        pd_updates["contract"] = subcontractor
+    frappe.db.set_value("PO Dispatch", name, pd_updates, update_modified=False)
+
+    # Mark PO Intake Line as Completed
+    intake_parent = pd.get("po_intake")
+    line_no = pd.get("po_line_no")
+    if intake_parent and line_no:
+        intake_line = frappe.db.exists("PO Intake Line",
+            {"parent": intake_parent, "po_line_no": line_no})
+        if intake_line and isinstance(intake_line, str):
+            frappe.db.set_value("PO Intake Line", intake_line, "po_line_status", "Completed")
+    frappe.db.commit()
+
+    return True, {"po_dispatch": name, "poid": poid, "work_done": wd.name}
+
+
+@frappe.whitelist()
 def list_backend_teams_for_picker(search=None, limit=200):
     """Backend Team picker — only teams with category 'Backend Team'."""
     role = _user_role_class()
@@ -10290,7 +10494,9 @@ def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, rema
 def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
     pd = frappe.db.get_value(
         "PO Dispatch", name,
-        ["name", "im", "dispatch_status", "subcon_status", "backend_team", "subcon_remark", "poid"],
+        ["name", "im", "dispatch_status", "subcon_status", "backend_team", "subcon_remark",
+         "poid", "item_code", "center_area", "region_type", "qty", "rate", "line_amount",
+         "contract", "po_intake", "po_line_no"],
         as_dict=True,
     ) or {}
     if not pd.get("name"):
@@ -10321,12 +10527,62 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
             combined = addition
         updates["subcon_remark"] = combined[:8000]
     frappe.db.set_value("PO Dispatch", name, updates, update_modified=True)
+    frappe.db.commit()
+
+    # Create a real Work Done record (skip if one already exists for this POID)
+    wd_name = None
+    if not frappe.db.exists("Work Done", {"system_id": name}):
+        try:
+            revenue = flt(pd.get("line_amount") or 0)
+            billing_rate = flt(pd.get("rate") or 0)
+            executed_qty = flt(pd.get("qty") or 0) or 1.0
+            if not revenue:
+                revenue = billing_rate * executed_qty
+
+            subcontractor = updates.get("contract") or pd.get("contract") or ""
+            subcontract_cost = 0.0
+            inet_margin_pct = 0.0
+            if subcontractor:
+                scc = frappe.db.get_value(
+                    "Subcontract Cost Master",
+                    {"subcontractor": subcontractor, "active_flag": 1},
+                    "expected_cost_sar",
+                )
+                subcontract_cost = flt(scc or 0)
+                margin_pct = frappe.db.get_value("Subcontract Master", subcontractor, "inet_margin_pct")
+                inet_margin_pct = flt(margin_pct or 0)
+
+            wd = frappe.new_doc("Work Done")
+            wd.system_id = name
+            wd.region_type = pd.get("region_type") or region_type_from_center_area(pd.get("center_area") or "")
+            wd.item_code = pd.get("item_code")
+            wd.executed_qty = executed_qty
+            wd.billing_rate_sar = billing_rate
+            wd.revenue_sar = revenue
+            wd.team_cost_sar = 0
+            wd.subcontract_cost_sar = subcontract_cost
+            wd.activity_cost_sar = 0
+            wd.total_cost_sar = subcontract_cost
+            wd.margin_sar = revenue - subcontract_cost
+            wd.inet_margin_pct = inet_margin_pct
+            wd.billing_status = "Pending"
+            if frappe.db.has_column("Work Done", "subcontractor"):
+                wd.subcontractor = subcontractor
+            if frappe.db.has_column("Work Done", "source"):
+                wd.source = "Backend"
+            wd.insert(ignore_permissions=True)
+            frappe.db.commit()
+            wd_name = wd.name
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "_mark_backend_done_one: WD creation failed")
+
     return True, {
         "po_dispatch": name,
         "poid": pd.get("poid") or name,
         "subcon_status": "Work Done",
         "subcon_completed_on": str(completed),
         "dispatch_status": "Completed",
+        "work_done": wd_name,
     }
 
 
@@ -10680,8 +10936,8 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
         if v is None or v == "":
             continue
         if k == "contract":
-            # Link field → Subcontractor Master; skip if not found to avoid broken links
-            if not frappe.db.exists("Subcontractor Master", str(v).strip()):
+            # Link field → Subcontract Master; skip if not found to avoid broken links
+            if not frappe.db.exists("Subcontract Master", str(v).strip()):
                 continue
             updates[k] = str(v).strip()
         elif k in NUMERIC:
@@ -10980,10 +11236,10 @@ def preview_po_archive_file(file_url):
                 tuple(existing_projects),
             )
             projects_no_customer = sorted([r[0] for r in no_cust_rows])
-    # Subcontractor check: contract values not in Subcontractor Master will be skipped on import.
+    # Subcontractor check: contract values not in Subcontract Master will be skipped on import.
     missing_subcontractors = []
     if contracts:
-        existing_contracts = _bulk_existing_set("Subcontractor Master", list(contracts))
+        existing_contracts = _bulk_existing_set("Subcontract Master", list(contracts))
         missing_subcontractors = sorted([c for c in contracts if c not in existing_contracts])
 
     return {

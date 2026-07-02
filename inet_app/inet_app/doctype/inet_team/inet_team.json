@@ -81,7 +81,7 @@
    "fieldname": "subcontractor",
    "fieldtype": "Link",
    "label": "Subcontractor",
-   "options": "Subcontractor Master"
+   "options": "Subcontract Master"
   },
   {
    "fieldname": "note",
@@ -141,7 +141,7 @@
   }
  ],
  "links": [],
- "modified": "2026-05-04 12:19:30.253847",
+ "modified": "2026-07-02 15:25:32.192844",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "INET Team",

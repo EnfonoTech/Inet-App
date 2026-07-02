@@ -75,9 +75,9 @@ LEFT JOIN (
     GROUP BY rp.po_dispatch
 ) wd_sub ON wd_sub.po_dispatch = pd.name
 LEFT JOIN `tabINET Team` sc_team_full ON sc_team_full.name = pd.backend_team
-LEFT JOIN `tabSubcontractor Master` sm
+LEFT JOIN `tabSubcontract Master` sm
        ON sm.name = COALESCE(plan.subcontractor, sc_team_full.subcontractor)
-LEFT JOIN `tabSubcontractor Master` sm_pd ON sm_pd.name = pd.contract
+LEFT JOIN `tabSubcontract Master` sm_pd ON sm_pd.name = pd.contract
 """
 
 
@@ -119,9 +119,9 @@ LEFT JOIN (
     GROUP BY rp.po_dispatch
 ) plan_contract ON plan_contract.po_dispatch = pd.name
 LEFT JOIN `tabINET Team` sc_team ON sc_team.name = pd.backend_team
-LEFT JOIN `tabSubcontractor Master` sm_sub
+LEFT JOIN `tabSubcontract Master` sm_sub
        ON sm_sub.name = COALESCE(plan_contract.subcontractor, sc_team.subcontractor)
-LEFT JOIN `tabSubcontractor Master` sm_pd ON sm_pd.name = pd.contract
+LEFT JOIN `tabSubcontract Master` sm_pd ON sm_pd.name = pd.contract
 """
 
 
@@ -490,7 +490,7 @@ def get_pic_summary_filter_options():
     contract_models = frappe.db.sql(
         """
         SELECT DISTINCT sm.contract_model
-        FROM `tabSubcontractor Master` sm
+        FROM `tabSubcontract Master` sm
         WHERE IFNULL(sm.contract_model, '') != ''
         ORDER BY sm.contract_model
         """,
@@ -1387,9 +1387,9 @@ def list_invoice_tracker_rows(filters=None, limit=500):
             GROUP BY rp.po_dispatch
         ) plan_inv ON plan_inv.po_dispatch = pd.name
         LEFT JOIN `tabINET Team` sc_team_inv ON sc_team_inv.name = pd.backend_team
-        LEFT JOIN `tabSubcontractor Master` sm_inv
+        LEFT JOIN `tabSubcontract Master` sm_inv
                ON sm_inv.name = COALESCE(plan_inv.subcontractor, sc_team_inv.subcontractor)
-        LEFT JOIN `tabSubcontractor Master` sm_pd_inv ON sm_pd_inv.name = pd.contract
+        LEFT JOIN `tabSubcontract Master` sm_pd_inv ON sm_pd_inv.name = pd.contract
         LEFT JOIN (
             SELECT rp.po_dispatch AS po_dispatch,
                    MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
