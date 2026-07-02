@@ -171,6 +171,9 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             params.extend(p)
 
     pic_vals = _ensure_list(pf.get("pic_status"))
+    # When filtering by "Commercial Invoice Closed", lift the dispatch_status and
+    # unbilled-amount restrictions — archive records are fully-invoiced Closed lines.
+    viewing_closed = "Commercial Invoice Closed" in (pic_vals or [])
     if pic_vals:
         # Match either the stored value OR the computed initial state.
         ph = ", ".join(["%s"] * len(pic_vals))
@@ -207,14 +210,15 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         ph = ", ".join(["%s"] * len(ds_vals))
         where.append(f"IFNULL(pd.dispatch_status,'') IN ({ph})")
         params.extend(ds_vals)
-    else:
-        # Default: hide cancelled / closed (archive) lines so the active
-        # invoicing pipeline is the focus.
-        where.append("IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled', 'Closed')")
+    elif not viewing_closed:
+        # Default: hide cancelled lines. Closed dispatch is kept visible because
+        # archive imports and completed PIC records carry dispatch_status='Closed'.
+        where.append("IFNULL(pd.dispatch_status,'') != 'Cancelled'")
 
     # Default: hide fully-invoiced lines (remaining 0%) so PIC only sees
-    # work that still needs attention.
-    if not pf.get("remaining_milestone_pct"):
+    # work that still needs attention. Not applied when explicitly viewing
+    # "Commercial Invoice Closed" since those are intentionally at 0 unbilled.
+    if not pf.get("remaining_milestone_pct") and not viewing_closed:
         where.append("(pd.ms1_unbilled + pd.ms2_unbilled) > 0")
 
     search = pf.get("search") or pf.get("q") or ""
@@ -369,7 +373,7 @@ def pic_invoicing_summary(portal_filters=None):
         where_common.append(f"IFNULL(pd.dispatch_status,'') IN ({ph})")
         params_common.extend(ds_vals)
     else:
-        where_common.append("IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled', 'Closed')")
+        where_common.append("IFNULL(pd.dispatch_status,'') != 'Cancelled'")
 
     # ── MS1: additional invoice-month filter ─────────────────────────────
     where_ms1 = list(where_common)
@@ -813,7 +817,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
             ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
             pd.ms1_amount, pd.ms2_amount
           {_PIC_FROM_JOIN}
-          WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+          WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
           {applied_clause}
         ) t
         GROUP BY bucket
@@ -831,7 +835,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
                COALESCE(SUM(pd.ms1_amount), 0) AS amount_ms1,
                COALESCE(SUM(pd.ms2_amount), 0) AS amount_ms2
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+        WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
           AND IFNULL(pd.ibuy_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under I-BUY'
           {applied_clause}
@@ -849,7 +853,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
                COALESCE(SUM(pd.ms1_amount), 0) AS amount_ms1,
                COALESCE(SUM(pd.ms2_amount), 0) AS amount_ms2
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+        WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
           AND IFNULL(pd.isdp_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under ISDP'
           {applied_clause}
@@ -905,7 +909,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
               {split_ms2_cond}
               THEN IFNULL(pd.ms2_amount, 0) * IFNULL(sm_sub.sub_payout_pct, 0) / 100 ELSE 0 END) AS subcon_ms2
         {_PIC_FROM_JOIN_LEAN}
-        WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+        WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
         """,
         tuple(split_params),
         as_dict=True,
@@ -930,7 +934,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
           COALESCE(SUM(pd.ms2_unbilled), 0) AS unbilled_ms2,
           COUNT(*) AS line_count
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+        WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
         {applied_clause}
         """,
         tuple(applied_params),
@@ -1007,7 +1011,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                     ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
                     pd.ms1_amount, pd.ms2_amount
                   {_PIC_FROM_JOIN}
-                  WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+                  WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
                   {project_clause}
                 ) t
                 GROUP BY bucket
@@ -1095,7 +1099,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        DATEDIFF(CURDATE(), pd.ms1_applied_date) AS days_since_applied,
                        pd.ms1_amount
                 {_PIC_FROM_JOIN}
-                WHERE IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
+                WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
                   AND pd.pic_status IN ('Under I-BUY', 'Under ISDP')
                   AND pd.ms1_applied_date IS NOT NULL
                   {project_clause}

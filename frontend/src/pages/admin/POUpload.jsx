@@ -514,8 +514,8 @@ export default function POUpload() {
                         <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(239,68,68,0.10)", color: "#b91c1c", fontSize: "0.74rem", fontWeight: 700 }}>
                           {archivePreview.counts?.CANCELLED || 0} CANCELLED
                         </span>
-                        <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(100,116,139,0.10)", color: "#64748b", fontSize: "0.74rem" }}>
-                          {archivePreview.counts?.OPEN || 0} OPEN (skipped)
+                        <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(59,130,246,0.10)", color: "#1d4ed8", fontSize: "0.74rem", fontWeight: 700 }}>
+                          {archivePreview.counts?.OPEN || 0} OPEN
                         </span>
                         {(archivePreview.counts?.OTHER || 0) > 0 && (
                           <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(245,158,11,0.10)", color: "#b45309", fontSize: "0.74rem" }}>
@@ -524,7 +524,7 @@ export default function POUpload() {
                         )}
                       </div>
                       <div style={{ fontSize: "0.78rem", color: "#475569", marginBottom: 10 }}>
-                        Will import <strong>{archivePreview.to_import || 0}</strong> closed / cancelled rows.
+                        Will import <strong>{archivePreview.to_import || 0}</strong> rows (closed, cancelled &amp; open).
                         Customer per row resolved from{" "}
                         <strong>{archivePreview.unique_projects || 0}</strong>{" "}
                         unique project{(archivePreview.unique_projects || 0) !== 1 ? "s" : ""}.
@@ -551,6 +551,16 @@ export default function POUpload() {
                         <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(99,102,241,0.06)", border: "1px solid #c7d2fe", borderRadius: 6, fontSize: "0.78rem" }}>
                           <strong style={{ color: "#4338ca" }}>ℹ {archivePreview.missing_projects.length} new Project{archivePreview.missing_projects.length !== 1 ? "s" : ""}</strong>
                           <span style={{ color: "#475569" }}>{customer ? " — auto-created with the chosen customer." : " — auto-created (a customer fallback above is required for these)."}</span>
+                        </div>
+                      )}
+
+                      {(archivePreview.missing_subcontractors?.length || 0) > 0 && (
+                        <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(245,158,11,0.08)", border: "1px solid #fde68a", borderRadius: 6, fontSize: "0.78rem" }}>
+                          <strong style={{ color: "#b45309" }}>⚠ {archivePreview.missing_subcontractors.length} Subcontractor{archivePreview.missing_subcontractors.length !== 1 ? "s" : ""} not in master:</strong>{" "}
+                          <span style={{ color: "#475569" }}>{archivePreview.missing_subcontractors.slice(0, 20).join(", ")}{archivePreview.missing_subcontractors.length > 20 ? `, +${archivePreview.missing_subcontractors.length - 20} more` : ""}</span>
+                          <div style={{ marginTop: 4, color: "#78350f" }}>
+                            These <strong>Contract / Sub Contract</strong> values won&apos;t be linked on import. Create them under <strong>Subcontractor Master</strong> first if you need the link.
+                          </div>
                         </div>
                       )}
 
@@ -600,7 +610,7 @@ export default function POUpload() {
                       {archiveJob.status}
                     </strong>
                     {" — "}
-                    {archiveJob.lines_imported || 0} imported · {archiveJob.lines_skipped || 0} skipped ·
+                    {archiveJob.lines_imported || 0} imported · {archiveJob.lines_overridden || 0} overridden · {archiveJob.lines_skipped || 0} skipped ·
                     {" "}{archiveJob.po_created || 0} new POs · {archiveJob.po_updated || 0} updated POs
                   </div>
                   {archiveJob.notes && (
@@ -1253,6 +1263,7 @@ function POUploadHistory({ logs, onRefresh, onSelect }) {
               <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Customer</th>
               <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>POs</th>
               <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Imported</th>
+              <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "#2563eb" }} title="Lines overridden (Excel data written over existing system data)">Overridden</th>
               <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Skipped</th>
               <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "#475569" }} title="Of the skipped duplicates, how many already exist as Closed">Closed</th>
               <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "#b91c1c" }} title="Of the skipped duplicates, how many already exist as Cancelled">Cancelled</th>
@@ -1272,6 +1283,7 @@ function POUploadHistory({ logs, onRefresh, onSelect }) {
                 <td style={{ padding: "10px 14px", fontSize: "0.82rem" }}>{log.customer || "—"}</td>
                 <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums" }}>{log.po_count || 0}</td>
                 <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: "#059669", fontWeight: 600 }}>{fmt.format(log.lines_imported || 0)}</td>
+                <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: (log.lines_overridden || 0) > 0 ? "#2563eb" : "var(--text-muted, #94a3b8)", fontWeight: (log.lines_overridden || 0) > 0 ? 600 : 400 }}>{fmt.format(log.lines_overridden || 0)}</td>
                 <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: (log.lines_skipped || 0) > 0 ? "#b45309" : "var(--text-muted, #94a3b8)" }}>{fmt.format(log.lines_skipped || 0)}</td>
                 <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: (log.lines_skipped_closed || 0) > 0 ? "#475569" : "var(--text-muted, #94a3b8)", fontWeight: (log.lines_skipped_closed || 0) > 0 ? 600 : 400 }}>{fmt.format(log.lines_skipped_closed || 0)}</td>
                 <td style={{ textAlign: "right", padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: (log.lines_skipped_cancelled || 0) > 0 ? "#b91c1c" : "var(--text-muted, #94a3b8)", fontWeight: (log.lines_skipped_cancelled || 0) > 0 ? 600 : 400 }}>{fmt.format(log.lines_skipped_cancelled || 0)}</td>
@@ -1326,6 +1338,9 @@ function POUploadDetailModal({ log, onClose }) {
         </div>
         <div style={{ padding: "14px 22px", display: "flex", gap: 10, flexWrap: "wrap", borderBottom: "1px solid var(--border, #e2e8f0)" }}>
           <SummaryChip label="Imported" value={log.lines_imported} color="#059669" bg="rgba(16,185,129,0.08)" />
+          {(log.lines_overridden || 0) > 0 && (
+            <SummaryChip label="Overridden" value={log.lines_overridden} color="#2563eb" bg="rgba(37,99,235,0.08)" />
+          )}
           <SummaryChip label="Skipped" value={log.lines_skipped} color="#b45309" bg="rgba(245,158,11,0.1)" />
           {(log.lines_skipped_closed || 0) > 0 && (
             <SummaryChip label="Already Closed" value={log.lines_skipped_closed} color="#475569" bg="rgba(100,116,139,0.10)" />
@@ -1337,6 +1352,9 @@ function POUploadDetailModal({ log, onClose }) {
           <SummaryChip label="Appended" value={log.po_updated} color="#2563eb" bg="rgba(37,99,235,0.08)" />
           <SummaryChip label="Auto Dispatched" value={log.auto_dispatched} />
         </div>
+        {log.notes && (
+          <div style={{ padding: "10px 22px 0", fontSize: "0.78rem", color: "#64748b", fontFamily: "monospace" }}>{log.notes}</div>
+        )}
         {(log.lines_skipped_terminal || 0) > 0 && (
           <div style={{ padding: "12px 22px 0" }}>
             <TerminalDupeCard

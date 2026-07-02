@@ -1814,7 +1814,7 @@ def list_po_upload_logs(limit=50):
         "PO Upload Log",
         fields=[
             "name", "uploaded_by", "uploaded_at", "customer", "file_name",
-            "total_rows", "lines_imported", "lines_skipped", "lines_skipped_terminal",
+            "total_rows", "lines_imported", "lines_overridden", "lines_skipped", "lines_skipped_terminal",
             "lines_skipped_closed", "lines_skipped_cancelled",
             "po_created", "po_updated", "auto_dispatched", "status",
         ],
@@ -1864,6 +1864,7 @@ def get_po_upload_log(name):
         "status": doc.status,
         "total_rows": doc.total_rows,
         "lines_imported": doc.lines_imported,
+        "lines_overridden": getattr(doc, "lines_overridden", 0) or 0,
         "lines_skipped": doc.lines_skipped,
         "lines_skipped_terminal": getattr(doc, "lines_skipped_terminal", 0) or 0,
         "lines_skipped_closed": getattr(doc, "lines_skipped_closed", 0) or 0,
@@ -10496,6 +10497,9 @@ _PO_ARCHIVE_ALIAS = {
     "Start Date": "start_date",
     "End Date": "end_date",
     "Sub Contract NO.": "sub_contract_no",
+    "Contract": "contract",
+    "Sub Contract": "contract",
+    "Sub-Contract": "contract",
     "Currency": "currency",
     "Unit Price": "rate",
     "Line Amount": "line_amount",
@@ -10547,15 +10551,16 @@ def _resolve_archive_header_keys(headers):
     ``Payment Received Date`` 2×. A plain dict keyed by header name would
     collapse them onto the same field.
 
-    We walk the header row left-to-right, tracking the current milestone
-    context: after seeing ``PIC Remarks`` we're in MS1; after
-    ``PIC Remarks (2nd Milestone)`` we're in MS2; before either anchor the
-    duplicate columns are treated as IM-side and skipped.
+    We walk the header row left-to-right and track the occurrence count of
+    each duplicate header name. Occurrence 1 → MS1 field, occurrence 2 → MS2
+    field. This is simpler and more robust than milestone-context tracking
+    because the IBUY / INV date columns appear AFTER both PIC-section anchors,
+    making a milestone counter unreliable.
     """
     out = {}
-    milestone = 0  # 0 = pre-PIC, 1 = MS1, 2 = MS2
-
-    DUP_BY_MS = {
+    # Map (header_text, occurrence_number) → standard field key.
+    # Occurrence is 1-indexed and incremented each time the header appears.
+    DUP_BY_OCC = {
         ("Detail Remarks/Dependency", 1): "pic_detail_remark",
         ("Detail Remarks/Dependency", 2): "pic_detail_remark_ms2",
         ("Applied Date", 1): "ms1_applied_date",
@@ -10563,30 +10568,65 @@ def _resolve_archive_header_keys(headers):
         ("IBUY / INV date", 1): "ms1_ibuy_inv_date",
         ("IBUY / INV date", 2): "ms2_ibuy_inv_date",
     }
-    DUP_NAMES = {h for (h, _) in DUP_BY_MS.keys()}
+    DUP_NAMES = {h for (h, _) in DUP_BY_OCC.keys()}
+    occ_count = {}  # tracks how many times each duplicate header has appeared
 
     for i, h in enumerate(headers or []):
         h = str(h or "").strip() if h is not None else ""
         if not h:
             continue
-        if h == "PIC Remarks":
-            milestone = 1
-            out[i] = "pic_status"
-            continue
-        if h == "PIC Remarks (2nd Milestone)":
-            milestone = 2
-            out[i] = "pic_status_ms2"
-            continue
         if h in DUP_NAMES:
-            key = DUP_BY_MS.get((h, milestone))
+            occ_count[h] = occ_count.get(h, 0) + 1
+            key = DUP_BY_OCC.get((h, occ_count[h]))
             if key:
                 out[i] = key
-            # Pre-PIC duplicates (e.g. col 30 IM detail) are left unmapped.
+            # occurrence > 2 (e.g. a third Detail Remarks): ignore
             continue
         alias = _PO_ARCHIVE_ALIAS.get(h)
         if alias:
             out[i] = alias
     return out
+
+
+def _sanitize_archive_date(v):
+    """Return a YYYY-MM-DD string MySQL will accept, or None to skip the field.
+
+    Handles:
+    - Excel float/int serials (e.g. 45776.0)
+    - Clean ISO strings ("2025-05-01")
+    - Month-year strings like "May-25", "May 2025", "(13) May-25"
+    - DD-Mon-YY like "01-May-25"
+    """
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return _excel_serial_to_date_str(v)  # handles float serial
+    s = str(v).strip()
+    if not s:
+        return None
+    # Strip leading "(N) " prefix common in archive invoice month cells
+    import re as _re
+    s = _re.sub(r"^\(\d+\)\s*", "", s).strip()
+    # Try ISO / common formats first
+    from datetime import datetime as _dt
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y",
+                "%d-%b-%y", "%d-%b-%Y", "%d %b %Y", "%d %b %y"):
+        try:
+            return _dt.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    # Month-Year only: "May-25", "May 2025", "May-2025"
+    for fmt in ("%b-%y", "%b %Y", "%b-%Y", "%B-%y", "%B %Y", "%B-%Y"):
+        try:
+            return _dt.strptime(s, fmt).strftime("%Y-%m-01")
+        except ValueError:
+            pass
+    # Fallback: try Excel serial stored as string
+    try:
+        return _excel_serial_to_date_str(float(s))
+    except Exception:
+        pass
+    return None  # unparseable — skip field
 
 
 def _stamp_archive_pic_fields(dispatch_name, src_line):
@@ -10617,16 +10657,32 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
         "remaining_milestone_pct",
         "subcon_pct_ms1", "inet_pct_ms1", "subcon_pct_ms2", "inet_pct_ms2",
     }
+    DATE_KEYS = {
+        "ms1_applied_date", "ms2_applied_date",
+        "ms1_invoice_month", "ms2_invoice_month",
+        "ms1_ibuy_inv_date", "ms2_ibuy_inv_date",
+    }
     updates = {}
     for k in PIC_KEYS:
         v = src_line.get(k)
         if v is None or v == "":
             continue
-        if k in NUMERIC:
+        if k == "contract":
+            # Link field → Subcontractor Master; skip if not found to avoid broken links
+            if not frappe.db.exists("Subcontractor Master", str(v).strip()):
+                continue
+            updates[k] = str(v).strip()
+        elif k in NUMERIC:
             try:
                 updates[k] = flt(v)
             except Exception:
                 continue
+        elif k in DATE_KEYS:
+            parsed = _sanitize_archive_date(v)
+            if parsed:
+                updates[k] = parsed
+            # else skip — don't write invalid date to MySQL
+            continue
         else:
             updates[k] = str(v).strip()[:8000] if isinstance(v, str) else v
     # Always normalize ms1/ms2_unbilled when we touched the matching amount or
@@ -10644,7 +10700,7 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
         inv = flt(updates.get("ms2_invoiced", 0))
         updates["ms2_unbilled"] = round(flt(amt) - inv, 4)
     if updates:
-        frappe.db.set_value("PO Dispatch", dispatch_name, updates, update_modified=False)
+        frappe.db.set_value("PO Dispatch", dispatch_name, updates)
 
 
 def _archive_date_keys():
@@ -10663,9 +10719,18 @@ def _archive_date_keys():
 
 
 def _excel_serial_to_date_str(value):
-    """Excel stores dates as serials; pyxlsb returns the float. Pass-through strings."""
+    """Normalise any date value from an Excel cell to a YYYY-MM-DD string.
+
+    Handles:
+    - Python datetime / date objects (openpyxl xlsx mode)
+    - Float / int serial numbers (pyxlsb xlsb mode)
+    - Existing string pass-through (already ISO-formatted or month-label)
+    """
     if value is None or value == "":
         return None
+    import datetime as _datetime_mod
+    if isinstance(value, (_datetime_mod.datetime, _datetime_mod.date)):
+        return value.strftime("%Y-%m-%d")
     if isinstance(value, (int, float)):
         try:
             from datetime import datetime as _dt, timedelta as _td
@@ -10760,6 +10825,7 @@ def _yield_po_archive_rows(file_path, sheet_hint="PO Tracker"):
         if not headers:
             return
         col_map = _resolve_archive_header_keys(headers)
+        date_keys = _archive_date_keys()
         for vals in py_iter:
             if not any(v not in (None, "") for v in vals):
                 continue
@@ -10769,6 +10835,17 @@ def _yield_po_archive_rows(file_path, sheet_hint="PO Tracker"):
                 if std_key:
                     row_dict[std_key] = cell_val
             if row_dict:
+                # openpyxl returns date/datetime cells as Python datetime objects;
+                # normalise them to YYYY-MM-DD strings so downstream code and MySQL
+                # both see a consistent format (same as the xlsb path).
+                for k in date_keys:
+                    if k in row_dict:
+                        row_dict[k] = _excel_serial_to_date_str(row_dict[k])
+                # Numeric-looking ints (line no, shipment no) may be returned as
+                # Python int by openpyxl — normalise same as xlsb path.
+                for k in ("po_line_no", "shipment_no"):
+                    if k in row_dict:
+                        row_dict[k] = _normalize_int_token(row_dict[k])
                 yield row_dict
         return
 
@@ -10796,12 +10873,15 @@ def _yield_po_archive_rows(file_path, sheet_hint="PO Tracker"):
 
 
 def _archive_status_for(po_status):
-    """Map normalized po_status → PO Dispatch dispatch_status; None for non-archive rows."""
+    """Map normalized po_status → PO Dispatch dispatch_status; None only for truly unknown rows."""
     s = str(po_status or "").strip().upper()
     if s in ("CLOSED", "CLOSE", "COMPLETED", "DONE"):
         return "Closed"
     if s in ("CANCELLED", "CANCELED", "CANCEL"):
         return "Cancelled"
+    if s == "OPEN":
+        # Commercially open but operationally done — import as Completed
+        return "Completed"
     return None
 
 
@@ -10819,6 +10899,7 @@ def preview_po_archive_file(file_url):
     uoms = set()
     items = set()
     projects = set()
+    contracts = set()
     projects_no_customer = set()
     rows_missing_project = 0
     for row_dict in _yield_po_archive_rows(file_path):
@@ -10841,6 +10922,8 @@ def preview_po_archive_file(file_url):
             projects.add(str(row_dict["project_code"]).strip())
         else:
             rows_missing_project += 1
+        if (row_dict.get("contract") or "").strip():
+            contracts.add(str(row_dict["contract"]).strip())
         if len(sample) < 10:
             sample.append({
                 "poid": row_dict.get("poid"),
@@ -10885,17 +10968,23 @@ def preview_po_archive_file(file_url):
                 tuple(existing_projects),
             )
             projects_no_customer = sorted([r[0] for r in no_cust_rows])
+    # Subcontractor check: contract values not in Subcontractor Master will be skipped on import.
+    missing_subcontractors = []
+    if contracts:
+        existing_contracts = _bulk_existing_set("Subcontractor Master", list(contracts))
+        missing_subcontractors = sorted([c for c in contracts if c not in existing_contracts])
 
     return {
         "total_rows": total,
         "counts": counts,
-        "to_import": counts["CLOSED"] + counts["CANCELLED"],
+        "to_import": counts["CLOSED"] + counts["CANCELLED"] + counts["OPEN"],
         "sample": sample,
         "missing_uoms": missing_uoms,
         "missing_items": missing_items,
         "missing_projects": missing_projects,
         "projects_without_customer": list(projects_no_customer),
         "rows_missing_project_code": rows_missing_project,
+        "missing_subcontractors": missing_subcontractors,
         "unique_projects": len(projects),
         "unique_uoms": len(uoms),
         "unique_items": len(items),
@@ -11061,6 +11150,7 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
         po_created = 0
         po_updated = 0
         lines_imported = 0
+        lines_overridden = 0
         lines_skipped = 0
         lines_failed = 0
         per_po = []
@@ -11075,24 +11165,41 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                 hdr_status = "CANCELLED" if statuses == {"Cancelled"} else "CLOSED"
 
                 existing_name = frappe.db.get_value("PO Intake", {"po_no": po_no}, "name")
-                existing_poids = set()
+                # poid → {line_name, dispatch_name, dispatch_status}
+                existing_poids = {}
                 if existing_name:
                     rows_existing = frappe.db.sql(
-                        "SELECT po_line_no, shipment_number, poid FROM `tabPO Intake Line` WHERE parent=%s",
+                        "SELECT name, po_line_no, shipment_number, poid FROM `tabPO Intake Line` WHERE parent=%s",
                         existing_name, as_dict=True,
                     ) or []
+                    # Look up dispatches by po_intake + po_line_no — the same
+                    # key _upsert_po_dispatch_for_line uses, avoids POID format mismatches.
+                    # PO Dispatch has no shipment_number column; po_line_no is the join key.
+                    dispatch_by_line = {}
+                    for dr in (frappe.db.sql(
+                        "SELECT po_line_no, name, dispatch_status "
+                        "FROM `tabPO Dispatch` WHERE po_intake=%s",
+                        existing_name, as_dict=True,
+                    ) or []):
+                        dispatch_by_line[cint(dr.po_line_no)] = {
+                            "dispatch_name": dr.name,
+                            "dispatch_status": dr.dispatch_status or "",
+                        }
                     for r in rows_existing:
                         pid = (r.poid or "").strip() or _make_poid(po_no, r.po_line_no, r.shipment_number)
-                        existing_poids.add(pid)
+                        existing_poids[pid] = {
+                            "line_name": r.name,
+                            **dispatch_by_line.get(cint(r.po_line_no), {}),
+                        }
 
                 new_entries = []
+                override_entries = []  # (line, append_row, info) — Excel always wins
                 po_skipped = 0
                 for line in lines:
                     poid = _poid_for_upload_line(po_no, line)
-                    if poid in existing_poids:
-                        po_skipped += 1
-                        continue
+                    info = existing_poids.get(poid)  # None = brand new POID
 
+                    # Resolve all data regardless of new vs override
                     # Item code is mandatory on PO Intake Line for the standard
                     # workflow, but archive imports may include legacy rows where
                     # it's blank or set to "NA". Fall back to the description so
@@ -11160,10 +11267,15 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                         "po_line_status": line.get("_target_status"),
                         "dispatch_mode": "Manual",
                     }
-                    new_entries.append((line, append_row))
-                    existing_poids.add(poid)
 
-                if not new_entries:
+                    if info is not None:
+                        # Existing POID — Excel is source of truth, always override
+                        override_entries.append((line, append_row, info))
+                    else:
+                        new_entries.append((line, append_row))
+                        existing_poids[poid] = {}  # prevent duplicate within same file
+
+                if not new_entries and not override_entries:
                     lines_skipped += po_skipped
                     if po_skipped > 0:
                         per_po.append({
@@ -11172,48 +11284,57 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                         })
                     continue
 
-                frappe.db.sql("SAVEPOINT _archive_po")
-                try:
-                    if existing_name:
-                        doc = frappe.get_doc("PO Intake", existing_name)
-                        doc.status = _normalize_po_intake_status(hdr_status)
-                        for _src, append_row in new_entries:
-                            doc.append("po_lines", append_row)
-                        # Archive: legacy lines may have blank item_code / qty.
-                        doc.flags.ignore_mandatory = True
-                        doc.save(ignore_permissions=True)
-                        is_new_po = False
-                        po_updated += 1
-                    else:
-                        doc = frappe.new_doc("PO Intake")
-                        doc.po_no = po_no
-                        doc.customer = group_customer
-                        doc.status = _normalize_po_intake_status(hdr_status)
-                        doc.publish_date = lines[0].get("publish_date") or None
-                        doc.center_area = lines[0].get("center_area")
-                        for _src, append_row in new_entries:
-                            doc.append("po_lines", append_row)
-                        doc.flags.ignore_mandatory = True
-                        doc.insert(ignore_permissions=True)
-                        is_new_po = True
-                        po_created += 1
-                except Exception as e:
-                    frappe.db.sql("ROLLBACK TO SAVEPOINT _archive_po")
-                    # Capture the FULL error text so the user can read it from the log,
-                    # along with which row triggered it where determinable.
-                    err_msg = frappe.utils.cstr(e)[:1000]
-                    lines_failed += len(new_entries)
-                    per_po.append({
-                        "po_no": po_no, "intake_name": existing_name,
-                        "lines_added": 0, "lines_skipped": len(new_entries),
-                        "is_new": not bool(existing_name), "error": err_msg,
-                    })
-                    continue
+                # Only touch the PO Intake parent doc when there are new lines to append.
+                # Override-only runs skip the save entirely — set_value on child rows is
+                # sufficient and avoids Frappe validation that would skip overrides via `continue`.
+                doc = None
+                is_new_po = False
+                new_entries_failed = False
+
+                if new_entries:
+                    frappe.db.sql("SAVEPOINT _archive_po")
+                    try:
+                        if existing_name:
+                            doc = frappe.get_doc("PO Intake", existing_name)
+                            doc.status = _normalize_po_intake_status(hdr_status)
+                            for _src, append_row in new_entries:
+                                doc.append("po_lines", append_row)
+                            # Archive: legacy lines may have blank item_code / qty.
+                            doc.flags.ignore_mandatory = True
+                            doc.save(ignore_permissions=True)
+                            po_updated += 1
+                        else:
+                            doc = frappe.new_doc("PO Intake")
+                            doc.po_no = po_no
+                            doc.customer = group_customer
+                            doc.status = _normalize_po_intake_status(hdr_status)
+                            doc.publish_date = lines[0].get("publish_date") or None
+                            doc.center_area = lines[0].get("center_area")
+                            for _src, append_row in new_entries:
+                                doc.append("po_lines", append_row)
+                            doc.flags.ignore_mandatory = True
+                            doc.insert(ignore_permissions=True)
+                            is_new_po = True
+                            po_created += 1
+                    except Exception as e:
+                        frappe.db.sql("ROLLBACK TO SAVEPOINT _archive_po")
+                        err_msg = frappe.utils.cstr(e)[:1000]
+                        lines_failed += len(new_entries)
+                        per_po.append({
+                            "po_no": po_no, "intake_name": existing_name,
+                            "lines_added": 0, "lines_skipped": len(new_entries),
+                            "is_new": not bool(existing_name), "error": err_msg,
+                        })
+                        new_entries_failed = True
+                        new_entries = []  # clear so dispatch creation is skipped below
+                elif existing_name:
+                    # Override-only: get a lightweight doc reference (for orphaned dispatch creation)
+                    doc = frappe.get_cached_doc("PO Intake", existing_name)
 
                 child_sql_rows = frappe.db.sql(
                     "SELECT name, po_line_no, shipment_number, poid FROM `tabPO Intake Line` WHERE parent=%s",
                     doc.name, as_dict=True,
-                ) or []
+                ) if doc and new_entries else []
                 new_poid_map = {ar["poid"]: ar for _src, ar in new_entries}
                 for r in child_sql_rows:
                     got_poid = (r.poid or "").strip() or _make_poid(po_no, r.po_line_no, r.shipment_number)
@@ -11250,9 +11371,74 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
 
                 lines_imported += len(new_entries)
                 lines_skipped += po_skipped
+
+                # Override existing POIDs — Excel is always source of truth, full data update
+                po_overridden = 0
+                for src_line, append_row, info in override_entries:
+                    target_status = src_line.get("_target_status", "Completed")
+                    dispatch_name = info.get("dispatch_name")
+                    line_name = info.get("line_name")
+                    try:
+                        if line_name:
+                            # Update all fields on the PO Intake Line from Excel
+                            intake_updates = {
+                                k: v for k, v in append_row.items()
+                                if k not in ("poid", "po_line_no", "shipment_number", "source_id")
+                                and v is not None and v != ""
+                            }
+                            if intake_updates:
+                                frappe.db.set_value(
+                                    "PO Intake Line", line_name, intake_updates,
+                                    update_modified=False,
+                                )
+                        if not dispatch_name and doc:
+                            # Orphaned intake line — create the missing PO Dispatch
+                            line_dict = dict(append_row)
+                            line_dict["name"] = line_name
+                            line_dict["parent"] = doc.name
+                            try:
+                                dispatch_name = _upsert_po_dispatch_for_line(
+                                    doc.name, po_no, line_dict,
+                                    customer=group_customer,
+                                    dispatch_status=target_status,
+                                    dispatch_mode="Manual",
+                                )
+                            except Exception:
+                                dispatch_name = None
+                        if dispatch_name:
+                            # Update all relevant fields on PO Dispatch from Excel
+                            dispatch_updates = {k: v for k, v in {
+                                "dispatch_status": target_status,
+                                "item_code": append_row.get("item_code"),
+                                "item_description": append_row.get("item_description"),
+                                "qty": append_row.get("qty"),
+                                "rate": append_row.get("rate"),
+                                "line_amount": append_row.get("line_amount"),
+                                "payment_terms": append_row.get("payment_terms") or "",
+                                "tax_rate": append_row.get("tax_rate") or "",
+                                "center_area": append_row.get("center_area"),
+                                "region_type": append_row.get("region_type"),
+                                "site_code": append_row.get("site_code"),
+                                "site_name": append_row.get("site_name"),
+                                "project_code": append_row.get("project_code"),
+                            }.items() if v is not None and v != ""}
+                            if dispatch_updates:
+                                frappe.db.set_value(
+                                    "PO Dispatch", dispatch_name, dispatch_updates,
+                                )
+                            _stamp_archive_pic_fields(dispatch_name, src_line)
+                    except Exception as _ov_exc:
+                        frappe.log_error(
+                            title="Archive override error",
+                            message=f"POID {append_row.get('poid')} line={line_name} dispatch={dispatch_name}: {_ov_exc}\n{frappe.get_traceback()}",
+                        )
+                    po_overridden += 1  # count regardless of PIC stamp errors
+                lines_overridden += po_overridden
+
                 per_po.append({
-                    "po_no": po_no, "intake_name": doc.name,
+                    "po_no": po_no, "intake_name": (doc.name if doc else existing_name),
                     "lines_added": len(new_entries),
+                    "lines_overridden": po_overridden,
                     "lines_skipped": po_skipped,
                     "is_new": is_new_po,
                 })
@@ -11273,10 +11459,10 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
         try:
             log_doc = frappe.get_doc("PO Upload Log", log_name)
             log_doc.set("po_details", [])
-            for d in per_po[:5000]:
+            for d in per_po:
                 if d.get("error"):
                     detail_status = "Failed"
-                elif d.get("lines_added"):
+                elif d.get("lines_added") or d.get("lines_overridden"):
                     detail_status = "New" if d.get("is_new") else "Appended"
                 else:
                     detail_status = "Duplicate"
@@ -11291,14 +11477,15 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
             log_doc.status = "Completed" if lines_failed == 0 else "Partial"
             log_doc.total_rows = total_archive
             log_doc.lines_imported = lines_imported
+            log_doc.lines_overridden = lines_overridden
             log_doc.lines_skipped = lines_skipped + lines_failed
             log_doc.po_created = po_created
             log_doc.po_updated = po_updated
             log_doc.auto_dispatched = 0
             log_doc.notes = (
                 f"Archive import: {total_archive} archive rows; "
-                f"{lines_imported} imported, {lines_skipped} skipped (duplicate), "
-                f"{lines_failed} failed."
+                f"{lines_imported} imported (new), {lines_overridden} overridden (open→closed/cancelled), "
+                f"{lines_skipped} skipped (already terminal), {lines_failed} failed."
             )
             log_doc.save(ignore_permissions=True)
             frappe.db.commit()
@@ -11383,7 +11570,7 @@ def get_po_archive_import_status(log_name):
         frappe.throw(f"PO Upload Log not found: {log_name}")
     row = frappe.db.get_value(
         "PO Upload Log", log_name,
-        ["status", "total_rows", "lines_imported", "lines_skipped",
+        ["status", "total_rows", "lines_imported", "lines_overridden", "lines_skipped",
          "po_created", "po_updated", "notes", "uploaded_at", "file_name"],
         as_dict=True,
     ) or {}

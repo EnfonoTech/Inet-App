@@ -16,6 +16,7 @@
   "section_totals",
   "total_rows",
   "lines_imported",
+  "lines_overridden",
   "lines_skipped",
   "lines_skipped_terminal",
   "lines_skipped_closed",
@@ -96,6 +97,11 @@
    "fieldname": "lines_imported",
    "fieldtype": "Int",
    "label": "Lines Imported"
+  },
+  {
+   "fieldname": "lines_overridden",
+   "fieldtype": "Int",
+   "label": "Lines Overridden"
   },
   {
    "fieldname": "lines_skipped",
