@@ -14,6 +14,8 @@
   "team_type",
   "subcontractor",
   "field_user",
+  "tl_id",
+  "team_skills",
   "isdp_account",
   "column_break_feex",
   "status",
@@ -96,6 +98,16 @@
    "in_standard_filter": 1,
    "label": "Field App User (Team Lead / PMS login)",
    "options": "User"
+  },
+  {
+   "fieldname": "tl_id",
+   "fieldtype": "Data",
+   "label": "TL ID"
+  },
+  {
+   "fieldname": "team_skills",
+   "fieldtype": "Small Text",
+   "label": "Team Skills"
   },
   {
    "fieldname": "isdp_account",

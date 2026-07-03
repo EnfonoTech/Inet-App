@@ -41,6 +41,7 @@ function monthToRange(ym) {
 
 const today = new Date();
 const DEFAULT_RANGE = { from: isoDate(startOfMonth(today)), to: isoDate(today) };
+const DEFAULT_DATE  = isoDate(today);
 const DEFAULT_MONTH = isoMonth(today);
 
 // Generate month options: 2 months ahead → 24 months back, most recent first
@@ -83,6 +84,30 @@ const REPORTS = [
     hasFilters: true,
     filterType: "month",
   },
+  {
+    key: "team_planning_report",
+    title: "Planning Report",
+    api: "reportTeamPlanningReport",
+    description: "Daily team plan status — what each team is scheduled to do",
+    hasFilters: true,
+    filterType: "teamdate",
+  },
+  {
+    key: "team_utilisation_report",
+    title: "Utilisation Report",
+    api: "reportTeamUtilisationReport",
+    description: "Daily team utilisation — what each team actually executed",
+    hasFilters: true,
+    filterType: "teamdate",
+  },
+  {
+    key: "team_implementation_report",
+    title: "Implementation Report",
+    api: "reportTeamImplementationReport",
+    description: "Daily team implementation status with QC, CIAG and remarks",
+    hasFilters: true,
+    filterType: "teamdate",
+  },
 ];
 
 export default function Reports() {
@@ -97,6 +122,7 @@ export default function Reports() {
   const [imFilter, setImFilter] = useState([]);
   const [dateRange, setDateRange] = useState(DEFAULT_RANGE);
   const [selectedMonth, setSelectedMonth] = useState(DEFAULT_MONTH);
+  const [teamDate, setTeamDate] = useState({ from: DEFAULT_DATE, to: DEFAULT_DATE });
 
   const [teamOptions, setTeamOptions] = useState([]);
   const [imOptions, setImOptions] = useState([]);
@@ -144,6 +170,7 @@ export default function Reports() {
     setImFilter([]);
     setDateRange(DEFAULT_RANGE);
     setSelectedMonth(DEFAULT_MONTH);
+    setTeamDate({ from: DEFAULT_DATE, to: DEFAULT_DATE });
   }, [activeKey]);
 
   // Auto-reload when active report or filters change
@@ -156,6 +183,9 @@ export default function Reports() {
         const range = monthToRange(selectedMonth);
         f.from_date = range.from;
         f.to_date = range.to;
+      } else if (active.filterType === "teamdate") {
+        f.from_date = teamDate.from;
+        f.to_date = teamDate.to;
       } else {
         if (dateRange.from) f.from_date = dateRange.from;
         if (dateRange.to) f.to_date = dateRange.to;
@@ -163,7 +193,7 @@ export default function Reports() {
     }
     loadReport(f);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeKey, teamFilter, imFilter, dateRange, selectedMonth]);
+  }, [activeKey, teamFilter, imFilter, dateRange, selectedMonth, teamDate]);
 
   const hasFilters = teamFilter.length > 0 || imFilter.length > 0;
 
@@ -180,7 +210,10 @@ export default function Reports() {
             columns={columns.map((c) => ({ key: c.fieldname || c.name, label: c.label }))}
             filename={active.key}
           />
-          <button className="btn-secondary" onClick={() => setDateRange((d) => ({ ...d }))} disabled={loading}>
+          <button className="btn-secondary" onClick={() => {
+            if (active.filterType === "teamdate") setTeamDate((d) => ({ ...d }));
+            else setDateRange((d) => ({ ...d }));
+          }} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
@@ -200,51 +233,60 @@ export default function Reports() {
         ))}
       </div>
 
-      {/* ── Filters toolbar (Team Utilization only) ───────────── */}
+      {/* ── Filters toolbar ───────────────────────────────────── */}
       {active.hasFilters && (
         <div className="toolbar">
-          <SearchableSelect
-            multi
-            value={teamFilter}
-            onChange={setTeamFilter}
-            options={teamOptions}
-            placeholder="All Teams"
-            minWidth={170}
-          />
-          <SearchableSelect
-            multi
-            value={imFilter}
-            onChange={setImFilter}
-            options={imOptions}
-            placeholder="All IMs"
-            minWidth={160}
-          />
-          {active.filterType === "month" ? (
-            <SearchableSelect
-              value={selectedMonth}
-              onChange={(val) => setSelectedMonth(val || DEFAULT_MONTH)}
-              options={MONTH_OPTIONS}
-              placeholder="Select Month"
-              minWidth={180}
+          {active.filterType === "teamdate" ? (
+            <DateRangePicker
+              value={teamDate}
+              onChange={({ from, to }) => setTeamDate({ from, to })}
             />
           ) : (
-            <DateRangePicker
-              value={dateRange}
-              onChange={({ from, to }) => setDateRange({ from, to })}
-            />
-          )}
-          {hasFilters && (
-            <button
-              className="btn-secondary"
-              style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-              onClick={() => {
-                setTeamFilter([]);
-                setImFilter([]);
-                setDateRange(DEFAULT_RANGE);
-              }}
-            >
-              Clear
-            </button>
+            <>
+              <SearchableSelect
+                multi
+                value={teamFilter}
+                onChange={setTeamFilter}
+                options={teamOptions}
+                placeholder="All Teams"
+                minWidth={170}
+              />
+              <SearchableSelect
+                multi
+                value={imFilter}
+                onChange={setImFilter}
+                options={imOptions}
+                placeholder="All IMs"
+                minWidth={160}
+              />
+              {active.filterType === "month" ? (
+                <SearchableSelect
+                  value={selectedMonth}
+                  onChange={(val) => setSelectedMonth(val || DEFAULT_MONTH)}
+                  options={MONTH_OPTIONS}
+                  placeholder="Select Month"
+                  minWidth={180}
+                />
+              ) : (
+                <DateRangePicker
+                  value={dateRange}
+                  onChange={({ from, to }) => setDateRange({ from, to })}
+                />
+              )}
+              {hasFilters && (
+                <button
+                  className="btn-secondary"
+                  style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+                  onClick={() => {
+                    setTeamFilter([]);
+                    setImFilter([]);
+                    setDateRange(DEFAULT_RANGE);
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </>
           )}
         </div>
       )}

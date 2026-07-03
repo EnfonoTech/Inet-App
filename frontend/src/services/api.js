@@ -185,6 +185,9 @@ export const pmApi = {
   reportTeamUtilizationReport:   (f) => call("inet_app.api.project_management.report_team_utilization_report",   { filters: JSON.stringify(f || {}) }),
   reportMonthlyTeamDetails:      (f) => call("inet_app.api.project_management.report_monthly_team_details",      { filters: JSON.stringify(f || {}) }),
   reportDailyWorkProgressReport: (f) => call("inet_app.api.project_management.report_daily_work_progress_report", { filters: JSON.stringify(f || {}) }),
+  reportTeamPlanningReport:       (f) => call("inet_app.api.command_center.get_team_report", { report_type: "planning",       from_date: f?.from_date, to_date: f?.to_date }),
+  reportTeamUtilisationReport:    (f) => call("inet_app.api.command_center.get_team_report", { report_type: "utilisation",    from_date: f?.from_date, to_date: f?.to_date }),
+  reportTeamImplementationReport: (f) => call("inet_app.api.command_center.get_team_report", { report_type: "implementation", from_date: f?.from_date, to_date: f?.to_date }),
 
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),

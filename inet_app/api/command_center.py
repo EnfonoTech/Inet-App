@@ -12870,3 +12870,193 @@ def extend_plan_end_date(rollout_plan, new_end_date, im_note=None):
     doc.save(ignore_permissions=True)
     frappe.db.commit()
     return {"ok": True, "plan_end_date": new_end_date, "reschedule_count": doc.reschedule_count}
+
+
+# ── Team Reports ──────────────────────────────────────────────────────────────
+
+_SUPPLIER_NAME = "Innovation Network General Contracting Establishment"
+
+_TEAM_REPORT_COLS = [
+    {"fieldname": "sn",           "label": "S/N"},
+    {"fieldname": "supplier_name","label": "Supplier Name"},
+    {"fieldname": "date",         "label": "Date"},
+    {"fieldname": "team_no",      "label": "Team No"},
+    {"fieldname": "tl_name",      "label": "TL Name"},
+    {"fieldname": "tl_id",        "label": "TL ID"},
+    {"fieldname": "tl_iqama",     "label": "TL Iqama"},
+    {"fieldname": "tl_mobile",    "label": "TL Mobile"},
+    {"fieldname": "team_skills",  "label": "Team Skills"},
+    {"fieldname": "team_status",  "label": "Team Status"},
+    {"fieldname": "site_duid",    "label": "Site Name/DUID"},
+    {"fieldname": "huawei_im",    "label": "Huawei IM Name"},
+    {"fieldname": "project_name", "label": "Project Name"},
+    {"fieldname": "domain",       "label": "Domain"},
+]
+
+_IDLE_SQL = """
+    SELECT
+        %s AS supplier_name,
+        %s AS `date`,
+        it.team_id AS team_no,
+        e.employee_name AS tl_name,
+        it.tl_id AS tl_id,
+        e.employee_number AS tl_iqama,
+        e.cell_number AS tl_mobile,
+        it.team_skills AS team_skills,
+        CASE it.status WHEN 'Inactive' THEN 'On Vacation' ELSE 'Available' END AS team_status,
+        NULL AS site_duid,
+        NULL AS huawei_im,
+        NULL AS project_name,
+        NULL AS domain
+    FROM `tabINET Team` it
+    LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
+    WHERE it.team_category = 'Field Team'
+    ORDER BY it.team_id
+"""
+
+
+def _idle_rows(fd, supplier, busy_teams, extra_col=None):
+    rows = frappe.db.sql(_IDLE_SQL, (supplier, fd), as_dict=True)
+    out = []
+    for r in rows:
+        if r["team_no"] in busy_teams:
+            continue
+        d = dict(r)
+        if extra_col:
+            d[extra_col] = None
+        out.append(d)
+    return out
+
+
+@frappe.whitelist()
+def get_team_report(report_type="planning", from_date=None, to_date=None):
+    """Return {columns, data} for Planning / Utilisation / Implementation team reports."""
+    from frappe.utils import today as _today
+    fd = from_date or _today()
+    td = to_date or fd
+    single_day = (fd == td)
+
+    if report_type == "planning":
+        cols = list(_TEAM_REPORT_COLS)
+        rows = _team_planning_rows(fd, td, single_day)
+    elif report_type == "utilisation":
+        cols = list(_TEAM_REPORT_COLS)
+        rows = _team_utilisation_rows(fd, td, single_day)
+    else:
+        cols = list(_TEAM_REPORT_COLS) + [{"fieldname": "activity_status", "label": "Activity Status"}]
+        rows = _team_implementation_rows(fd, td, single_day)
+
+    for i, r in enumerate(rows, 1):
+        r["sn"] = i
+
+    return {"columns": cols, "data": rows}
+
+
+def _team_planning_rows(fd, td, single_day):
+    sql = """
+        SELECT
+            %s AS supplier_name,
+            DATE(rp.plan_date) AS `date`,
+            it.team_id AS team_no,
+            e.employee_name AS tl_name,
+            it.tl_id AS tl_id,
+            e.employee_number AS tl_iqama,
+            e.cell_number AS tl_mobile,
+            it.team_skills AS team_skills,
+            CASE it.status WHEN 'Inactive' THEN 'On Vacation' ELSE 'Available' END AS team_status,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.site_code,'')   ORDER BY pd.site_code   SEPARATOR ', ') AS site_duid,
+            GROUP_CONCAT(DISTINCT IFNULL(imm.full_name,'')  ORDER BY imm.full_name  SEPARATOR ', ') AS huawei_im,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.project_code,'') ORDER BY pd.project_code SEPARATOR ', ') AS project_name,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.project_domain,'') ORDER BY pd.project_domain SEPARATOR ', ') AS domain
+        FROM `tabRollout Plan` rp
+        INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
+        LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
+        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+          AND IFNULL(rp.plan_status,'') NOT IN ('Cancelled')
+        GROUP BY DATE(rp.plan_date), it.name
+        ORDER BY it.team_id, DATE(rp.plan_date)
+    """
+    rows = [dict(r) for r in frappe.db.sql(sql, (_SUPPLIER_NAME, fd, td), as_dict=True)]
+    if single_day:
+        busy = {r["team_no"] for r in rows}
+        rows = rows + _idle_rows(fd, _SUPPLIER_NAME, busy)
+        rows.sort(key=lambda r: r["team_no"] or "")
+    return rows
+
+
+def _team_utilisation_rows(fd, td, single_day):
+    sql = """
+        SELECT
+            %s AS supplier_name,
+            DATE(de.execution_date) AS `date`,
+            it.team_id AS team_no,
+            e.employee_name AS tl_name,
+            it.tl_id AS tl_id,
+            e.employee_number AS tl_iqama,
+            e.cell_number AS tl_mobile,
+            it.team_skills AS team_skills,
+            CASE it.status WHEN 'Inactive' THEN 'On Vacation' ELSE 'Available' END AS team_status,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.site_code,'')    ORDER BY pd.site_code    SEPARATOR ', ') AS site_duid,
+            GROUP_CONCAT(DISTINCT IFNULL(imm.full_name,'')   ORDER BY imm.full_name   SEPARATOR ', ') AS huawei_im,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.project_code,'') ORDER BY pd.project_code SEPARATOR ', ') AS project_name,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.project_domain,'') ORDER BY pd.project_domain SEPARATOR ', ') AS domain
+        FROM `tabDaily Execution` de
+        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
+        LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+        GROUP BY DATE(de.execution_date), it.name
+        ORDER BY it.team_id, DATE(de.execution_date)
+    """
+    rows = [dict(r) for r in frappe.db.sql(sql, (_SUPPLIER_NAME, fd, td), as_dict=True)]
+    if single_day:
+        busy = {r["team_no"] for r in rows}
+        rows = rows + _idle_rows(fd, _SUPPLIER_NAME, busy)
+        rows.sort(key=lambda r: r["team_no"] or "")
+    return rows
+
+
+def _team_implementation_rows(fd, td, single_day):
+    sql = """
+        SELECT
+            %s AS supplier_name,
+            DATE(de.execution_date) AS `date`,
+            it.team_id AS team_no,
+            e.employee_name AS tl_name,
+            it.tl_id AS tl_id,
+            e.employee_number AS tl_iqama,
+            e.cell_number AS tl_mobile,
+            it.team_skills AS team_skills,
+            CASE it.status WHEN 'Inactive' THEN 'On Vacation' ELSE 'Available' END AS team_status,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.site_code,'')    ORDER BY pd.site_code    SEPARATOR ', ') AS site_duid,
+            GROUP_CONCAT(DISTINCT IFNULL(imm.full_name,'')   ORDER BY imm.full_name   SEPARATOR ', ') AS huawei_im,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.project_code,'') ORDER BY pd.project_code SEPARATOR ', ') AS project_name,
+            GROUP_CONCAT(DISTINCT IFNULL(pd.project_domain,'') ORDER BY pd.project_domain SEPARATOR ', ') AS domain,
+            GROUP_CONCAT(
+                TRIM(BOTH ' | ' FROM CONCAT_WS(' | ',
+                    IF(IFNULL(de.qc_status,'')   != '', CONCAT('QC: ',   de.qc_status),   NULL),
+                    IF(IFNULL(de.ciag_status,'') != '', CONCAT('CIAG: ', de.ciag_status), NULL),
+                    IF(IFNULL(de.remarks,'')     != '', de.remarks,                        NULL)
+                ))
+                ORDER BY de.execution_date SEPARATOR ' | '
+            ) AS activity_status
+        FROM `tabDaily Execution` de
+        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
+        LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+        GROUP BY DATE(de.execution_date), it.name
+        ORDER BY it.team_id, DATE(de.execution_date)
+    """
+    rows = [dict(r) for r in frappe.db.sql(sql, (_SUPPLIER_NAME, fd, td), as_dict=True)]
+    if single_day:
+        busy = {r["team_no"] for r in rows}
+        rows = rows + _idle_rows(fd, _SUPPLIER_NAME, busy, extra_col="activity_status")
+        rows.sort(key=lambda r: r["team_no"] or "")
+    return rows
