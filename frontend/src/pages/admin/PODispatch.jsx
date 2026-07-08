@@ -348,11 +348,9 @@ export default function PODispatch() {
       </Modal>
 
       {/* ── Convert Modal ──────────────────────────────────── */}
-      <Modal open={showConvertModal} onClose={() => setShowConvertModal(false)} title="Convert to Manual Dispatch">
-        <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "0.88rem" }}>
-          {convertScope?.scope === "project"
-            ? `All Auto-dispatched lines for project "${convertScope.project_code}" will be converted to Manual.`
-            : `${convertScope?.line_names?.length} selected line${convertScope?.line_names?.length !== 1 ? "s" : ""} will be converted to Manual dispatch.`}
+      <Modal open={showConvertModal} onClose={() => setShowConvertModal(false)} title="Convert to Manual / Re-assign IM">
+        <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "0.84rem" }}>
+          {convertScope?.line_names?.length} selected line{convertScope?.line_names?.length !== 1 ? "s" : ""} will be set to Manual dispatch. You can also re-assign the IM at the same time.
         </p>
         <div style={{ marginBottom: 20 }}>
           <label style={labelStyle}>Re-assign IM (optional)</label>
@@ -365,13 +363,13 @@ export default function PODispatch() {
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button className="btn-secondary" onClick={() => setShowConvertModal(false)}>Cancel</button>
-          <button className="btn-primary" onClick={handleConvert}>Convert to Manual</button>
+          <button className="btn-primary" onClick={handleConvert}>Apply</button>
         </div>
       </Modal>
 
-      <Modal open={showProjectConvertModal} onClose={() => setShowProjectConvertModal(false)} title="Convert Project to Manual">
+      <Modal open={showProjectConvertModal} onClose={() => setShowProjectConvertModal(false)} title="Convert to Manual / Re-assign IM">
         <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "0.84rem" }}>
-          Item code is optional — leave blank to convert all items in the project.
+          Applies to all dispatched lines in the project. Item code is optional. Can be done multiple times to re-assign IM.
         </p>
         <div style={{ marginBottom: 14 }}>
           <label style={labelStyle}>Project *</label>
@@ -527,7 +525,7 @@ export default function PODispatch() {
 
         <div className="toolbar-actions">
           {/* Dispatched tab: auto-convert buttons */}
-          {activeTab === "Dispatched" && autoRows.length > 0 && (
+          {activeTab === "Dispatched" && (
             <>
               <button className="btn-primary" style={{ fontSize: "0.8rem" }}
                 onClick={() => { setConvertProject(""); setConvertItemCode(""); setConvertIm(""); setShowProjectConvertModal(true); }} disabled={converting}>
@@ -536,7 +534,7 @@ export default function PODispatch() {
               {selected.size > 0 && (
                 <button className="btn-primary" style={{ fontSize: "0.8rem" }}
                   onClick={() => openConvertModal("lines", [...selected], null)} disabled={converting}>
-                  Convert {selected.size} → Manual
+                  Convert / Re-assign ({selected.size})
                 </button>
               )}
             </>

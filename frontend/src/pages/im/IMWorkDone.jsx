@@ -917,13 +917,36 @@ export default function IMWorkDone() {
           onClick={() => !bulkBusy && setBulkModalOpen(false)}
         >
           <div
-            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(520px, 96vw)", maxHeight: "90dvh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(700px, 96vw)", maxHeight: "90dvh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Update Submission — {selectedRows.size} rows</h3>
               <button type="button" onClick={() => setBulkModalOpen(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }} disabled={bulkBusy}>&times;</button>
             </div>
+
+            {(() => {
+              const selList = filteredRows.filter((r) => selectedRows.has(r.name));
+              const byDuid = {};
+              for (const r of selList) {
+                const d = r.site_code || "—";
+                const p = r.poid || r.po_dispatch || "—";
+                if (!byDuid[d]) byDuid[d] = new Set();
+                byDuid[d].add(p);
+              }
+              const entries = Object.entries(byDuid).sort(([a], [b]) => a.localeCompare(b));
+              if (!entries.length) return null;
+              return (
+                <div style={{ marginBottom: 14, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 12px", maxHeight: 140, overflowY: "auto" }}>
+                  {entries.map(([duid, poids], i) => (
+                    <div key={duid} style={{ display: "flex", gap: 10, fontSize: "0.8rem", padding: "3px 0", borderTop: i > 0 ? "1px solid #f1f5f9" : "none" }}>
+                      <span style={{ flexShrink: 0, fontFamily: "monospace", fontWeight: 700, color: "#0369a1", minWidth: 90 }}>{duid}</span>
+                      <span style={{ color: "#64748b", fontFamily: "monospace", fontSize: "0.75rem", wordBreak: "break-all" }}>{[...poids].sort().join("  ·  ")}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {bulkResult ? (
               <div>
@@ -1057,6 +1080,11 @@ export default function IMWorkDone() {
                 <span style={{ marginLeft: 8, fontFamily: "monospace", color: "#64748b", fontWeight: 500, fontSize: "0.82rem" }}>
                   {submissionFor.poid || submissionFor.po_dispatch || submissionFor.name}
                 </span>
+                {submissionFor.site_code && (
+                  <span style={{ marginLeft: 8, fontFamily: "monospace", color: "#0369a1", fontWeight: 600, fontSize: "0.82rem" }}>
+                    {submissionFor.site_code}
+                  </span>
+                )}
                 {submissionFor.is_subcon && (
                   <span style={{ marginLeft: 8, fontSize: "0.68rem", padding: "2px 8px", borderRadius: 999, background: "rgba(167,139,250,0.15)", color: "#7c3aed", fontWeight: 700 }}>Backend</span>
                 )}
