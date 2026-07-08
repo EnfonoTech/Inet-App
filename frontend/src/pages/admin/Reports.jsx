@@ -59,18 +59,6 @@ const MONTH_OPTIONS = (() => {
 
 const REPORTS = [
   {
-    key: "project_status_summary",
-    title: "Project Status Summary",
-    api: "reportProjectStatusSummary",
-    description: "Overview of all projects by status",
-  },
-  {
-    key: "budget_vs_actual_by_project",
-    title: "Budget vs Actual",
-    api: "reportBudgetVsActualByProject",
-    description: "Budget vs actual spend by project",
-  },
-  {
     key: "team_utilization_report",
     title: "Team Utilization",
     api: "reportTeamUtilizationReport",
@@ -140,6 +128,13 @@ const REPORTS = [
     description: "Weekly aggregated performance — lines, revenue, re-visits",
     hasFilters: true,
     filterType: "dateonly",
+  },
+  {
+    key: "revenue_forecast",
+    title: "Revenue Forecast",
+    api: "reportRevenueForecast",
+    description: "6-month rolling forecast — run-rate projection vs planned revenue",
+    hasFilters: false,
   },
 ];
 

@@ -191,7 +191,8 @@ export const pmApi = {
   reportIMPerformance:            (f) => call("inet_app.api.command_center.get_im_performance_report",    { from_date: f?.from_date, to_date: f?.to_date }),
   reportTopTeams:                 (f) => call("inet_app.api.command_center.get_top_teams_report",         { from_date: f?.from_date, to_date: f?.to_date }),
   reportTeamPVA:                  (f) => call("inet_app.api.command_center.get_team_utilization_pva",    { from_date: f?.from_date, to_date: f?.to_date, team: JSON.stringify(f?.team || []) }),
-  reportWeeklyPerformance:        (f) => call("inet_app.api.command_center.get_weekly_performance_report", { from_date: f?.from_date, to_date: f?.to_date }),
+  reportWeeklyPerformance:        (f) => call("inet_app.api.command_center.get_weekly_performance_report",   { from_date: f?.from_date, to_date: f?.to_date }),
+  reportRevenueForecast:          ()  => call("inet_app.api.command_center.get_revenue_forecast_report",     {}),
 
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),

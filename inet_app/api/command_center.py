@@ -7631,6 +7631,174 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
     return {"columns": columns, "data": data}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 4 — Revenue Tracking & Forecast
+# ─────────────────────────────────────────────────────────────────────────────
+
+@frappe.whitelist()
+def get_revenue_tracking_report(from_date=None, to_date=None, **kwargs):
+    """Monthly revenue breakdown: Gross, Sub-Con split, INET net revenue.
+
+    Sub-Con Expense  = revenue × (1 - inet_margin_pct / 100)
+    INET from Sub-Con = Sub-Con Gross − Sub-Con Expense
+    INET Own Revenue  = Gross − Sub-Con Gross
+    Total INET Revenue = INET from Sub-Con + INET Own Revenue
+    """
+    fd, td = _perf_date_range(from_date, to_date)
+
+    rows = frappe.db.sql(
+        """
+        SELECT
+            DATE_FORMAT(de.execution_date, '%%Y-%%m')            AS month,
+            COALESCE(it.team_type, 'INET')                        AS team_type,
+            COALESCE(SUM(wd.revenue_sar), 0)                      AS revenue,
+            COALESCE(SUM(
+                wd.revenue_sar * (100 - COALESCE(NULLIF(wd.inet_margin_pct, 0), 100)) / 100
+            ), 0)                                                  AS subcon_expense
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        LEFT JOIN `tabINET Team` it ON it.name = de.team
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+        GROUP BY DATE_FORMAT(de.execution_date, '%%Y-%%m'), COALESCE(it.team_type, 'INET')
+        ORDER BY month
+        """,
+        (fd, td), as_dict=True,
+    )
+
+    # Aggregate per month
+    month_data = {}
+    for r in rows:
+        m = r.month
+        if m not in month_data:
+            month_data[m] = {"gross": 0.0, "subcon_gross": 0.0, "subcon_expense": 0.0}
+        month_data[m]["gross"] += flt(r.revenue)
+        if (r.team_type or "").upper() == "SUB":
+            month_data[m]["subcon_gross"]   += flt(r.revenue)
+            month_data[m]["subcon_expense"] += flt(r.subcon_expense)
+
+    data = []
+    for i, (month, m) in enumerate(sorted(month_data.items()), 1):
+        gross           = round(m["gross"], 0)
+        subcon_gross    = round(m["subcon_gross"], 0)
+        subcon_expense  = round(m["subcon_expense"], 0)
+        inet_subcon_rev = round(subcon_gross - subcon_expense, 0)
+        inet_own_rev    = round(gross - subcon_gross, 0)
+        total_inet_rev  = round(inet_subcon_rev + inet_own_rev, 0)
+        inet_pct        = round(total_inet_rev / gross * 100, 1) if gross > 0 else 0.0
+        data.append({
+            "sn":              i,
+            "month":           month,
+            "gross_revenue":   gross,
+            "subcon_gross":    subcon_gross,
+            "subcon_expense":  subcon_expense,
+            "inet_subcon_rev": inet_subcon_rev,
+            "inet_own_rev":    inet_own_rev,
+            "total_inet_rev":  total_inet_rev,
+            "inet_margin_pct": inet_pct,
+        })
+
+    columns = [
+        {"fieldname": "sn",              "label": "#",                       "fieldtype": "Int"},
+        {"fieldname": "month",           "label": "Month",                   "fieldtype": "Data"},
+        {"fieldname": "gross_revenue",   "label": "Gross Revenue (SAR)",     "fieldtype": "Currency"},
+        {"fieldname": "subcon_gross",    "label": "Sub-Con Gross (SAR)",     "fieldtype": "Currency"},
+        {"fieldname": "subcon_expense",  "label": "Sub-Con Expense (SAR)",   "fieldtype": "Currency"},
+        {"fieldname": "inet_subcon_rev", "label": "INET from Sub-Con (SAR)", "fieldtype": "Currency"},
+        {"fieldname": "inet_own_rev",    "label": "INET Own Revenue (SAR)",  "fieldtype": "Currency"},
+        {"fieldname": "total_inet_rev",  "label": "Total INET Revenue (SAR)","fieldtype": "Currency"},
+        {"fieldname": "inet_margin_pct", "label": "INET Margin %",           "fieldtype": "Percent"},
+    ]
+    return {"columns": columns, "data": data}
+
+
+@frappe.whitelist()
+def get_revenue_forecast_report(**kwargs):
+    """6-month rolling revenue forecast (current month + 5 future).
+
+    Planned  = SUM(pd.line_amount) WHERE pd.target_month = that month
+    Achieved = SUM(wd.revenue_sar) WHERE execution_date in month
+    Run Rate = Achieved / days_elapsed
+    Forecast = Run Rate × total_days_in_month
+    Gap      = Planned − Forecast
+    """
+    import calendar as _cal
+    from frappe.utils import getdate as _gd, today as _today
+
+    today_d = _gd(_today())
+
+    # Planned revenue by month from PO Dispatch.target_month
+    planned_rows = frappe.db.sql(
+        """
+        SELECT DATE_FORMAT(target_month, '%%Y-%%m') AS month,
+               COALESCE(SUM(line_amount), 0)        AS planned
+        FROM `tabPO Dispatch`
+        WHERE target_month IS NOT NULL AND target_month != '0000-00-00'
+        GROUP BY DATE_FORMAT(target_month, '%%Y-%%m')
+        """,
+        as_dict=True,
+    )
+    planned_by_month = {r.month: flt(r.planned) for r in planned_rows}
+
+    # Achieved revenue by month from Work Done
+    achieved_rows = frappe.db.sql(
+        """
+        SELECT DATE_FORMAT(de.execution_date, '%%Y-%%m') AS month,
+               COALESCE(SUM(wd.revenue_sar), 0)          AS achieved
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        GROUP BY DATE_FORMAT(de.execution_date, '%%Y-%%m')
+        """,
+        as_dict=True,
+    )
+    achieved_by_month = {r.month: flt(r.achieved) for r in achieved_rows}
+
+    # Build 6 rows: current month + 5 ahead
+    data = []
+    for offset in range(6):
+        year  = today_d.year + (today_d.month - 1 + offset) // 12
+        month = (today_d.month - 1 + offset) % 12 + 1
+        month_key   = f"{year}-{month:02d}"
+        total_days  = _cal.monthrange(year, month)[1]
+        is_current  = (year == today_d.year and month == today_d.month)
+        days_passed = today_d.day if is_current else (total_days if offset < 0 else 0)
+        # For past months use full days; future months use 0 (no achieved, no run-rate)
+        if offset == 0:
+            days_passed = today_d.day
+        elif offset < 0:
+            days_passed = total_days
+        else:
+            days_passed = 0
+
+        planned  = planned_by_month.get(month_key, 0.0)
+        achieved = achieved_by_month.get(month_key, 0.0)
+        run_rate = round(achieved / days_passed, 0) if days_passed > 0 else 0.0
+        forecast = round(run_rate * total_days, 0)
+        gap      = round(planned - forecast, 0)
+
+        data.append({
+            "month":       month_key,
+            "planned":     round(planned, 0),
+            "achieved":    round(achieved, 0),
+            "days_passed": days_passed,
+            "total_days":  total_days,
+            "run_rate":    run_rate,
+            "forecast":    forecast,
+            "gap":         gap,
+        })
+
+    columns = [
+        {"fieldname": "month",       "label": "Month",             "fieldtype": "Data"},
+        {"fieldname": "planned",     "label": "Planned (SAR)",     "fieldtype": "Currency"},
+        {"fieldname": "achieved",    "label": "Achieved (SAR)",    "fieldtype": "Currency"},
+        {"fieldname": "days_passed", "label": "Days Elapsed",      "fieldtype": "Int"},
+        {"fieldname": "total_days",  "label": "Total Days",        "fieldtype": "Int"},
+        {"fieldname": "run_rate",    "label": "Daily Run Rate",    "fieldtype": "Currency"},
+        {"fieldname": "forecast",    "label": "Forecast (SAR)",    "fieldtype": "Currency"},
+        {"fieldname": "gap",         "label": "Gap (SAR)",         "fieldtype": "Currency"},
+    ]
+    return {"columns": columns, "data": data}
+
+
 @frappe.whitelist()
 def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=None):
     """Rollout plans for this IM (join PO Dispatch — works before im backfill on Rollout Plan)."""
