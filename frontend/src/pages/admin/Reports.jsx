@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
@@ -108,10 +109,46 @@ const REPORTS = [
     hasFilters: true,
     filterType: "teamdate",
   },
+  {
+    key: "im_performance",
+    title: "IM Performance",
+    api: "reportIMPerformance",
+    description: "Revenue, completion % and rating per Implementation Manager",
+    hasFilters: true,
+    filterType: "dateonly",
+  },
+  {
+    key: "top_teams",
+    title: "Top Teams",
+    api: "reportTopTeams",
+    description: "Teams ranked by revenue — completion % and achievement %",
+    hasFilters: true,
+    filterType: "dateonly",
+  },
+  {
+    key: "team_pva",
+    title: "Team PVA",
+    api: "reportTeamPVA",
+    description: "Planned vs Actual per team per day — daily utilisation breakdown",
+    hasFilters: true,
+    filterType: "teamdate",
+  },
+  {
+    key: "weekly_performance",
+    title: "Weekly Performance",
+    api: "reportWeeklyPerformance",
+    description: "Weekly aggregated performance — lines, revenue, re-visits",
+    hasFilters: true,
+    filterType: "dateonly",
+  },
 ];
 
 export default function Reports() {
-  const [activeKey, setActiveKey] = useState(REPORTS[0].key);
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab");
+  const [activeKey, setActiveKey] = useState(
+    REPORTS.find((r) => r.key === initialTab) ? initialTab : REPORTS[0].key
+  );
   const [columns, setColumns] = useState([]);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -241,6 +278,11 @@ export default function Reports() {
               value={teamDate}
               onChange={({ from, to }) => setTeamDate({ from, to })}
             />
+          ) : active.filterType === "dateonly" ? (
+            <DateRangePicker
+              value={dateRange}
+              onChange={({ from, to }) => setDateRange({ from, to })}
+            />
           ) : (
             <>
               <SearchableSelect
@@ -303,7 +345,7 @@ export default function Reports() {
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading report…
             </div>
-          ) : columns.length === 0 && data.length === 0 ? (
+          ) : columns.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📈</div>
               <h3>No data available</h3>
@@ -313,20 +355,28 @@ export default function Reports() {
             <table className="data-table">
               <thead>
                 <tr>
-                  {(columns || []).map((col) => (
+                  {columns.map((col) => (
                     <th key={col.fieldname || col.label}>{col.label}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {(data || []).map((row, idx) => (
+                {data.length === 0 ? (
+                  <tr>
+                    <td colSpan={columns.length} style={{ textAlign: "center", color: "var(--text-muted)", padding: "32px" }}>
+                      No records found for the selected period.
+                    </td>
+                  </tr>
+                ) : data.map((row, idx) => (
                   <tr key={idx}>
-                    {(columns || []).map((col) => {
+                    {columns.map((col) => {
                       const key = col.fieldname || col.name;
                       const raw = row?.[key];
                       const pct = isPctCol(col);
                       const style = pct && raw != null ? { ...pctCellStyle(raw), textAlign: "center", borderRadius: 4 } : {};
-                      const display = pct && raw != null ? `${raw}%` : (raw ?? "—");
+                      const display = pct
+                        ? (raw != null ? `${raw}%` : "—")
+                        : (raw === null || raw === undefined || raw === "" ? "—" : raw);
                       return (
                         <td key={col.fieldname || col.label} style={style}>
                           {display}

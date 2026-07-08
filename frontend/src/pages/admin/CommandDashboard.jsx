@@ -75,10 +75,15 @@ function Stat({ label, value, sub, color = "", onClick }) {
 }
 
 /* ── Section card wrapper ───────────────────────────────────────── */
-function Section({ title, accent, children, style }) {
+function Section({ title, accent, children, style, onTitleClick }) {
   return (
     <div className="dash-section" style={style}>
-      <div className={`dash-section-hd dash-section-hd--${accent}`}>{title}</div>
+      <div
+        className={`dash-section-hd dash-section-hd--${accent}${onTitleClick ? " dash-section-hd--link" : ""}`}
+        onClick={onTitleClick}
+      >
+        {title}{onTitleClick && <span style={{ float: "right", opacity: 0.7, fontSize: "0.75rem" }}>↗</span>}
+      </div>
       <div className="dash-section-bd">{children}</div>
     </div>
   );
@@ -205,18 +210,12 @@ export default function CommandDashboard() {
 
   /* ── Top 5 Teams table ─── */
   const teamCols = [
-    { label: "Team", key: "team_name" },
-    { label: "Target", key: "target", align: "right" },
-    { label: "Achieved", key: "achieved", align: "right", colorFn: (v) => v > 0 ? "text-green" : "" },
-    {
-      label: "Completion %", key: "_pct", align: "right",
-      colorFn: (v) => v >= 80 ? "text-green" : v >= 40 ? "text-amber" : "text-red",
-    },
+    { label: "Team",    key: "team_name" },
+    { label: "Revenue", key: "revenue",   align: "right", colorFn: (v) => v > 0 ? "text-green" : "" },
+    { label: "Cost",    key: "team_cost", align: "right" },
+    { label: "Profit",  key: "profit",    align: "right", colorFn: (v) => v > 0 ? "text-green" : v < 0 ? "text-red" : "" },
   ];
-  const teamRows = (top_teams || []).slice(0, 5).map((t) => ({
-    ...t,
-    _pct: t.target > 0 ? Math.round((t.achieved / t.target) * 100) : t.achieved > 0 ? 100 : 0,
-  }));
+  const teamRows = (top_teams || []).slice(0, 5);
 
   /* ── IM Performance table ─── */
   const imCols = [
@@ -418,11 +417,11 @@ export default function CommandDashboard() {
       {/* ── Bottom panels ────────────────────────────────────────── */}
       <div className="bottom-grid">
 
-        <Section title="Top 5 Teams" accent="teams">
+        <Section title="Top 5 Teams" accent="teams" onTitleClick={() => navigate("/reports?tab=top_teams")}>
           <MiniTable columns={teamCols} rows={teamRows} emptyText="No team data" />
         </Section>
 
-        <Section title="IM Performance" accent="im">
+        <Section title="IM Performance" accent="im" onTitleClick={() => navigate("/reports?tab=im_performance")}>
           <MiniTable columns={imCols} rows={im_performance || []} emptyText="No IM data" />
         </Section>
 

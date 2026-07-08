@@ -709,6 +709,8 @@
 .dashboard .dash-section-hd--im      { background: linear-gradient(90deg, #0e7490, #0891b2); }
 .dashboard .dash-section-hd--status  { background: linear-gradient(90deg, #047857, #10b981); }
 .dashboard .dash-section-hd--watch   { background: linear-gradient(90deg, #b45309, #f59e0b); }
+.dashboard .dash-section-hd--link    { cursor: pointer; user-select: none; }
+.dashboard .dash-section-hd--link:hover { filter: brightness(1.12); }
 
 .dashboard .dash-section-bd {
   padding: 12px;

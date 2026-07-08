@@ -6510,7 +6510,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         try: last_day = getdate(to_date)
         except Exception: pass
     days_in_month = _days_in_month(today)
-    day_of_month = today.day
+    day_of_month = min(today.day, 30)   # month basis = 30; cost capped at 30 days
 
     # ---- Operational KPIs --------------------------------------------------
     # Open lines = PO Intake Lines whose per-line status is NOT terminal.
@@ -6786,61 +6786,113 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     profit_loss = round(total_achieved - total_cost_today, 2)
     coverage_pct = (total_achieved / company_target * 100.0) if company_target else 0.0
 
-    # ---- Top 5 teams by revenue this month ---------------------------------
-    top_teams = frappe.db.sql(
+    # ---- Top 5 teams by revenue this month (same logic as get_top_teams_report) ----
+    _tt_period_days = (last_day - first_day).days + 1
+    _tt_rev_rows = frappe.db.sql(
         """
-        SELECT exe.team AS team, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
+        SELECT de.team,
+               COALESCE(SUM(wd.revenue_sar), 0)                    AS revenue,
+               COALESCE(AVG(NULLIF(wd.inet_margin_pct, 0)), 100)   AS avg_inet_margin
         FROM `tabWork Done` wd
-        JOIN `tabDaily Execution` exe ON exe.name = wd.execution
-        WHERE exe.execution_date BETWEEN %s AND %s
-        AND exe.team IS NOT NULL AND exe.team != ''
-        GROUP BY exe.team
-        ORDER BY revenue DESC
-        LIMIT 5
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND de.team IS NOT NULL AND de.team != ''
+        GROUP BY de.team
         """,
-        (first_day, last_day),
-        as_dict=True,
+        (first_day, last_day), as_dict=True,
     )
-    team_rollout_targets = frappe.db.sql(
+    _tt_rev_by_team = {r.team: r for r in _tt_rev_rows}
+    _tt_team_rows = frappe.db.sql(
         """
-        SELECT team AS team, COALESCE(SUM(target_amount), 0) AS target
-        FROM `tabRollout Plan`
-        WHERE plan_date BETWEEN %s AND %s
-        AND team IS NOT NULL AND team != ''
-        GROUP BY team
+        SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type
+        FROM `tabINET Team`
+        WHERE IFNULL(status, 'Active') = 'Active'
+          AND IFNULL(team_category, '') != 'Backend Team'
         """,
-        (first_day, last_day),
         as_dict=True,
     )
-    target_by_team = {r.team: flt(r.target) for r in (team_rollout_targets or [])}
-    for _row in top_teams:
-        tid = _row.get("team")
-        _row["team_name"] = frappe.db.get_value("INET Team", tid, "team_name") or tid or "—"
-        _row["achieved"] = flt(_row.get("revenue", 0))
-        _row["target"] = target_by_team.get(tid, 0.0)
+    _tt_data = []
+    for _ti in _tt_team_rows:
+        _r         = _tt_rev_by_team.get(_ti.name, frappe._dict(revenue=0, avg_inet_margin=100))
+        _revenue   = flt(_r.revenue)
+        _team_type = ((_ti.team_type or "INET")).upper()
+        if _team_type == "SUB":
+            _inet_margin = flt(_r.avg_inet_margin) or 100.0
+            _team_cost   = round(_revenue * (100.0 - _inet_margin) / 100.0, 0)
+        else:
+            _team_cost = round(flt(_ti.daily_cost) * min(_tt_period_days, 30), 0)
+        _tt_data.append({
+            "team":      _ti.name,
+            "team_name": _ti.team_name or _ti.name,
+            "revenue":   round(_revenue, 0),
+            "team_cost": _team_cost,
+            "profit":    round(_revenue - _team_cost, 0),
+        })
+    _tt_data.sort(key=lambda x: x["revenue"], reverse=True)
+    top_teams = _tt_data[:5]
 
-    # ---- IM performance ----------------------------------------------------
-    im_perf = frappe.db.sql(
+    # ---- IM performance (same cost formula as top_teams) -------------------
+    _ip_period_days = (last_day - first_day).days + 1
+    _ip_rev_rows = frappe.db.sql(
         """
-        SELECT pd.im AS im,
-               COUNT(DISTINCT exe.team) AS team_count,
-               COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
-               COALESCE(SUM(wd.total_cost_sar), 0) AS cost
+        SELECT pd.im,
+               COALESCE(imm.full_name, pd.im)                      AS im_name,
+               COUNT(DISTINCT de.team)                              AS team_count,
+               COALESCE(SUM(wd.revenue_sar), 0)                    AS revenue
         FROM `tabWork Done` wd
-        JOIN `tabDaily Execution` exe ON exe.name = wd.execution
-        JOIN `tabRollout Plan` rp ON rp.name = exe.rollout_plan
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
         JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        WHERE exe.execution_date BETWEEN %s AND %s
-        AND pd.im IS NOT NULL AND pd.im != ''
+        LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
         GROUP BY pd.im
         """,
-        (first_day, last_day),
+        (first_day, last_day), as_dict=True,
+    )
+    _ip_team_cost_rows = frappe.db.sql(
+        """
+        SELECT pd.im, de.team,
+               COALESCE(SUM(wd.revenue_sar), 0)                    AS team_revenue,
+               COALESCE(AVG(NULLIF(wd.inet_margin_pct, 0)), 100)   AS avg_inet_margin
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
+          AND de.team IS NOT NULL AND de.team != ''
+        GROUP BY pd.im, de.team
+        """,
+        (first_day, last_day), as_dict=True,
+    )
+    _ip_team_info_rows = frappe.db.sql(
+        "SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type FROM `tabINET Team` WHERE IFNULL(status,'Active')='Active'",
         as_dict=True,
     )
-    for row in im_perf:
-        row["profit"] = flt(row.revenue) - flt(row.cost)
-        row["teams"] = cint(row.get("team_count") or 0)
-        row["team_cost"] = flt(row.get("cost") or 0)
+    _ip_team_info = {r.name: r for r in _ip_team_info_rows}
+    _ip_cost_by_im = {}
+    for _tc in _ip_team_cost_rows:
+        _ti        = _ip_team_info.get(_tc.team)
+        _tt        = ((_ti.team_type if _ti else None) or "INET").upper()
+        if _tt == "SUB":
+            _im_margin = flt(_tc.avg_inet_margin) or 100.0
+            _tc_cost   = flt(_tc.team_revenue) * (100.0 - _im_margin) / 100.0
+        else:
+            _tc_cost = flt(_ti.daily_cost if _ti else 0) * min(_ip_period_days, 30)
+        _ip_cost_by_im[_tc.im] = _ip_cost_by_im.get(_tc.im, 0.0) + _tc_cost
+
+    im_perf = []
+    for _r in _ip_rev_rows:
+        _rev  = flt(_r.revenue)
+        _cost = round(_ip_cost_by_im.get(_r.im, 0.0), 0)
+        im_perf.append({
+            "im":        _r.im_name or _r.im,
+            "teams":     cint(_r.team_count),
+            "revenue":   round(_rev, 0),
+            "team_cost": _cost,
+            "profit":    round(_rev - _cost, 0),
+        })
 
     # ---- Team status summary -----------------------------------------------
     # Teams that have any Daily Execution today (started or completed work)
@@ -7107,6 +7159,470 @@ def im_action_counts(im_identifiers):
         "pending_approvals": cint(pending_approvals),
         "open_dummy_pos": cint(open_dummies),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5 — Performance Scorecard Reports
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _perf_date_range(from_date, to_date):
+    from frappe.utils import today as _today, getdate
+    fd = str(getdate(from_date)) if from_date else _today()
+    td = str(getdate(to_date)) if to_date else fd
+    return fd, td
+
+
+@frappe.whitelist()
+def get_im_performance_report(from_date=None, to_date=None, **kwargs):
+    """IM Performance Scorecard — revenue, cost, profit, completion %, rating per IM.
+    Target = SUM(pd.line_amount) for distinct POs that had plans in the period.
+    Rating thresholds (IM-level, stricter): >=100% Excellent, >=85% Good, >=70% NI, else Idle.
+    """
+    fd, td = _perf_date_range(from_date, to_date)
+    fd_date = getdate(fd)
+    td_date = getdate(td)
+    period_days = (td_date - fd_date).days + 1
+
+    # Plans: assigned/completed lines + distinct teams per IM
+    plan_rows = frappe.db.sql(
+        """
+        SELECT pd.im,
+               COALESCE(imm.full_name, pd.im) AS im_name,
+               COUNT(DISTINCT rp.team)         AS teams,
+               COUNT(DISTINCT rp.name)         AS assigned_lines,
+               SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines
+        FROM `tabRollout Plan` rp
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
+        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+        GROUP BY pd.im
+        """,
+        (fd, td), as_dict=True,
+    )
+
+    # Target = SUM of line_amount on distinct PO Dispatches that had plans in the period
+    target_rows = frappe.db.sql(
+        """
+        SELECT pd.im, COALESCE(SUM(pd.line_amount), 0) AS target
+        FROM (
+            SELECT DISTINCT rp.po_dispatch
+            FROM `tabRollout Plan` rp
+            WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+              AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+        ) plans
+        JOIN `tabPO Dispatch` pd ON pd.name = plans.po_dispatch
+        WHERE pd.im IS NOT NULL AND pd.im != ''
+        GROUP BY pd.im
+        """,
+        (fd, td), as_dict=True,
+    )
+    target_by_im = {r.im: flt(r.target) for r in target_rows}
+
+    # Revenue per IM from Work Done
+    rev_rows = frappe.db.sql(
+        """
+        SELECT pd.im, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
+        GROUP BY pd.im
+        """,
+        (fd, td), as_dict=True,
+    )
+    rev_by_im = {r.im: flt(r.revenue) for r in rev_rows}
+
+    # Team costs per IM — aggregate individual team costs grouped by IM
+    team_cost_rows = frappe.db.sql(
+        """
+        SELECT pd.im, de.team,
+               COALESCE(SUM(wd.revenue_sar), 0)                    AS team_revenue,
+               COALESCE(AVG(NULLIF(wd.inet_margin_pct, 0)), 100)   AS avg_inet_margin
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
+          AND de.team IS NOT NULL AND de.team != ''
+        GROUP BY pd.im, de.team
+        """,
+        (fd, td), as_dict=True,
+    )
+    team_info_rows = frappe.db.sql(
+        """
+        SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type
+        FROM `tabINET Team`
+        WHERE IFNULL(status, 'Active') = 'Active'
+        """,
+        as_dict=True,
+    )
+    team_info = {r.name: r for r in team_info_rows}
+
+    cost_by_im = {}
+    for tc in team_cost_rows:
+        ti         = team_info.get(tc.team)
+        team_type  = ((ti.team_type if ti else None) or "INET").upper()
+        if team_type == "SUB":
+            inet_margin = flt(tc.avg_inet_margin) or 100.0
+            tc_cost     = flt(tc.team_revenue) * (100.0 - inet_margin) / 100.0
+        else:
+            daily_cost = flt(ti.daily_cost if ti else 0)
+            tc_cost    = daily_cost * min(period_days, 30)
+        cost_by_im[tc.im] = cost_by_im.get(tc.im, 0.0) + tc_cost
+
+    # All IMs from master — so IMs with 0 activity still appear
+    all_ims = frappe.db.sql(
+        "SELECT name, COALESCE(full_name, name) AS im_name FROM `tabIM Master`",
+        as_dict=True,
+    )
+    plan_by_im = {r.im: r for r in plan_rows}
+
+    data = []
+    for im_rec in all_ims:
+        im_id     = im_rec.name
+        r         = plan_by_im.get(im_id, frappe._dict(teams=0, assigned_lines=0, completed_lines=0))
+        assigned  = cint(r.assigned_lines)
+        completed = cint(r.completed_lines)
+        target    = target_by_im.get(im_id, 0.0)
+        revenue   = rev_by_im.get(im_id, 0.0)
+        team_cost = round(cost_by_im.get(im_id, 0.0), 0)
+        profit    = round(revenue - team_cost, 0)
+        compl_pct = round(completed / assigned * 100, 1) if assigned > 0 else 0.0
+        ach_pct   = round(revenue / target * 100, 1) if target > 0 else 0.0
+        rating    = ("Excellent"        if ach_pct >= 100 else
+                     "Good"             if ach_pct >= 85  else
+                     "Need Improvement" if ach_pct >= 70  else "Idle")
+        data.append({
+            "im":              im_rec.im_name,
+            "teams":           cint(r.teams),
+            "assigned_lines":  assigned,
+            "completed_lines": completed,
+            "completion_pct":  compl_pct,
+            "target":          round(target, 0),
+            "revenue":         round(revenue, 0),
+            "achievement_pct": ach_pct,
+            "team_cost":       team_cost,
+            "profit":          profit,
+            "rating":          rating,
+        })
+    data.sort(key=lambda x: x["revenue"], reverse=True)
+
+    columns = [
+        {"fieldname": "im",              "label": "IM",              "fieldtype": "Data"},
+        {"fieldname": "teams",           "label": "Teams",           "fieldtype": "Int"},
+        {"fieldname": "assigned_lines",  "label": "Assigned",        "fieldtype": "Int"},
+        {"fieldname": "completed_lines", "label": "Completed",       "fieldtype": "Int"},
+        {"fieldname": "completion_pct",  "label": "Completion %",    "fieldtype": "Percent"},
+        {"fieldname": "target",          "label": "Target (SAR)",    "fieldtype": "Currency"},
+        {"fieldname": "revenue",         "label": "Revenue (SAR)",   "fieldtype": "Currency"},
+        {"fieldname": "achievement_pct", "label": "Achievement %",   "fieldtype": "Percent"},
+        {"fieldname": "team_cost",       "label": "Team Cost (SAR)", "fieldtype": "Currency"},
+        {"fieldname": "profit",          "label": "Profit / Loss",   "fieldtype": "Currency"},
+        {"fieldname": "rating",          "label": "Rating",          "fieldtype": "Data"},
+    ]
+    return {"columns": columns, "data": data}
+
+
+@frappe.whitelist()
+def get_top_teams_report(from_date=None, to_date=None, **kwargs):
+    """Top Teams — ranked by revenue.
+    Team Cost:
+      INET  → daily_cost × 30  (Excel standard: month = 30 days)
+      SUB   → revenue × (1 - inet_margin_pct/100)  i.e. revenue × subcon_rate
+    Utilization % = distinct days worked / period days × 100
+    """
+    fd, td = _perf_date_range(from_date, to_date)
+    fd_date = getdate(fd)
+    td_date = getdate(td)
+    period_days = (td_date - fd_date).days + 1
+
+    # Revenue + distinct working days per team (from Work Done / Daily Execution)
+    rev_rows = frappe.db.sql(
+        """
+        SELECT de.team,
+               COALESCE(SUM(wd.revenue_sar), 0)               AS revenue,
+               COALESCE(AVG(NULLIF(wd.inet_margin_pct, 0)), 100) AS avg_inet_margin,
+               COUNT(DISTINCT DATE(de.execution_date))          AS days_worked
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND de.team IS NOT NULL AND de.team != ''
+        GROUP BY de.team
+        """,
+        (fd, td), as_dict=True,
+    )
+
+    # Plans: assigned lines + completed lines per team
+    plan_rows = frappe.db.sql(
+        """
+        SELECT rp.team,
+               COUNT(DISTINCT rp.name) AS assigned_lines,
+               SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines
+        FROM `tabRollout Plan` rp
+        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+          AND rp.team IS NOT NULL AND rp.team != ''
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+        GROUP BY rp.team
+        """,
+        (fd, td), as_dict=True,
+    )
+    plan_by_team = {r.team: r for r in plan_rows}
+
+    # Most frequent IM per team — via Work Done → PO Dispatch.im
+    im_rows = frappe.db.sql(
+        """
+        SELECT de.team, pd.im, COUNT(*) AS cnt
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND de.team IS NOT NULL AND de.team != ''
+          AND pd.im IS NOT NULL AND pd.im != ''
+        GROUP BY de.team, pd.im
+        ORDER BY de.team, cnt DESC
+        """,
+        (fd, td), as_dict=True,
+    )
+    im_by_team = {}
+    for row in im_rows:
+        if row.team not in im_by_team:
+            im_by_team[row.team] = row.im
+
+    # Team master: daily_cost + team_type (INET vs SUB) + team_name
+    team_info_rows = frappe.db.sql(
+        """
+        SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type
+        FROM `tabINET Team`
+        WHERE IFNULL(status, 'Active') = 'Active'
+          AND IFNULL(team_category, '') != 'Backend Team'
+        """,
+        as_dict=True,
+    )
+    team_info = {r.name: r for r in team_info_rows}
+
+    rev_by_team = {r.team: r for r in rev_rows}
+
+    data = []
+    # Iterate over ALL active teams so teams with 0 revenue still appear
+    for team, ti in team_info.items():
+        r           = rev_by_team.get(team, frappe._dict(revenue=0, avg_inet_margin=100, days_worked=0))
+        p           = plan_by_team.get(team, frappe._dict(assigned_lines=0, completed_lines=0))
+        assigned    = cint(p.assigned_lines)
+        completed   = cint(p.completed_lines)
+        revenue     = flt(r.revenue)
+        days_worked = cint(r.days_worked)
+
+        team_type = ((ti.team_type if ti else None) or "INET").upper()
+
+        if team_type == "SUB":
+            inet_margin = flt(r.avg_inet_margin) or 100.0
+            subcon_rate = (100.0 - inet_margin) / 100.0
+            team_cost   = round(revenue * subcon_rate, 0)
+        else:
+            daily_cost = flt(ti.daily_cost if ti else 0)
+            cost_days  = min(period_days, 30)
+            team_cost  = round(daily_cost * cost_days, 0)
+
+        profit          = round(revenue - team_cost, 0)
+        utilization_pct = round(days_worked / period_days * 100, 1) if period_days > 0 else 0.0
+        compl_pct       = round(completed / assigned * 100, 1) if assigned > 0 else 0.0
+
+        data.append({
+            "team_name":       ti.team_name or team,
+            "im":              im_by_team.get(team, ""),
+            "assigned_lines":  assigned,
+            "completed_lines": completed,
+            "completion_pct":  compl_pct,
+            "revenue":         round(revenue, 0),
+            "team_cost":       team_cost,
+            "profit":          profit,
+            "utilization_pct": utilization_pct,
+        })
+
+    data.sort(key=lambda x: x["revenue"], reverse=True)
+    for i, row in enumerate(data, 1):
+        row["sn"] = i
+
+    columns = [
+        {"fieldname": "sn",              "label": "#",               "fieldtype": "Int"},
+        {"fieldname": "team_name",       "label": "Team",            "fieldtype": "Data"},
+        {"fieldname": "im",              "label": "IM",              "fieldtype": "Data"},
+        {"fieldname": "assigned_lines",  "label": "Assigned",        "fieldtype": "Int"},
+        {"fieldname": "completed_lines", "label": "Completed",       "fieldtype": "Int"},
+        {"fieldname": "completion_pct",  "label": "Completion %",    "fieldtype": "Percent"},
+        {"fieldname": "revenue",         "label": "Revenue (SAR)",   "fieldtype": "Currency"},
+        {"fieldname": "team_cost",       "label": "Team Cost (SAR)", "fieldtype": "Currency"},
+        {"fieldname": "profit",          "label": "Profit / Loss",   "fieldtype": "Currency"},
+        {"fieldname": "utilization_pct", "label": "Utilization %",   "fieldtype": "Percent"},
+    ]
+    return {"columns": columns, "data": data}
+
+
+@frappe.whitelist()
+def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
+    """Team Utilization PVA — Planned vs Actual per team per day."""
+    import json as _json
+    fd, td = _perf_date_range(from_date, to_date)
+
+    raw_team = kwargs.get("team") or []
+    if isinstance(raw_team, str):
+        try:
+            raw_team = _json.loads(raw_team)
+        except Exception:
+            raw_team = [raw_team] if raw_team else []
+
+    team_cond   = ""
+    team_params = []
+    if raw_team:
+        ph = ", ".join(["%s"] * len(raw_team))
+        team_cond   = f" AND rp.team IN ({ph})"
+        team_params = list(raw_team)
+
+    plan_rows = frappe.db.sql(
+        f"""
+        SELECT DATE(rp.plan_date) AS plan_date,
+               rp.team,
+               COUNT(DISTINCT rp.name) AS planned_lines,
+               SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines,
+               COALESCE(SUM(rp.target_amount), 0) AS target
+        FROM `tabRollout Plan` rp
+        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+          AND rp.team IS NOT NULL AND rp.team != ''
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+          {team_cond}
+        GROUP BY DATE(rp.plan_date), rp.team
+        ORDER BY plan_date, rp.team
+        """,
+        (fd, td, *team_params), as_dict=True,
+    )
+
+    team_cond_de = team_cond.replace("rp.team", "de.team") if team_cond else ""
+    rev_rows = frappe.db.sql(
+        f"""
+        SELECT DATE(de.execution_date) AS exec_date, de.team,
+               COALESCE(SUM(wd.revenue_sar), 0) AS revenue
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND de.team IS NOT NULL
+          {team_cond_de}
+        GROUP BY DATE(de.execution_date), de.team
+        """,
+        (fd, td, *team_params), as_dict=True,
+    )
+    rev_map    = {(str(r.exec_date), r.team): flt(r.revenue) for r in rev_rows}
+    team_names = {}
+
+    data = []
+    for r in plan_rows:
+        team = r.team
+        if team not in team_names:
+            team_names[team] = frappe.db.get_value("INET Team", team, "team_name") or team
+        planned   = cint(r.planned_lines)
+        completed = cint(r.completed_lines)
+        target    = flt(r.target)
+        revenue   = rev_map.get((str(r.plan_date), team), 0.0)
+        compl_pct = round(completed / planned * 100, 1) if planned > 0 else 0.0
+        ach_pct   = round(revenue / target * 100, 1) if target > 0 else 0.0
+        data.append({
+            "plan_date":       str(r.plan_date),
+            "team_name":       team_names[team],
+            "planned_lines":   planned,
+            "completed_lines": completed,
+            "completion_pct":  compl_pct,
+            "target":          round(target, 0),
+            "revenue":         round(revenue, 0),
+            "achievement_pct": ach_pct,
+        })
+
+    columns = [
+        {"fieldname": "plan_date",       "label": "Date",           "fieldtype": "Date"},
+        {"fieldname": "team_name",       "label": "Team",           "fieldtype": "Data"},
+        {"fieldname": "planned_lines",   "label": "Planned",        "fieldtype": "Int"},
+        {"fieldname": "completed_lines", "label": "Completed",      "fieldtype": "Int"},
+        {"fieldname": "completion_pct",  "label": "Completion %",   "fieldtype": "Percent"},
+        {"fieldname": "target",          "label": "Target (SAR)",   "fieldtype": "Currency"},
+        {"fieldname": "revenue",         "label": "Revenue (SAR)",  "fieldtype": "Currency"},
+        {"fieldname": "achievement_pct", "label": "Achievement %",  "fieldtype": "Percent"},
+    ]
+    return {"columns": columns, "data": data}
+
+
+@frappe.whitelist()
+def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
+    """Weekly Performance — aggregated by ISO week: lines, revenue, re-visits."""
+    fd, td = _perf_date_range(from_date, to_date)
+
+    plan_rows = frappe.db.sql(
+        """
+        SELECT YEARWEEK(rp.plan_date, 1)        AS yw,
+               MIN(DATE(rp.plan_date))           AS week_start,
+               COUNT(DISTINCT rp.name)           AS assigned_lines,
+               SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines,
+               COUNT(DISTINCT rp.team)           AS active_teams,
+               COUNT(CASE WHEN LOWER(IFNULL(rp.visit_type,'')) LIKE '%%re%%visit%%' THEN 1 END) AS revisits,
+               COALESCE(SUM(rp.target_amount), 0) AS target
+        FROM `tabRollout Plan` rp
+        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+        GROUP BY YEARWEEK(rp.plan_date, 1)
+        ORDER BY yw
+        """,
+        (fd, td), as_dict=True,
+    )
+
+    rev_rows = frappe.db.sql(
+        """
+        SELECT YEARWEEK(de.execution_date, 1) AS yw,
+               COALESCE(SUM(wd.revenue_sar), 0) AS revenue
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+        GROUP BY YEARWEEK(de.execution_date, 1)
+        """,
+        (fd, td), as_dict=True,
+    )
+    rev_by_yw = {r.yw: flt(r.revenue) for r in rev_rows}
+
+    data = []
+    for i, r in enumerate(plan_rows, 1):
+        target    = flt(r.target)
+        revenue   = rev_by_yw.get(r.yw, 0.0)
+        assigned  = cint(r.assigned_lines)
+        completed = cint(r.completed_lines)
+        compl_pct = round(completed / assigned * 100, 1) if assigned > 0 else 0.0
+        ach_pct   = round(revenue / target * 100, 1) if target > 0 else 0.0
+        data.append({
+            "sn":              i,
+            "week_start":      str(r.week_start),
+            "active_teams":    cint(r.active_teams),
+            "assigned_lines":  assigned,
+            "completed_lines": completed,
+            "completion_pct":  compl_pct,
+            "revisits":        cint(r.revisits),
+            "target":          round(target, 0),
+            "revenue":         round(revenue, 0),
+            "achievement_pct": ach_pct,
+        })
+
+    columns = [
+        {"fieldname": "sn",              "label": "Week #",         "fieldtype": "Int"},
+        {"fieldname": "week_start",      "label": "Week Start",     "fieldtype": "Date"},
+        {"fieldname": "active_teams",    "label": "Active Teams",   "fieldtype": "Int"},
+        {"fieldname": "assigned_lines",  "label": "Assigned",       "fieldtype": "Int"},
+        {"fieldname": "completed_lines", "label": "Completed",      "fieldtype": "Int"},
+        {"fieldname": "completion_pct",  "label": "Completion %",   "fieldtype": "Percent"},
+        {"fieldname": "revisits",        "label": "Re-Visits",      "fieldtype": "Int"},
+        {"fieldname": "target",          "label": "Target (SAR)",   "fieldtype": "Currency"},
+        {"fieldname": "revenue",         "label": "Revenue (SAR)",  "fieldtype": "Currency"},
+        {"fieldname": "achievement_pct", "label": "Achievement %",  "fieldtype": "Percent"},
+    ]
+    return {"columns": columns, "data": data}
 
 
 @frappe.whitelist()
@@ -7714,7 +8230,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         try: last_day = getdate(to_date)
         except Exception: pass
     days_in_month = _days_in_month(today)
-    day_of_month = today.day
+    day_of_month = min(today.day, 30)   # month basis = 30; cost capped at 30 days
 
     # Teams belonging to this IM — match any known identifier value
     teams = frappe.get_all(

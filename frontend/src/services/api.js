@@ -188,6 +188,10 @@ export const pmApi = {
   reportTeamPlanningReport:       (f) => call("inet_app.api.command_center.get_team_report", { report_type: "planning",       from_date: f?.from_date, to_date: f?.to_date }),
   reportTeamUtilisationReport:    (f) => call("inet_app.api.command_center.get_team_report", { report_type: "utilisation",    from_date: f?.from_date, to_date: f?.to_date }),
   reportTeamImplementationReport: (f) => call("inet_app.api.command_center.get_team_report", { report_type: "implementation", from_date: f?.from_date, to_date: f?.to_date }),
+  reportIMPerformance:            (f) => call("inet_app.api.command_center.get_im_performance_report",    { from_date: f?.from_date, to_date: f?.to_date }),
+  reportTopTeams:                 (f) => call("inet_app.api.command_center.get_top_teams_report",         { from_date: f?.from_date, to_date: f?.to_date }),
+  reportTeamPVA:                  (f) => call("inet_app.api.command_center.get_team_utilization_pva",    { from_date: f?.from_date, to_date: f?.to_date, team: JSON.stringify(f?.team || []) }),
+  reportWeeklyPerformance:        (f) => call("inet_app.api.command_center.get_weekly_performance_report", { from_date: f?.from_date, to_date: f?.to_date }),
 
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
