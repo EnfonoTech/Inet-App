@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
+import AttachmentsSection from "../../components/AttachmentsSection";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 
@@ -10,17 +11,22 @@ function fmtAmt(n) {
   return Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Amount the TL actually entered (VAT-inclusive grand total; falls back for old claims)
+function grossAmt(c) {
+  return Number(c?.grand_total ?? c?.total_claimed_amount) || 0;
+}
+
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
-// Field user perspective: Draft = Pending (waiting for IM), Approved only when submitted.
+// Field user perspective: Draft = Pending (waiting for IM). Approved claims stay
+// docstatus 0 until the accounts team submits them in ERPNext — still Approved here.
 function effectiveStatus(claim) {
   if (!claim) return "Pending";
   const s = (claim.approval_status || "").toLowerCase();
-  if (s === "approved" && claim.docstatus !== 1) return "Pending";
   if (s === "draft" || !s) return "Pending";
   return claim.approval_status;
 }
@@ -168,8 +174,23 @@ function PoidMultiSelect({ poids, value, onChange }) {
 
 // ── Expense Line ──────────────────────────────────────────────────────────────
 
-function ExpenseLine({ line, idx, expenseTypes, poids, onChange, onRemove }) {
-  const isMulti = line.poid_mode === "multi";
+function ExpenseLine({ line, idx, expenseTypes, poids, projects, onChange, onRemove, taxRate = 0 }) {
+  const mode = line.poid_mode || "single";
+  const isMulti = mode === "multi";
+  const isGeneral = mode === "general";
+
+  const modeBtn = (key, label, onClick) => {
+    const active = mode === key;
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        style={{ flex: 1, padding: "6px 0", borderRadius: 6, border: `1.5px solid ${active ? "#3b82f6" : "#e2e8f0"}`, background: active ? "#eff6ff" : "#fff", color: active ? "#1d4ed8" : "#475569", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer" }}
+      >
+        {label}
+      </button>
+    );
+  };
 
   return (
     <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "14px 14px 10px", marginBottom: 12, position: "relative" }}>
@@ -193,7 +214,7 @@ function ExpenseLine({ line, idx, expenseTypes, poids, onChange, onRemove }) {
           </select>
         </div>
         <div>
-          {lbl("Amount (SAR)", true)}
+          {lbl(taxRate > 0 ? "Amount (SAR, incl. VAT)" : "Amount (SAR)", true)}
           <input
             type="number"
             min="0"
@@ -219,25 +240,26 @@ function ExpenseLine({ line, idx, expenseTypes, poids, onChange, onRemove }) {
       </div>
 
       <div style={{ marginBottom: 8 }}>
-        {lbl("POID Allocation", true)}
+        {lbl("Allocation", true)}
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <button
-            type="button"
-            onClick={() => onChange({ ...line, poid_mode: "single", poids: line.poids.slice(0, 1) })}
-            style={{ flex: 1, padding: "6px 0", borderRadius: 6, border: `1.5px solid ${!isMulti ? "#3b82f6" : "#e2e8f0"}`, background: !isMulti ? "#eff6ff" : "#fff", color: !isMulti ? "#1d4ed8" : "#475569", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer" }}
-          >
-            Single POID
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange({ ...line, poid_mode: "multi" })}
-            style={{ flex: 1, padding: "6px 0", borderRadius: 6, border: `1.5px solid ${isMulti ? "#3b82f6" : "#e2e8f0"}`, background: isMulti ? "#eff6ff" : "#fff", color: isMulti ? "#1d4ed8" : "#475569", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer" }}
-          >
-            Split Across Multiple
-          </button>
+          {modeBtn("single", "Single POID", () => onChange({ ...line, poid_mode: "single", poids: line.poids.slice(0, 1), project: "" }))}
+          {modeBtn("multi", "Split POIDs", () => onChange({ ...line, poid_mode: "multi", project: "" }))}
+          {modeBtn("general", "General (Project)", () => onChange({ ...line, poid_mode: "general", poids: [] }))}
         </div>
 
-        {!isMulti ? (
+        {isGeneral ? (
+          <SearchableSelect
+            value={line.project || ""}
+            onChange={(id) => onChange({ ...line, project: id || "" })}
+            options={(projects || []).map((p) => ({
+              id: p.name,
+              label: p.project_name ? `${p.project_code || p.name} — ${p.project_name}` : (p.project_code || p.name),
+            }))}
+            placeholder="Select project..."
+            style={{ width: "100%", display: "block" }}
+            triggerStyle={{ width: "100%", boxSizing: "border-box", padding: "8px 30px 8px 10px", fontSize: "0.86rem", borderRadius: 8 }}
+          />
+        ) : !isMulti ? (
           <SearchableSelect
             value={line.poids[0] || ""}
             onChange={(id) => onChange({ ...line, poids: id ? [id] : [] })}
@@ -270,15 +292,18 @@ function ExpenseLine({ line, idx, expenseTypes, poids, onChange, onRemove }) {
 // ── Create Expense Modal ──────────────────────────────────────────────────────
 
 function emptyLine() {
-  return { expense_type: "", description: "", amount: "", poid_mode: "single", poids: [] };
+  return { expense_type: "", description: "", amount: "", poid_mode: "single", poids: [], project: "" };
 }
 
 function CreateExpenseModal({ open, onClose, team, onCreated }) {
   const [date, setDate] = useState(today());
   const [remarks, setRemarks] = useState("");
   const [lines, setLines] = useState([emptyLine()]);
+  const [attachments, setAttachments] = useState([]);
   const [expenseTypes, setExpenseTypes] = useState([]);
   const [poids, setPoids] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [taxRate, setTaxRate] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -287,11 +312,19 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
     setDate(today());
     setRemarks("");
     setLines([emptyLine()]);
+    setAttachments([]);
     setError(null);
-    Promise.all([pmApi.getExpenseClaimTypes(), pmApi.getAvailablePoids(team?.name)])
-      .then(([types, ps]) => {
+    Promise.all([
+      pmApi.getExpenseClaimTypes(),
+      pmApi.getAvailablePoids(team?.name),
+      pmApi.getAvailableProjects(team?.name),
+      pmApi.getExpenseTaxInfo(),
+    ])
+      .then(([types, ps, projs, tax]) => {
         setExpenseTypes(types || []);
         setPoids(ps || []);
+        setProjects(projs || []);
+        setTaxRate(Number(tax?.tax_rate) || 0);
       })
       .catch(() => {});
   }, [open, team?.name]);
@@ -311,7 +344,9 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
     for (const l of lines) {
       if (!l.expense_type) { setError("Select expense type for all lines."); return; }
       if (!l.amount || Number(l.amount) <= 0) { setError("Enter a valid amount for all lines."); return; }
-      if (l.poids.length === 0) { setError("Select at least one POID for each line."); return; }
+      if (l.poid_mode === "general") {
+        if (!l.project) { setError("Select a project for each general expense line."); return; }
+      } else if (l.poids.length === 0) { setError("Select at least one POID for each line."); return; }
     }
 
     setSaving(true);
@@ -324,8 +359,11 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
           expense_type: l.expense_type,
           description: l.description,
           amount: Number(l.amount),
-          poids: l.poids,
+          is_general: l.poid_mode === "general",
+          project: l.poid_mode === "general" ? l.project : "",
+          poids: l.poid_mode === "general" ? [] : l.poids,
         })),
+        attachments,
       });
       window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
       onCreated(result);
@@ -385,7 +423,9 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#334155" }}>Expense Lines</span>
           {totalAmt > 0 && (
-            <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#1d4ed8" }}>Total: SAR {fmtAmt(totalAmt)}</span>
+            <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#1d4ed8" }}>
+              Total: SAR {fmtAmt(totalAmt)}{taxRate > 0 ? " (incl. VAT)" : ""}
+            </span>
           )}
         </div>
 
@@ -396,6 +436,8 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
             line={line}
             expenseTypes={expenseTypes}
             poids={poids}
+            projects={projects}
+            taxRate={taxRate}
             onChange={(updated) => updateLine(idx, updated)}
             onRemove={() => removeLine(idx)}
           />
@@ -409,6 +451,12 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
           + Add Expense Line
         </button>
       </div>
+
+      <AttachmentsSection
+        urls={attachments}
+        onChange={setAttachments}
+        title="Receipts / Documents"
+      />
     </Modal>
   );
 }
@@ -431,7 +479,7 @@ function ClaimDetailModal({ open, onClose, claim }) {
           </div>
           <div style={{ flex: 1, minWidth: 120 }}>
             <div style={{ fontSize: "0.72rem", color: "#64748b", marginBottom: 2 }}>Total Amount</div>
-            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#1d4ed8" }}>SAR {fmtAmt(claim.total_claimed_amount)}</div>
+            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#1d4ed8" }}>SAR {fmtAmt(grossAmt(claim))}</div>
           </div>
         </div>
         {claim.remark && (
@@ -445,7 +493,7 @@ function ClaimDetailModal({ open, onClose, claim }) {
         <thead>
           <tr style={{ background: "#f1f5f9" }}>
             <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Expense Type</th>
-            <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>POID</th>
+            <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>POID / Project</th>
             <th style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700, color: "#475569" }}>Amount</th>
           </tr>
         </thead>
@@ -453,12 +501,37 @@ function ClaimDetailModal({ open, onClose, claim }) {
           {(claim.lines || []).map((l, i) => (
             <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
               <td style={{ padding: "7px 10px" }}>{l.expense_type}</td>
-              <td style={{ padding: "7px 10px", fontFamily: "monospace", color: "#1e40af", fontSize: "0.78rem" }}>{l.poid || "—"}</td>
+              <td style={{ padding: "7px 10px", fontFamily: "monospace", fontSize: "0.78rem", color: l.poid ? "#1e40af" : "#7c3aed" }}>
+                {l.poid || (l.project ? `${l.project} (General)` : "—")}
+              </td>
               <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600 }}>SAR {fmtAmt(l.amount)}</td>
             </tr>
           ))}
+          {Number(claim.total_taxes_and_charges) > 0 && (
+            <>
+              <tr style={{ borderTop: "2px solid #e2e8f0" }}>
+                <td colSpan={2} style={{ padding: "6px 10px", textAlign: "right", color: "#64748b" }}>Net Total</td>
+                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600 }}>SAR {fmtAmt(claim.total_claimed_amount)}</td>
+              </tr>
+              <tr>
+                <td colSpan={2} style={{ padding: "6px 10px", textAlign: "right", color: "#64748b" }}>VAT (included)</td>
+                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600 }}>SAR {fmtAmt(claim.total_taxes_and_charges)}</td>
+              </tr>
+              <tr style={{ background: "#f8fafc" }}>
+                <td colSpan={2} style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: "#334155" }}>Total</td>
+                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 800, color: "#1d4ed8" }}>SAR {fmtAmt(claim.grand_total)}</td>
+              </tr>
+            </>
+          )}
         </tbody>
       </table>
+
+      <AttachmentsSection
+        urls={(claim.attachments || []).map((a) => a.file_url)}
+        title="Receipts / Documents"
+        readOnly
+        noCamera
+      />
     </Modal>
   );
 }
@@ -506,7 +579,7 @@ export default function FieldExpense() {
     tab === "paid"    ? paidClaims :
     claims;
 
-  const tabTotal = visibleClaims.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0);
+  const tabTotal = visibleClaims.reduce((s, c) => s + grossAmt(c), 0);
   const tabTotalColor = { pending: "#b45309", unpaid: "#92400e", paid: "#15803d", all: "#1d4ed8" }[tab];
 
   const pagedClaims = rowLimit === 0 ? visibleClaims : visibleClaims.slice(0, rowLimit);
@@ -657,9 +730,10 @@ export default function FieldExpense() {
                       {(c.lines || []).some((l) => l.poid) && (
                         <> · {[...new Set((c.lines || []).map((l) => l.poid).filter(Boolean))].length} POID{[...new Set((c.lines || []).map((l) => l.poid).filter(Boolean))].length !== 1 ? "s" : ""}</>
                       )}
+                      {(c.lines || []).some((l) => !l.poid && l.project) && <> · General</>}
                     </span>
                     <span style={{ fontWeight: 700, color: "#1d4ed8", fontSize: "0.9rem" }}>
-                      SAR {fmtAmt(c.total_claimed_amount)}
+                      SAR {fmtAmt(grossAmt(c))}
                     </span>
                   </div>
                   {c.remark && (

@@ -8483,7 +8483,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
             WHERE is_project_claim = 1
               AND expense_approver IN %s
               AND approval_status = 'Approved'
-              AND docstatus = 1
+              AND docstatus < 2
               AND posting_date BETWEEN %s AND %s
             """,
             (tuple(im_users), first_day, last_day),

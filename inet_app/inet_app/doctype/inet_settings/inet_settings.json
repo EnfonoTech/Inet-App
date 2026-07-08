@@ -8,7 +8,9 @@
   "material_section",
   "source_warehouse",
   "expense_section",
-  "expense_payable_account"
+  "expense_payable_account",
+  "expense_tax_rate",
+  "expense_tax_account"
  ],
  "fields": [
   {
@@ -40,6 +42,18 @@
    "label": "Expense Claim Payable Account",
    "options": "Account",
    "description": "Default payable account auto-populated on project expense claims before submission"
+  },
+  {
+   "default": "15",
+   "fieldname": "expense_tax_rate",
+   "fieldtype": "Percent",
+   "label": "Expense VAT Rate (%)"
+  },
+  {
+   "fieldname": "expense_tax_account",
+   "fieldtype": "Link",
+   "label": "Expense VAT Account",
+   "options": "Account"
   }
  ],
  "index_web_pages_for_search": 1,

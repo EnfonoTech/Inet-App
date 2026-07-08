@@ -31,6 +31,13 @@ def _get_company():
     return frappe.defaults.get_global_default("company") or frappe.db.get_single_value("Global Defaults", "default_company")
 
 
+def _get_expense_tax_settings():
+    """Return (tax_rate, tax_account) for VAT-inclusive expense amounts from INET Settings."""
+    rate = flt(frappe.db.get_single_value("INET Settings", "expense_tax_rate"))
+    account = frappe.db.get_single_value("INET Settings", "expense_tax_account")
+    return rate, account
+
+
 def _resolve_poid_display(system_id):
     """Return the human-readable POID string for a PO Dispatch name (system_id)."""
     if not system_id:
@@ -51,11 +58,14 @@ def _enrich_lines_with_poid(rows, parent_field="parent"):
             ecd.parent,
             COALESCE(pd.poid, ecd.poid, '') AS poid_display,
             ecd.poid AS poid_raw,
+            ecd.project_control_center AS project,
+            COALESCE(pcc.project_code, ecd.project_control_center, '') AS project_display,
             ecd.expense_type,
             ecd.amount,
             ecd.description
         FROM `tabExpense Claim Detail` ecd
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = ecd.poid
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.name = ecd.project_control_center
         WHERE ecd.parent IN ({ph})
         ORDER BY ecd.idx ASC
         """,
@@ -69,10 +79,63 @@ def _enrich_lines_with_poid(rows, parent_field="parent"):
             "amount": d.amount,
             "description": d.description,
             "poid": d.poid_display,  # human-readable POID
+            "project": d.project_display,  # set for general (project-level) expenses
         })
     for r in rows:
         r["lines"] = by_claim.get(r.name, [])
+    return _enrich_attachments(rows)
+
+
+def _enrich_attachments(rows):
+    """Attach the list of File attachments to each claim record."""
+    if not rows:
+        return rows
+    files = frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": "Expense Claim",
+            "attached_to_name": ["in", [r.name for r in rows]],
+        },
+        fields=["attached_to_name", "file_name", "file_url"],
+        order_by="creation asc",
+    )
+    by_claim = {}
+    for f in files:
+        by_claim.setdefault(f.attached_to_name, []).append(
+            {"file_name": f.file_name, "file_url": f.file_url}
+        )
+    for r in rows:
+        r["attachments"] = by_claim.get(r.name, [])
     return rows
+
+
+def _link_attachments(claim_name, file_urls):
+    """Attach already-uploaded files (by URL) to an Expense Claim."""
+    for url in file_urls or []:
+        if not url:
+            continue
+        candidates = frappe.get_all(
+            "File",
+            filters={"file_url": url},
+            fields=["name", "attached_to_name"],
+            order_by="creation desc",
+            limit=5,
+        )
+        target = next((f for f in candidates if not f.attached_to_name), None)
+        if target:
+            frappe.db.set_value(
+                "File",
+                target.name,
+                {"attached_to_doctype": "Expense Claim", "attached_to_name": claim_name},
+                update_modified=False,
+            )
+        elif not candidates:
+            frappe.get_doc({
+                "doctype": "File",
+                "file_url": url,
+                "attached_to_doctype": "Expense Claim",
+                "attached_to_name": claim_name,
+            }).insert(ignore_permissions=True)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -172,16 +235,76 @@ def get_available_poids(team=None):
 
 
 @frappe.whitelist()
-def create_project_expense_claim(date=None, remarks=None, inet_team=None, expense_lines=None):
+def get_available_projects(team=None):
+    """Return Project Control Center projects for general (non-POID) expenses.
+
+    Scoped to projects the team's IM works on (directly assigned, or appearing
+    in the IM's PO Dispatches). Falls back to all active projects when the IM
+    has none linked yet.
+    """
+    im_name = None
+    if not team:
+        t = _get_team_for_user()
+        if t:
+            team = t.name
+    if team:
+        im_name = frappe.db.get_value("INET Team", team, "im")
+
+    rows = []
+    if im_name:
+        rows = frappe.db.sql(
+            """
+            SELECT DISTINCT pcc.name, pcc.project_code, pcc.project_name
+            FROM `tabProject Control Center` pcc
+            WHERE pcc.active_flag = 'Yes'
+              AND (
+                pcc.implementation_manager = %(im)s
+                OR pcc.project_code IN (
+                    SELECT DISTINCT project_code FROM `tabPO Dispatch`
+                    WHERE im = %(im)s AND project_code IS NOT NULL AND project_code != ''
+                )
+              )
+            ORDER BY pcc.project_code ASC
+            LIMIT 500
+            """,
+            {"im": im_name},
+            as_dict=True,
+        )
+
+    if not rows:
+        rows = frappe.get_all(
+            "Project Control Center",
+            filters={"active_flag": "Yes"},
+            fields=["name", "project_code", "project_name"],
+            order_by="project_code asc",
+            limit=500,
+        )
+    return rows
+
+
+@frappe.whitelist()
+def get_expense_tax_info():
+    """Return the VAT rate/account config used for tax-inclusive expense amounts."""
+    rate, account = _get_expense_tax_settings()
+    return {"tax_rate": rate, "tax_account_set": bool(account)}
+
+
+@frappe.whitelist()
+def create_project_expense_claim(date=None, remarks=None, inet_team=None, expense_lines=None, attachments=None):
     """Create a draft ERPNext Expense Claim for a project team lead.
 
     expense_lines: JSON list of {expense_type, description, amount, poids: [po_dispatch_name, ...]}
-    For multi-POID lines the amount is split equally across all selected POIDs.
+    Amounts entered are VAT-INCLUSIVE: the net portion is stored on the expense
+    rows (split equally across selected POIDs) and the VAT portion is added as
+    an Expense Taxes and Charges row, so grand_total equals the entered amount.
+    attachments: JSON list of already-uploaded file URLs to attach to the claim.
     """
     import json
 
     if isinstance(expense_lines, str):
         expense_lines = json.loads(expense_lines)
+    if isinstance(attachments, str):
+        attachments = json.loads(attachments)
 
     if not expense_lines:
         frappe.throw("At least one expense line is required.")
@@ -219,6 +342,11 @@ def create_project_expense_claim(date=None, remarks=None, inet_team=None, expens
     payable_account = frappe.db.get_single_value("INET Settings", "expense_payable_account") or None
     default_cost_center = frappe.db.get_value("Company", company, "cost_center") if company else None
 
+    # Entered amounts are VAT-inclusive — net goes on expense rows, VAT on a tax row
+    tax_rate, tax_account = _get_expense_tax_settings()
+    if tax_rate > 0 and not tax_account:
+        frappe.throw("Expense VAT Account is not configured in INET Settings. Ask an administrator to set it.")
+
     doc = frappe.new_doc("Expense Claim")
     doc.employee = employee
     doc.posting_date = posting_date
@@ -232,18 +360,46 @@ def create_project_expense_claim(date=None, remarks=None, inet_team=None, expens
         doc.remark = remarks
 
     # Build expense detail rows
+    total_tax = 0.0
     for line in expense_lines:
         exp_type = line.get("expense_type")
         description = line.get("description") or ""
-        total_amount = flt(line.get("amount") or 0)
+        gross_amount = flt(line.get("amount") or 0)
         poids = line.get("poids") or []
+        is_general = bool(line.get("is_general"))
+        project = line.get("project")
 
         if not exp_type:
             frappe.throw("Expense Type is required for each line.")
-        if total_amount <= 0:
+        if gross_amount <= 0:
             frappe.throw(f"Amount must be greater than zero for expense type '{exp_type}'.")
-        if not poids:
+        if is_general and not project:
+            frappe.throw(f"A project must be selected for general expense '{exp_type}'.")
+        if not is_general and not poids:
             frappe.throw(f"At least one POID must be selected for expense type '{exp_type}'.")
+
+        # Back out the VAT portion: entered amount is tax-inclusive
+        if tax_rate > 0:
+            total_amount = flt(gross_amount / (1 + tax_rate / 100), 2)
+            total_tax += flt(gross_amount - total_amount, 2)
+        else:
+            total_amount = gross_amount
+
+        # General expense — booked against the project, not a POID
+        if is_general:
+            row = doc.append("expenses", {})
+            row.expense_date = posting_date
+            row.expense_type = exp_type
+            row.description = description
+            row.amount = total_amount
+            row.sanctioned_amount = total_amount
+            if default_cost_center and hasattr(row, "cost_center"):
+                row.cost_center = default_cost_center
+            # field auto-created by the Project Control Center accounting dimension
+            if not hasattr(row, "project_control_center"):
+                frappe.throw("Project accounting dimension is not set up yet. Run bench migrate.")
+            row.project_control_center = project
+            continue
 
         split_amount = flt(total_amount / len(poids), 2)
         # Distribute any rounding remainder to the last row
@@ -263,8 +419,20 @@ def create_project_expense_claim(date=None, remarks=None, inet_team=None, expens
             if hasattr(row, "poid"):
                 row.poid = poid
 
+    # VAT row — with rate set, ERPNext recomputes tax_amount as rate% of the
+    # sanctioned total, so the tax follows any adjustment accounts makes later.
+    if tax_rate > 0 and total_tax > 0:
+        doc.append("taxes", {
+            "account_head": tax_account,
+            "description": f"VAT {flt(tax_rate)}% (included in claimed amount)",
+            "rate": flt(tax_rate),
+            "tax_amount": flt(total_tax, 2),
+        })
+
     doc.flags.ignore_permissions = True
     doc.insert()
+
+    _link_attachments(doc.name, attachments)
 
     # Share with IM approver so they can view & approve
     try:
@@ -278,6 +446,19 @@ def create_project_expense_claim(date=None, remarks=None, inet_team=None, expens
         )
     except Exception:
         pass
+
+    # Notify the IM that a new claim is waiting for approval
+    try:
+        from inet_app.api.notifications import _make_notification
+        employee_name = frappe.db.get_value("Employee", employee, "employee_name") or employee
+        _make_notification(
+            im_user,
+            f"[ALERT] New expense claim from {employee_name} — SAR {flt(doc.grand_total, 2)}",
+            "Expense Claim", doc.name,
+            link="/pms/im-expense",
+        )
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Expense claim filing notification failed")
 
     return {"claim_name": doc.name, "status": doc.approval_status}
 
@@ -295,6 +476,8 @@ def list_my_expense_claims():
             ec.name,
             ec.posting_date,
             ec.total_claimed_amount,
+            ec.total_taxes_and_charges,
+            ec.grand_total,
             ec.total_sanctioned_amount,
             ec.approval_status,
             ec.docstatus,
@@ -328,6 +511,8 @@ def list_pending_expense_approvals():
             ec.posting_date,
             ec.employee,
             ec.total_claimed_amount,
+            ec.total_taxes_and_charges,
+            ec.grand_total,
             ec.approval_status,
             ec.docstatus,
             ec.status,
@@ -364,6 +549,8 @@ def list_im_all_claims():
             ec.posting_date,
             ec.employee,
             ec.total_claimed_amount,
+            ec.total_taxes_and_charges,
+            ec.grand_total,
             ec.approval_status,
             ec.docstatus,
             ec.status,
@@ -423,6 +610,8 @@ def list_all_expense_claims(filters=None):
             ec.posting_date,
             ec.employee,
             ec.total_claimed_amount,
+            ec.total_taxes_and_charges,
+            ec.grand_total,
             ec.approval_status,
             ec.docstatus,
             ec.status,
@@ -457,14 +646,26 @@ def get_expense_claim_detail(claim_name):
     lines = []
     for row in doc.expenses:
         raw_poid = getattr(row, "poid", None)
+        raw_project = getattr(row, "project_control_center", None)
+        project_display = None
+        if raw_project:
+            project_display = frappe.db.get_value("Project Control Center", raw_project, "project_code") or raw_project
         lines.append({
             "expense_type": row.expense_type,
             "description": row.description,
             "amount": row.amount,
             "sanctioned_amount": row.sanctioned_amount,
             "poid": _resolve_poid_display(raw_poid),  # human-readable POID
+            "project": project_display,  # set for general (project-level) expenses
             "expense_date": str(row.expense_date) if row.expense_date else None,
         })
+
+    attachments = frappe.get_all(
+        "File",
+        filters={"attached_to_doctype": "Expense Claim", "attached_to_name": doc.name},
+        fields=["file_name", "file_url"],
+        order_by="creation asc",
+    )
 
     return {
         "name": doc.name,
@@ -478,54 +679,64 @@ def get_expense_claim_detail(claim_name):
         "status": doc.status,
         "total_claimed_amount": doc.total_claimed_amount,
         "total_sanctioned_amount": doc.total_sanctioned_amount,
+        "total_taxes_and_charges": doc.total_taxes_and_charges,
+        "grand_total": doc.grand_total,
         "remark": doc.remark,
         "lines": lines,
+        "attachments": attachments,
     }
+
+
+def _notify_claim_filer(doc, subject):
+    """Send a portal notification to the employee who filed the claim."""
+    try:
+        from inet_app.api.notifications import _make_notification
+        filer = frappe.db.get_value("Employee", doc.employee, "user_id")
+        _make_notification(filer, subject, "Expense Claim", doc.name, link="/pms/field-expense")
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Expense claim status notification failed")
 
 
 @frappe.whitelist()
 def approve_expense_claim(claim_name):
-    """Approve and submit an expense claim. Caller must be the expense_approver."""
+    """Approve an expense claim WITHOUT submitting it. Caller must be the expense_approver.
+
+    The claim stays in draft (docstatus 0) so the accounts team can still adjust
+    amounts/accounts in ERPNext before they submit it themselves (which creates GL entries).
+    """
     doc = frappe.get_doc("Expense Claim", claim_name)
 
     if doc.expense_approver != frappe.session.user:
         frappe.throw("Only the designated approver can approve this expense claim.")
     if doc.docstatus != 0:
         frappe.throw("Expense Claim is already submitted or cancelled.")
+    if doc.approval_status == "Rejected":
+        frappe.throw("Expense Claim has already been rejected.")
 
-    # Ensure payable_account is set before submission
+    # Pre-fill payable_account so accounts can submit without extra steps
     if not doc.payable_account:
         payable_account = frappe.db.get_single_value("INET Settings", "expense_payable_account")
         if payable_account:
             frappe.db.set_value("Expense Claim", claim_name, "payable_account", payable_account)
 
-    # Set approval status (permlevel 1 field — bypass via db.set_value)
+    # Set approval status only (permlevel 1 field — bypass via db.set_value).
+    # Deliberately NOT submitting: accounts team finalises in ERPNext.
     frappe.db.set_value("Expense Claim", claim_name, "approval_status", "Approved")
-    frappe.db.commit()
 
-    # Reload and submit
-    doc.reload()
-    doc.flags.ignore_permissions = True
-    doc.submit()
+    _notify_claim_filer(doc, f"[INFO] Expense claim {claim_name} approved — SAR {flt(doc.grand_total, 2)}")
 
     return {"status": "Approved", "claim_name": claim_name}
 
 
 @frappe.whitelist()
 def reject_expense_claim(claim_name, reason=None):
-    """Reject an expense claim. Caller must be the expense_approver."""
+    """Reject an expense claim (stays draft, no submission). Caller must be the expense_approver."""
     doc = frappe.get_doc("Expense Claim", claim_name)
 
     if doc.expense_approver != frappe.session.user:
         frappe.throw("Only the designated approver can reject this expense claim.")
     if doc.docstatus != 0:
         frappe.throw("Expense Claim is already submitted or cancelled.")
-
-    # Ensure payable_account is set before submission
-    if not doc.payable_account:
-        payable_account = frappe.db.get_single_value("INET Settings", "expense_payable_account")
-        if payable_account:
-            frappe.db.set_value("Expense Claim", claim_name, "payable_account", payable_account)
 
     # Set rejection fields (permlevel 1 — bypass via db.set_value)
     frappe.db.set_value(
@@ -536,12 +747,8 @@ def reject_expense_claim(claim_name, reason=None):
             "remark": reason or doc.remark or "",
         },
     )
-    frappe.db.commit()
 
-    # Submit so the record is finalised (docstatus = 1, no GL entries for rejected)
-    doc.reload()
-    doc.flags.ignore_permissions = True
-    doc.submit()
+    _notify_claim_filer(doc, f"[CRITICAL] Expense claim {claim_name} rejected — check remarks")
 
     return {"status": "Rejected", "claim_name": claim_name}
 

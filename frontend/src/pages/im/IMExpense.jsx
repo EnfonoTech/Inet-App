@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { pmApi } from "../../services/api";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import DateRangePicker from "../../components/DateRangePicker";
+import AttachmentsSection from "../../components/AttachmentsSection";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -9,11 +10,15 @@ import { useTableRowLimit } from "../../context/TableRowLimitContext";
 const fmtAmt = (n) =>
   Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Amount the TL entered (VAT-inclusive grand total; falls back for old claims)
+const grossAmt = (c) => Number(c?.grand_total ?? c?.total_claimed_amount) || 0;
+
+// Approved claims stay docstatus 0 until the accounts team submits in ERPNext —
+// they still count as Approved here.
 function effectiveStatus(claim) {
   if (!claim) return "Pending";
   const s = (claim.approval_status || "").toLowerCase();
   if (s === "draft") return "Pending";
-  if (s === "approved" && claim.docstatus !== 1) return "Pending";
   return claim.approval_status || "Pending";
 }
 
@@ -59,15 +64,17 @@ function StatusBadge({ status }) {
 
 // ── Expense Lines Detail ──────────────────────────────────────────────────────
 
-function ExpenseLines({ lines }) {
+function ExpenseLines({ lines, claim }) {
   if (!lines || lines.length === 0)
     return <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>No lines</div>;
+  const netTotal = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  const vat = Number(claim?.total_taxes_and_charges) || 0;
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.81rem" }}>
       <thead>
         <tr style={{ background: "#f1f5f9" }}>
           <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Expense Type</th>
-          <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>POID</th>
+          <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>POID / Project</th>
           <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Description</th>
           <th style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: "#475569" }}>Amount (SAR)</th>
         </tr>
@@ -76,15 +83,29 @@ function ExpenseLines({ lines }) {
         {lines.map((l, i) => (
           <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
             <td style={{ padding: "6px 10px" }}>{l.expense_type}</td>
-            <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#1e40af", fontSize: "0.78rem" }}>{l.poid || "—"}</td>
+            <td style={{ padding: "6px 10px", fontFamily: "monospace", fontSize: "0.78rem", color: l.poid ? "#1e40af" : "#7c3aed" }}>
+              {l.poid || (l.project ? `${l.project} (General)` : "—")}
+            </td>
             <td style={{ padding: "6px 10px", color: "#64748b" }}>{l.description || "—"}</td>
             <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600 }}>{fmtAmt(l.amount)}</td>
           </tr>
         ))}
+        {vat > 0 && (
+          <>
+            <tr style={{ borderTop: "2px solid #e2e8f0" }}>
+              <td colSpan={3} style={{ padding: "6px 10px", textAlign: "right", color: "#64748b" }}>Net Total</td>
+              <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600 }}>{fmtAmt(netTotal)}</td>
+            </tr>
+            <tr>
+              <td colSpan={3} style={{ padding: "6px 10px", textAlign: "right", color: "#64748b" }}>VAT (included)</td>
+              <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600 }}>{fmtAmt(vat)}</td>
+            </tr>
+          </>
+        )}
         <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
           <td colSpan={3} style={{ padding: "6px 10px", fontWeight: 700, textAlign: "right", color: "#334155" }}>Total</td>
           <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 800, color: "#1d4ed8" }}>
-            {fmtAmt(lines.reduce((s, l) => s + (Number(l.amount) || 0), 0))}
+            {fmtAmt(vat > 0 ? netTotal + vat : netTotal)}
           </td>
         </tr>
       </tbody>
@@ -115,7 +136,7 @@ function ClaimDetailModal({ open, claim, onClose }) {
             { label: "Team Lead", value: claim.employee_name || claim.employee },
             { label: "Team", value: claim.team_name || claim.inet_team || "—" },
             { label: "IM", value: claim.im_name || "—" },
-            { label: "Amount", value: `SAR ${fmtAmt(claim.total_claimed_amount)}` },
+            { label: "Amount", value: `SAR ${fmtAmt(grossAmt(claim))}` },
             { label: "Payment", value: paymentStatus(claim) || "—" },
           ].map(({ label, value }) => (
             <div key={label} style={{ flex: "1 1 110px", background: "#f8fafc", borderRadius: 8, padding: "8px 10px" }}>
@@ -133,7 +154,13 @@ function ClaimDetailModal({ open, claim, onClose }) {
             {claim.remark}
           </div>
         )}
-        <ExpenseLines lines={claim.lines} />
+        <ExpenseLines lines={claim.lines} claim={claim} />
+        <AttachmentsSection
+          urls={(claim.attachments || []).map((a) => a.file_url)}
+          title="Receipts / Documents"
+          readOnly
+          noCamera
+        />
       </div>
     </div>
   );
@@ -183,7 +210,7 @@ function ActionModal({ open, claim, mode, onClose, onDone }) {
         <div style={{ fontSize: "0.86rem", marginBottom: 12 }}>
           <strong>{claim.name}</strong> — {claim.employee_name || claim.employee}
           <div style={{ fontSize: "0.8rem", color: "#64748b", marginTop: 2 }}>
-            {claim.team_name || claim.inet_team} · {claim.posting_date} · SAR {fmtAmt(claim.total_claimed_amount)}
+            {claim.team_name || claim.inet_team} · {claim.posting_date} · SAR {fmtAmt(grossAmt(claim))}
           </div>
         </div>
         {mode === "reject" && (
@@ -347,7 +374,7 @@ export default function IMExpense({ isAdmin = false }) {
   const unpaidCount = useMemo(() => allClaims.filter((c) => effectiveStatus(c) === "Approved" && (c.status || "").toLowerCase() !== "paid").length, [allClaims]);
   const paidCount   = useMemo(() => allClaims.filter((c) => (c.status || "").toLowerCase() === "paid").length, [allClaims]);
 
-  const totalAmt = useMemo(() => rows.reduce((s, c) => s + (Number(c.total_claimed_amount) || 0), 0), [rows]);
+  const totalAmt = useMemo(() => rows.reduce((s, c) => s + grossAmt(c), 0), [rows]);
   const hasFilters = search || dateFrom || dateTo || (tab === "all" && statusFilter) || imFilter || teamFilter;
 
   const visibleRows = rowLimit === 0 ? rows : rows.slice(0, rowLimit);
@@ -464,7 +491,7 @@ export default function IMExpense({ isAdmin = false }) {
                       <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.employee_name || c.employee}</td>
                       <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.team_name || c.inet_team || "—"}</td>
                       {isAdmin && <td style={{ padding: "10px 14px", fontSize: "0.83rem", color: "#475569" }}>{c.im_name || "—"}</td>}
-                      <td style={{ padding: "10px 14px", fontWeight: 700, textAlign: "right", color: "#1d4ed8" }}>SAR {fmtAmt(c.total_claimed_amount)}</td>
+                      <td style={{ padding: "10px 14px", fontWeight: 700, textAlign: "right", color: "#1d4ed8" }}>SAR {fmtAmt(grossAmt(c))}</td>
                       <td style={{ padding: "10px 14px" }}><StatusBadge status={effectiveStatus(c)} /></td>
                       <td style={{ padding: "10px 14px" }}><PaymentBadge claim={c} /></td>
                       <td style={{ padding: "10px 14px" }}>

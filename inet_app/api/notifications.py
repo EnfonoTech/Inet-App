@@ -343,6 +343,11 @@ def on_huawei_plan_insert(doc, method=None):
 # ---------------------------------------------------------------------------
 
 def on_expense_claim_submit(doc, method=None):
+	# Project claims are submitted by the ACCOUNTS team after IM approval —
+	# the portal already notified the IM at filing time and the TL at
+	# approval time (see inet_app.api.expense), so skip them here.
+	if doc.get("is_project_claim"):
+		return
 	_make_notification(
 		doc.expense_approver,
 		f"[ALERT] Expense claim from {doc.employee_name} — {doc.total_claimed_amount}",
@@ -356,10 +361,10 @@ def on_expense_claim_update(doc, method=None):
 	if not before or doc.status == before.status:
 		return
 	submitter = frappe.db.get_value("Employee", doc.employee, "user_id")
-	if doc.status == "Approved":
+	if doc.status == "Paid":
 		_make_notification(
 			submitter,
-			f"[INFO] Expense claim approved — {doc.total_claimed_amount}",
+			f"[INFO] Expense claim paid — {doc.grand_total or doc.total_claimed_amount}",
 			"Expense Claim", doc.name,
 			link="/pms/field-expense",
 		)

@@ -22,6 +22,7 @@ def after_migrate():
     _ensure_duid_inventory_dimension()
     _ensure_outbound_custom_fields()
     _ensure_poid_accounting_dimension()
+    _ensure_project_accounting_dimension()
     _ensure_material_permissions()
     _ensure_material_return_field()
 
@@ -403,6 +404,38 @@ def _ensure_poid_accounting_dimension():
         frappe.db.commit()
     except Exception:
         frappe.log_error(frappe.get_traceback(), "POID Accounting Dimension setup failed")
+
+
+def _ensure_project_accounting_dimension():
+    """Create the Project Control Center Accounting Dimension if it does not exist.
+
+    Lets general (non-POID) project expenses carry the project on GL entries.
+    Fields are created synchronously — after_insert only enqueues them, and the
+    expense API needs the `project_control_center` column right after migrate.
+    """
+    if not frappe.db.exists("DocType", "Accounting Dimension"):
+        return
+    if frappe.db.exists("Accounting Dimension", {"document_type": "Project Control Center"}):
+        return
+    if not frappe.db.exists("DocType", "Project Control Center"):
+        return
+    try:
+        dim = frappe.get_doc({
+            "doctype": "Accounting Dimension",
+            "document_type": "Project Control Center",
+            "label": "Project Control Center",
+            "fieldname": "project_control_center",
+            "disabled": 0,
+        })
+        dim.insert(ignore_permissions=True)
+
+        from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
+            make_dimension_in_accounting_doctypes,
+        )
+        make_dimension_in_accounting_doctypes(doc=dim)
+        frappe.db.commit()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Project Accounting Dimension setup failed")
 
 
 def _ensure_material_permissions():
