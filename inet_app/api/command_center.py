@@ -6882,12 +6882,18 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             _tc_cost = flt(_ti.daily_cost if _ti else 0) * min(_ip_period_days, 30)
         _ip_cost_by_im[_tc.im] = _ip_cost_by_im.get(_tc.im, 0.0) + _tc_cost
 
+    _ip_rev_by_im  = {r.im: r for r in _ip_rev_rows}
+    _ip_all_ims    = frappe.db.sql(
+        "SELECT name, COALESCE(full_name, name) AS im_name FROM `tabIM Master`",
+        as_dict=True,
+    )
     im_perf = []
-    for _r in _ip_rev_rows:
+    for _im_rec in _ip_all_ims:
+        _r    = _ip_rev_by_im.get(_im_rec.name, frappe._dict(revenue=0, team_count=0))
         _rev  = flt(_r.revenue)
-        _cost = round(_ip_cost_by_im.get(_r.im, 0.0), 0)
+        _cost = round(_ip_cost_by_im.get(_im_rec.name, 0.0), 0)
         im_perf.append({
-            "im":        _r.im_name or _r.im,
+            "im":        _im_rec.im_name,
             "teams":     cint(_r.team_count),
             "revenue":   round(_rev, 0),
             "team_cost": _cost,
