@@ -257,6 +257,7 @@ export default function IMWorkDone() {
   const [bulkIssueFlagBusy, setBulkIssueFlagBusy] = useState(false);
   const [bulkIssueFlagErr, setBulkIssueFlagErr] = useState(null);
   const [bulkIssueFlagResult, setBulkIssueFlagResult] = useState(null);
+  const [tab, setTab] = useState("active"); // "active" | "confirmed" | "pic_rejected"
 
   const WD_ISSUE_OPTIONS = [
     "", "POD/PPT required", "TFM Check list", "Spare part return",
@@ -456,7 +457,15 @@ export default function IMWorkDone() {
       .finally(() => setDetailAttachLoading(false));
   }, [detailRow]);
 
-  const filteredRows = useMemo(() => rows.filter((r) => {
+  useEffect(() => { setSelectedRows(new Set()); setSubmissionFilter([]); }, [tab]);
+
+  const tabRows = useMemo(() => {
+    if (tab === "confirmed") return rows.filter((r) => r.submission_status === "Confirmation Done");
+    if (tab === "pic_rejected") return rows.filter((r) => r.submission_status === "PIC Rejected" || !!r.pic_rejection_remark);
+    return rows.filter((r) => r.submission_status !== "Confirmation Done" && r.submission_status !== "PIC Rejected" && !r.pic_rejection_remark);
+  }, [rows, tab]);
+
+  const filteredRows = useMemo(() => tabRows.filter((r) => {
     if (submissionFilter.length) {
       const sub = r.submission_status || "";
       const wantsNone = submissionFilter.includes("__NONE__");
@@ -473,7 +482,7 @@ export default function IMWorkDone() {
     }
     if (sourceFilter.length && !sourceFilter.includes(r.source || "")) return false;
     return true;
-  }), [rows, submissionFilter, execStatusFilter, issueFlagFilter, sourceFilter]);
+  }), [tabRows, submissionFilter, execStatusFilter, issueFlagFilter, sourceFilter]);
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
   const bulkActTypes = [...new Set(filteredRows.filter((r) => selectedRows.has(r.name)).map((r) => r.activity_type).filter(Boolean))];
@@ -492,17 +501,48 @@ export default function IMWorkDone() {
     { lineAmount: 0, revenue: 0 }
   );
 
+  function tabStyle(active) {
+    return {
+      padding: "8px 20px", fontSize: "0.86rem", fontWeight: 700, border: "none",
+      borderBottom: active ? "2px solid #1d4ed8" : "2px solid transparent",
+      background: "none", cursor: "pointer", color: active ? "#1d4ed8" : "#64748b",
+      transition: "color 120ms",
+    };
+  }
+
+  const confirmedCount = rows.filter((r) => r.submission_status === "Confirmation Done").length;
+  const picRejectedCount = rows.filter((r) => r.submission_status === "PIC Rejected" || !!r.pic_rejection_remark).length;
+
   return (
     <div>
       <div className="page-header">
         <div>
           <h1 className="page-title">Work Done</h1>
-          <div className="page-subtitle">Completed work rows for your IM scope.</div>
+          <div className="page-subtitle">
+            {tab === "confirmed" ? "Lines confirmed by PIC." : tab === "pic_rejected" ? "Lines rejected by PIC." : "Active work rows for your IM scope."}
+          </div>
         </div>
         <div className="page-actions">
           <ExportExcelButton filename="im-work-done" rows={filteredRows} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", margin: "0 0 2px", paddingLeft: 4 }}>
+        <button type="button" style={tabStyle(tab === "active")} onClick={() => setTab("active")}>Active</button>
+        <button type="button" style={tabStyle(tab === "confirmed")} onClick={() => setTab("confirmed")}>
+          Confirmation Done
+          {confirmedCount > 0 && tab !== "confirmed" && (
+            <span style={{ marginLeft: 6, background: "#dcfce7", color: "#14532d", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{confirmedCount}</span>
+          )}
+        </button>
+        <button type="button" style={tabStyle(tab === "pic_rejected")} onClick={() => setTab("pic_rejected")}>
+          PIC Rejected
+          {picRejectedCount > 0 && tab !== "pic_rejected" && (
+            <span style={{ marginLeft: 6, background: "#fee2e2", color: "#991b1b", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{picRejectedCount}</span>
+          )}
+        </button>
       </div>
       <div className="toolbar">
         <input
@@ -512,14 +552,16 @@ export default function IMWorkDone() {
           onChange={(e) => setSearch(e.target.value)}
           style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240 }}
         />
-        <SearchableSelect
-          multi
-          value={submissionFilter}
-          onChange={setSubmissionFilter}
-          options={[{ id: "__NONE__", label: "Not set" }, { id: "Ready for Confirmation", label: "Ready for Confirmation" }, { id: "Confirmation Done", label: "Confirmation Done" }]}
-          placeholder="All Submission"
-          minWidth={150}
-        />
+        {tab === "active" && (
+          <SearchableSelect
+            multi
+            value={submissionFilter}
+            onChange={setSubmissionFilter}
+            options={[{ id: "__NONE__", label: "Not set" }, { id: "Ready for Confirmation", label: "Ready for Confirmation" }]}
+            placeholder="All Submission"
+            minWidth={150}
+          />
+        )}
         <SearchableSelect
           multi
           value={issueFlagFilter}
@@ -621,7 +663,7 @@ export default function IMWorkDone() {
           ) : filteredRows.length === 0 ? (
             <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No work done rows"}</h3></div>
           ) : (
-            <table className="data-table" data-table-key="im-workdone-v1">
+            <table className="data-table" data-table-key={`im-workdone-v1-${tab}`}>
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -665,6 +707,7 @@ export default function IMWorkDone() {
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Billing Status</th>
                   <th>Submission Status</th>
+                  <th>PIC Rejection Reason</th>
                   <th>Source</th>
                   <th>Issue Flag</th>
                   <th>Actions</th>
@@ -714,6 +757,7 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.revenue_sar || 0)}</td>
                     <td title={r.pic_status ? `PIC status: ${r.pic_status}` : ""}><StatusPill value={r.billing_status} /></td>
                     <td><StatusPill value={r.submission_status} /></td>
+                    <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: r.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={r.pic_rejection_remark || ""}>{r.pic_rejection_remark || "—"}</td>
                     <td>
                       {r.source === "Direct Close" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0369a1", border: "1px solid #93c5fd", whiteSpace: "nowrap" }} title={r.direct_close_by ? `Closed by: ${r.direct_close_by_full_name || r.direct_close_by}` : ""}>Direct Close</span>}
                       {r.source === "Backend" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#ede9fe", color: "#7c3aed", border: "1px solid #c4b5fd", whiteSpace: "nowrap" }}>Backend</span>}
@@ -750,7 +794,7 @@ export default function IMWorkDone() {
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
                     {fmt.format(totals.revenue)}
                   </td>
-                  <td /><td /><td /><td />
+                  <td /><td /><td /><td /><td /><td />
                 </tr>
               </tfoot>
             </table>
