@@ -300,7 +300,7 @@ export default function IMExecution() {
     for (const e of executions) {
       if (e.is_dummy_po) continue;
       if (e.execution_status !== "Completed") continue;
-      if (!(isNotRequired(e.qc_required) || e.qc_status === "Pass")) continue;
+      if (!(isNotRequired(e.qc_required) || ["Pass", "Not Applicable"].includes(e.qc_status))) continue;
       if (e.work_done) continue;
       const key = e.rollout_plan || e.name;
       if (seenPlans.has(key)) continue;
@@ -391,7 +391,7 @@ export default function IMExecution() {
       return `Work Done already exists${suffix}`;
     }
     if (e.execution_status !== "Completed") return `Not completed — ${e.execution_status || "—"}`;
-    if (!isNotRequired(e.qc_required) && e.qc_status !== "Pass") return `QC not passed — ${e.qc_status || "Pending"}`;
+    if (!isNotRequired(e.qc_required) && !["Pass", "Not Applicable"].includes(e.qc_status)) return `QC not passed — ${e.qc_status || "Pending"}`;
     return "Duplicate plan (another execution covers this)";
   }
 
