@@ -8,6 +8,9 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import DateRangePicker from "../../components/DateRangePicker";
+import RecordDetailView from "../../components/RecordDetailView";
+import IMNoteCallout from "../../components/IMNoteCallout";
+import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
@@ -235,6 +238,9 @@ export default function IMPOIntake() {
   const [mapBusy, setMapBusy] = useState(false);
   const [mapErr, setMapErr] = useState(null);
   const [mapLinesLoading, setMapLinesLoading] = useState(false);
+
+  // Intake tab view popup (IMPlanning-style)
+  const [intakeViewRow, setIntakeViewRow] = useState(null);
 
   // Dummy detail popup
   const [detailRow, setDetailRow] = useState(null);
@@ -1030,6 +1036,7 @@ export default function IMPOIntake() {
                     <th>DUID</th>
                     <th>Center area</th>
                     <th>Dispatched On</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1056,6 +1063,9 @@ export default function IMPOIntake() {
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>{row.center_area || "—"}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{row.modified ? String(row.modified).slice(0, 10) : "—"}</td>
+                      <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
+                        <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }} onClick={() => setIntakeViewRow(row)}>View</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1282,6 +1292,51 @@ export default function IMPOIntake() {
               <button type="button" className="btn-primary" disabled={mapBusy || !mapLineId || mapLinesLoading} onClick={submitMapDummy}>
                 {mapBusy ? "Mapping…" : "Map PO"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── INTAKE VIEW POPUP (Rollout Planning style) ──────────────────── */}
+      {intakeViewRow && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setIntakeViewRow(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, width: "min(840px, 96vw)", maxHeight: "calc(100dvh - 32px)", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 48px -16px rgba(0,0,0,0.3)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>PO Dispatch Details</h3>
+              <button type="button" onClick={() => setIntakeViewRow(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            <div style={{ padding: 20, overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
+              <RecordDetailView
+                row={intakeViewRow}
+                pills={[
+                  { label: "POID", value: intakeViewRow.poid || intakeViewRow.name, tone: "blue" },
+                  { label: "DUID", value: intakeViewRow.site_code || "—", tone: "green" },
+                  { label: "Project", value: intakeViewRow.project_code || "—", tone: "violet" },
+                  intakeViewRow.dispatch_status ? {
+                    label: "Status",
+                    value: intakeViewRow.dispatch_status,
+                    tone: /complete/i.test(intakeViewRow.dispatch_status) ? "green" : /cancel/i.test(intakeViewRow.dispatch_status) ? "rose" : "slate",
+                  } : null,
+                ].filter(Boolean)}
+                hiddenFields={[
+                  "name", "poid", "site_code", "project_code", "dispatch_status", "im",
+                  "manager_remark", "general_remark", "team_lead_remark",
+                  "is_dummy_po", "was_dummy_po", "original_dummy_poid",
+                  "pic_status", "pic_detail_remark", "payment_terms",
+                  "ms1_amount", "ms2_amount", "ms1_invoiced", "ms2_invoiced",
+                  "ms1_invoice_month", "ms2_invoice_month",
+                  "direct_close_by", "plan_documents",
+                ]}
+                keyOrder={["po_no", "dispatch_mode", "project_domain", "huawei_im", "activity_type", "item_code", "item_description", "qty", "rate", "line_amount", "target_month", "center_area", "region_type"]}
+              />
+              <IMNoteCallout note={intakeViewRow.manager_remark} />
+              <DispatchVisitHistory poDispatch={intakeViewRow.name} />
             </div>
           </div>
         </div>

@@ -283,6 +283,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     sqc_expr = _po_dispatch_col_expr("sqc_status")
     pat_expr = _po_dispatch_col_expr("pat_status")
     im_rej_expr = _po_dispatch_col_expr("im_rejection_remark")
+    pic_rej_expr = _po_dispatch_col_expr("pic_rejection_remark")
 
     sql = f"""
     SELECT  /* {limit_page_length} = 0 → unlimited; with_team_type={int(with_team_type)} */
@@ -306,7 +307,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       imm.full_name AS im_full_name,
       pd.dispatch_status,
       pd.payment_terms,
-      {sqc_expr}, {pat_expr}, {im_rej_expr},
+      {sqc_expr}, {pat_expr}, {im_rej_expr}, {pic_rej_expr},
       ({_PIC_INITIAL_RULE_SQL.strip()}) AS pic_status_effective,
       pd.pic_status AS pic_status_stored,
       pd.pic_status_ms2,

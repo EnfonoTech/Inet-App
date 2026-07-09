@@ -67,6 +67,7 @@ const CSV_COLUMNS = [
   ["pic_status_effective", "PIC Status (MS1)"],
   ["isdp_owner", "ISDP Owner"],
   ["ibuy_owner", "iBuy Owner"],
+  ["pic_rejection_remark", "PIC Rejection Reason"],
   ["pic_detail_remark", "Detail Remarks (MS1)"],
   ["ms1_applied_date", "Applied Date (MS1)"],
   ["ms1_pct", "MS1 %"],
@@ -478,6 +479,7 @@ export default function PICTracker() {
                   <th>Payment Terms</th>
                   <th>IM Status</th>
                   <th>PIC Status (MS1)</th>
+                  <th>PIC Rejection Reason</th>
                   <th>ISDP Owner</th>
                   <th>iBuy Owner</th>
                   <th>Applied Date (MS1)</th>
@@ -519,6 +521,7 @@ export default function PICTracker() {
                     <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.payment_terms || ""}>{r.payment_terms || "—"}</td>
                     <td><IMStatusPill value={r.im_submission_status} /></td>
                     <td><StatusPill value={r.pic_status_effective} /></td>
+                    <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: r.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={r.pic_rejection_remark || ""}>{r.pic_rejection_remark || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.isdp_owner || ""}>{r.isdp_owner || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.ibuy_owner || ""}>{r.ibuy_owner || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms1_applied_date ? String(r.ms1_applied_date).slice(0, 10) : "—"}</td>
@@ -548,50 +551,46 @@ export default function PICTracker() {
                 ))}
               </tbody>
               <tfoot>
-                {/* 27 columns total. Empty cells preserve alignment with
-                    the header so totals land under the right column. */}
+                {/* 32 columns: checkbox · Subcontract · Contract Model · POID · PO No ·
+                    PO Status · Project Domain · Project · Item · Description · DUID ·
+                    Qty · Unit Price · Line Amount · Tax Rate · Payment Terms · IM Status ·
+                    PIC Status MS1 · PIC Rejection Reason · ISDP Owner · iBuy Owner ·
+                    Applied MS1 · MS1% · MS1 Amt · MS1 Inv · MS1 Unb ·
+                    PIC Status MS2 · Applied MS2 · MS2% · MS2 Amt · MS2 Inv · Edit */}
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
-                  {/* 1 checkbox · 2-3 POID/PO No (row count colspan) */}
-                  <td></td>
+                  <td></td>{/* checkbox */}
                   <td colSpan={2} style={{ fontSize: "0.78rem", color: "#475569" }}>
                     {fmtInt.format(rows.length)} row{rows.length !== 1 ? "s" : ""}
-                  </td>
-                  {/* 4 PO Status · 5 Project Domain · 6 Project ·
-                      7 Item · 8 Description · 9 DUID */}
-                  <td></td>
-                  <td></td>
-                  <td></td>
-                  <td></td>
-                  <td></td>
-                  <td></td>
-                  {/* 10 Qty */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtInt.format(totals.qty)}</td>
-                  {/* 11 Unit Price */}
-                  <td></td>
-                  {/* 12 Line Amount */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.line_amount)}</td>
-                  {/* 13 Tax · 14 Payment Terms · 15 PIC MS1 ·
-                      16 ISDP Owner · 17 iBuy Owner · 18 Applied MS1 */}
-                  <td></td>
-                  <td></td>
-                  <td></td>
-                  <td></td>
-                  <td></td>
-                  <td></td>
-                  {/* 19 MS1 % (no total) · 20-22 MS1 Amt / Invoiced / Unbilled */}
-                  <td></td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms1_invoiced)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>{fmt.format(totals.ms1_unbilled)}</td>
-                  {/* 22 PIC MS2 · 23 Applied MS2 */}
-                  <td></td>
-                  <td></td>
-                  {/* 24 MS2 % (no total) · 25 MS2 Amt · 26 MS2 Invoiced */}
-                  <td></td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms2_invoiced)}</td>
-                  {/* 27 Edit */}
-                  <td></td>
+                  </td>{/* Subcontract + Contract Model */}
+                  <td></td>{/* POID */}
+                  <td></td>{/* PO No */}
+                  <td></td>{/* PO Status */}
+                  <td></td>{/* Project Domain */}
+                  <td></td>{/* Project */}
+                  <td></td>{/* Item */}
+                  <td></td>{/* Description */}
+                  <td></td>{/* DUID */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtInt.format(totals.qty)}</td>{/* Qty */}
+                  <td></td>{/* Unit Price */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.line_amount)}</td>{/* Line Amount */}
+                  <td></td>{/* Tax Rate */}
+                  <td></td>{/* Payment Terms */}
+                  <td></td>{/* IM Status */}
+                  <td></td>{/* PIC Status MS1 */}
+                  <td></td>{/* PIC Rejection Reason */}
+                  <td></td>{/* ISDP Owner */}
+                  <td></td>{/* iBuy Owner */}
+                  <td></td>{/* Applied MS1 */}
+                  <td></td>{/* MS1 % */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms1_invoiced)}</td>{/* MS1 Invoiced */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>{fmt.format(totals.ms1_unbilled)}</td>{/* MS1 Unbilled */}
+                  <td></td>{/* PIC Status MS2 */}
+                  <td></td>{/* Applied MS2 */}
+                  <td></td>{/* MS2 % */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms2_invoiced)}</td>{/* MS2 Invoiced */}
+                  <td></td>{/* Edit */}
                 </tr>
               </tfoot>
             </table>

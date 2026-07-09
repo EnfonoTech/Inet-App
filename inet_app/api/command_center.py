@@ -195,7 +195,7 @@ def _sql_like_pattern(term):
     return f"%{t}%"
 
 
-def _sql_like_tokens(term, max_tokens=50):
+def _sql_like_tokens(term, max_tokens=1000):
     """Split a free-text search on whitespace / commas / semicolons / pipes
     into individual LIKE patterns. Any row matching any token is returned
     (OR'd). Multi-word phrases are not preserved — users who need phrase
@@ -217,12 +217,41 @@ def _sql_like_tokens(term, max_tokens=50):
     return out
 
 
-def _sql_search_clause(concat_expr, term):
-    """Build an OR'd LIKE clause across pasted tokens for a concat expression.
+def _sql_raw_tokens(term, max_tokens=1000):
+    """Split a search term into raw (un-wildcarded) tokens. Used for exact IN
+    matching when the caller knows the user is pasting exact values."""
+    if not term:
+        return []
+    raw = re.split(r"[\s,;|]+", str(term))
+    seen = set()
+    out = []
+    for piece in raw:
+        s = (piece or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+        if len(out) >= max_tokens:
+            break
+    return out
+
+
+def _sql_search_clause(concat_expr, term, exact_col=None):
+    """Build a search clause for pasted tokens.
+
+    When ``exact_col`` is provided AND the term has multiple tokens, emits
+    ``exact_col IN (...)`` (fast exact match) instead of OR'd LIKE conditions
+    on the big CONCAT expression. Falls back to LIKE for single-token partial
+    searches so normal typing still works.
+
     Returns (clause_sql_or_None, params_list). Empty term → (None, [])."""
-    patterns = _sql_like_tokens(term)
-    if not patterns:
+    tokens = _sql_raw_tokens(term)
+    if not tokens:
         return None, []
+    if exact_col and len(tokens) > 1:
+        ph = ", ".join(["%s"] * len(tokens))
+        return f"({exact_col} IN ({ph}))", tokens
+    patterns = ["%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for t in tokens]
     ors = " OR ".join([f"{concat_expr} LIKE %s"] * len(patterns))
     return f"({ors})", patterns
 
@@ -5535,7 +5564,8 @@ def list_work_done_rows(filters=None, limit=500):
         if frappe.db.has_column("PO Dispatch", "im"):
             concat_parts.append("IFNULL(rim_pd.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "")
+        poid_col = "COALESCE(NULLIF(pd.poid,''), NULLIF(pd_sys.poid,''), pd.name, pd_sys.name)"
+        clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "", exact_col=poid_col)
         if clause:
             wheres.append(clause)
             params.extend(cparams)
@@ -5768,8 +5798,9 @@ def list_work_done_rows(filters=None, limit=500):
             return (date_str, str(r.get("modified") or ""))
         out.sort(key=_wd_sort_key, reverse=True)
     # Re-apply the row limit after combining regular + subcon rows so the total
-    # never exceeds the caller's requested limit.
-    out = out[:lim]
+    # never exceeds the caller's requested limit. lim=0 means unlimited — skip slice.
+    if lim:
+        out = out[:lim]
     _enrich_with_project_fields(out)
     _apply_dummy_description(out)
     return out
