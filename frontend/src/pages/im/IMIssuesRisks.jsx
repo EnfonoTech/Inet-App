@@ -114,6 +114,9 @@ export default function IMIssuesRisks() {
   const [issueRemarks, setIssueRemarks] = useState("");
   const [planDocUrls, setPlanDocUrls] = useState([]);
   const [teamsList, setTeamsList] = useState([]);
+  const [planTeams, setPlanTeams] = useState([]);
+  const [qcRequired, setQcRequired] = useState(true);
+  const [ciagRequired, setCiagRequired] = useState(true);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
 
@@ -222,13 +225,25 @@ export default function IMIssuesRisks() {
       const selectedRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
       const dispatches = [...new Set(selectedRows.map((r) => r.po_dispatch).filter(Boolean))];
       if (dispatches.length === 0) throw new Error("No POIDs found in selected issue rows.");
+      const validExtras = (planTeams || []).filter((r) => r.team);
+      const teamsPayload = validExtras.length > 0
+        ? [
+            ...(validExtras.some((r) => r.team === planTeam)
+              ? []
+              : [{ team: planTeam, assigned_qty: 0 }]),
+            ...validExtras.map((r) => ({ team: r.team, assigned_qty: Number(r.assigned_qty) || 0 })),
+          ]
+        : [];
       await pmApi.createRolloutPlans({
         dispatches,
         plan_date: planDate,
         plan_end_date: planEndDate,
         team: planTeam,
+        teams: teamsPayload,
         access_time: accessTime,
         access_period: accessPeriod,
+        qc_required: qcRequired ? 1 : 0,
+        ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType || "Re-Visit",
         issue_remarks: issueRemarks || undefined,
         plan_documents: planDocUrls.length ? JSON.stringify(planDocUrls) : undefined,
@@ -236,6 +251,7 @@ export default function IMIssuesRisks() {
       setSelected(new Set());
       setShowModal(false);
       setIssueRemarks("");
+      setPlanTeams([]);
       await loadData();
     } catch (e) {
       setCreateError(e.message || "Failed to create plans");
@@ -243,6 +259,12 @@ export default function IMIssuesRisks() {
       setCreating(false);
     }
   }
+
+  const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
+  const selectedIssueRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
+  const createPlanTotalQty = selectedIssueRows.reduce((s, r) => s + Number(r.qty || 0), 0);
+  const planTeamsAssignedQty = (planTeams || []).reduce((s, r) => s + (Number(r.assigned_qty) || 0), 0);
+  const planTeamsRemaining = createPlanTotalQty - planTeamsAssignedQty;
 
   return (
     <div>
@@ -281,7 +303,7 @@ export default function IMIssuesRisks() {
         )}
         <div className="toolbar-actions">
           {selected.size > 0 && <span style={{ fontSize: "0.78rem", color: "#64748b" }}>{selected.size} selected</span>}
-          <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setPlanDocUrls([]); setShowModal(true); }}>
+          <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setPlanDocUrls([]); setPlanTeams([]); setShowModal(true); }}>
             Create Plans ({selected.size})
           </button>
         </div>
@@ -401,6 +423,94 @@ export default function IMIssuesRisks() {
                 </select>
               </div>
             </div>
+            {/* Additional Teams */}
+            <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 12, marginBottom: 4 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569" }}>ADDITIONAL TEAMS (optional)</div>
+                <button
+                  type="button"
+                  onClick={() => setPlanTeams((arr) => [...arr, { team: "", assigned_qty: 0 }])}
+                  style={{ fontSize: "0.74rem", padding: "4px 10px", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 600, color: "#1d4ed8" }}
+                >
+                  + Add team
+                </button>
+              </div>
+              <div style={{
+                fontSize: "0.74rem", color: "#475569", marginBottom: 8,
+                padding: "6px 8px", borderRadius: 6,
+                background: planTeamsRemaining < 0 ? "#fef2f2" : "#eef2ff",
+                border: planTeamsRemaining < 0 ? "1px solid #fecaca" : "1px solid #c7d2fe",
+              }}>
+                Total qty <strong>{fmt.format(createPlanTotalQty)}</strong>
+                {" · Assigned to extras "}
+                <strong>{fmt.format(planTeamsAssignedQty)}</strong>
+                {" · Remaining for lead team "}
+                <strong style={{ color: planTeamsRemaining < 0 ? "#b91c1c" : "#1d4ed8" }}>
+                  {fmt.format(planTeamsRemaining)}
+                </strong>
+                {planTeamsRemaining < 0 && (
+                  <span style={{ marginLeft: 8, color: "#b91c1c", fontWeight: 700 }}>⚠ over total</span>
+                )}
+              </div>
+              {planTeams.length === 0 ? (
+                <div style={{ fontSize: "0.74rem", color: "#94a3b8" }}>Single-team plan. Add another team to split the work.</div>
+              ) : (
+                <div>
+                  {planTeams.map((row, i) => (
+                    <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                      <select
+                        value={row.team || ""}
+                        onChange={(e) => setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, team: e.target.value } : x))}
+                        style={{ flex: 2, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
+                      >
+                        <option value="">Select team</option>
+                        {teamsList.filter((t) => t.team_id !== planTeam || row.team === t.team_id).map((t) => (
+                          <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        pattern="[0-9]*\.?[0-9]*"
+                        value={row.assigned_qty ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
+                          setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: v } : x));
+                        }}
+                        placeholder="Qty"
+                        style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setPlanTeams((arr) => arr.filter((_, j) => j !== i))}
+                        style={{ fontSize: "0.78rem", padding: "4px 8px", borderRadius: 6, border: "1px solid #fecaca", background: "#fff", cursor: "pointer", color: "#b91c1c" }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: 4 }}>Lead team gets the remaining qty if you leave it blank.</div>
+                </div>
+              )}
+            </div>
+
+            {/* QC / CIAG */}
+            <div style={{
+              display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap",
+              padding: "10px 12px", background: "#f8fafc",
+              border: "1px solid #e2e8f0", borderRadius: 6, marginTop: 10, marginBottom: 4,
+            }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
+                <input type="checkbox" checked={qcRequired} onChange={(e) => setQcRequired(e.target.checked)} />
+                QC Required
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
+                <input type="checkbox" checked={ciagRequired} onChange={(e) => setCiagRequired(e.target.checked)} />
+                CIAG Required
+              </label>
+            </div>
+
             <div className="form-group" style={{ marginTop: 10 }}>
               <label>Issue Remarks</label>
               <textarea

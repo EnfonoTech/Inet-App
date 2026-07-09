@@ -1184,7 +1184,7 @@ export default function IMExecution() {
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {(() => {
-                        const badge = accessTimeBadge(e.access_time, e.access_period, e.timer_start_ms, e.tl_status);
+                        const badge = accessTimeBadge(e.access_time, e.access_period, e.timer_start_ms, e.tl_status, e.plan_date);
                         if (!badge) return <span style={{ color: "#94a3b8" }}>—</span>;
                         return (
                           <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 700, background: badge.bg, color: badge.color }}>

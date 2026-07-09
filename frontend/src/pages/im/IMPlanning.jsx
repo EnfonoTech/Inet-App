@@ -495,7 +495,7 @@ export default function IMPlanning() {
                     <td>{p.plan_date}</td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {(() => {
-                        const badge = accessTimeBadge(p.access_time, p.access_period, p.timer_start_ms, p.tl_status);
+                        const badge = accessTimeBadge(p.access_time, p.access_period, p.timer_start_ms, p.tl_status, p.plan_date);
                         if (!badge) return <span style={{ color: "#94a3b8" }}>—</span>;
                         return (
                           <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 700, background: badge.bg, color: badge.color }}>

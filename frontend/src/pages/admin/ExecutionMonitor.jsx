@@ -423,7 +423,7 @@ export default function ExecutionMonitor() {
                       <td>{row.plan_date}</td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         {(() => {
-                          const badge = accessTimeBadge(row.access_time, row.access_period, row.timer_start_ms, row.tl_status);
+                          const badge = accessTimeBadge(row.access_time, row.access_period, row.timer_start_ms, row.tl_status, row.plan_date);
                           if (!badge) return <span style={{ color: "#94a3b8" }}>—</span>;
                           return (
                             <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 700, background: badge.bg, color: badge.color }}>

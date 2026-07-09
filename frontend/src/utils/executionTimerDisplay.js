@@ -38,7 +38,7 @@ export function elapsedSecondsFromServerEpoch(startTimeMs, skewMs) {
  * Uses serverNow() + serverUtcOffsetMs() so the badge is always in the server's
  * timezone (KSA/UTC+3) regardless of where the browser is (e.g. IST/UTC+5:30).
  */
-export function accessTimeBadge(access_time, access_period, timer_start_ms, tl_status) {
+export function accessTimeBadge(access_time, access_period, timer_start_ms, tl_status, plan_date) {
   if (!access_time) return null;
 
   const [h, m] = access_time.split(":").map(Number);
@@ -57,6 +57,13 @@ export function accessTimeBadge(access_time, access_period, timer_start_ms, tl_s
   function fmtMins(mins) {
     if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`;
     return `${mins}m`;
+  }
+
+  // Only show "Not on site" / "Due now" for today's plans.
+  // Past and future plans just show the grey scheduled time.
+  if (plan_date) {
+    const todayStr = new Date(nowMs + offsetMs).toISOString().slice(0, 10);
+    if (plan_date !== todayStr) return { label: schedLabel, bg: "#f8fafc", color: "#64748b" };
   }
 
   // Has TL started? — exact start from timer (epoch ms), or inferred from tl_status
