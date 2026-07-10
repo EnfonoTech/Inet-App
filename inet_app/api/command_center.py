@@ -11916,15 +11916,15 @@ def preview_po_archive_file(file_url):
             counts["OPEN" if ps == "OPEN" else "OTHER"] += 1
         if not target:
             continue
-        if (row_dict.get("unit") or "").strip():
+        if str(row_dict.get("unit") or "").strip():
             uoms.add(str(row_dict["unit"]).strip())
-        if (row_dict.get("item_code") or "").strip():
+        if str(row_dict.get("item_code") or "").strip():
             items.add(str(row_dict["item_code"]).strip())
-        if (row_dict.get("project_code") or "").strip():
+        if str(row_dict.get("project_code") or "").strip():
             projects.add(str(row_dict["project_code"]).strip())
         else:
             rows_missing_project += 1
-        if (row_dict.get("contract") or "").strip():
+        if str(row_dict.get("contract") or "").strip():
             contracts.add(str(row_dict["contract"]).strip())
         if len(sample) < 10:
             sample.append({
@@ -12048,7 +12048,7 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                 continue
             row["_target_status"] = target
             all_rows.append(row)
-            if (row.get("project_code") or "").strip():
+            if str(row.get("project_code") or "").strip():
                 first_pass_projects.add(str(row["project_code"]).strip())
         proj_cust_map = {}
         if first_pass_projects:
@@ -12064,7 +12064,7 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
             po_no = str(row.get("po_no") or "").strip()
             if not po_no:
                 continue
-            proj = (row.get("project_code") or "").strip()
+            proj = str(row.get("project_code") or "").strip()
             cust = proj_cust_map.get(proj) or fallback_cust
             if not cust:
                 rows_missing_customer += 1
