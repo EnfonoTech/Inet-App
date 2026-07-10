@@ -203,10 +203,12 @@ export default function IMIssuesRisks() {
   }
 
   function toggleAll() {
-    if (filteredRows.length > 0 && filteredRows.every((r) => selected.has(r.rollout_plan))) {
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = filteredRows.filter((r) => !dtpHidden.has(r.rollout_plan));
+    if (visible.length > 0 && visible.every((r) => selected.has(r.rollout_plan))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filteredRows.map((r) => r.rollout_plan)));
+      setSelected(new Set(visible.map((r) => r.rollout_plan)));
     }
   }
 
@@ -354,7 +356,7 @@ export default function IMIssuesRisks() {
               </thead>
               <tbody>
                 {filteredRows.map((r) => (
-                  <tr key={`${r.rollout_plan}-${r.execution_name || ""}`} style={{ ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
+                  <tr key={`${r.rollout_plan}-${r.execution_name || ""}`} data-doc-name={r.rollout_plan} style={{ ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
                     <td>
                       <input
                         type="checkbox"

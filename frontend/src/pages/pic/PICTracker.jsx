@@ -257,8 +257,13 @@ export default function PICTracker() {
   }
   function toggleAll() {
     if (rows.length === 0) return;
-    const all = rows.every((r) => selected.has(r.po_dispatch));
-    setSelected(all ? new Set() : new Set(rows.map((r) => r.po_dispatch)));
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = rows.filter((r) => !dtpHidden.has(r.po_dispatch));
+    if (visible.length > 0 && visible.every((r) => selected.has(r.po_dispatch))) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(visible.map((r) => r.po_dispatch)));
+    }
   }
 
   function openEdit(row, initialTab) {
@@ -498,6 +503,7 @@ export default function PICTracker() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.po_dispatch}
+                      data-doc-name={r.po_dispatch}
                       className={selected.has(r.po_dispatch) ? "row-selected" : ""}
                       onClick={() => toggleRow(r.po_dispatch)}
                       style={{ cursor: "pointer" }}>

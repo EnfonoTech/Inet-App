@@ -198,10 +198,12 @@ export default function IMPlanning() {
   }
 
   function toggleAll() {
-    if (selected.size === filteredPlans.length && filteredPlans.length > 0) {
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = filteredPlans.filter((p) => !dtpHidden.has(p.name));
+    if (visible.length > 0 && visible.every((p) => selected.has(p.name))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filteredPlans.map((p) => p.name)));
+      setSelected(new Set(visible.map((p) => p.name)));
     }
   }
 
@@ -466,6 +468,7 @@ export default function IMPlanning() {
                 {filteredPlans.map((p) => (
                   <tr
                     key={p.name}
+                    data-doc-name={p.name}
                     className={selected.has(p.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(p.name)}
                     style={{ cursor: "pointer", ...(p.is_dummy_po ? { background: "#fffbeb" } : {}) }}

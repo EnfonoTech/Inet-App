@@ -704,7 +704,13 @@ export default function IMPOIntake() {
     setSelected((prev) => { const next = new Set(prev); next.has(name) ? next.delete(name) : next.add(name); return next; });
   }
   function toggleAll() {
-    setSelected(selected.size === rows.length && rows.length > 0 ? new Set() : new Set(rows.map((r) => r.name)));
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(visible.map((r) => r.name)));
+    }
   }
 
   const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.name)), [rows, selected]);

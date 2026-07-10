@@ -121,12 +121,13 @@ export default function IMBackend() {
   }
 
   function toggleAll() {
-    if (selectableNames.length === 0) return;
-    const allSelected = selectableNames.every((n) => selected.has(n));
-    if (allSelected) {
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visibleNames = selectableNames.filter((n) => !dtpHidden.has(n));
+    if (visibleNames.length === 0) return;
+    if (visibleNames.every((n) => selected.has(n))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(selectableNames));
+      setSelected(new Set(visibleNames));
     }
   }
 
@@ -315,6 +316,7 @@ export default function IMBackend() {
                   const isPending = r.subcon_status === "Pending";
                   return (
                     <tr key={r.po_dispatch}
+                        data-doc-name={r.po_dispatch}
                         className={selected.has(r.po_dispatch) ? "row-selected" : ""}
                         onClick={isPending ? () => toggleRow(r.po_dispatch) : undefined}
                         style={{ cursor: isPending ? "pointer" : "default" }}>

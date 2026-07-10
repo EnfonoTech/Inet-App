@@ -239,10 +239,12 @@ export default function RolloutPlanning() {
   const filterActiveForFooter = !!(searchDebounced.trim() || projectFilter.length || imFilter.length || duidFilter.length || fromDate || toDate);
 
   function toggleAll() {
-    if (selected.size === rows.length && rows.length > 0) {
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(rows.map((r) => r.name)));
+      setSelected(new Set(visible.map((r) => r.name)));
     }
   }
 
@@ -522,6 +524,7 @@ export default function RolloutPlanning() {
                 {rows.map((row) => (
                   <tr
                     key={row.name}
+                    data-doc-name={row.name}
                     className={selected.has(row.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(row.name)}
                     style={{ cursor: "pointer", ...(row.is_dummy_po ? { background: "#fffbeb" } : {}) }}

@@ -215,7 +215,13 @@ export default function PODispatch() {
   const hasFilters = !!(tableSearch || projectFilter.length || imFilter.length || duidFilter.length || fromDate || toDate);
 
   function toggleAll() {
-    setSelected(selected.size === rows.length ? new Set() : new Set(rows.map((r) => r.name)));
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(visible.map((r) => r.name)));
+    }
   }
 
   // ── Dispatch ─────────────────────────────────────────────────────────────
@@ -612,6 +618,7 @@ export default function PODispatch() {
                   const isAuto = row.dispatch_mode === "Auto";
                   return (
                     <tr key={row.name}
+                      data-doc-name={row.name}
                       className={selected.has(row.name) ? "row-selected" : ""}
                       onClick={() => toggleRow(row.name)}
                       style={{

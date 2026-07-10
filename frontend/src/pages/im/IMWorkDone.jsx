@@ -672,8 +672,10 @@ export default function IMWorkDone() {
                       checked={filteredRows.length > 0 && filteredRows.every((r) => selectedRows.has(r.name))}
                       ref={(el) => { if (el) el.indeterminate = selectedRows.size > 0 && !filteredRows.every((r) => selectedRows.has(r.name)); }}
                       onChange={() => {
-                        const allSel = filteredRows.every((r) => selectedRows.has(r.name));
-                        setSelectedRows(allSel ? new Set() : new Set(filteredRows.map((r) => r.name)));
+                        const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+                        const visible = filteredRows.filter((r) => !dtpHidden.has(r.name));
+                        const allSel = visible.length > 0 && visible.every((r) => selectedRows.has(r.name));
+                        setSelectedRows(allSel ? new Set() : new Set(visible.map((r) => r.name)));
                       }}
                       title={filteredRows.every((r) => selectedRows.has(r.name)) ? "Deselect all" : "Select all"}
                     />
@@ -717,6 +719,7 @@ export default function IMWorkDone() {
                 {filteredRows.map((r) => (
                   <tr
                     key={r.name}
+                    data-doc-name={r.name}
                     className={selectedRows.has(r.name) ? "row-selected" : ""}
                     onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(r.name) ? next.delete(r.name) : next.add(r.name); return next; })}
                     style={{ cursor: "pointer", ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}

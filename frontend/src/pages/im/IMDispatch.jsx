@@ -531,10 +531,12 @@ export default function IMDispatch() {
   }
 
   function toggleAllPlanable() {
-    if (selected.size === planableRows.length && planableRows.length > 0) {
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = planableRows.filter((r) => !dtpHidden.has(r.name));
+    if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(planableRows.map((r) => r.name)));
+      setSelected(new Set(visible.map((r) => r.name)));
     }
   }
 
@@ -1415,6 +1417,7 @@ export default function IMDispatch() {
                   return (
                     <tr
                       key={row.name}
+                      data-doc-name={row.name}
                       style={{
                         background: !!Number(row.is_dummy_po) ? "#fffbeb" : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
                         opacity: canPlan ? 1 : 0.85,

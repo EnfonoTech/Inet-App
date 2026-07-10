@@ -571,6 +571,17 @@ def _sanitize_table_pref_config(config):
 
     out["show_filters"] = 1 if cint(config.get("show_filters")) else 0
 
+    frozen = config.get("frozen")
+    if isinstance(frozen, list):
+        out["frozen"] = [str(x) for x in frozen if str(x).strip()][:200]
+
+    sort = config.get("sort")
+    if isinstance(sort, dict):
+        key = str(sort.get("key") or "").strip()
+        direction = str(sort.get("dir") or "desc").strip()
+        if key and direction in ("asc", "desc"):
+            out["sort"] = {"key": key, "dir": direction}
+
     dyn = config.get("dynamic_fields")
     if isinstance(dyn, list):
         clean_dyn = []

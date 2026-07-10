@@ -244,10 +244,12 @@ export default function FieldQcCiag() {
   }
 
   function toggleAll() {
-    if (rows.length > 0 && rows.every((r) => selectedPlans.has(r.name))) {
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    if (visible.length > 0 && visible.every((r) => selectedPlans.has(r.name))) {
       setSelectedPlans(new Set());
     } else {
-      setSelectedPlans(new Set(rows.map((r) => r.name)));
+      setSelectedPlans(new Set(visible.map((r) => r.name)));
     }
   }
 
@@ -368,7 +370,7 @@ export default function FieldQcCiag() {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.name} className="row-link" onClick={() => setEditRow(r)}>
+                  <tr key={r.name} data-doc-name={r.name} className="row-link" onClick={() => setEditRow(r)}>
                     <td onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"

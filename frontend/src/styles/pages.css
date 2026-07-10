@@ -936,6 +936,11 @@
   background: #f8fafc;
 }
 
+.tablepro-btn-clear-filters {
+  color: #dc2626 !important;
+  border-color: #fca5a5 !important;
+}
+
 .tablepro-resize-handle {
   position: absolute;
   top: 0;

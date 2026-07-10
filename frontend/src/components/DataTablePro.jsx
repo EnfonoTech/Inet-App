@@ -266,18 +266,18 @@ export default function DataTablePro() {
           }
         };
 
-        const persist = () => {
-          prefsApi.saveDebounced(tableId, {
-            order: state.order,
-            hidden: Array.from(state.hidden),
-            frozen: Array.from(state.frozen),
-            widths: state.widths,
-            filters: state.filters,
-            show_filters: state.show_filters ? 1 : 0,
-            sort: state.sort && state.sort.key ? { key: state.sort.key, dir: state.sort.dir } : null,
-            dynamic_fields: state.dynamic_fields,
-          });
-        };
+        const getFullState = () => ({
+          order: state.order,
+          hidden: Array.from(state.hidden),
+          frozen: Array.from(state.frozen),
+          widths: state.widths,
+          filters: state.filters,
+          show_filters: state.show_filters ? 1 : 0,
+          sort: state.sort && state.sort.key ? { key: state.sort.key, dir: state.sort.dir } : null,
+          dynamic_fields: state.dynamic_fields,
+        });
+        const persist = () => prefsApi.saveDebounced(tableId, getFullState());
+        const persistNow = () => void prefsApi.saveImmediate(tableId, getFullState());
 
         const getRows = () => ({
           head: Array.from(table.querySelectorAll("thead tr")),
@@ -509,7 +509,17 @@ export default function DataTablePro() {
             // above that (20). Body sticky just needs > 0 to cover non-frozen
             // body cells (which have no z-index).
             cell.style.zIndex = String(isHeader ? 20 : 3);
-            cell.style.background = isHeader ? "#f8fafc" : "#fff";
+            if (isHeader) {
+              cell.style.background = "#f8fafc";
+            } else {
+              // Inherit the row's inline background (e.g. dummy-PO amber, selected row)
+              // so row highlight colors show through the sticky cell.
+              // Fall back to white so the cell isn't transparent during horizontal scroll.
+              const rowBg = cell.parentElement?.style?.background
+                || cell.parentElement?.style?.backgroundColor
+                || "";
+              cell.style.background = rowBg || "#fff";
+            }
           };
 
           const rows = [
@@ -655,7 +665,26 @@ export default function DataTablePro() {
               return txt.includes(val);
             });
             row.style.display = pass ? "" : "none";
+            if (pass) delete row.dataset.tableproFiltered;
+            else row.dataset.tableproFiltered = "1";
           });
+        };
+
+        const makeFilterCell = (key) => {
+          const th = document.createElement("th");
+          th.dataset.colKey = key;
+          const input = document.createElement("input");
+          input.className = "tablepro-filter-input";
+          input.placeholder = "Filter...";
+          input.value = state.filters[key] || "";
+          input.addEventListener("input", (e) => {
+            state.filters[key] = e.target.value;
+            updateClearFiltersBtn();
+            applyFilters();
+            persist();
+          });
+          th.appendChild(input);
+          return th;
         };
 
         const ensureFilterRow = () => {
@@ -665,45 +694,16 @@ export default function DataTablePro() {
           if (!filterRow) {
             filterRow = document.createElement("tr");
             filterRow.className = "tablepro-filter-row";
-            state.order.forEach((key) => {
-              const th = document.createElement("th");
-              th.dataset.colKey = key;
-              const input = document.createElement("input");
-              input.className = "tablepro-filter-input";
-              input.placeholder = "Filter...";
-              input.value = state.filters[key] || "";
-              input.addEventListener("input", (e) => {
-                state.filters[key] = e.target.value;
-                applyFilters();
-                persist();
-              });
-              th.appendChild(input);
-              filterRow.appendChild(th);
-            });
+            state.order.forEach((key) => filterRow.appendChild(makeFilterCell(key)));
             thead.appendChild(filterRow);
           }
           // Ensure filter cells exist for newly added columns
           state.order.forEach((key) => {
             const exists = Array.from(filterRow.children).some((c) => c.dataset.colKey === key);
-            if (!exists) {
-              const th = document.createElement("th");
-              th.dataset.colKey = key;
-              const input = document.createElement("input");
-              input.className = "tablepro-filter-input";
-              input.placeholder = "Filter...";
-              input.value = state.filters[key] || "";
-              input.addEventListener("input", (e) => {
-                state.filters[key] = e.target.value;
-                applyFilters();
-                persist();
-              });
-              th.appendChild(input);
-              filterRow.appendChild(th);
-            }
+            if (!exists) filterRow.appendChild(makeFilterCell(key));
           });
           filterRow.style.display = state.show_filters ? "" : "none";
-          const cells = Array.from(filterRow.children);
-          cells.forEach((cell) => {
+          Array.from(filterRow.children).forEach((cell) => {
             cell.style.display = state.hidden.has(cell.dataset.colKey) ? "none" : "";
           });
         };
@@ -747,15 +747,7 @@ export default function DataTablePro() {
               document.removeEventListener("mousemove", onMove, true);
               document.removeEventListener("mouseup", onUp, true);
               applyWidths();
-              const snap = {
-                order: [...state.order],
-                hidden: Array.from(state.hidden),
-                widths: { ...state.widths },
-                filters: { ...state.filters },
-                show_filters: state.show_filters ? 1 : 0,
-                dynamic_fields: state.dynamic_fields.map((d) => ({ ...d })),
-              };
-              void prefsApi.saveImmediate(tableId, snap);
+              persistNow();
               persist();
               syncTableScrollWidth();
             };
@@ -820,6 +812,7 @@ export default function DataTablePro() {
         toolbar.innerHTML = `
           <button type="button" class="btn-secondary tablepro-btn-columns" title="Manage Table">⚙ Manage Table</button>
           <button type="button" class="btn-secondary tablepro-btn-filters">Filters</button>
+          <button type="button" class="btn-secondary tablepro-btn-clear-filters" style="display:none;">✕ Clear Filters</button>
           <button type="button" class="btn-secondary tablepro-btn-reset">Reset</button>
           <button type="button" class="btn-secondary tablepro-btn-sort" title="Sort rows by column">
             <span class="tablepro-sort-icon">↕</span>
@@ -994,7 +987,7 @@ export default function DataTablePro() {
               else state.frozen.add(key);
               renderPanel();
               void applyAll();
-              persist();
+              persistNow();
             });
             cb?.addEventListener("change", (e) => {
               if (e.target.checked) state.hidden.delete(key);
@@ -1034,9 +1027,21 @@ export default function DataTablePro() {
           panel.style.display = "none";
           if (sortPanel.style.display === "block") renderSortPanel();
         });
+        const updateClearFiltersBtn = () => {
+          const hasActive = Object.values(state.filters).some((v) => String(v || "").trim());
+          const btn = toolbar.querySelector(".tablepro-btn-clear-filters");
+          if (btn) btn.style.display = hasActive ? "" : "none";
+        };
         toolbar.querySelector(".tablepro-btn-filters")?.addEventListener("click", () => {
           state.show_filters = !state.show_filters;
           ensureFilterRow();
+          persist();
+        });
+        toolbar.querySelector(".tablepro-btn-clear-filters")?.addEventListener("click", () => {
+          state.filters = {};
+          table.querySelectorAll(".tablepro-filter-row .tablepro-filter-input").forEach((inp) => { inp.value = ""; });
+          updateClearFiltersBtn();
+          applyFilters();
           persist();
         });
         toolbar.querySelector(".tablepro-btn-reset")?.addEventListener("click", async () => {
@@ -1069,6 +1074,7 @@ export default function DataTablePro() {
         document.addEventListener("mousedown", onDocClick);
 
         await applyAll();
+        updateClearFiltersBtn();
         renderPanel();
         // data-table--tablepro-ready is added inside applyAll (before the async
         // dynamic-column fetch) so the table is visible as fast as possible.

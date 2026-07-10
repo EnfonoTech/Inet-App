@@ -106,10 +106,12 @@ export default function InvoiceTracker() {
   const someSelected = rows.some((r) => selected.has(r.name));
 
   function toggleAll() {
-    if (allSelected) {
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(rows.map((r) => r.name)));
+      setSelected(new Set(visible.map((r) => r.name)));
     }
   }
 
@@ -340,6 +342,7 @@ export default function InvoiceTracker() {
                   return (
                     <tr
                       key={r.name}
+                      data-doc-name={r.name}
                       className={selected.has(r.name) ? "row-selected" : ""}
                       onClick={() => toggleRow(r.name)}
                       style={{ cursor: "pointer" }}

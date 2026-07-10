@@ -680,8 +680,10 @@ export default function WorkDone() {
                       checked={filteredRows.length > 0 && filteredRows.every((r) => selectedRows.has(r.name))}
                       ref={(el) => { if (el) el.indeterminate = selectedRows.size > 0 && !filteredRows.every((r) => selectedRows.has(r.name)); }}
                       onChange={() => {
-                        const allSel = filteredRows.every((r) => selectedRows.has(r.name));
-                        setSelectedRows(allSel ? new Set() : new Set(filteredRows.map((r) => r.name)));
+                        const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+                        const visible = filteredRows.filter((r) => !dtpHidden.has(r.name));
+                        const allSel = visible.length > 0 && visible.every((r) => selectedRows.has(r.name));
+                        setSelectedRows(allSel ? new Set() : new Set(visible.map((r) => r.name)));
                       }}
                       title={filteredRows.every((r) => selectedRows.has(r.name)) ? "Deselect all" : "Select all"}
                     />
@@ -719,6 +721,7 @@ export default function WorkDone() {
                   const revenue = parseFloat(row.revenue_sar || row.revenue || row.line_amount) || 0;
                   return (
                     <tr key={row.name}
+                      data-doc-name={row.name}
                       className={selectedRows.has(row.name) ? "row-selected" : ""}
                       style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}), cursor: "pointer" }}
                       onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(row.name) ? next.delete(row.name) : next.add(row.name); return next; })}

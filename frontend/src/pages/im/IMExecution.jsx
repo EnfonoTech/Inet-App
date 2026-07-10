@@ -1100,10 +1100,12 @@ export default function IMExecution() {
                       type="checkbox"
                       checked={filteredExecutions.length > 0 && filteredExecutions.every((e) => selectedExecs.has(e.name))}
                       onChange={() => {
-                        if (filteredExecutions.length > 0 && filteredExecutions.every((e) => selectedExecs.has(e.name))) {
+                        const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+                        const visible = filteredExecutions.filter((e) => !dtpHidden.has(e.name));
+                        if (visible.length > 0 && visible.every((e) => selectedExecs.has(e.name))) {
                           setSelectedExecs(new Set());
                         } else {
-                          setSelectedExecs(new Set(filteredExecutions.map((e) => e.name)));
+                          setSelectedExecs(new Set(visible.map((e) => e.name)));
                         }
                       }}
                     />
@@ -1142,7 +1144,7 @@ export default function IMExecution() {
               </thead>
               <tbody>
                 {filteredExecutions.map((e) => (
-                  <tr key={e.name} style={e.is_dummy_po ? { background: "#fffbeb" } : undefined}>
+                  <tr key={e.name} data-doc-name={e.name} style={e.is_dummy_po ? { background: "#fffbeb" } : undefined}>
                     <td>
                       <input
                         type="checkbox"
