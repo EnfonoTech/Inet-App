@@ -25,6 +25,7 @@ export default function SearchableSelect({
   multi = false,
   onSearch,
   onCreateNew,
+  wrap = false,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -375,14 +376,14 @@ export default function SearchableSelect({
                         background: selected ? "rgba(37,99,235,0.10)" : active ? "rgba(100,116,139,0.08)" : "transparent",
                         color: selected ? "var(--primary, #2563eb)" : "var(--text, #1e293b)",
                         fontWeight: selected ? 700 : 500,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                        whiteSpace: wrap ? "normal" : "nowrap",
+                        overflow: wrap ? "visible" : "hidden",
+                        textOverflow: wrap ? "unset" : "ellipsis",
                         display: "flex",
-                        alignItems: "center",
+                        alignItems: wrap ? "flex-start" : "center",
                         gap: 8,
                       }}
-                      title={o.label}
+                      title={wrap ? undefined : o.label}
                     >
                       {multi && (
                         <input
@@ -390,10 +391,10 @@ export default function SearchableSelect({
                           checked={selected}
                           onChange={() => toggleMulti(o.id)}
                           onClick={(e) => e.stopPropagation()}
-                          style={{ margin: 0, cursor: "pointer" }}
+                          style={{ margin: 0, cursor: "pointer", flexShrink: 0 }}
                         />
                       )}
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{o.label}</span>
+                      <span style={{ overflow: wrap ? "visible" : "hidden", textOverflow: wrap ? "unset" : "ellipsis" }}>{o.label}</span>
                     </div>
                   );
                 })}

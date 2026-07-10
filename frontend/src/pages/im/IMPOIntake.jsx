@@ -1216,6 +1216,7 @@ export default function IMPOIntake() {
               options={itemsForDummy.map((i) => ({ id: i.item_code, label: i.item_name && i.item_name !== i.item_code ? `${i.item_code} — ${i.item_name}` : i.item_code }))}
               placeholder="Search item…"
               allLabel="None"
+              style={{ display: "block", width: "100%" }}
               minWidth={0}
               triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.88rem" }}
               panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
@@ -1234,6 +1235,7 @@ export default function IMPOIntake() {
               options={duidsForDummy.map((d) => ({ id: d.name, label: d.site_name && d.site_name !== d.name ? `${d.name} — ${d.site_name}` : d.name }))}
               placeholder="Auto placeholder (DUMMY-…)"
               allLabel="Auto placeholder (DUMMY-…)"
+              style={{ display: "block", width: "100%" }}
               minWidth={0}
               triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.88rem" }}
               panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
@@ -1256,7 +1258,7 @@ export default function IMPOIntake() {
       {mapForRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
              onClick={() => !mapBusy && setMapForRow(null)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(500px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(680px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
                onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 4px", fontSize: "1.05rem" }}>Map Dummy PO</h3>
             <p style={{ fontSize: "0.82rem", color: "#64748b", margin: "0 0 16px" }}>
@@ -1284,9 +1286,14 @@ export default function IMPOIntake() {
                     onChange={setMapLineId}
                     options={optionLines.map((l) => ({
                       id: l.name,
-                      label: `${l.poid || l.po_no || l.name} · L${l.po_line_no} · ${l.item_code || "—"}${l.existing_dispatch ? ` · dispatched (${l.existing_dispatch_status || "?"})` : ""}`,
+                      label: [
+                        l.site_code || null,
+                        l.item_description || l.item_code || null,
+                        l.existing_dispatch ? `dispatched (${l.existing_dispatch_status || "?"})` : null,
+                      ].filter(Boolean).join(" · "),
                     }))}
-                    placeholder={optionLines.length ? "— search & select PO line —" : "No open lines for this project"}
+                    wrap
+                    placeholder={optionLines.length ? "— search by DUID or description —" : "No open lines for this project"}
                     style={{ display: "block", width: "100%" }}
                     panelStyle={{ zIndex: 10001 }}
                   />

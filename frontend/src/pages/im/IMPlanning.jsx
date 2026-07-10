@@ -666,7 +666,7 @@ export default function IMPlanning() {
           onClick={() => !mapBusy && setMapForRow(null)}
         >
           <div
-            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(480px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(680px, 96vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ margin: "0 0 6px", fontSize: "1.05rem" }}>Map Dummy PO</h3>
@@ -695,8 +695,16 @@ export default function IMPlanning() {
                   <SearchableSelect
                     value={mapLineId}
                     onChange={(id) => setMapLineId(id)}
-                    options={optionLines.map((l) => ({ id: l.name, label: `${l.poid || l.name}${l.item_description ? ` — ${l.item_description}` : ""}` }))}
-                    placeholder={optionLines.length ? "— search & select PO line —" : "No open lines for this project"}
+                    options={optionLines.map((l) => ({
+                      id: l.name,
+                      label: [
+                        l.site_code || null,
+                        l.item_description || l.item_code || null,
+                        l.existing_dispatch ? `dispatched (${l.existing_dispatch_status || "?"})` : null,
+                      ].filter(Boolean).join(" · "),
+                    }))}
+                    wrap
+                    placeholder={optionLines.length ? "— search by DUID or description —" : "No open lines for this project"}
                     style={{ display: "block", width: "100%" }}
                     panelStyle={{ zIndex: 10001 }}
                   />
