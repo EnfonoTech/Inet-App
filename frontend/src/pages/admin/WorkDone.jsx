@@ -254,6 +254,9 @@ export default function WorkDone() {
   const [selectedRows, setSelectedRows] = useState(new Set());
   const [issueFlagFilter, setIssueFlagFilter] = useState([]);
   const [workTypeFilter, setWorkTypeFilter] = useState([]);
+  const [tab, setTab] = useState("list");
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -499,6 +502,19 @@ export default function WorkDone() {
     { qty: 0, revenue: 0 }
   );
 
+  useEffect(() => {
+    if (tab !== "summary") return;
+    if (summary) return;
+    let cancelled = false;
+    setSummaryLoading(true);
+    pmApi.getWorkDoneSummary().then((res) => {
+      if (!cancelled) setSummary(res);
+    }).catch(() => {
+      if (!cancelled) setSummary({ operational: [], commercial: [], operational_order: [], commercial_order: [] });
+    }).finally(() => { if (!cancelled) setSummaryLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, summary]);
+
   return (
     <div>
       <div className="page-header">
@@ -514,7 +530,35 @@ export default function WorkDone() {
         </div>
       </div>
 
-      {/* ── Toolbar ─────────────────────────────────────────── */}
+      {/* ── Tab bar ─────────────────────────────────────────── */}
+      <div style={{ display: "flex", borderBottom: "2px solid #e2e8f0", marginBottom: 0 }}>
+        {[
+          { id: "list", label: "Work Done" },
+          { id: "summary", label: "Work Done Summary" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            style={{
+              padding: "9px 20px",
+              fontSize: "0.84rem",
+              fontWeight: tab === t.id ? 700 : 500,
+              color: tab === t.id ? "#2563eb" : "#64748b",
+              background: "none",
+              border: "none",
+              borderBottom: tab === t.id ? "2px solid #2563eb" : "2px solid transparent",
+              marginBottom: -2,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "list" && (
       <div className="toolbar">
         <input
           type="search"
@@ -647,6 +691,7 @@ export default function WorkDone() {
           </button>
         </div>
       </div>
+      )}
 
       <div className="page-content">
         {error && (
@@ -656,7 +701,189 @@ export default function WorkDone() {
         )}
 
         <DataTableWrapper>
-          {loading ? (
+        {tab === "summary" ? (
+          <div style={{ padding: "20px 20px 40px", background: "#f8fafc" }}>
+            {summaryLoading ? (
+              <div style={{ padding: "60px", textAlign: "center", color: "var(--text-muted)" }}>Loading summary…</div>
+            ) : !summary ? (
+              <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No data loaded.</div>
+            ) : (() => {
+              /* ── helpers ── */
+              const SectionHeader = ({ accent, title, sub }) => (
+                <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 16 }}>
+                  <div style={{ width: 4, minWidth: 4, height: 22, borderRadius: 3, background: accent, marginRight: 10 }} />
+                  <span style={{ fontSize: "0.78rem", fontWeight: 800, color: "#1e293b", textTransform: "uppercase", letterSpacing: "0.07em" }}>{title}</span>
+                  {sub && <span style={{ fontSize: "0.7rem", color: "#94a3b8", marginLeft: 8, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>{sub}</span>}
+                </div>
+              );
+
+              const ProportionBar = ({ segments }) => (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ display: "flex", height: 7, borderRadius: 999, overflow: "hidden", background: "#e2e8f0" }}>
+                    {segments.map((s, i) => s.value > 0 && (
+                      <div key={i} style={{ flex: s.value, background: s.color, transition: "flex 0.5s" }} />
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 14, marginTop: 5, flexWrap: "wrap" }}>
+                    {segments.map((s, i) => (
+                      <span key={i} style={{ fontSize: "0.66rem", color: "#64748b", display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }} />
+                        {s.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+
+              const TotalsRow = ({ tiles }) => (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                  {tiles.map((s) => (
+                    <div key={s.label} style={{ border: `1px solid ${s.bd}`, background: s.bg, borderRadius: 8, padding: "10px 18px", display: "flex", flexDirection: "column", gap: 2, minWidth: 140, flex: "1 1 140px", maxWidth: 240 }}>
+                      <span style={{ fontSize: "0.64rem", fontWeight: 700, color: s.fg, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</span>
+                      <span style={{ fontSize: "1.35rem", fontWeight: 800, color: s.fg, lineHeight: 1.1 }}>{fmt.format(s.lines)}</span>
+                      <span style={{ fontSize: "0.72rem", color: s.fg, opacity: 0.75, fontWeight: 500 }}>SAR {fmt.format(s.revenue)}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+
+              const StatCard = ({ label, count, revenue, accentColor, bdColor, bgColor, barColor, totalLines, totalRev }) => {
+                const pct    = totalLines > 0 ? Math.round((count / totalLines) * 100) : 0;
+                const revPct = totalRev   > 0 ? Math.round((revenue / totalRev)   * 100) : 0;
+                return (
+                  <div style={{ border: `1px solid ${bdColor}`, borderRadius: 8, overflow: "hidden", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.07)" }}>
+                    <div style={{ background: bgColor, padding: "8px 12px", borderBottom: `1px solid ${bdColor}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 4 }}>
+                      <span style={{ fontSize: "0.74rem", fontWeight: 700, color: accentColor, lineHeight: 1.3 }}>{label}</span>
+                      <span style={{ fontSize: "0.65rem", fontWeight: 800, color: accentColor, background: "#fff", borderRadius: 999, padding: "2px 7px", border: `1px solid ${bdColor}`, flexShrink: 0 }}>{pct}%</span>
+                    </div>
+                    <div style={{ padding: "10px 12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                        <span style={{ fontSize: "0.68rem", color: "#94a3b8" }}>Lines</span>
+                        <span style={{ fontWeight: 800, fontSize: "1.1rem", color: accentColor }}>{fmt.format(count)}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                        <span style={{ fontSize: "0.68rem", color: "#94a3b8" }}>Revenue</span>
+                        <span style={{ fontWeight: 600, fontSize: "0.82rem", color: "#1e293b" }}>SAR {fmt.format(revenue)}</span>
+                      </div>
+                      <div style={{ height: 5, borderRadius: 999, background: "#f1f5f9", overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 999, transition: "width 0.5s" }} />
+                      </div>
+                      <div style={{ fontSize: "0.62rem", color: "#94a3b8", textAlign: "right", marginTop: 3 }}>{revPct}% of rev</div>
+                    </div>
+                  </div>
+                );
+              };
+
+              const ZeroChips = ({ keys, label = "No activity" }) => keys.length === 0 ? null : (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 10, padding: "8px 10px", background: "#f1f5f9", borderRadius: 6 }}>
+                  <span style={{ fontSize: "0.66rem", color: "#94a3b8", fontWeight: 600, flexShrink: 0 }}>{label}:</span>
+                  {keys.map((k) => (
+                    <span key={k} style={{ fontSize: "0.68rem", padding: "2px 8px", borderRadius: 4, background: "#fff", color: "#94a3b8", border: "1px solid #e2e8f0" }}>{k}</span>
+                  ))}
+                </div>
+              );
+
+              /* ─────────────── OPERATIONAL ─────────────── */
+              const opMap = Object.fromEntries((summary.operational || []).map((r) => [r.key || "", r]));
+              const opKeys = summary.operational_order.length ? summary.operational_order : (summary.operational || []).map((r) => r.key || "").filter(Boolean);
+              const nonFlagged   = opMap[""] || { count: 0, revenue: 0 };
+              const flaggedLines = opKeys.reduce((s, k) => s + (opMap[k]?.count || 0), 0);
+              const flaggedRev   = opKeys.reduce((s, k) => s + (opMap[k]?.revenue || 0), 0);
+              const totalOpLines = flaggedLines + nonFlagged.count;
+              const totalOpRev   = flaggedRev + (nonFlagged.revenue || 0);
+              const activeOpKeys = opKeys.filter((k) => (opMap[k]?.count || 0) > 0);
+              const zeroOpKeys   = opKeys.filter((k) => !(opMap[k]?.count || 0));
+
+              /* ─────────────── COMMERCIAL ─────────────── */
+              const doneStatuses = new Set(summary.pic_done_statuses || ["Commercial Invoice Submitted", "Commercial Invoice Closed"]);
+              const activeKeys   = (summary.pic_status_order || summary.commercial_order || []);
+              const ms1Data      = summary.commercial_ms1 || summary.commercial || [];
+              const comGrandTotal = ms1Data.reduce((s, r) => s + (r.count || 0), 0);
+              const comGrandRev   = ms1Data.reduce((s, r) => s + (r.revenue || 0), 0);
+              const comDoneLines  = ms1Data.filter(r => doneStatuses.has(r.key)).reduce((s, r) => s + (r.count || 0), 0);
+              const comDoneRev    = ms1Data.filter(r => doneStatuses.has(r.key)).reduce((s, r) => s + (r.revenue || 0), 0);
+              const comActiveLines = comGrandTotal - comDoneLines;
+              const comActiveRev   = comGrandRev   - comDoneRev;
+              const msList = [
+                { ms: "MS1", label: "PIC Status (MS1)", data: summary.commercial_ms1 || summary.commercial || [], color: "#0369a1", bd: "#bae6fd", bg: "#f0f9ff", bar: "#0369a1" },
+                { ms: "MS2", label: "PIC Status (MS2)", data: summary.commercial_ms2 || [],                       color: "#7c3aed", bd: "#ddd6fe", bg: "#f5f3ff", bar: "#7c3aed" },
+              ];
+
+              return (
+                <>
+                  {/* ══ OPERATIONAL ══ */}
+                  <div style={{ marginBottom: 0 }}>
+                    <SectionHeader accent="#047857" title="Operational Work Done Categories" sub="by Issue Flag" />
+                    <TotalsRow tiles={[
+                      { label: "Total Work Done", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0" },
+                      { label: "Flagged Lines",   lines: flaggedLines,  revenue: flaggedRev,        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
+                      { label: "Not Flagged",     lines: nonFlagged.count, revenue: nonFlagged.revenue || 0, bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0" },
+                    ]} />
+                    <ProportionBar segments={[
+                      { value: flaggedLines, color: "#f97316", label: `Flagged ${totalOpLines > 0 ? Math.round(flaggedLines/totalOpLines*100) : 0}%` },
+                      { value: nonFlagged.count, color: "#cbd5e1", label: `Not Flagged ${totalOpLines > 0 ? Math.round(nonFlagged.count/totalOpLines*100) : 0}%` },
+                    ]} />
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10, marginTop: 16 }}>
+                      {opKeys.map((key) => {
+                        const { count = 0, revenue = 0 } = opMap[key] || {};
+                        const p = ISSUE_FLAG_PALETTE[key] || { bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0" };
+                        return <StatCard key={key} label={key || "No Flag"} count={count} revenue={revenue} accentColor={p.fg} bdColor={p.bd} bgColor={p.bg} barColor={p.fg} totalLines={flaggedLines} totalRev={flaggedRev} />;
+                      })}
+                    </div>
+                  </div>
+
+                  {/* divider */}
+                  <div style={{ height: 1, background: "#e2e8f0", margin: "28px 0" }} />
+
+                  {/* ══ COMMERCIAL ══ */}
+                  <div>
+                    <SectionHeader accent="#0369a1" title="Commercial Work Done Categories" sub="by PIC Status (MS1 & MS2)" />
+                    <TotalsRow tiles={[
+                      { label: "Total Work Done Lines", lines: comGrandTotal,  revenue: comGrandRev,   bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
+                      { label: "Commercially Done",     lines: comDoneLines,   revenue: comDoneRev,    bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" },
+                      { label: "Still Active",          lines: comActiveLines, revenue: comActiveRev,  bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
+                    ]} />
+                    <ProportionBar segments={[
+                      { value: comDoneLines,   color: "#10b981", label: `Done ${comGrandTotal > 0 ? Math.round(comDoneLines/comGrandTotal*100) : 0}%` },
+                      { value: comActiveLines, color: "#f59e0b", label: `Active ${comGrandTotal > 0 ? Math.round(comActiveLines/comGrandTotal*100) : 0}%` },
+                    ]} />
+
+                    <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 20 }}>
+                      {msList.map(({ ms, label, data, color, bd, bg, bar }) => {
+                        const msMap      = Object.fromEntries((data || []).map((r) => [r.key || "", r]));
+                        const msTotalL   = (data || []).reduce((s, r) => s + (r.count || 0), 0);
+                        const msTotalR   = (data || []).reduce((s, r) => s + (r.revenue || 0), 0);
+                        const msDoneL    = (data || []).filter(r => doneStatuses.has(r.key)).reduce((s, r) => s + (r.count || 0), 0);
+                        const msDoneR    = (data || []).filter(r => doneStatuses.has(r.key)).reduce((s, r) => s + (r.revenue || 0), 0);
+                        return (
+                          <div key={ms} style={{ borderLeft: `3px solid ${color}`, paddingLeft: 14 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: "0.72rem", fontWeight: 800, color, textTransform: "uppercase", letterSpacing: "0.06em" }}>{ms}</span>
+                              <span style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: 500 }}>{label}</span>
+                              <span style={{ fontSize: "0.7rem", color: "#64748b" }}>— {fmt.format(msTotalL)} lines · SAR {fmt.format(msTotalR)}</span>
+                              {msDoneL > 0 && (
+                                <span style={{ fontSize: "0.68rem", background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", borderRadius: 999, padding: "1px 8px", fontWeight: 600 }}>
+                                  ✓ {fmt.format(msDoneL)} done · SAR {fmt.format(msDoneR)}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
+                              {activeKeys.map((key) => {
+                                const { count = 0, revenue = 0 } = msMap[key] || {};
+                                return <StatCard key={key} label={key} count={count} revenue={revenue} accentColor={color} bdColor={bd} bgColor={bg} barColor={bar} totalLines={msTotalL} totalRev={msTotalR} />;
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        ) : (
+          loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading work done records…
             </div>
@@ -796,14 +1023,17 @@ export default function WorkDone() {
                 </tr>
               </tfoot>
             </table>
-          )}
+          )
+        )}
         </DataTableWrapper>
+        {tab === "list" && (
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={filteredRows.length}
           filteredCount={filteredRows.length}
           filterActive={!!hasFilters}
         />
+        )}
       </div>
 
       {submissionWarn && (

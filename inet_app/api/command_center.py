@@ -5451,6 +5451,79 @@ def list_execution_monitor_rows(filters=None, limit=500):
 
 
 @frappe.whitelist()
+def get_work_done_summary():
+    """
+    Full-dataset Work Done summary.
+    Returns operational breakdown by issue_flag, and commercial breakdown
+    separately for MS1 (pic_status) and MS2 (pic_status_ms2).
+    """
+    has_pic     = frappe.db.has_column("PO Dispatch", "pic_status")
+    has_pic_ms2 = frappe.db.has_column("PO Dispatch", "pic_status_ms2")
+    has_flag    = frappe.db.has_column("Work Done", "issue_flag")
+
+    if has_flag:
+        op_rows = frappe.db.sql("""
+            SELECT IFNULL(issue_flag, '') AS flag,
+                   COUNT(*) AS cnt,
+                   SUM(IFNULL(revenue_sar, 0)) AS revenue
+            FROM `tabWork Done`
+            GROUP BY flag
+        """, as_dict=True)
+    else:
+        op_rows = []
+
+    def _pic_query(field):
+        return frappe.db.sql("""
+            SELECT IFNULL(pd.{field}, '') AS status,
+                   COUNT(*) AS cnt,
+                   SUM(IFNULL(wd.revenue_sar, 0)) AS revenue
+            FROM `tabWork Done` wd
+            LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+            GROUP BY pd.{field}
+        """.format(field=field), as_dict=True)
+
+    ms1_rows = _pic_query("pic_status")     if has_pic     else []
+    ms2_rows = _pic_query("pic_status_ms2") if has_pic_ms2 else []
+
+    PIC_STATUS_ORDER = [
+        "Under Process to Apply",
+        "Under I-BUY",
+        "Under ISDP",
+        "I-BUY Rejected",
+        "ISDP Rejected",
+        "Ready for Invoice",
+        "PO Need to Cancel",
+        "PO Line Canceled",
+        "Work Not Done",
+    ]
+    PIC_DONE_STATUSES = ["Commercial Invoice Submitted", "Commercial Invoice Closed"]
+    OPERATIONAL_FLAGS = [
+        "POD/PPT required",
+        "TFM Check list",
+        "Spare part return",
+        "PAT/HO Final Approval",
+        "FPDC/FM Survey report Approval",
+        "Partial Work done",
+    ]
+
+    def to_serial(rows, key):
+        return [{"key": r[key], "count": cint(r.cnt), "revenue": float(r.revenue or 0)}
+                for r in rows]
+
+    return {
+        "operational":        to_serial(op_rows,  "flag"),
+        "commercial_ms1":     to_serial(ms1_rows, "status"),
+        "commercial_ms2":     to_serial(ms2_rows, "status"),
+        "operational_order":  OPERATIONAL_FLAGS,
+        "pic_status_order":   PIC_STATUS_ORDER,
+        "pic_done_statuses":  PIC_DONE_STATUSES,
+        # backward-compat alias
+        "commercial":         to_serial(ms1_rows, "status"),
+        "commercial_order":   PIC_STATUS_ORDER,
+    }
+
+
+@frappe.whitelist()
 def list_work_done_rows(filters=None, limit=500):
     """
     Rich Work Done rows for PM page.
