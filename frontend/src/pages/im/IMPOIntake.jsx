@@ -907,7 +907,7 @@ export default function IMPOIntake() {
                 <p>{ovShowClosed ? "No POIDs assigned to you." : "Try enabling 'All statuses' to include closed and cancelled POIDs."}</p>
               </div>
             ) : (
-              <table className="data-table">
+              <table className="data-table" data-table-key="im-po-overview-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
                     <th>POID</th>
@@ -949,7 +949,7 @@ export default function IMPOIntake() {
                     const iflag = ps?.issue_flag || "";
                     const ifsc = iflag ? issueFlagColor(iflag) : null;
                     return (
-                      <tr key={row.name} style={{ opacity: isClosed ? 0.65 : 1, background: isDummy ? "#fffbeb" : undefined }}>
+                      <tr key={row.name} data-doc-name={row.name} style={{ opacity: isClosed ? 0.65 : 1, background: isDummy ? "#fffbeb" : undefined }}>
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>
                           {row.poid || row.name}
                           {isDummy && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#fed7aa", color: "#92400e" }}>Dummy</span>}
@@ -1018,7 +1018,7 @@ export default function IMPOIntake() {
                 <p>{hasFilters ? "Try adjusting your search or filters." : "When the PM dispatches new PO lines to you, they'll land here first."}</p>
               </div>
             ) : (
-              <table className="data-table">
+              <table className="data-table" data-table-key="im-po-intake-v2">
                 <thead>
                   <tr>
                     <th><input type="checkbox" checked={selected.size === rows.length && rows.length > 0} onChange={toggleAll} /></th>
@@ -1041,7 +1041,7 @@ export default function IMPOIntake() {
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <tr key={row.name} className={selected.has(row.name) ? "row-selected" : ""} onClick={() => toggleRow(row.name)} style={{ cursor: "pointer", background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined }}>
+                    <tr key={row.name} data-doc-name={row.name} className={selected.has(row.name) ? "row-selected" : ""} onClick={() => toggleRow(row.name)} style={{ cursor: "pointer", background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined }}>
                       <td onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(row.name)} onChange={() => toggleRow(row.name)} />
                       </td>
@@ -1081,7 +1081,7 @@ export default function IMPOIntake() {
                 <p>{dummyStatusFilter === "open" ? "Create a dummy PO using the + Dummy PO button above when a real PO is not yet available." : dummyStatusFilter === "mapped" ? "Once dummy POs are mapped to real PO intake lines they appear here." : "No dummy POs have been created yet."}</p>
               </div>
             ) : (
-              <table className="data-table">
+              <table className="data-table" data-table-key="im-po-dummy-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
                     <th>POID</th>
@@ -1112,7 +1112,7 @@ export default function IMPOIntake() {
                     const isOpen = !!Number(row.is_dummy_po);
                     const ps = planSummaries[row.name];
                     return (
-                      <tr key={row.name} style={{ background: isOpen ? "#fffbeb" : undefined }}>
+                      <tr key={row.name} data-doc-name={row.name} style={{ background: isOpen ? "#fffbeb" : undefined }}>
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>{row.poid || row.name}</td>
                         <td>
                           {isOpen

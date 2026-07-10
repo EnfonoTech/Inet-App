@@ -183,8 +183,9 @@ export default function DataTablePro() {
           ? `${userKey}:${role || "user"}:${pathname}:${customKey}`
           : `${userKey}:${role || "user"}:${pathname}:table:${tIdx + 1}`;
         const tableDoctype = detectTableDoctype(pathname, tIdx);
+        const noDynamic = table.getAttribute("data-tablepro-no-dynamic") === "true";
         const saved = await prefsApi.load(tableId);
-        const savedDyn = Array.isArray(saved.dynamic_fields) ? saved.dynamic_fields : [];
+        const savedDyn = (!noDynamic && Array.isArray(saved.dynamic_fields)) ? saved.dynamic_fields : [];
         // Merge saved dynamic columns into `columns` before restoring order, or saved.order
         // filters them out and refresh drops added fields from Manage Table + layout.
         savedDyn.forEach((d) => {
@@ -301,11 +302,17 @@ export default function DataTablePro() {
 
             let sourceKey = dyn.source_key;
             const bodyRows = Array.from(table.querySelectorAll("tbody tr"));
+            // Prefer data-doc-name on <tr> (the actual Frappe document name) so the
+            // backend lookup uses `name` correctly even when the source cell displays a
+            // different value (e.g. the business POID vs. the system name).
+            const getRowLookupKey = (row, sk) => {
+              const explicit = row.dataset.docName;
+              if (explicit) return String(explicit).trim();
+              const cell = Array.from(row.children).find((c) => c.dataset.colKey === sk);
+              return String(cell?.textContent || "").trim();
+            };
             const collectNames = (sk) =>
-              bodyRows
-                .map((row) => Array.from(row.children).find((c) => c.dataset.colKey === sk))
-                .map((cell) => String(cell?.textContent || "").trim())
-                .filter(Boolean);
+              bodyRows.map((row) => getRowLookupKey(row, sk)).filter(Boolean);
 
             let names = collectNames(sourceKey);
             if (!names.length && headerTr) {
@@ -318,6 +325,26 @@ export default function DataTablePro() {
             }
             if (!names.length) continue;
 
+            // Inject <th> and placeholder <td> cells immediately so the column
+            // structure is correct before the async API call completes. Without this,
+            // there is a visible white/empty column between the header paint and the
+            // API response.
+            const head = table.querySelector("thead tr");
+            if (head && !Array.from(head.children).some((c) => c.dataset.colKey === dyn.key)) {
+              const th = document.createElement("th");
+              th.dataset.colKey = dyn.key;
+              th.textContent = dyn.label || dyn.fieldname;
+              head.appendChild(th);
+            }
+            bodyRows.forEach((row) => {
+              if (!Array.from(row.children).find((c) => c.dataset.colKey === dyn.key)) {
+                const td = document.createElement("td");
+                td.dataset.colKey = dyn.key;
+                td.textContent = "…";
+                row.appendChild(td);
+              }
+            });
+
             let values = {};
             try {
               const res = await pmApi.getTableFieldValues(dyn.doctype, dyn.fieldname, names);
@@ -326,24 +353,11 @@ export default function DataTablePro() {
               values = {};
             }
 
-            const head = table.querySelector("thead tr");
-            if (head && !Array.from(head.children).some((c) => c.dataset.colKey === dyn.key)) {
-              const th = document.createElement("th");
-              th.dataset.colKey = dyn.key;
-              th.textContent = dyn.label || dyn.fieldname;
-              head.appendChild(th);
-            }
-
             bodyRows.forEach((row) => {
-              let td = Array.from(row.children).find((c) => c.dataset.colKey === dyn.key);
-              if (!td) {
-                td = document.createElement("td");
-                td.dataset.colKey = dyn.key;
-                row.appendChild(td);
-              }
-              const sourceCell = Array.from(row.children).find((c) => c.dataset.colKey === sourceKey);
-              const sourceName = String(sourceCell?.textContent || "").trim();
-              td.textContent = values[sourceName] == null || values[sourceName] === "" ? "—" : String(values[sourceName]);
+              const td = Array.from(row.children).find((c) => c.dataset.colKey === dyn.key);
+              if (!td) return;
+              const lookupKey = getRowLookupKey(row, sourceKey);
+              td.textContent = values[lookupKey] == null || values[lookupKey] === "" ? "—" : String(values[lookupKey]);
             });
 
             if (!columns.some((c) => c.key === dyn.key)) {
@@ -762,7 +776,9 @@ export default function DataTablePro() {
 
         const applyAll = async () => {
           pinSelectColumnFirst();
-          const allowed = new Set(state.order);
+          // allowed = saved order UNION current column keys so newly added columns
+          // are never removed before normalizeRowCells() gets to stamp their <td>s.
+          const allowed = new Set([...state.order, ...baseColumnKeys]);
           table.querySelectorAll("thead tr, tbody tr, tfoot tr").forEach((row) => {
             Array.from(row.children).forEach((cell) => {
               const k = cell.dataset.colKey;
@@ -771,8 +787,8 @@ export default function DataTablePro() {
           });
           columns = columns.filter((c) => allowed.has(c.key));
 
-          normalizeRowCells();
-          await ensureDynamicColumns();
+          // Phase 1 — synchronous layout: apply column order/visibility/widths first
+          // so the table becomes visible immediately without waiting for any API calls.
           normalizeRowCells();
           applyOrder();
           applyHidden();
@@ -782,9 +798,21 @@ export default function DataTablePro() {
           applyFilters();
           addResizeHandles();
           applyFrozen();
-          // Sort runs last so it operates on the final cell layout.
           applySort();
           updateSortButtonLabel();
+          // Mark ready here so the table shows before dynamic-column values load.
+          table.classList.add("data-table--tablepro-ready");
+
+          // Phase 2 — async: fetch dynamic-column values. The table is already
+          // visible at this point; cells show "…" briefly then fill with real values.
+          if (state.dynamic_fields.length) {
+            await ensureDynamicColumns();
+            normalizeRowCells();
+            applyOrder();
+            applyHidden();
+            applyWidths();
+            applySort();
+          }
         };
 
         const toolbar = document.createElement("div");
@@ -907,15 +935,19 @@ export default function DataTablePro() {
           panel.innerHTML = "";
           const addField = document.createElement("div");
           addField.className = "tablepro-panel-addfield";
-          addField.innerHTML = `
-            <div class="tablepro-panel-title">Add Doctype Field Column</div>
-            <div class="tablepro-help">${tableDoctype ? `Doctype: ${escAttr(tableDoctype)}` : "Doctype: not mapped for this table"}</div>
-            <select class="tablepro-input-field">
-              <option value="">Select field...</option>
-              ${availableFields.map((f) => `<option value="${escAttr(f.fieldname)}">${escAttr(f.label)}</option>`).join("")}
-            </select>
-            <button type="button" class="btn-secondary tablepro-btn-addfield">Add Field Column</button>
-          `;
+          if (noDynamic) {
+            addField.style.display = "none";
+          } else {
+            addField.innerHTML = `
+              <div class="tablepro-panel-title">Add Doctype Field Column</div>
+              <div class="tablepro-help">${tableDoctype ? `Doctype: ${escAttr(tableDoctype)}` : "Doctype: not mapped for this table"}</div>
+              <select class="tablepro-input-field">
+                <option value="">Select field...</option>
+                ${availableFields.map((f) => `<option value="${escAttr(f.fieldname)}">${escAttr(f.label)}</option>`).join("")}
+              </select>
+              <button type="button" class="btn-secondary tablepro-btn-addfield">Add Field Column</button>
+            `;
+          }
           panel.appendChild(addField);
           addField.querySelector(".tablepro-btn-addfield")?.addEventListener("click", async () => {
             const fieldname = addField.querySelector(".tablepro-input-field")?.value?.trim();
@@ -1038,9 +1070,9 @@ export default function DataTablePro() {
 
         await applyAll();
         renderPanel();
-        // Signal to CSS that saved widths / order / hidden are applied so the
-        // table fades in — avoids the "flash of old layout" before init runs.
-        table.classList.add("data-table--tablepro-ready");
+        // data-table--tablepro-ready is added inside applyAll (before the async
+        // dynamic-column fetch) so the table is visible as fast as possible.
+        // Keep the explicit add here as a safety net for tables with no dynamic fields.
 
         const wrapEl = table.closest(".data-table-wrapper");
         let wrapResizeObs = null;
@@ -1052,20 +1084,38 @@ export default function DataTablePro() {
         // Re-apply layout when tbody rows are replaced in-place (e.g. limit selector / data refresh).
         // The wrapper MutationObserver only fires when the <table> element itself is swapped out;
         // it misses in-place tbody updates, so new rows come in without colKey, widths, or ordering.
+        //
+        // IMPORTANT: React may REUSE the same <table> DOM element for a different tab (same element
+        // type at the same JSX position). When that happens the data-table-key attribute changes but
+        // no childList mutation fires on .data-table-scroll — only the tbody rows change. We detect
+        // the identity shift here and do a full re-init instead of applying stale state.
+        const tableKey = customKey || "";
         let tbodyReapplyTimer = null;
         const tbodyMo = new MutationObserver(() => {
           if (destroyed) return;
+          // Detect tab-switch reuse: React updated data-table-key to a different value
+          const nowKey = table.getAttribute("data-table-key") || "";
+          if (nowKey !== tableKey) {
+            tbodyMo.disconnect();
+            if (tbodyReapplyTimer) { clearTimeout(tbodyReapplyTimer); tbodyReapplyTimer = null; }
+            // Tear down the stale init so the upcoming scheduleReinitFromDom -> init() can start fresh
+            delete table.dataset.tableproInitialized;
+            table.classList.remove("data-table--tablepro-ready");
+            toolbar.remove();
+            if (typeof table._tableproCleanup === "function") {
+              table._tableproCleanup();
+              delete table._tableproCleanup;
+            }
+            const ti = tracked.findIndex((e) => e.table === table);
+            if (ti !== -1) tracked.splice(ti, 1);
+            scheduleReinitFromDom();
+            return;
+          }
           if (tbodyReapplyTimer) clearTimeout(tbodyReapplyTimer);
-          tbodyReapplyTimer = setTimeout(() => {
+          tbodyReapplyTimer = setTimeout(async () => {
             tbodyReapplyTimer = null;
             if (!table.isConnected || destroyed) return;
-            normalizeRowCells();
-            applyOrder();
-            applyHidden();
-            applyWidths();
-            ensureFilterRow();
-            applyFilters();
-            applyFrozen();
+            await applyAll();
           }, 16);
         });
         const tbody = table.querySelector("tbody");
