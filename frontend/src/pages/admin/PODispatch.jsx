@@ -578,7 +578,7 @@ export default function PODispatch() {
               <p>{tableSearch ? "Try a different search term." : activeTab === "New" ? "All PO lines have been dispatched." : "No records in this view."}</p>
             </div>
           ) : (
-            <table className="data-table">
+            <table className="data-table" data-table-key="admin-po-dispatch-v1">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>

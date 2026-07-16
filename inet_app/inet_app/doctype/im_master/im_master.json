@@ -15,6 +15,7 @@
   "status",
   "can_assign_backend",
   "can_direct_close",
+  "can_milestone_close",
   "section_break_cost",
   "monthly_cost_sar",
   "column_break_pozg",
@@ -85,6 +86,12 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Can Direct Close"
+  },
+  {
+   "default": "0",
+   "fieldname": "can_milestone_close",
+   "fieldtype": "Check",
+   "label": "Can Milestone Close"
   },
   {
    "fieldname": "section_break_cost",

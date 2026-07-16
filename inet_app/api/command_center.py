@@ -2097,6 +2097,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         disp_fields_full = [
             "name", "po_intake", "po_line_no", "system_id", "im",
             "dispatch_mode", "target_month", "region_type", "center_area",
+            "ms1_amount", "ms2_amount", "pic_status", "pic_status_ms2",
         ]
         disp_fields_base = [
             "name", "po_intake", "po_line_no", "system_id", "im",
@@ -2146,6 +2147,10 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
                 line["region_type"] = region_type_from_center_area(
                     dispatch_data.get("center_area") or line.get("center_area")
                 )
+            line["ms1_amount"] = flt(dispatch_data.get("ms1_amount") or 0)
+            line["ms2_amount"] = flt(dispatch_data.get("ms2_amount") or 0)
+            line["pic_status"] = dispatch_data.get("pic_status")
+            line["pic_status_ms2"] = dispatch_data.get("pic_status_ms2")
 
         if not line.get("region_type"):
             line["region_type"] = region_type_from_center_area(line.get("center_area"))
@@ -2587,6 +2592,26 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
         r["activity_type"] = act_map.get(r.get("item_code") or "")
     _enrich_with_project_fields(rows)
     _apply_dummy_description(rows)
+
+    # Enrich with milestone close state from Work Done
+    if rows and frappe.db.has_column("Work Done", "ms1_closed"):
+        pd_names = [r.get("name") for r in rows if r.get("name")]
+        if pd_names:
+            ph = ", ".join(["%s"] * len(pd_names))
+            wd_ms_rows = frappe.db.sql(
+                f"SELECT system_id, ms1_closed, ms2_closed, ms1_closed_at, ms2_closed_at, subcontractor"
+                f" FROM `tabWork Done` WHERE system_id IN ({ph})",
+                tuple(pd_names), as_dict=True,
+            )
+            wd_ms_map = {w.system_id: w for w in (wd_ms_rows or [])}
+            for r in rows:
+                wd_ms = wd_ms_map.get(r.get("name")) or {}
+                r["ms1_closed"] = cint(wd_ms.get("ms1_closed") or 0)
+                r["ms2_closed"] = cint(wd_ms.get("ms2_closed") or 0)
+                r["ms1_closed_at"] = wd_ms.get("ms1_closed_at")
+                r["ms2_closed_at"] = wd_ms.get("ms2_closed_at")
+                r["wd_subcontractor"] = wd_ms.get("subcontractor") or None
+
     return rows
 
 
@@ -5563,6 +5588,8 @@ def list_work_done_rows(filters=None, limit=500):
         wd_fields.append("source")
     if frappe.db.has_column("Work Done", "direct_close_by"):
         wd_fields.append("direct_close_by")
+    if frappe.db.has_column("Work Done", "ms1_closed"):
+        wd_fields += ["ms1_closed", "ms2_closed", "ms1_closed_at", "ms2_closed_at"]
     lim = _portal_row_limit(limit, 500)
 
     wheres = ["1=1"]
@@ -5739,6 +5766,8 @@ def list_work_done_rows(filters=None, limit=500):
             pd_fields_wd.append("original_dummy_poid")
         if frappe.db.has_column("PO Dispatch", "pic_status"):
             pd_fields_wd.append("pic_status")
+        if frappe.db.has_column("PO Dispatch", "pic_status_ms2"):
+            pd_fields_wd.append("pic_status_ms2")
         if frappe.db.has_column("PO Dispatch", "subcon_submission_status"):
             pd_fields_wd.append("subcon_submission_status")
         if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
@@ -5812,6 +5841,7 @@ def list_work_done_rows(filters=None, limit=500):
                 **r,
                 "billing_status": billing_override,
                 "pic_status": pic_status_val,
+                "pic_status_ms2": pd.get("pic_status_ms2") if pd else None,
                 "rollout_plan": ex.rollout_plan if ex else None,
                 "po_dispatch": (rp.po_dispatch if rp else None) or r.get("system_id"),
                 # Business POID from dispatch (fall back to dispatch name on legacy docs).
@@ -6187,13 +6217,28 @@ def update_work_done_submission(name, submission_status, note=None):
     pic_warning = None
     if po_dispatch:
         if status == "Confirmation Done":
-            current_pic = frappe.db.get_value("PO Dispatch", po_dispatch, "pic_status") or ""
-            if current_pic in {"", "Work Not Done"}:
-                # Bug fix: physically write status so PIC tracker sees the correct value
-                frappe.db.set_value(
-                    "PO Dispatch", po_dispatch, "pic_status", "Under Process to Apply",
-                    update_modified=False,
-                )
+            # Determine which milestone(s) this Work Done covers.
+            # MS2-only direct-close → update pic_status_ms2.
+            # MS1 close or non-milestone → update pic_status (legacy / default).
+            ms_vals = {}
+            if frappe.db.has_column("Work Done", "ms1_closed"):
+                ms_vals = frappe.db.get_value("Work Done", name, ["ms1_closed", "ms2_closed"], as_dict=True) or {}
+            ms1_cl = cint(ms_vals.get("ms1_closed") or 0)
+            ms2_cl = cint(ms_vals.get("ms2_closed") or 0)
+            if ms1_cl or not ms2_cl:
+                current_pic = frappe.db.get_value("PO Dispatch", po_dispatch, "pic_status") or ""
+                if current_pic in {"", "Work Not Done"}:
+                    frappe.db.set_value(
+                        "PO Dispatch", po_dispatch, "pic_status", "Under Process to Apply",
+                        update_modified=False,
+                    )
+            if ms2_cl and frappe.db.has_column("PO Dispatch", "pic_status_ms2"):
+                current_pic_ms2 = frappe.db.get_value("PO Dispatch", po_dispatch, "pic_status_ms2") or ""
+                if current_pic_ms2 in {"", "Work Not Done"}:
+                    frappe.db.set_value(
+                        "PO Dispatch", po_dispatch, "pic_status_ms2", "Under Process to Apply",
+                        update_modified=False,
+                    )
             if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
                 frappe.db.set_value(
                     "PO Dispatch", po_dispatch, "pic_rejection_remark", "",
@@ -6248,6 +6293,43 @@ def update_work_done_submission(name, submission_status, note=None):
     if pic_warning:
         result["pic_warning"] = pic_warning
     return result
+
+
+@frappe.whitelist()
+def submit_milestone_to_pic(work_done, milestone):
+    """IM explicitly submits a closed milestone to PIC from the Work Done page.
+    milestone = 'MS1' or 'MS2'.
+    Sets pic_status (MS1) or pic_status_ms2 (MS2) on the linked PO Dispatch to
+    'Under Process to Apply', only if the milestone is closed on the Work Done
+    and the PIC field is still empty / 'Work Not Done'.
+    """
+    milestone = (milestone or "").strip().upper()
+    if milestone not in ("MS1", "MS2"):
+        frappe.throw("milestone must be MS1 or MS2")
+
+    closed_field = "ms1_closed" if milestone == "MS1" else "ms2_closed"
+    pic_field    = "pic_status"  if milestone == "MS1" else "pic_status_ms2"
+
+    wd_vals = frappe.db.get_value("Work Done", work_done,
+        [closed_field, "system_id"], as_dict=True)
+    if not wd_vals:
+        frappe.throw("Work Done not found")
+    if not cint(wd_vals.get(closed_field)):
+        frappe.throw(f"{milestone} is not closed on this Work Done")
+
+    po_dispatch = wd_vals.get("system_id")
+    if not po_dispatch:
+        frappe.throw("Work Done is not linked to a PO Dispatch")
+
+    current = frappe.db.get_value("PO Dispatch", po_dispatch, pic_field) or ""
+    if current not in ("", "Work Not Done"):
+        frappe.throw(f"{milestone} has already been submitted to PIC (current status: {current})")
+
+    frappe.db.set_value("PO Dispatch", po_dispatch, pic_field,
+                        "Under Process to Apply", update_modified=False)
+    frappe.db.commit()
+    return {"ok": True, "milestone": milestone, "pic_field": pic_field,
+            "po_dispatch": po_dispatch, "new_status": "Under Process to Apply"}
 
 
 @frappe.whitelist()
@@ -6904,7 +6986,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     coverage_pct = (total_achieved / company_target * 100.0) if company_target else 0.0
 
     # ---- Top 5 teams by revenue this month (same logic as get_top_teams_report) ----
-    _tt_period_days = (last_day - first_day).days + 1
+    _tt_period_days = (getdate(last_day) - getdate(first_day)).days + 1
     _tt_rev_rows = frappe.db.sql(
         """
         SELECT de.team,
@@ -6949,7 +7031,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     top_teams = _tt_data[:5]
 
     # ---- IM performance (same cost formula as top_teams) -------------------
-    _ip_period_days = (last_day - first_day).days + 1
+    _ip_period_days = (getdate(last_day) - getdate(first_day)).days + 1
     _ip_rev_rows = frappe.db.sql(
         """
         SELECT pd.im,
@@ -10959,12 +11041,12 @@ def get_my_direct_close_capability(im=None):
     """
     role = _user_role_class()
     if role == "pm":
-        return {"role": role, "can_direct_close": True, "im": None}
+        return {"role": role, "can_direct_close": True, "can_milestone_close": True, "im": None}
     if role != "im":
-        return {"role": role, "can_direct_close": False, "im": None}
+        return {"role": role, "can_direct_close": False, "can_milestone_close": False, "im": None}
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
-        return {"role": role, "can_direct_close": False, "im": None}
+        return {"role": role, "can_direct_close": False, "can_milestone_close": False, "im": None}
     target = im_resolved if im_resolved and frappe.db.exists("IM Master", im_resolved) else None
     if not target:
         for ident in im_identifiers:
@@ -10972,9 +11054,16 @@ def get_my_direct_close_capability(im=None):
                 target = ident
                 break
     flag = 0
+    milestone_flag = 0
     if target:
-        flag = cint(frappe.db.get_value("IM Master", target, "can_direct_close") or 0)
-    return {"role": role, "can_direct_close": bool(flag), "im": target}
+        vals = frappe.db.get_value(
+            "IM Master", target,
+            ["can_direct_close", "can_milestone_close"],
+            as_dict=True,
+        ) or {}
+        flag = cint(vals.get("can_direct_close") or 0)
+        milestone_flag = cint(vals.get("can_milestone_close") or 0)
+    return {"role": role, "can_direct_close": bool(flag), "can_milestone_close": bool(milestone_flag), "im": target}
 
 
 @frappe.whitelist()
@@ -10995,23 +11084,29 @@ def get_subcontractors_by_type(close_type):
 
 
 @frappe.whitelist()
-def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None):
+def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None, milestone=None):
     """Bulk direct-close PO Dispatch lines: create Work Done + move to Completed.
 
     Only available to IMs with `can_direct_close = 1` (or PM/admin).
+    milestone: None/"MS1"/"MS2" — if set, partial milestone close (IM must have can_milestone_close).
     """
     role = _user_role_class()
     if role not in ("pm", "im"):
         frappe.throw("Not permitted", frappe.PermissionError)
 
-    # Check capability for IM
     if role == "im":
         cap = get_my_direct_close_capability()
         if not cap.get("can_direct_close"):
             frappe.throw("You do not have permission to Direct Close dispatches.", frappe.PermissionError)
+        if milestone and not cap.get("can_milestone_close"):
+            frappe.throw("You do not have permission for Milestone Close.", frappe.PermissionError)
 
     if isinstance(po_dispatches, str):
         po_dispatches = frappe.parse_json(po_dispatches)
+
+    milestone = (milestone or "").strip().upper() or None
+    if milestone and milestone not in ("MS1", "MS2"):
+        frappe.throw("milestone must be MS1 or MS2")
 
     im_resolved, im_identifiers, _ = resolve_im_for_session(None)
     im_doc = im_resolved
@@ -11020,7 +11115,8 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None)
     errors = []
     for name in (po_dispatches or []):
         ok, info = _direct_close_one(role, im_identifiers or [], im_doc, name,
-                                     close_type, subcontractor, (note or "").strip())
+                                     close_type, subcontractor, (note or "").strip(),
+                                     milestone=milestone)
         if ok:
             updated.append(info)
         else:
@@ -11029,13 +11125,24 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None)
     return {"updated": updated, "errors": errors}
 
 
-def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontractor, note):
-    """Create Work Done + complete one PO Dispatch directly. Returns (ok, info)."""
+def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontractor, note, milestone=None):
+    """Create Work Done + complete one PO Dispatch directly. Returns (ok, info).
+
+    milestone: None = full close; "MS1"/"MS2" = partial milestone close on single WD.
+    """
+    extra_pd_fields = []
+    if frappe.db.has_column("PO Dispatch", "ms1_amount"):
+        extra_pd_fields += ["ms1_amount", "ms2_amount"]
+    if frappe.db.has_column("PO Dispatch", "pic_status"):
+        extra_pd_fields += ["pic_status"]
+    if frappe.db.has_column("PO Dispatch", "pic_status_ms2"):
+        extra_pd_fields += ["pic_status_ms2"]
+
     pd = frappe.db.get_value(
         "PO Dispatch", name,
         ["name", "im", "dispatch_status", "is_dummy_po", "poid", "item_code",
          "center_area", "region_type", "qty", "rate", "line_amount", "contract",
-         "po_intake", "po_line_no"],
+         "po_intake", "po_line_no"] + extra_pd_fields,
         as_dict=True,
     ) or {}
     if not pd.get("name"):
@@ -11046,19 +11153,161 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
         return False, {"po_dispatch": name, "poid": poid, "error": "Cannot direct-close a dummy PO"}
 
     cur_status = pd.get("dispatch_status") or ""
-    if cur_status in ("Completed", "Cancelled", "Closed"):
+    if cur_status in ("Cancelled", "Closed"):
         return False, {"po_dispatch": name, "poid": poid, "error": f"Already {cur_status}"}
+
+    # For milestone close, allow re-entry even if Completed (the other milestone may still be open)
+    if not milestone and cur_status == "Completed":
+        return False, {"po_dispatch": name, "poid": poid, "error": "Already Completed"}
 
     if role == "im":
         pd_im = pd.get("im") or ""
         if pd_im and pd_im not in (im_identifiers or []):
             return False, {"po_dispatch": name, "poid": poid, "error": "This POID belongs to a different IM"}
 
-    if frappe.db.exists("Work Done", {"system_id": name}):
-        return False, {"po_dispatch": name, "poid": poid, "error": "Work Done already exists for this POID"}
-
     if not subcontractor:
         return False, {"po_dispatch": name, "poid": poid, "error": "Subcontractor is required"}
+
+    # ── Milestone close path ─────────────────────────────────────────────
+    if milestone:
+        ms_amount_field = "ms1_amount" if milestone == "MS1" else "ms2_amount"
+        ms_closed_field = "ms1_closed" if milestone == "MS1" else "ms2_closed"
+        ms_closed_at_field = "ms1_closed_at" if milestone == "MS1" else "ms2_closed_at"
+        other_closed_field = "ms2_closed" if milestone == "MS1" else "ms1_closed"
+        other_amount_field = "ms2_amount" if milestone == "MS1" else "ms1_amount"
+        pic_field = "pic_status" if milestone == "MS1" else "pic_status_ms2"
+
+        ms_revenue = flt(pd.get(ms_amount_field) or 0)
+        if not ms_revenue:
+            return False, {"po_dispatch": name, "poid": poid,
+                           "error": f"{milestone} amount is not set on this PO Dispatch"}
+
+        subcontract_cost = 0.0
+        inet_margin_pct = 0.0
+        if close_type == "SUB":
+            scc = frappe.db.get_value(
+                "Subcontract Cost Master",
+                {"subcontractor": subcontractor, "active_flag": 1},
+                "expected_cost_sar",
+            )
+            subcontract_cost = flt(scc or 0)
+            margin_pct = frappe.db.get_value("Subcontract Master", subcontractor, "inet_margin_pct")
+            inet_margin_pct = flt(margin_pct or 0)
+
+        now_dt = now_datetime()
+        existing_wd_name = frappe.db.get_value("Work Done", {"system_id": name}, "name")
+
+        if existing_wd_name:
+            # Check this milestone isn't already closed
+            wd_vals = frappe.db.get_value(
+                "Work Done", existing_wd_name,
+                [ms_closed_field, other_closed_field, "revenue_sar", "subcontractor"],
+                as_dict=True,
+            ) or {}
+            if cint(wd_vals.get(ms_closed_field)):
+                return False, {"po_dispatch": name, "poid": poid,
+                               "error": f"{milestone} is already closed"}
+
+            # Lock subcontractor: if existing WD already has one, use it (cannot change)
+            existing_sub = (wd_vals.get("subcontractor") or "").strip()
+            if existing_sub:
+                subcontractor = existing_sub
+
+            # Recalculate subcontract_cost for the locked subcontractor
+            if close_type == "SUB" and subcontractor:
+                scc = frappe.db.get_value(
+                    "Subcontract Cost Master",
+                    {"subcontractor": subcontractor, "active_flag": 1},
+                    "expected_cost_sar",
+                )
+                subcontract_cost = flt(scc or 0)
+
+            # Accumulate revenue: add this milestone's amount to existing
+            other_closed = cint(wd_vals.get(other_closed_field) or 0)
+            other_revenue = flt(pd.get(other_amount_field) or 0) if other_closed else 0
+            new_revenue = ms_revenue + other_revenue
+            margin = new_revenue - subcontract_cost
+
+            wd_updates = {
+                ms_closed_field: 1,
+                ms_closed_at_field: now_dt,
+                "revenue_sar": new_revenue,
+                "margin_sar": margin,
+            }
+            frappe.db.set_value("Work Done", existing_wd_name, wd_updates, update_modified=True)
+            wd_name = existing_wd_name
+        else:
+            billing_rate = flt(pd.get("rate") or 0)
+            executed_qty = flt(pd.get("qty") or 0) or 1.0
+            margin = ms_revenue - subcontract_cost
+
+            wd = frappe.new_doc("Work Done")
+            wd.system_id = name
+            wd.region_type = pd.get("region_type") or region_type_from_center_area(pd.get("center_area") or "")
+            wd.item_code = pd.get("item_code")
+            wd.executed_qty = executed_qty
+            wd.billing_rate_sar = billing_rate
+            wd.revenue_sar = ms_revenue
+            wd.team_cost_sar = 0
+            wd.subcontract_cost_sar = subcontract_cost
+            wd.activity_cost_sar = 0
+            wd.total_cost_sar = subcontract_cost
+            wd.margin_sar = margin
+            wd.inet_margin_pct = inet_margin_pct
+            wd.billing_status = "Pending"
+            if frappe.db.has_column("Work Done", "subcontractor"):
+                wd.subcontractor = subcontractor
+            if frappe.db.has_column("Work Done", "source"):
+                wd.source = "Direct Close"
+            if frappe.db.has_column("Work Done", "direct_close_by"):
+                wd.direct_close_by = im_doc or frappe.session.user
+            if frappe.db.has_column("Work Done", ms_closed_field):
+                setattr(wd, ms_closed_field, 1)
+            if frappe.db.has_column("Work Done", ms_closed_at_field):
+                setattr(wd, ms_closed_at_field, now_dt)
+            wd.insert(ignore_permissions=True)
+            wd_name = wd.name
+
+        frappe.db.commit()
+
+        # Do NOT auto-set pic_status here — IM submits each milestone to PIC
+        # explicitly from the Work Done page via submit_milestone_to_pic().
+        pd_updates = {}
+        if frappe.db.has_column("PO Dispatch", "direct_close_by"):
+            pd_updates["direct_close_by"] = im_doc or frappe.session.user
+        existing_contract = pd.get("contract") or ""
+        if subcontractor and not existing_contract:
+            pd_updates["contract"] = subcontractor
+
+        # Only set Completed when both milestones are now closed
+        wd_check = frappe.db.get_value("Work Done", wd_name, ["ms1_closed", "ms2_closed"], as_dict=True) or {}
+        both_closed = cint(wd_check.get("ms1_closed")) and cint(wd_check.get("ms2_closed"))
+        if both_closed:
+            pd_updates["dispatch_status"] = "Completed"
+
+        if pd_updates:
+            frappe.db.set_value("PO Dispatch", name, pd_updates, update_modified=False)
+
+        # Mark PO Intake Line Completed only when both milestones closed
+        if both_closed:
+            intake_parent = pd.get("po_intake")
+            line_no = pd.get("po_line_no")
+            if intake_parent and line_no:
+                intake_line = frappe.db.exists("PO Intake Line",
+                    {"parent": intake_parent, "po_line_no": line_no})
+                if intake_line and isinstance(intake_line, str):
+                    frappe.db.set_value("PO Intake Line", intake_line, "po_line_status", "Completed")
+
+        frappe.db.commit()
+        return True, {"po_dispatch": name, "poid": poid, "work_done": wd_name,
+                      "milestone": milestone, "both_closed": both_closed}
+
+    # ── Full close path (original logic) ────────────────────────────────
+    if cur_status == "Completed":
+        return False, {"po_dispatch": name, "poid": poid, "error": "Already Completed"}
+
+    if frappe.db.exists("Work Done", {"system_id": name}):
+        return False, {"po_dispatch": name, "poid": poid, "error": "Work Done already exists for this POID"}
 
     # Resolve subcontract cost and margin (only for SUB type teams)
     revenue = flt(pd.get("line_amount") or 0)

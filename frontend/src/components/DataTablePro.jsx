@@ -210,9 +210,19 @@ export default function DataTablePro() {
           if (!restoredOrder.includes(k)) restoredOrder.push(k);
         });
         const validKeys = new Set(restoredOrder);
+        // Keys with data-tablepro-default-hidden="true" on the <th> are hidden
+        // on first visit (no saved prefs). Once the user toggles via Manage Table,
+        // saved.hidden takes over and default is ignored.
+        const defaultHiddenKeys = new Set(
+          headers
+            .filter(th => th.getAttribute("data-tablepro-default-hidden") === "true")
+            .map(th => th.dataset.colKey)
+            .filter(Boolean)
+            .filter(k => validKeys.has(k))
+        );
         const filteredHidden = Array.isArray(saved.hidden)
           ? saved.hidden.filter((k) => validKeys.has(k))
-          : [];
+          : Array.from(defaultHiddenKeys);
         // Defensive: if every visible column ends up hidden (stale prefs from
         // an older release), wipe the set so the table doesn't look broken.
         const visibleCount = restoredOrder.length - filteredHidden.length;

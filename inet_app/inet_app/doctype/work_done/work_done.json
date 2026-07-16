@@ -24,7 +24,11 @@
   "inet_margin_pct",
   "submission_status",
   "billing_status",
-  "issue_flag"
+  "issue_flag",
+  "ms1_closed",
+  "ms1_closed_at",
+  "ms2_closed",
+  "ms2_closed_at"
  ],
  "fields": [
   {
@@ -150,6 +154,32 @@
    "fieldtype": "Select",
    "label": "Issue Flag",
    "options": "\nPOD/PPT required\nTFM Check list\nSpare part return\nPAT/HO Final Approval\nFPDC/FM Survey report Approval\nPartial Work done"
+  },
+  {
+   "default": "0",
+   "fieldname": "ms1_closed",
+   "fieldtype": "Check",
+   "label": "MS1 Closed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ms1_closed_at",
+   "fieldtype": "Datetime",
+   "label": "MS1 Closed At",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "ms2_closed",
+   "fieldtype": "Check",
+   "label": "MS2 Closed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ms2_closed_at",
+   "fieldtype": "Datetime",
+   "label": "MS2 Closed At",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
