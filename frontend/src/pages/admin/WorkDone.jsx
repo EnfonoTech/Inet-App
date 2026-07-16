@@ -934,6 +934,7 @@ export default function WorkDone() {
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Submission Status</th>
+                  <th>PIC Rejection Reason</th>
                   <th>Work Type</th>
                   <th title="Which milestones are closed for this Work Done">Milestone</th>
                   <th>Issue Flag</th>
@@ -984,6 +985,7 @@ export default function WorkDone() {
                       <td style={{ textAlign: "right" }}>{row.executed_qty}</td>
                       <td style={{ textAlign: "right", color: "var(--green)" }}>{fmt.format(revenue)}</td>
                       <td><StatusPill value={row.submission_status} /></td>
+                      <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: row.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={row.pic_rejection_remark || ""}>{row.pic_rejection_remark || "—"}</td>
                       <td>
                         {row.source === "Direct Close" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0369a1", border: "1px solid #93c5fd", whiteSpace: "nowrap" }} title={row.direct_close_by ? `Closed by: ${row.direct_close_by_full_name || row.direct_close_by}` : ""}>Direct Close</span>}
                         {row.source === "Backend" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#ede9fe", color: "#7c3aed", border: "1px solid #c4b5fd", whiteSpace: "nowrap" }}>Backend</span>}
