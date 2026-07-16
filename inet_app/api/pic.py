@@ -180,8 +180,12 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         where.append(f"({_PIC_INITIAL_RULE_SQL.strip()}) IN ({ph})")
         params.extend(pic_vals)
     else:
-        # Default: hide "Work Not Done" — PIC only sees lines ready for processing.
-        where.append(f"({_PIC_INITIAL_RULE_SQL.strip()}) != 'Work Not Done'")
+        # Default: show any line where MS1 OR MS2 has an active status.
+        # MS2-only lines (pic_status NULL, pic_status_ms2 set) must not be hidden.
+        where.append(
+            f"(({_PIC_INITIAL_RULE_SQL.strip()}) != 'Work Not Done'"
+            f" OR IFNULL(pd.pic_status_ms2,'') NOT IN ('', 'Work Not Done'))"
+        )
 
     pic_ms2_vals = _ensure_list(pf.get("pic_status_ms2"))
     if pic_ms2_vals:
@@ -1556,6 +1560,11 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
         si.due_date = frappe.utils.add_days(frappe.utils.nowdate(), 30)
         if tax_template:
             si.taxes_and_charges = tax_template
+            # Server-side creation doesn't auto-fetch template rows (that's
+            # form JS behaviour) — append them so VAT is actually applied.
+            from erpnext.controllers.accounts_controller import get_taxes_and_charges
+            for tax in get_taxes_and_charges("Sales Taxes and Charges Template", tax_template) or []:
+                si.append("taxes", tax)
         for pd, row_milestone, amount in pds:
             dname = pd["name"]
             item_code = pd.get("item_code") or "Service"

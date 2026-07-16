@@ -935,6 +935,7 @@ export default function WorkDone() {
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Submission Status</th>
                   <th>Work Type</th>
+                  <th title="Which milestones are closed for this Work Done">Milestone</th>
                   <th>Issue Flag</th>
                   <th>Billing Status</th>
                   <th title="Remark set by PM">General</th>
@@ -988,6 +989,31 @@ export default function WorkDone() {
                         {row.source === "Backend" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#ede9fe", color: "#7c3aed", border: "1px solid #c4b5fd", whiteSpace: "nowrap" }}>Backend</span>}
                         {(row.source === "Rollout Execution" || !row.source) && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dcfce7", color: "#16a34a", border: "1px solid #86efac", whiteSpace: "nowrap" }}>Field Work</span>}
                       </td>
+                      <td style={{ fontSize: "0.74rem", whiteSpace: "nowrap" }}>
+                        {(() => {
+                          const m1 = !!row.ms1_closed, m2 = !!row.ms2_closed;
+                          if (!m1 && !m2) return <span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>—</span>;
+                          // Per-milestone chip: PIC submission state (empty PIC status = not submitted to PIC)
+                          const inv = (s) => {
+                            const v = (s || "").trim();
+                            if (!v || v === "Work Not Done") return { t: "Not Submitted", bg: "#fef3c7", fg: "#b45309", bd: "#fde68a" };
+                            if (v === "Commercial Invoice Closed") return { t: "Inv. Closed", bg: "#dcfce7", fg: "#16a34a", bd: "#86efac" };
+                            if (v === "Commercial Invoice Submitted") return { t: "Invoiced", bg: "#dbeafe", fg: "#1d4ed8", bd: "#93c5fd" };
+                            if (v.includes("Rejected") || v.includes("Cancel")) return { t: v, bg: "#fee2e2", fg: "#dc2626", bd: "#fecaca" };
+                            return { t: "In PIC", bg: "#ede9fe", fg: "#7c3aed", bd: "#c4b5fd" };
+                          };
+                          const chip = (label, closedAt, pic) => {
+                            const c = inv(pic);
+                            return (
+                              <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, background: c.bg, color: c.fg, border: `1px solid ${c.bd}`, marginRight: 4, whiteSpace: "nowrap" }}
+                                title={`${label} closed: ${String(closedAt || "").slice(0, 10)} · PIC: ${pic || "—"}`}>
+                                {label} ✓ · {c.t}
+                              </span>
+                            );
+                          };
+                          return <>{m1 ? chip("MS1", row.ms1_closed_at, row.pic_status) : null}{m2 ? chip("MS2", row.ms2_closed_at, row.pic_status_ms2) : null}</>;
+                        })()}
+                      </td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <IssueFlagCell flag={row.issue_flag} onClick={() => openIssueFlagModal(row)} />
                       </td>
@@ -1019,7 +1045,7 @@ export default function WorkDone() {
                   <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                     {fmt.format(totals.revenue)}
                   </td>
-                  <td /><td /><td /><td /><td /><td /><td />
+                  <td /><td /><td /><td /><td /><td /><td /><td />
                 </tr>
               </tfoot>
             </table>

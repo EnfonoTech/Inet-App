@@ -173,12 +173,14 @@ export default function IMPOIntake() {
 
   // ── Direct Close (intake tab) ────────────────────────────────────────
   const [canDirectClose, setCanDirectClose] = useState(false);
+  const [canMilestoneClose, setCanMilestoneClose] = useState(false);
   const [showDcModal, setShowDcModal] = useState(false);
   const [dcType, setDcType] = useState("INET");
   const [dcSubcontractor, setDcSubcontractor] = useState("");
   const [dcSubconOptions, setDcSubconOptions] = useState([]);
   const [dcSubconLoading, setDcSubconLoading] = useState(false);
   const [dcNote, setDcNote] = useState("");
+  const [dcMilestone, setDcMilestone] = useState("full"); // "full" | "MS1" | "MS2"
   const [dcBusy, setDcBusy] = useState(false);
   const [dcError, setDcError] = useState(null);
 
@@ -356,7 +358,10 @@ export default function IMPOIntake() {
   useEffect(() => {
     let cancelled = false;
     pmApi.getMyDirectCloseCapability().then((res) => {
-      if (!cancelled) setCanDirectClose(!!res?.can_direct_close);
+      if (!cancelled) {
+        setCanDirectClose(!!res?.can_direct_close);
+        setCanMilestoneClose(!!res?.can_milestone_close);
+      }
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -566,12 +571,34 @@ export default function IMPOIntake() {
     }
   }
 
+  // Auto-fill + lock subcontractor from the existing Work Done when closing
+  // the second milestone of a POID — either direction (MS1→MS2 or MS2→MS1).
+  // The backend locks the WD's subcontractor anyway, so mirror it here.
+  useEffect(() => {
+    if (!showDcModal) return;
+    let lockedSub = null;
+    if (dcMilestone !== "full" && selected.size === 1) {
+      const singleRow = rows.find((r) => selected.has(r.name));
+      const otherClosed = dcMilestone === "MS1" ? singleRow?.ms2_closed : singleRow?.ms1_closed;
+      lockedSub = (otherClosed && singleRow?.wd_subcontractor) || null;
+    }
+    if (lockedSub) {
+      setDcSubcontractor(lockedSub);
+      setDcSubconOptions((prev) =>
+        prev.find((o) => o.id === lockedSub) ? prev : [...prev, { id: lockedSub, label: lockedSub }]
+      );
+    } else {
+      setDcSubcontractor("");
+    }
+  }, [dcMilestone, showDcModal, dcSubconLoading]);
+
   async function openDcModal() {
     if (selected.size < 1) return;
     setDcError(null);
     setDcNote("");
     setDcType("INET");
     setDcSubcontractor("");
+    setDcMilestone("full");
     setShowDcModal(true);
     await loadDcSubcontractors("INET");
   }
@@ -582,7 +609,8 @@ export default function IMPOIntake() {
     setDcError(null);
     try {
       const ids = Array.from(selected);
-      const res = await pmApi.directCloseDispatches(ids, dcType, dcSubcontractor, dcNote);
+      const milestone = dcMilestone !== "full" ? dcMilestone : null;
+      const res = await pmApi.directCloseDispatches(ids, dcType, dcSubcontractor, dcNote, milestone);
       const upd = res?.updated?.length || 0;
       const err = res?.errors?.length || 0;
       setShowDcModal(false);
@@ -1038,7 +1066,10 @@ export default function IMPOIntake() {
                     <th>Description</th>
                     <th>Activity Type</th>
                     <th style={{ textAlign: "right" }}>Qty</th>
+                    <th style={{ textAlign: "right" }}>Rate (SAR)</th>
                     <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    <th style={{ textAlign: "center" }} title="MS1 milestone closed">MS1</th>
+                    <th style={{ textAlign: "center" }} title="MS2 milestone closed">MS2</th>
                     <th>DUID</th>
                     <th>Center area</th>
                     <th>Dispatched On</th>
@@ -1065,7 +1096,24 @@ export default function IMPOIntake() {
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? fmt.format(row.qty) : "—"}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.rate != null ? fmt.format(row.rate) : "—"}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(row.line_amount || 0)}</td>
+                      <td style={{ fontSize: "0.74rem", whiteSpace: "nowrap" }}>
+                        {row.ms1_amount > 0 ? (() => {
+                          const pct = row.line_amount > 0 ? Math.round((row.ms1_amount / row.line_amount) * 100) : 0;
+                          return <span style={{ color: row.ms1_closed ? "#16a34a" : "#475569", fontWeight: row.ms1_closed ? 700 : 400 }}>
+                            {row.ms1_closed ? "✓ " : ""}{fmt.format(row.ms1_amount)} · {pct}%{row.ms1_closed && row.ms1_closed_at ? " · " + String(row.ms1_closed_at).slice(0, 10) : ""}
+                          </span>;
+                        })() : <span style={{ color: "#e2e8f0" }}>—</span>}
+                      </td>
+                      <td style={{ fontSize: "0.74rem", whiteSpace: "nowrap" }}>
+                        {row.ms2_amount > 0 ? (() => {
+                          const pct = row.line_amount > 0 ? Math.round((row.ms2_amount / row.line_amount) * 100) : 0;
+                          return <span style={{ color: row.ms2_closed ? "#16a34a" : "#475569", fontWeight: row.ms2_closed ? 700 : 400 }}>
+                            {row.ms2_closed ? "✓ " : ""}{fmt.format(row.ms2_amount)} · {pct}%{row.ms2_closed && row.ms2_closed_at ? " · " + String(row.ms2_closed_at).slice(0, 10) : ""}
+                          </span>;
+                        })() : <span style={{ color: "#e2e8f0" }}>—</span>}
+                      </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>{row.center_area || "—"}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{row.modified ? String(row.modified).slice(0, 10) : "—"}</td>
@@ -1707,16 +1755,77 @@ export default function IMPOIntake() {
                 ))}
               </div>
             </div>
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Subcontract *</label>
-              <SearchableSelect
-                value={dcSubcontractor}
-                onChange={setDcSubcontractor}
-                options={dcSubconOptions}
-                placeholder={dcSubconLoading ? "Loading…" : "— Select subcontractor —"}
-                disabled={dcBusy || dcSubconLoading}
-              />
-            </div>
+            {(() => {
+              const singleRow = selected.size === 1 ? selectedRows[0] : null;
+              const subLocked = dcMilestone !== "full" && singleRow?.wd_subcontractor &&
+                (dcMilestone === "MS1" ? singleRow?.ms2_closed : singleRow?.ms1_closed);
+              return (
+                <div className="form-group" style={{ marginBottom: 10 }}>
+                  <label>Subcontract *</label>
+                  <SearchableSelect
+                    value={dcSubcontractor}
+                    onChange={setDcSubcontractor}
+                    options={dcSubconOptions}
+                    placeholder={dcSubconLoading ? "Loading…" : "— Select subcontractor —"}
+                    disabled={dcBusy || dcSubconLoading || !!subLocked}
+                  />
+                </div>
+              );
+            })()}
+            {canMilestoneClose && (() => {
+              const singleRow = selected.size === 1 ? selectedRows[0] : null;
+              const msOpts = [
+                { id: "full",  label: "Full Close",  color: "#0369a1" },
+                { id: "MS1",   label: "MS1 Only",    color: "#7c3aed" },
+                { id: "MS2",   label: "MS2 Only",    color: "#0891b2" },
+              ];
+              return (
+                <div className="form-group" style={{ marginBottom: 10 }}>
+                  <label>Milestone</label>
+                  <div style={{ display: "inline-flex", gap: 0, background: "#f1f5f9", borderRadius: 8, padding: 3, border: "1px solid #e2e8f0" }}>
+                    {msOpts.map((opt) => {
+                      const alreadyClosed = singleRow && (
+                        (opt.id === "MS1" && singleRow.ms1_closed) ||
+                        (opt.id === "MS2" && singleRow.ms2_closed)
+                      );
+                      const noAmount = singleRow && (
+                        (opt.id === "MS1" && !singleRow.ms1_amount) ||
+                        (opt.id === "MS2" && !singleRow.ms2_amount)
+                      );
+                      const isDisabled = dcBusy || alreadyClosed || noAmount;
+                      const active = dcMilestone === opt.id;
+                      const tip = alreadyClosed ? `${opt.id} already closed`
+                                : noAmount ? `${opt.id} amount not set on this POID`
+                                : "";
+                      return (
+                        <button key={opt.id} type="button" disabled={isDisabled}
+                          onClick={() => setDcMilestone(opt.id)}
+                          title={tip}
+                          style={{ padding: "5px 14px", border: "none", borderRadius: 6,
+                            cursor: isDisabled ? "not-allowed" : "pointer",
+                            fontWeight: active ? 700 : 400,
+                            background: active ? opt.color : "transparent",
+                            color: active ? "#fff" : isDisabled ? "#cbd5e1" : "#64748b",
+                            opacity: isDisabled ? 0.45 : 1,
+                            transition: "all 0.15s" }}>
+                          {opt.label}{alreadyClosed ? " ✓" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {dcMilestone !== "full" && singleRow && (() => {
+                    const amt = dcMilestone === "MS1" ? (singleRow.ms1_amount || 0) : (singleRow.ms2_amount || 0);
+                    const total = (singleRow.ms1_amount || 0) + (singleRow.ms2_amount || 0) || singleRow.line_amount || 0;
+                    const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+                    return (
+                      <div style={{ marginTop: 5, fontSize: "0.76rem", color: "#64748b" }}>
+                        Revenue: <strong>SAR {fmt.format(amt)}</strong> · {pct}% of total
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })()}
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>
               <textarea rows={2} value={dcNote} onChange={(e) => setDcNote(e.target.value)} disabled={dcBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
@@ -1725,7 +1834,7 @@ export default function IMPOIntake() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <button type="button" className="btn-secondary" onClick={() => setShowDcModal(false)} disabled={dcBusy}>Cancel</button>
               <button type="button" className="btn-primary" onClick={submitDirectClose} disabled={dcBusy || !dcSubcontractor} style={{ background: "#0369a1", borderColor: "#0369a1" }}>
-                {dcBusy ? "Closing…" : `Close ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
+                {dcBusy ? "Closing…" : dcMilestone !== "full" ? `Close ${dcMilestone} · ${selected.size} POID${selected.size !== 1 ? "s" : ""}` : `Close ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
               </button>
             </div>
           </div>

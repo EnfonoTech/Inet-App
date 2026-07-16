@@ -437,6 +437,7 @@ export const pmApi = {
   getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
   updateWorkDoneSubmission: (name, submission_status, note) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status, note }),
+  submitMilestoneToPic: (work_done, milestone) => call("inet_app.api.command_center.submit_milestone_to_pic", { work_done, milestone }),
   updateWorkDoneIssue: (name, issue_flag) => call("inet_app.api.command_center.update_work_done_issue", { name, issue_flag }),
   updateSubconSubmission: (po_dispatch, submission_status, note) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status, note }),
   getWorkDoneAttachments: (name) => call("inet_app.api.command_center.get_work_done_attachments", { name }),
@@ -608,18 +609,20 @@ export const pmApi = {
   }),
   createSalesInvoiceFromPic: (poDispatch, milestone) => call("inet_app.api.pic.create_sales_invoice_from_pic", {
     po_dispatch: poDispatch,
-    milestone: milestone || "MS1",
+    // null/undefined → server auto-detects the Ready milestone per line
+    milestone: milestone || null,
   }),
 
   // Backend-team assignment flow — IM-driven, lives outside the rollout chain
   getMyBackendCapability: (im) => call("inet_app.api.command_center.get_my_backend_capability", im ? { im } : {}),
   getMyDirectCloseCapability: () => call("inet_app.api.command_center.get_my_direct_close_capability", {}),
   getSubcontractorsByType: (close_type) => call("inet_app.api.command_center.get_subcontractors_by_type", { close_type }),
-  directCloseDispatches: (po_dispatches, close_type, subcontractor, note) => call("inet_app.api.command_center.direct_close_dispatches", {
+  directCloseDispatches: (po_dispatches, close_type, subcontractor, note, milestone) => call("inet_app.api.command_center.direct_close_dispatches", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
     close_type,
     subcontractor: subcontractor || "",
     note: note || "",
+    milestone: milestone || "",
   }),
   listBackendTeamsForPicker: (search) => call("inet_app.api.command_center.list_backend_teams_for_picker", { search: search || "", limit: 200 }),
   assignBackend: (po_dispatches, backend_team, remark) => call("inet_app.api.command_center.assign_backend", {
