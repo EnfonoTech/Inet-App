@@ -470,6 +470,27 @@ export const pmApi = {
   },
   uploadImAttachment: (po_dispatch, file, slot = "im_attachment") =>
     pmApi.uploadDocAttachment("PO Dispatch", po_dispatch, file, slot),
+  attachDocLink: async (doctype, docname, fileUrl, fileName, attachedToField = "") => {
+    const fd = new FormData();
+    fd.append("file_url", fileUrl);
+    if (fileName) fd.append("file_name", fileName);
+    fd.append("is_private", "0");
+    fd.append("doctype", doctype);
+    fd.append("docname", docname);
+    fd.append("folder", "Home/Attachments");
+    if (attachedToField) fd.append("fieldname", attachedToField);
+    const res = await fetch("/api/method/upload_file", {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-Frappe-CSRF-Token": getCsrf() },
+      body: fd,
+    });
+    const json = await res.json();
+    if (!res.ok || json.exc) throw new Error(json.message || "Failed to attach link");
+    return json.message;
+  },
+  attachImLink: (po_dispatch, url, name, slot = "im_attachment") =>
+    pmApi.attachDocLink("PO Dispatch", po_dispatch, url, name, slot),
   uploadFileGeneric: async (file) => {
     const fd = new FormData();
     fd.append("file", file, file.name);

@@ -69,14 +69,16 @@ function AttachmentSlotList({ attachments, docReq }) {
             </div>
             {files.map((f, i) => {
               const isMsgFile = (f.file_name || "").toLowerCase().endsWith(".msg");
+              const isWebLink = /^https?:\/\//i.test(f.file_url || "");
               return (
-                <a key={f.name} href={f.file_url} download={isMsgFile ? f.file_name : undefined}
-                  target={isMsgFile ? undefined : "_blank"} rel="noopener noreferrer"
+                <a key={f.name} href={f.file_url} download={isMsgFile && !isWebLink ? f.file_name : undefined}
+                  target={isMsgFile && !isWebLink ? undefined : "_blank"} rel="noopener noreferrer"
                   style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: i % 2 === 0 ? "#fff" : bg, textDecoration: "none", borderTop: i > 0 ? `1px solid ${bd}` : "none" }}>
-                  <span style={{ fontSize: "1rem", flexShrink: 0 }}>{isMsgFile ? "✉️" : "📎"}</span>
-                  <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.85rem", color: "#1d4ed8" }}>{f.file_name}</div>
+                  <span style={{ fontSize: "1rem", flexShrink: 0 }}>{isWebLink ? "🔗" : isMsgFile ? "✉️" : "📎"}</span>
+                  <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.85rem", color: "#1d4ed8" }}>{f.file_name || f.file_url}</div>
                   {f.file_size ? <span style={{ fontSize: "0.72rem", color: "#94a3b8", flexShrink: 0 }}>{f.file_size < 1048576 ? `${Math.round(f.file_size / 1024)} KB` : `${(f.file_size / 1048576).toFixed(1)} MB`}</span> : null}
-                  {isMsgFile && <span style={{ fontSize: "0.68rem", color: "#64748b", flexShrink: 0 }}>↓ download</span>}
+                  {isWebLink && <span style={{ fontSize: "0.68rem", color: "#64748b", flexShrink: 0 }}>web link ↗</span>}
+                  {isMsgFile && !isWebLink && <span style={{ fontSize: "0.68rem", color: "#64748b", flexShrink: 0 }}>↓ download</span>}
                 </a>
               );
             })}
@@ -87,7 +89,69 @@ function AttachmentSlotList({ attachments, docReq }) {
   );
 }
 
-function FileSlot({ slotKey, slotLabel, accept, files, setFiles, required }) {
+function LinkAttachInput({ links, setLinks }) {
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
+
+  function addLink() {
+    let u = (url || "").trim();
+    if (!u) return;
+    if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+    let n = (name || "").trim();
+    if (!n) {
+      try {
+        const parsed = new URL(u);
+        n = decodeURIComponent(parsed.pathname.split("/").filter(Boolean).pop() || "") || parsed.hostname;
+      } catch { n = u; }
+    }
+    setLinks([...(links || []), { url: u, name: n }]);
+    setUrl("");
+    setName("");
+  }
+
+  return (
+    <div style={{ marginTop: 4 }}>
+      {!open ? (
+        <button type="button" onClick={() => setOpen(true)}
+          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "0.75rem", color: "#2563eb", fontWeight: 600 }}>
+          🔗 Attach via web link
+        </button>
+      ) : (
+        <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, padding: "8px 10px" }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…"
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addLink(); } }}
+              style={{ flex: "2 1 160px", minWidth: 0, padding: "5px 8px", border: "1px solid #bfdbfe", borderRadius: 5, fontSize: "0.78rem" }} />
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name (optional)"
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addLink(); } }}
+              style={{ flex: "1 1 110px", minWidth: 0, padding: "5px 8px", border: "1px solid #bfdbfe", borderRadius: 5, fontSize: "0.78rem" }} />
+            <button type="button" className="btn-secondary" onClick={addLink} disabled={!url.trim()}
+              style={{ padding: "4px 12px", fontSize: "0.78rem" }}>
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+      {(links || []).length > 0 && (
+        <div style={{ marginTop: 4, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, padding: "5px 10px" }}>
+          {links.map((l, i) => (
+            <div key={i} style={{ fontSize: "0.78rem", color: "#1e40af", display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}>
+              <span>🔗</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.url}>{l.name}</span>
+              <button type="button" onClick={() => setLinks(links.filter((_, j) => j !== i))}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "0.85rem", lineHeight: 1, padding: 0 }}>
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FileSlot({ slotKey, slotLabel, accept, files, setFiles, required, links, setLinks }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -121,6 +185,7 @@ function FileSlot({ slotKey, slotLabel, accept, files, setFiles, required }) {
           ))}
         </div>
       )}
+      {setLinks && <LinkAttachInput links={links} setLinks={setLinks} />}
     </div>
   );
 }
@@ -270,6 +335,9 @@ export default function WorkDone() {
   const [doc1Files, setDoc1Files] = useState([]);
   const [doc2Files, setDoc2Files] = useState([]);
   const [doc2PartFiles, setDoc2PartFiles] = useState([]);
+  const [doc1Links, setDoc1Links] = useState([]);
+  const [doc2Links, setDoc2Links] = useState([]);
+  const [doc2PartLinks, setDoc2PartLinks] = useState([]);
   const [imNote, setImNote] = useState("");
   const [existingAttachments, setExistingAttachments] = useState([]);
   const [attachLoading, setAttachLoading] = useState(false);
@@ -333,6 +401,9 @@ export default function WorkDone() {
     setDoc1Files([]);
     setDoc2Files([]);
     setDoc2PartFiles([]);
+    setDoc1Links([]);
+    setDoc2Links([]);
+    setDoc2PartLinks([]);
     setImNote("");
     setExistingAttachments([]);
     setSubmissionFor(r);
@@ -351,12 +422,14 @@ export default function WorkDone() {
     const needsAttach = submissionPick === "Confirmation Done";
     if (needsAttach && existingAttachments.length === 0) {
       const docReq = DOC_REQUIREMENTS[submissionFor.activity_type];
-      if (doc1Files.length === 0) {
+      if (doc1Files.length === 0 && doc1Links.length === 0) {
         setSubmissionErr(`DOC1 (${docReq?.doc1Label || "Confirmation Mail"}) is required for Confirmation Done.`);
         return;
       }
       if (docReq?.doc2) {
-        const hasDoc2 = docReq.doc2.parts ? doc2PartFiles.flat().length > 0 : doc2Files.length > 0;
+        const hasDoc2 = docReq.doc2.parts
+          ? doc2PartFiles.flat().filter(Boolean).length + doc2PartLinks.flat().filter(Boolean).length > 0
+          : doc2Files.length + doc2Links.length > 0;
         if (!hasDoc2) {
           setSubmissionErr(`DOC2 (${docReq.doc2.label}) is required for this activity type.`);
           return;
@@ -370,14 +443,19 @@ export default function WorkDone() {
       if (!po_dispatch) throw new Error("Missing PO Dispatch reference");
       const docReqUp = DOC_REQUIREMENTS[submissionFor?.activity_type];
       for (const file of doc1Files) await pmApi.uploadImAttachment(po_dispatch, file, "im_doc1");
+      for (const link of doc1Links) await pmApi.attachImLink(po_dispatch, link.url, link.name, "im_doc1");
       if (docReqUp?.doc2?.parts) {
         for (let i = 0; i < docReqUp.doc2.parts.length; i++) {
           for (const file of (doc2PartFiles[i] || [])) {
             await pmApi.uploadImAttachment(po_dispatch, file, docReqUp.doc2.parts[i].slot);
           }
+          for (const link of (doc2PartLinks[i] || [])) {
+            await pmApi.attachImLink(po_dispatch, link.url, link.name, docReqUp.doc2.parts[i].slot);
+          }
         }
       } else {
         for (const file of doc2Files) await pmApi.uploadImAttachment(po_dispatch, file, "im_doc2");
+        for (const link of doc2Links) await pmApi.attachImLink(po_dispatch, link.url, link.name, "im_doc2");
       }
       let res;
       if (submissionFor.is_subcon) {
@@ -1285,6 +1363,8 @@ export default function WorkDone() {
                       files={doc1Files}
                       setFiles={setDoc1Files}
                       required={isConfDone && !hasExisting}
+                      links={doc1Links}
+                      setLinks={setDoc1Links}
                     />
                     {docReq?.doc2 ? (
                       docReq.doc2.parts ? (
@@ -1309,20 +1389,26 @@ export default function WorkDone() {
                                         setDoc2PartFiles(prev => { const next = [...prev]; next[i] = newFiles; return next; });
                                       }} />
                                   </label>
+                                  <LinkAttachInput
+                                    links={doc2PartLinks[i] || []}
+                                    setLinks={(ls) => setDoc2PartLinks(prev => { const next = [...prev]; next[i] = ls; return next; })}
+                                  />
                                 </div>
                               );
                             })}
                           </div>
                         </div>
                       ) : (
-                        <FileSlot slotKey="DOC2" slotLabel={docReq.doc2.label} accept={docReq.doc2.accept} files={doc2Files} setFiles={setDoc2Files} required={isConfDone && !hasExisting} />
+                        <FileSlot slotKey="DOC2" slotLabel={docReq.doc2.label} accept={docReq.doc2.accept} files={doc2Files} setFiles={setDoc2Files} required={isConfDone && !hasExisting}
+                          links={doc2Links} setLinks={setDoc2Links} />
                       )
                     ) : (
                       <div style={{ marginBottom: 10 }}>
                         <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>DOC2</div>
                         <div style={{ fontSize: "0.8rem", color: "#94a3b8", padding: "8px 12px", border: "1px dashed #e2e8f0", borderRadius: 8, background: "#f8fafc" }}>
                           Not required for this activity type
-                          <FileSlot slotKey="" slotLabel="Optional attachment" accept="" files={doc2Files} setFiles={setDoc2Files} required={false} />
+                          <FileSlot slotKey="" slotLabel="Optional attachment" accept="" files={doc2Files} setFiles={setDoc2Files} required={false}
+                            links={doc2Links} setLinks={setDoc2Links} />
                         </div>
                       </div>
                     )}
