@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import DateRangePicker from "../../components/DateRangePicker";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtMoney = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+
+const INVOICE_TRACKER_BUCKETS = new Set([
+  "Commercial Invoice Closed",
+  "Commercial Invoice Submitted",
+  "Ready for Invoice",
+]);
 
 // Acceptance buckets, in the order the spreadsheet shows them.
 const BUCKET_ORDER = [
@@ -36,6 +43,8 @@ const BUCKET_TONE = {
 };
 
 export default function PICDashboard({ showSwitcher = false }) {
+  const navigate = useNavigate();
+  const bucketNavigable = !showSwitcher;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -194,8 +203,22 @@ export default function PICDashboard({ showSwitcher = false }) {
               const row = bucketByKey[key] || { bucket: key, line_count: 0, ms1_total: 0, ms2_total: 0, total: 0 };
               const tone = BUCKET_TONE[key];
               const dim = (row.line_count || 0) === 0;
+              const clickable = bucketNavigable && !dim;
+              function handleClick() {
+                if (INVOICE_TRACKER_BUCKETS.has(key)) {
+                  navigate(`/pic-invoice-tracker?ms1_status=${encodeURIComponent(key)}&ms2_status=${encodeURIComponent(key)}`);
+                } else {
+                  navigate(`/pic-tracker?pic_status=${encodeURIComponent(key)}&pic_ms2_status=${encodeURIComponent(key)}`);
+                }
+              }
               return (
-                <tr key={key} style={dim ? { color: "#94a3b8" } : undefined}>
+                <tr
+                  key={key}
+                  style={{ ...(dim ? { color: "#94a3b8" } : {}), ...(clickable ? { cursor: "pointer" } : {}) }}
+                  onClick={clickable ? handleClick : undefined}
+                  onMouseEnter={clickable ? (e) => { e.currentTarget.style.background = "#f8fafc"; } : undefined}
+                  onMouseLeave={clickable ? (e) => { e.currentTarget.style.background = ""; } : undefined}
+                >
                   <td style={{ fontWeight: 600 }}>
                     <span style={{
                       display: "inline-flex", alignItems: "center", gap: 6,

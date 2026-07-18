@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
+import { useAuth } from "../../context/AuthContext";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -93,13 +95,30 @@ function TopSummaryCard({ top }) {
   );
 }
 
-function StatusTable({ title, rows, statusOrder, tone }) {
+const INVOICE_TRACKER_STATUSES_SET = new Set([
+  "Commercial Invoice Closed",
+  "Commercial Invoice Submitted",
+  "Ready for Invoice",
+]);
+
+function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
+  const navigate = useNavigate();
   const tones = {
     blue:   { hd: "#1e3a8a", sub: "#1e40af" },
     violet: { hd: "#4c1d95", sub: "#6d28d9" },
   };
   const t = tones[tone] || tones.blue;
   const sorted = statusOrder ? sortByStatus(rows, statusOrder) : rows;
+
+  function handleRowClick(status) {
+    if (INVOICE_TRACKER_STATUSES_SET.has(status)) {
+      const param = milestone === "ms2" ? "ms2_status" : "ms1_status";
+      navigate(`/pic-invoice-tracker?${param}=${encodeURIComponent(status)}`);
+    } else {
+      const param = milestone === "ms2" ? "pic_ms2_status" : "pic_status";
+      navigate(`/pic-tracker?${param}=${encodeURIComponent(status)}`);
+    }
+  }
 
   const totals = rows.reduce((acc, r) => ({
     row_count: acc.row_count + (Number(r.row_count) || 0),
@@ -129,8 +148,16 @@ function StatusTable({ title, rows, statusOrder, tone }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r, i) => (
-              <tr key={r.pic_status || i} style={{ borderTop: "1px solid #f1f5f9" }}>
+            {sorted.map((r, i) => {
+              const clickable = navigable && (r.row_count || 0) > 0 && r.pic_status;
+              return (
+              <tr
+                key={r.pic_status || i}
+                style={{ borderTop: "1px solid #f1f5f9", ...(clickable ? { cursor: "pointer" } : {}) }}
+                onClick={clickable ? () => handleRowClick(r.pic_status) : undefined}
+                onMouseEnter={clickable ? (e) => { e.currentTarget.style.background = "#f8fafc"; } : undefined}
+                onMouseLeave={clickable ? (e) => { e.currentTarget.style.background = ""; } : undefined}
+              >
                 <td style={{ padding: "8px 14px", fontWeight: 600, color: statusColor(r.pic_status) }}>
                   {r.pic_status || "(blank)"}
                 </td>
@@ -153,7 +180,8 @@ function StatusTable({ title, rows, statusOrder, tone }) {
                   {(r.inet_amt || 0) > 0 ? fmt.format(r.inet_amt) : <span style={{ color: "#cbd5e1" }}>—</span>}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
           <tfoot>
             <tr style={{ background: "#f8fafc", borderTop: "2px solid #e2e8f0", fontWeight: 700 }}>
@@ -186,6 +214,8 @@ function StatusTable({ title, rows, statusOrder, tone }) {
 
 // ── Main component ─────────────────────────────────────────────────────
 export default function PICInvoicingSummary() {
+  const { role } = useAuth();
+  const navigable = role === "pic";
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -292,12 +322,16 @@ export default function PICInvoicingSummary() {
               rows={data.ms1_rows}
               statusOrder={MS1_STATUS_ORDER}
               tone="blue"
+              milestone="ms1"
+              navigable={navigable}
             />
             <StatusTable
               title="MS2 — 2nd Payment Milestone"
               rows={data.ms2_rows}
               statusOrder={MS1_STATUS_ORDER}
               tone="violet"
+              milestone="ms2"
+              navigable={navigable}
             />
           </>
         ) : null}

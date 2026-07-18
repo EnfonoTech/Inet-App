@@ -27,8 +27,14 @@ export default function InvoiceTracker() {
   const searchDebounced = useDebounced(search, 300);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
-  const [ms1StatusFilter, setMs1StatusFilter] = useState([]);
-  const [ms2StatusFilter, setMs2StatusFilter] = useState([]);
+  const [ms1StatusFilter, setMs1StatusFilter] = useState(() => {
+    const v = new URLSearchParams(window.location.search).get("ms1_status");
+    return v ? [v] : [];
+  });
+  const [ms2StatusFilter, setMs2StatusFilter] = useState(() => {
+    const v = new URLSearchParams(window.location.search).get("ms2_status");
+    return v ? [v] : [];
+  });
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
   const [subconFilter, setSubconFilter] = useState([]);
   const [isdpOwnerFilter, setIsdpOwnerFilter] = useState([]);

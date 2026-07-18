@@ -171,14 +171,32 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             params.extend(p)
 
     pic_vals = _ensure_list(pf.get("pic_status"))
-    # When filtering by "Commercial Invoice Closed", lift the dispatch_status and
-    # unbilled-amount restrictions — archive records are fully-invoiced Closed lines.
-    viewing_closed = "Commercial Invoice Closed" in (pic_vals or [])
-    if pic_vals:
-        # Match either the stored value OR the computed initial state.
+    pic_ms2_vals = _ensure_list(pf.get("pic_status_ms2"))
+    # Lift restrictions when viewing fully-invoiced Closed lines (archive records).
+    viewing_closed = (
+        "Commercial Invoice Closed" in (pic_vals or [])
+        or "Commercial Invoice Closed" in (pic_ms2_vals or [])
+    )
+
+    if pic_vals and pic_ms2_vals:
+        # Both filters set → OR logic (same as InvoiceTracker), so a line is
+        # shown if either its MS1 effective status or its MS2 status matches.
+        ph1 = ", ".join(["%s"] * len(pic_vals))
+        ph2 = ", ".join(["%s"] * len(pic_ms2_vals))
+        where.append(
+            f"(({_PIC_INITIAL_RULE_SQL.strip()}) IN ({ph1})"
+            f" OR IFNULL(pd.pic_status_ms2,'') IN ({ph2}))"
+        )
+        params.extend(pic_vals)
+        params.extend(pic_ms2_vals)
+    elif pic_vals:
         ph = ", ".join(["%s"] * len(pic_vals))
         where.append(f"({_PIC_INITIAL_RULE_SQL.strip()}) IN ({ph})")
         params.extend(pic_vals)
+    elif pic_ms2_vals:
+        ph = ", ".join(["%s"] * len(pic_ms2_vals))
+        where.append(f"IFNULL(pd.pic_status_ms2,'') IN ({ph})")
+        params.extend(pic_ms2_vals)
     else:
         # Default: show any line where MS1 OR MS2 has an active status.
         # MS2-only lines (pic_status NULL, pic_status_ms2 set) must not be hidden.
@@ -186,12 +204,6 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             f"(({_PIC_INITIAL_RULE_SQL.strip()}) != 'Work Not Done'"
             f" OR IFNULL(pd.pic_status_ms2,'') NOT IN ('', 'Work Not Done'))"
         )
-
-    pic_ms2_vals = _ensure_list(pf.get("pic_status_ms2"))
-    if pic_ms2_vals:
-        ph = ", ".join(["%s"] * len(pic_ms2_vals))
-        where.append(f"IFNULL(pd.pic_status_ms2,'') IN ({ph})")
-        params.extend(pic_ms2_vals)
 
     if pf.get("from_date"):
         where.append("pd.ms1_applied_date >= %s")
@@ -1294,25 +1306,26 @@ def list_invoice_tracker_rows(filters=None, limit=500):
     ms1_vals = _ensure_list(filters.get("pic_status_ms1") or filters.get("pic_status"))
     ms2_vals = _ensure_list(filters.get("pic_status_ms2"))
 
+    # All INVOICE_TRACKER_STATUSES are stored values — never computed via wd_sub.
+    # Use direct column checks so the wd_sub triple-join is not needed.
     if not ms1_vals and not ms2_vals:
-        # No filter: show any row with an invoicing-stage status on MS1 OR MS2
         default = list(INVOICE_TRACKER_STATUSES)
         ph = ", ".join(["%s"] * len(default))
-        wheres = ["(({rule}) IN ({ph}) OR IFNULL(pd.pic_status_ms2,'') IN ({ph}))".format(
-            rule=_PIC_INITIAL_RULE_SQL.strip(), ph=ph)]
+        wheres = [f"(IFNULL(pd.pic_status,'') IN ({ph}) OR IFNULL(pd.pic_status_ms2,'') IN ({ph}))"]
         params = default + default
     else:
         parts = []
         params = []
         if ms1_vals:
             ph1 = ", ".join(["%s"] * len(ms1_vals))
-            parts.append(f"({_PIC_INITIAL_RULE_SQL.strip()}) IN ({ph1})")
+            parts.append(f"IFNULL(pd.pic_status,'') IN ({ph1})")
             params.extend(ms1_vals)
         if ms2_vals:
             ph2 = ", ".join(["%s"] * len(ms2_vals))
             parts.append(f"IFNULL(pd.pic_status_ms2,'') IN ({ph2})")
             params.extend(ms2_vals)
         wheres = [f"({' OR '.join(parts)})"]
+    wheres.append("IFNULL(pd.dispatch_status,'') != 'Cancelled'")
 
     # Optional filters
     for col, key in (
@@ -1410,14 +1423,6 @@ def list_invoice_tracker_rows(filters=None, limit=500):
         LEFT JOIN `tabSubcontract Master` sm_inv
                ON sm_inv.name = COALESCE(plan_inv.subcontractor, sc_team_inv.subcontractor)
         LEFT JOIN `tabSubcontract Master` sm_pd_inv ON sm_pd_inv.name = pd.contract
-        LEFT JOIN (
-            SELECT rp.po_dispatch AS po_dispatch,
-                   MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
-            FROM `tabRollout Plan` rp
-            INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
-            INNER JOIN `tabWork Done` wd ON wd.execution = de.name
-            GROUP BY rp.po_dispatch
-        ) wd_sub ON wd_sub.po_dispatch = pd.name
         {si_join}
         WHERE {where_str}
         GROUP BY pd.name

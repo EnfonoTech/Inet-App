@@ -160,8 +160,14 @@ export default function PICTracker() {
 
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [picFilter, setPicFilter] = useState([]);
-  const [picMs2Filter, setPicMs2Filter] = useState([]);
+  const [picFilter, setPicFilter] = useState(() => {
+    const v = new URLSearchParams(window.location.search).get("pic_status");
+    return v ? [v] : [];
+  });
+  const [picMs2Filter, setPicMs2Filter] = useState(() => {
+    const v = new URLSearchParams(window.location.search).get("pic_ms2_status");
+    return v ? [v] : [];
+  });
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [dateRange, setDateRange] = useState({ from: "", to: "" });

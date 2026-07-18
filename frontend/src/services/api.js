@@ -605,7 +605,7 @@ export const pmApi = {
   // Invoice Tracker — PIC creates Sales Invoices from Ready for Invoice lines
   listInvoiceTrackerRows: (filters, limit) => call("inet_app.api.pic.list_invoice_tracker_rows", {
     filters: filters || {},
-    limit: limit || 500,
+    limit: Number.isFinite(Number(limit)) ? Number(limit) : 500,
   }),
   createSalesInvoiceFromPic: (poDispatch, milestone) => call("inet_app.api.pic.create_sales_invoice_from_pic", {
     po_dispatch: poDispatch,
