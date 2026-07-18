@@ -31,6 +31,9 @@
   "is_dummy_po",
   "original_dummy_poid",
   "was_dummy_po",
+  "is_internal_work",
+  "internal_work_type",
+  "internal_domain",
   "section_site",
   "center_area",
   "region_type",
@@ -237,6 +240,27 @@
    "in_list_view": 1,
    "label": "Was dummy PO",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_internal_work",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Internal Work"
+  },
+  {
+   "depends_on": "eval:doc.is_internal_work",
+   "fieldname": "internal_work_type",
+   "fieldtype": "Select",
+   "label": "Internal Work Type",
+   "options": "\nDomain\nGeneral"
+  },
+  {
+   "depends_on": "eval:doc.is_internal_work && doc.internal_work_type=='Domain'",
+   "fieldname": "internal_domain",
+   "fieldtype": "Link",
+   "label": "Internal Domain",
+   "options": "Project Domain"
   },
   {
    "fieldname": "section_site",

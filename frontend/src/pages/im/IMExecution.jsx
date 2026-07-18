@@ -154,6 +154,14 @@ export default function IMExecution() {
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [dummyFilter, setDummyFilter] = useState("");
+  const [tab, setTab] = useState("poid"); // "poid" | "internal_done"
+  const [internalSearch, setInternalSearch] = useState("");
+  const [internalTeamFilter, setInternalTeamFilter] = useState([]);
+  const [internalDomainFilter, setInternalDomainFilter] = useState([]);
+  const [internalTypeFilter, setInternalTypeFilter] = useState([]);
+  const [internalFromDate, setInternalFromDate] = useState("");
+  const [internalToDate, setInternalToDate] = useState("");
+  const internalSearchDebounced = useDebounced(internalSearch, 300);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -281,10 +289,57 @@ export default function IMExecution() {
   }, []);
   const duidOptions = dispOpts.site_code || [];
 
+  // The main table is unified: POID lines and not-yet-done internal lines
+  // sit side by side, exactly like before internal work existed, so every
+  // normal IM action (QC/CIAG/status/reschedule/Create Work Done) is
+  // available for both. Internal work has no Work Done record, so once it's
+  // marked done it moves to its own archive tab instead of the Work Done page.
   const filteredExecutions = useMemo(() => {
-    if (!dummyFilter) return executions;
-    return executions.filter((e) => dummyFilter === "Dummy Only" ? !!e.is_dummy_po : !e.is_dummy_po);
+    const activeRows = executions.filter(
+      (e) => !(Number(e.is_internal_work || 0) && e.execution_status === "Completed"),
+    );
+    if (!dummyFilter) return activeRows;
+    return activeRows.filter((e) => dummyFilter === "Dummy Only" ? !!e.is_dummy_po : !e.is_dummy_po);
   }, [executions, dummyFilter]);
+
+  const internalDoneExecutions = useMemo(
+    () => executions.filter((e) => !!Number(e.is_internal_work || 0) && e.execution_status === "Completed"),
+    [executions],
+  );
+
+  const internalTeamOptions = useMemo(() => {
+    const seen = new Map();
+    internalDoneExecutions.forEach((e) => {
+      if (e.team && !seen.has(e.team)) seen.set(e.team, e.team_name || e.team);
+    });
+    return [...seen.entries()].map(([id, label]) => ({ id, label }));
+  }, [internalDoneExecutions]);
+  const internalDomainOptions = useMemo(() => {
+    const seen = new Set();
+    internalDoneExecutions.forEach((e) => { if (e.internal_domain) seen.add(e.internal_domain); });
+    return [...seen].sort().map((d) => ({ id: d, label: d }));
+  }, [internalDoneExecutions]);
+
+  const filteredInternalDone = useMemo(() => {
+    let rows = internalDoneExecutions;
+    const q = internalSearchDebounced.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((e) =>
+        [e.name, e.rollout_plan, e.item_code, e.item_description, e.team_name, e.team]
+          .some((v) => (v || "").toString().toLowerCase().includes(q)));
+    }
+    if (internalTeamFilter.length) rows = rows.filter((e) => internalTeamFilter.includes(e.team));
+    if (internalDomainFilter.length) rows = rows.filter((e) => internalDomainFilter.includes(e.internal_domain));
+    if (internalTypeFilter.length) rows = rows.filter((e) => internalTypeFilter.includes(e.internal_work_type));
+    if (internalFromDate) rows = rows.filter((e) => (e.execution_date || "") >= internalFromDate);
+    if (internalToDate) rows = rows.filter((e) => (e.execution_date || "") <= internalToDate);
+    return rows;
+  }, [internalDoneExecutions, internalSearchDebounced, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate]);
+
+  const hasInternalFilters = !!(
+    internalSearch || internalTeamFilter.length || internalDomainFilter.length ||
+    internalTypeFilter.length || internalFromDate || internalToDate
+  );
 
   const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate || dummyFilter);
   const totalAchieved = executions.reduce((s, e) => s + (e.achieved_qty || 0), 0);
@@ -299,6 +354,7 @@ export default function IMExecution() {
     const out = [];
     for (const e of executions) {
       if (e.is_dummy_po) continue;
+      if (Number(e.is_internal_work || 0)) continue;
       if (e.execution_status !== "Completed") continue;
       if (!(isNotRequired(e.qc_required) || ["Pass", "Not Applicable"].includes(e.qc_status))) continue;
       if (e.work_done) continue;
@@ -380,6 +436,7 @@ export default function IMExecution() {
   );
 
   function workDoneBlockReason(e) {
+    if (Number(e.is_internal_work || 0)) return "Internal work — set Execution Status to Completed instead, no Work Done needed";
     if (e.is_dummy_po) return "Dummy PO — must be mapped to a real PO before Work Done can be created";
     if (e.work_done) {
       const pending = [];
@@ -987,6 +1044,56 @@ export default function IMExecution() {
         </div>
       )}
 
+      <div role="tablist" aria-label="Work type" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 8px", width: "fit-content" }}>
+        {[
+          { id: "poid", label: "Rollout Work Done" },
+          { id: "internal_done", label: "Internal Work Done", count: internalDoneExecutions.length },
+        ].map((tt) => {
+          const active = tab === tt.id;
+          const teal = tt.id === "internal_done";
+          return (
+            <button key={tt.id} type="button" role="tab" aria-selected={active} onClick={() => setTab(tt.id)}
+              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? (teal ? "#0d9488" : "#1d4ed8") : "transparent", color: active ? "#fff" : "#475569", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {tt.label}
+              {!!tt.count && (
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, fontSize: "0.66rem", fontWeight: 800, background: active ? "#fff" : "#14b8a6", color: active ? "#0d9488" : "#fff" }}>
+                  {tt.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "internal_done" && (
+        <div className="toolbar">
+          <input
+            type="search"
+            placeholder="Search Execution ID, Plan, Item, Team…"
+            value={internalSearch}
+            onChange={(e) => setInternalSearch(e.target.value)}
+            style={{
+              padding: "7px 14px", borderRadius: 8,
+              border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,
+            }}
+          />
+          <SearchableSelect multi value={internalTeamFilter} onChange={setInternalTeamFilter} options={internalTeamOptions} placeholder="All Teams" minWidth={150} />
+          <SearchableSelect multi value={internalDomainFilter} onChange={setInternalDomainFilter} options={internalDomainOptions} placeholder="All Domains" minWidth={150} />
+          <SearchableSelect multi value={internalTypeFilter} onChange={setInternalTypeFilter} options={["Domain", "General"]} placeholder="All Types" minWidth={130} />
+          <DateRangePicker value={{ from: internalFromDate, to: internalToDate }} onChange={({ from, to }) => { setInternalFromDate(from); setInternalToDate(to); }} />
+          {hasInternalFilters && (
+            <button
+              className="btn-secondary"
+              style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+              onClick={() => { setInternalSearch(""); setInternalTeamFilter([]); setInternalDomainFilter([]); setInternalTypeFilter([]); setInternalFromDate(""); setInternalToDate(""); }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {tab === "poid" && (<>
       <div className="toolbar">
         <input
           type="search"
@@ -1076,10 +1183,90 @@ export default function IMExecution() {
           </div>
         </div>
       )}
+      </>)}
 
       <div className="page-content">
         <DataTableWrapper>
-          {loading && executions.length === 0 ? (
+          {tab === "internal_done" ? (
+            loading && executions.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
+            ) : filteredInternalDone.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">✅</div>
+                <h3>{hasInternalFilters ? "No results match your filters" : "No internal work done yet"}</h3>
+                <p>
+                  {hasInternalFilters
+                    ? "Try adjusting your search or filter criteria."
+                    : "Internal work moves here once its Execution Status is set to Completed."}
+                </p>
+              </div>
+            ) : (
+              <table className="data-table" data-table-key="im-execution-internal-done">
+                <thead>
+                  <tr>
+                    <th>Execution</th>
+                    <th>Rollout Plan</th>
+                    <th>Item</th>
+                    <th>Description</th>
+                    <th>Type</th>
+                    <th>Domain</th>
+                    <th>Team</th>
+                    <th>IM</th>
+                    <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
+                    <th>TL Status</th>
+                    <th style={{ textAlign: "right" }}>Qty</th>
+                    <th>IM Note</th>
+                    <th>TL Remark</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredInternalDone.map((e) => (
+                    <tr key={e.name} data-doc-name={e.name} style={{ background: "#f0fdfa" }}>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{e.item_code || e.site_name || "—"}</td>
+                      <td style={{ fontSize: "0.82rem", maxWidth: 260 }} title={e.item_description || ""}>{e.item_description || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{e.internal_work_type || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{e.internal_domain || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{e.team_name || e.team || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{e.im_full_name || e.dispatch_im || "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{e.execution_date || "—"}</td>
+                      <td><StatusPill value={e.tl_status || "—"} /></td>
+                      <td style={{ textAlign: "right" }}>{e.achieved_qty ?? "—"}</td>
+                      <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.manager_remark || ""}>{e.manager_remark || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.team_lead_remark || ""}>{e.team_lead_remark || "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+                            onClick={() => setDetailRow(e)}
+                          >
+                            View
+                          </button>
+                          <span style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0" }}>
+                            ✓ Done
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                      <strong>{filteredInternalDone.length} row{filteredInternalDone.length !== 1 ? "s" : ""} done</strong>
+                      {filteredInternalDone.length !== internalDoneExecutions.length && (
+                        <span style={{ color: "#64748b", marginLeft: 10 }}>of {internalDoneExecutions.length} total</span>
+                      )}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            )
+          ) : loading && executions.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
           ) : filteredExecutions.length === 0 ? (
             <div className="empty-state">
@@ -1144,7 +1331,7 @@ export default function IMExecution() {
               </thead>
               <tbody>
                 {filteredExecutions.map((e) => (
-                  <tr key={e.name} data-doc-name={e.name} style={e.is_dummy_po ? { background: "#fffbeb" } : undefined}>
+                  <tr key={e.name} data-doc-name={e.name} style={e.is_dummy_po ? { background: "#fffbeb" } : Number(e.is_internal_work || 0) ? { background: "#f0fdfa" } : undefined}>
                     <td>
                       <input
                         type="checkbox"
@@ -1163,13 +1350,18 @@ export default function IMExecution() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.poid || e.system_id || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(e.original_dummy_poid || "").trim() ? `Dummy POID: ${e.original_dummy_poid}` : ""}>
-                      {(e.original_dummy_poid || "").trim() || "—"}
+                      {Number(e.is_internal_work || 0) ? (
+                        <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontWeight: 700, fontFamily: "inherit", background: "#ccfbf1", color: "#0f766e", border: "1px solid #99f6e4" }}
+                          title={e.internal_work_type ? `Internal work — ${e.internal_work_type}${e.internal_domain ? ` (${e.internal_domain})` : ""}` : "Internal work"}>
+                          Internal
+                        </span>
+                      ) : ((e.original_dummy_poid || "").trim() || "—")}
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.item_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 200 }}>{e.item_description || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{e.activity_type || "—"}</td>
                     <td>{e.project_code || "—"}</td>
-                    <td>{e.project_domain || "—"}</td>
+                    <td>{e.project_domain || e.internal_domain || "—"}</td>
                     <td>{e.huawei_im || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={e.site_name || ""}>{e.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={e.center_area || ""}>

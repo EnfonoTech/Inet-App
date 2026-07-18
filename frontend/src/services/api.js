@@ -255,6 +255,16 @@ export const pmApi = {
     call("inet_app.api.command_center.create_im_dummy_po_dispatch", {
       payload: JSON.stringify(payload || {}),
     }),
+  createInternalWork: (payload) =>
+    call("inet_app.api.command_center.create_internal_work", {
+      payload: JSON.stringify(payload || {}),
+    }),
+  markInternalWorkDone: (execution_name) =>
+    call("inet_app.api.command_center.mark_internal_work_done", { execution_name }),
+  searchInternalWorkItems: (query) =>
+    call("inet_app.api.command_center.search_internal_work_items", { query: query || "" }),
+  addInternalWorkItem: (item_name, description, activity_type) =>
+    call("inet_app.api.command_center.add_internal_work_item", { item_name, description: description || "", activity_type: activity_type || "" }),
   listPoIntakeLinesForIMMap: (projectCode) =>
     call("inet_app.api.command_center.list_po_intake_lines_for_im_map", {
       project_code: projectCode || "",
@@ -686,6 +696,7 @@ export const pmApi = {
   },
   listRolloutPlans:  (filters) => call("frappe.client.get_list", { doctype: "Rollout Plan", filters: filters || {}, fields: ["*"], order_by: "plan_date desc", limit_page_length: 100 }),
   listProjectDomains:(filters) => call("frappe.client.get_list", { doctype: "Project Domain", filters: filters || { status: "Active" }, fields: ["name", "domain_name", "status"], order_by: "domain_name asc", limit_page_length: 100 }),
+  listActivityTypes: () => call("frappe.client.get_list", { doctype: "Activity Type", filters: { disabled: 0 }, fields: ["name"], order_by: "name asc", limit_page_length: 100 }),
   listHuaweiIMs:     (filters) => call("frappe.client.get_list", { doctype: "Huawei IM", filters: filters || { status: "Active" }, fields: ["name", "full_name", "email", "phone"], order_by: "full_name asc", limit_page_length: 100 }),
   listISDPOwners:    () => call("frappe.client.get_list", { doctype: "ISDP Owner", filters: { status: "Active" }, fields: ["name", "owner_name"], order_by: "owner_name asc", limit_page_length: 200 }),
   listIBuyOwners:    () => call("frappe.client.get_list", { doctype: "IBuy Owner", filters: { status: "Active" }, fields: ["name", "owner_name"], order_by: "owner_name asc", limit_page_length: 200 }),

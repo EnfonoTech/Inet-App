@@ -213,6 +213,20 @@ export default function IMDispatch() {
   const [itemsForDummy, setItemsForDummy] = useState([]);
   const [itemSearch, setItemSearch] = useState("");
   const [dummyForm, setDummyForm] = useState({ project_code: "", target_month: "", site_code: "", duid_text: "", item_code: "", item_description: "", manager_remark: "" });
+  const [showInternalModal, setShowInternalModal] = useState(false);
+  const [internalBusy, setInternalBusy] = useState(false);
+  const [internalErr, setInternalErr] = useState(null);
+  const [internalForm, setInternalForm] = useState({ work_type: "General", domain: "", item_code: "", description: "", manager_remark: "" });
+  const [internalItems, setInternalItems] = useState([]);
+  const [internalItemSearch, setInternalItemSearch] = useState("");
+  const [internalDomains, setInternalDomains] = useState([]);
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemDescription, setNewItemDescription] = useState("");
+  const [newItemActivityType, setNewItemActivityType] = useState("");
+  const [activityTypeOptions, setActivityTypeOptions] = useState([]);
+  const [addItemErr, setAddItemErr] = useState(null);
+  const [addingInternalItem, setAddingInternalItem] = useState(false);
   const [mapForRow, setMapForRow] = useState(null);
   const [mapLines, setMapLines] = useState([]);
   const [mapLineId, setMapLineId] = useState("");
@@ -256,7 +270,14 @@ export default function IMDispatch() {
         const portal = { has_target_month: "yes" };
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
         if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
-        if (dummyFilter !== "all") portal.dummy_preset = dummyFilter;
+        // Internal work rows are hidden from every PO list by default; this
+        // planning view opts in (or shows only them via the filter).
+        if (dummyFilter === "internal") {
+          portal.internal_preset = "only";
+        } else {
+          portal.internal_preset = "include";
+          if (dummyFilter !== "all") portal.dummy_preset = dummyFilter;
+        }
         if (projectFilter.length) portal.project_code = projectFilter;
         if (teamFilter.length) portal.team = teamFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
@@ -459,6 +480,104 @@ export default function IMDispatch() {
       setDummyErr(e.message || "Could not create dummy PO");
     } finally {
       setDummyBusy(false);
+    }
+  }
+
+  async function openInternalModal() {
+    setInternalErr(null);
+    setInternalForm({ work_type: "General", domain: "", item_code: "", description: "", manager_remark: "" });
+    setInternalItems([]);
+    setInternalItemSearch("");
+    setShowInternalModal(true);
+    try {
+      const domains = await pmApi.listProjectDomains();
+      setInternalDomains(Array.isArray(domains) ? domains : []);
+    } catch {
+      setInternalDomains([]);
+    }
+  }
+
+  useEffect(() => {
+    if (!showInternalModal) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await pmApi.searchInternalWorkItems(internalItemSearch.trim());
+        if (!cancelled) setInternalItems(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (!cancelled) setInternalItems([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showInternalModal, internalItemSearch]);
+
+  async function openAddItemModal() {
+    setAddItemErr(null);
+    setNewItemName(internalItemSearch || "");
+    setNewItemDescription("");
+    setNewItemActivityType("");
+    setShowAddItemModal(true);
+    try {
+      const rows = await pmApi.listActivityTypes();
+      setActivityTypeOptions(Array.isArray(rows) ? rows : []);
+    } catch {
+      setActivityTypeOptions([]);
+    }
+  }
+
+  async function submitAddItem() {
+    const name = (newItemName || "").trim();
+    if (!name) {
+      setAddItemErr("Item name is required.");
+      return;
+    }
+    setAddingInternalItem(true);
+    setAddItemErr(null);
+    try {
+      const res = await pmApi.addInternalWorkItem(name, newItemDescription || undefined, newItemActivityType || undefined);
+      const rows = await pmApi.searchInternalWorkItems("");
+      setInternalItems(Array.isArray(rows) ? rows : []);
+      if (res?.item_code) {
+        setInternalForm((f) => ({
+          ...f,
+          item_code: res.item_code,
+          description: res.description || f.description,
+        }));
+      }
+      setShowAddItemModal(false);
+    } catch (e) {
+      setAddItemErr(e.message || "Could not add item");
+    } finally {
+      setAddingInternalItem(false);
+    }
+  }
+
+  async function submitInternalWork() {
+    if (internalForm.work_type === "Domain" && !internalForm.domain) {
+      setInternalErr("Select a domain for Domain work.");
+      return;
+    }
+    if (!internalForm.item_code) {
+      setInternalErr("Select a work item.");
+      return;
+    }
+    setInternalBusy(true);
+    setInternalErr(null);
+    try {
+      await pmApi.createInternalWork({
+        work_type: internalForm.work_type,
+        domain: internalForm.work_type === "Domain" ? internalForm.domain : undefined,
+        item_code: internalForm.item_code,
+        description: internalForm.description || undefined,
+        manager_remark: internalForm.manager_remark || undefined,
+      });
+      setShowInternalModal(false);
+      setSuccessMsg("Internal work created.");
+      await load();
+    } catch (e) {
+      setInternalErr(e.message || "Could not create internal work");
+    } finally {
+      setInternalBusy(false);
     }
   }
 
@@ -710,6 +829,25 @@ export default function IMDispatch() {
           >
             Dummy PO
           </button>
+          <button
+            type="button"
+            onClick={openInternalModal}
+            disabled={!imName}
+            style={{
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 18px",
+              fontSize: "0.88rem",
+              fontWeight: 700,
+              color: "#fff",
+              cursor: !imName ? "not-allowed" : "pointer",
+              opacity: !imName ? 0.55 : 1,
+              background: "linear-gradient(135deg,#0d9488 0%,#14b8a6 100%)",
+              boxShadow: "0 4px 14px rgba(13,148,136,0.28)",
+            }}
+          >
+            Internal Work
+          </button>
           <ExportExcelButton filename="im-dispatch" rows={visibleRows} />
           <button className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading..." : "Refresh"}
@@ -816,6 +954,7 @@ export default function IMDispatch() {
             <option value="dummy">Open dummy only</option>
             <option value="mapped_dummy">Mapped from dummy</option>
             <option value="standard">Exclude open dummy</option>
+            <option value="internal">Internal work only</option>
           </select>
           <select
             value={modeFilter}
@@ -1295,6 +1434,143 @@ export default function IMDispatch() {
         </div>
       </Modal>
 
+      <Modal
+        open={showInternalModal}
+        onClose={() => !internalBusy && setShowInternalModal(false)}
+        title="Internal Work"
+        width={620}
+      >
+        {internalErr && <div className="notice error" style={{ marginBottom: 12 }}>{internalErr}</div>}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Work Type</label>
+          <select
+            value={internalForm.work_type}
+            onChange={(e) => setInternalForm((f) => ({ ...f, work_type: e.target.value, domain: e.target.value === "Domain" ? f.domain : "" }))}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+          >
+            <option value="General">General</option>
+            <option value="Domain">Domain</option>
+          </select>
+        </div>
+        {internalForm.work_type === "Domain" && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Domain</label>
+            <select
+              value={internalForm.domain}
+              onChange={(e) => setInternalForm((f) => ({ ...f, domain: e.target.value }))}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+            >
+              <option value="">{internalDomains.length ? "Select domain" : "No domains found"}</option>
+              {internalDomains.map((d) => (
+                <option key={d.name} value={d.name}>{d.domain_name || d.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Work Item</label>
+          <SearchableSelect
+            value={internalForm.item_code || ""}
+            onChange={(v) => {
+              const picked = internalItems.find((i) => i.item_code === v);
+              setInternalForm((f) => ({
+                ...f,
+                item_code: v || "",
+                description: picked?.description || f.description,
+              }));
+            }}
+            onSearch={setInternalItemSearch}
+            options={internalItems.map((i) => ({
+              id: i.item_code,
+              label: i.item_name && i.item_name !== i.item_code ? `${i.item_code} — ${i.item_name}` : i.item_code,
+            }))}
+            placeholder="Search work item…"
+            allLabel="None"
+            style={{ display: "block", width: "100%" }}
+            minWidth={0}
+            triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.88rem" }}
+            panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
+          />
+          <div style={{ marginTop: 6 }}>
+            <button type="button" className="btn-secondary" onClick={openAddItemModal} style={{ fontSize: "0.78rem", padding: "5px 12px" }}>
+              + Add new item
+            </button>
+          </div>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Description</label>
+          <textarea
+            value={internalForm.description}
+            onChange={(e) => setInternalForm((f) => ({ ...f, description: e.target.value }))}
+            rows={2}
+            placeholder="What exactly needs to be done…"
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontFamily: "inherit", fontSize: "0.84rem", resize: "vertical" }}
+          />
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Note for field team</label>
+          <textarea
+            value={internalForm.manager_remark}
+            onChange={(e) => setInternalForm((f) => ({ ...f, manager_remark: e.target.value }))}
+            rows={3}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontFamily: "inherit", fontSize: "0.84rem", resize: "vertical" }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button type="button" className="btn-secondary" disabled={internalBusy} onClick={() => setShowInternalModal(false)}>Cancel</button>
+          <button type="button" className="btn-primary" disabled={internalBusy} onClick={submitInternalWork}>
+            {internalBusy ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showAddItemModal}
+        onClose={() => !addingInternalItem && setShowAddItemModal(false)}
+        title="Add Work Item"
+        width={460}
+      >
+        {addItemErr && <div className="notice error" style={{ marginBottom: 12 }}>{addItemErr}</div>}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Item Name</label>
+          <input
+            type="text"
+            placeholder="e.g. Oil Clearance"
+            value={newItemName}
+            onChange={(e) => setNewItemName(e.target.value)}
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontSize: "0.86rem" }}
+          />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Activity Type</label>
+          <select
+            value={newItemActivityType}
+            onChange={(e) => setNewItemActivityType(e.target.value)}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+          >
+            <option value="">{activityTypeOptions.length ? "None" : "No activity types found"}</option>
+            {activityTypeOptions.map((a) => (
+              <option key={a.name} value={a.name}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Description</label>
+          <textarea
+            value={newItemDescription}
+            onChange={(e) => setNewItemDescription(e.target.value)}
+            rows={3}
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontFamily: "inherit", fontSize: "0.84rem", resize: "vertical" }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button type="button" className="btn-secondary" disabled={addingInternalItem} onClick={() => setShowAddItemModal(false)}>Cancel</button>
+          <button type="button" className="btn-primary" disabled={addingInternalItem} onClick={submitAddItem}>
+            {addingInternalItem ? "Adding…" : "Add"}
+          </button>
+        </div>
+      </Modal>
+
       {mapForRow && (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
@@ -1424,7 +1700,7 @@ export default function IMDispatch() {
                       key={row.name}
                       data-doc-name={row.name}
                       style={{
-                        background: !!Number(row.is_dummy_po) ? "#fffbeb" : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
+                        background: !!Number(row.is_dummy_po) ? "#fffbeb" : !!Number(row.is_internal_work) ? "#f0fdfa" : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
                         opacity: canPlan ? 1 : 0.85,
                       }}
                     >
@@ -1457,7 +1733,22 @@ export default function IMDispatch() {
                       </td>
                       <td><DispatchModeBadge mode={row.dispatch_mode || "Manual"} /></td>
                       <td style={{ fontSize: "0.72rem", maxWidth: 160 }}>
-                        {!!Number(row.is_dummy_po) ? (
+                        {!!Number(row.is_internal_work) ? (
+                          <span
+                            style={{
+                              display: "inline-block",
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              fontWeight: 700,
+                              background: "#ccfbf1",
+                              color: "#0f766e",
+                              border: "1px solid #99f6e4",
+                            }}
+                            title={row.internal_work_type ? `Internal work — ${row.internal_work_type}${row.internal_domain ? ` (${row.internal_domain})` : ""}` : "Internal work"}
+                          >
+                            Internal
+                          </span>
+                        ) : !!Number(row.is_dummy_po) ? (
                           <span style={{
                             display: "inline-block",
                             padding: "2px 8px",
@@ -1495,7 +1786,7 @@ export default function IMDispatch() {
                       </td>
                       <td>{row.po_no}</td>
                       <td>{row.project_code}</td>
-                      <td>{row.project_domain || "—"}</td>
+                      <td>{row.project_domain || row.internal_domain || "—"}</td>
                       <td>{row.huawei_im || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.item_code}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>

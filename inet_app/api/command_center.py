@@ -2393,6 +2393,192 @@ def create_im_dummy_po_dispatch(payload=None):
     return {"name": final_name, "po_no": po_no, "poid": poid}
 
 
+INTERNAL_WORK_ITEM_GROUP = "Internal Work"
+
+
+def _ensure_internal_work_item_group():
+    """Get-or-create the leaf Item Group that separates internal-work items."""
+    if frappe.db.exists("Item Group", INTERNAL_WORK_ITEM_GROUP):
+        return INTERNAL_WORK_ITEM_GROUP
+    parent = (
+        frappe.db.get_value("Item Group", {"is_group": 1}, "name")
+        or frappe.db.get_value("Item Group", "All Item Groups", "name")
+    )
+    ig = frappe.new_doc("Item Group")
+    ig.item_group_name = INTERNAL_WORK_ITEM_GROUP
+    ig.is_group = 0
+    if parent:
+        ig.parent_item_group = parent
+    ig.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return INTERNAL_WORK_ITEM_GROUP
+
+
+def _is_internal_dispatch(name):
+    if not name or not frappe.db.has_column("PO Dispatch", "is_internal_work"):
+        return False
+    return bool(cint(frappe.db.get_value("PO Dispatch", name, "is_internal_work") or 0))
+
+
+@frappe.whitelist()
+def search_internal_work_items(query=""):
+    """Search Items in the Internal Work group (IM internal-work modal picker)."""
+    if not frappe.session.user or frappe.session.user == "Guest":
+        frappe.throw("Not permitted", frappe.PermissionError)
+    q = (query or "").strip()
+    base_filters = [["disabled", "=", 0], ["item_group", "=", INTERNAL_WORK_ITEM_GROUP]]
+    filters = base_filters + ([["item_name", "like", f"%{q}%"]] if q else [])
+    rows = frappe.db.get_all(
+        "Item",
+        filters=filters,
+        fields=["item_code", "item_name", "description", "activity_type"],
+        order_by="item_name asc",
+        limit=30,
+        ignore_permissions=True,
+    )
+    if q and not rows:
+        rows = frappe.db.get_all(
+            "Item",
+            filters=base_filters + [["item_code", "like", f"%{q}%"]],
+            fields=["item_code", "item_name", "description"],
+            order_by="item_name asc",
+            limit=30,
+            ignore_permissions=True,
+        )
+    return rows
+
+
+@frappe.whitelist()
+def add_internal_work_item(item_name, description=None, activity_type=None):
+    """IM adds a new internal-work item (Item in the Internal Work group)."""
+    roles = set(frappe.get_roles(frappe.session.user))
+    if not roles & {"INET IM", "INET Admin", "System Manager", "Administrator"}:
+        frappe.throw("Not permitted", frappe.PermissionError)
+    name = (item_name or "").strip()
+    if not name:
+        frappe.throw("item_name is required")
+    description = (description or "").strip()
+    activity_type = (activity_type or "").strip()
+    if activity_type and not frappe.db.exists("Activity Type", activity_type):
+        frappe.throw(f"Activity Type not found: {activity_type}")
+    group = _ensure_internal_work_item_group()
+    existing = frappe.db.get_value(
+        "Item", {"item_name": name, "item_group": group}, "item_code"
+    ) or (frappe.db.exists("Item", name) and frappe.db.get_value("Item", name, "item_group") == group and name)
+    if existing:
+        return {"item_code": existing, "item_name": name}
+    if frappe.db.exists("Item", name):
+        frappe.throw(f"An Item named {name} already exists outside the {group} group")
+    uom = frappe.db.get_single_value("Stock Settings", "stock_uom") or "Nos"
+    it = frappe.new_doc("Item")
+    it.item_code = name[:140]
+    it.item_name = name[:140]
+    it.item_group = group
+    it.stock_uom = uom
+    if description:
+        it.description = description[:2000]
+    if activity_type and hasattr(it, "activity_type"):
+        it.activity_type = activity_type
+    if hasattr(it, "is_stock_item"):
+        it.is_stock_item = 0
+    it.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {
+        "item_code": it.item_code, "item_name": it.item_name,
+        "description": it.description, "activity_type": getattr(it, "activity_type", None),
+    }
+
+
+@frappe.whitelist()
+def create_internal_work(payload=None):
+    """
+    Internal (non-POID) work assigned by an IM: travel, oil clearance, etc.
+
+    No PO, no DUID, no project, no revenue — the row exists only so the standard
+    Rollout Plan → Daily Execution chain can run. Never mappable to a PO line and
+    never produces a Work Done record.
+
+    payload: {
+        work_type: "Domain" | "General",
+        domain: Project Domain name (required when work_type == "Domain"),
+        item_code: Item in the Internal Work group (required),
+        description: optional free text,
+        manager_remark: optional note shown to the field team,
+        target_month: optional "YYYY-MM" / "YYYY-MM-DD" (defaults to current month),
+    }
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload)
+    payload = payload or {}
+
+    _im_resolved, _im_identifiers = _require_inet_im_session()
+
+    work_type = (payload.get("work_type") or "").strip()
+    if work_type not in ("Domain", "General"):
+        frappe.throw("work_type must be Domain or General")
+
+    domain = (payload.get("domain") or "").strip()
+    if work_type == "Domain":
+        if not domain:
+            frappe.throw("domain is required for Domain work")
+        if not frappe.db.exists("Project Domain", domain):
+            frappe.throw(f"Project Domain not found: {domain}")
+    else:
+        domain = ""
+
+    item_code = (payload.get("item_code") or "").strip()
+    if not item_code:
+        frappe.throw("item_code is required")
+    item_row = frappe.db.get_value(
+        "Item", item_code, ["item_name", "item_group"], as_dict=True
+    )
+    if not item_row:
+        frappe.throw(f"Item {item_code} not found")
+    if item_row.item_group != INTERNAL_WORK_ITEM_GROUP:
+        frappe.throw(f"Item {item_code} is not in the {INTERNAL_WORK_ITEM_GROUP} group")
+    item_label = item_row.item_name or item_code
+
+    description = (payload.get("description") or "").strip()
+    manager_remark = (payload.get("manager_remark") or payload.get("note") or "").strip()
+
+    target_month = (payload.get("target_month") or "").strip()
+    try:
+        if target_month:
+            if len(target_month) == 7:
+                target_month = f"{target_month}-01"
+            target_month = str(getdate(target_month).replace(day=1))
+        else:
+            # Always set: My Dispatches filters has_target_month == "yes".
+            target_month = str(getdate(nowdate()).replace(day=1))
+    except Exception:
+        frappe.throw("Invalid target_month (expected YYYY-MM or YYYY-MM-DD)")
+
+    from frappe.model.naming import make_autoname
+    poid = make_autoname("INT-.#####")
+
+    doc = frappe.new_doc("PO Dispatch")
+    doc.im = _im_resolved
+    doc.item_code = item_code
+    doc.item_description = description
+    doc.qty = flt(1)
+    doc.rate = flt(0)
+    doc.line_amount = flt(0)
+    doc.site_name = item_label
+    doc.planning_mode = "Plan"
+    doc.dispatch_status = "Dispatched"
+    doc.dispatch_mode = "Manual"
+    doc.is_internal_work = 1
+    doc.internal_work_type = work_type
+    doc.internal_domain = domain
+    if manager_remark and frappe.db.has_column("PO Dispatch", "manager_remark"):
+        doc.manager_remark = manager_remark[:8000]
+    doc.target_month = target_month
+
+    final_name = _insert_po_dispatch_with_poid(doc, poid)
+    frappe.db.commit()
+    return {"name": final_name, "poid": poid}
+
+
 def _po_dispatch_portal_pf_active(pf):
     if not pf:
         return False
@@ -2416,6 +2602,10 @@ def _po_dispatch_portal_pf_active(pf):
             continue
         if k == "has_target_month" and str(v).strip().lower() in ("", "any"):
             continue
+        return True
+    # "include" alone doesn't need the SQL path (get_list default already
+    # includes nothing extra to filter); "only" is an active filter.
+    if (pf.get("internal_preset") or "").strip().lower() == "only":
         return True
     return False
 
@@ -2489,6 +2679,15 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             " AND TRIM(original_dummy_poid) != IFNULL(TRIM(name), '')))"
         )
 
+    # internal_preset: "exclude" (DEFAULT — internal work is invisible to PO
+    # tracking/finance surfaces), "include" (planning views), "only".
+    internal_preset = (pf.get("internal_preset") or "exclude").strip().lower()
+    if "is_internal_work" in fields:
+        if internal_preset == "only":
+            wheres.append("IFNULL(`is_internal_work`, 0) = 1")
+        elif internal_preset != "include":
+            wheres.append("IFNULL(`is_internal_work`, 0) = 0")
+
     # has_target_month: "yes" (target_month set), "no" (null/empty), "any" / "" (no filter)
     htm = (pf.get("has_target_month") or "").strip().lower()
     if htm == "yes" and "target_month" in fields:
@@ -2552,8 +2751,26 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
     fields = list(frappe.db.get_table_columns("PO Dispatch"))
 
     if not _po_dispatch_portal_pf_active(pf):
+        # Internal work is invisible to PO-tracking callers by default; the
+        # planning views opt in via portal internal_preset. By-name lookups and
+        # explicit is_internal_work filters are left untouched.
+        gl_filters = filters
+        if "is_internal_work" in fields:
+            internal_pref = (pf.get("internal_preset") or "exclude").strip().lower()
+            if isinstance(gl_filters, dict):
+                mentions = set(gl_filters.keys())
+            elif isinstance(gl_filters, list):
+                mentions = {f[0] for f in gl_filters if isinstance(f, (list, tuple)) and f}
+            else:
+                mentions = set()
+            if internal_pref != "include" and not ({"is_internal_work", "name"} & mentions):
+                if isinstance(gl_filters, dict):
+                    gl_filters = dict(gl_filters)
+                    gl_filters["is_internal_work"] = ["!=", 1]
+                else:
+                    gl_filters = list(gl_filters or []) + [["is_internal_work", "!=", 1]]
         gl_pd = dict(
-            filters=filters,
+            filters=gl_filters,
             fields=fields,
             order_by=order_by or "modified desc",
         )
@@ -2921,6 +3138,9 @@ def map_im_dummy_po_to_intake_line(payload=None):
     d_im = frappe.db.get_value("PO Dispatch", dummy_name, "im")
     if d_im not in set(im_identifiers):
         frappe.throw("Not permitted for this dispatch.")
+
+    if _is_internal_dispatch(dummy_name):
+        frappe.throw("Internal work cannot be mapped to a PO line.")
 
     if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
         if not cint(frappe.db.get_value("PO Dispatch", dummy_name, "is_dummy_po")):
@@ -3404,14 +3624,22 @@ def create_rollout_plans(payload):
         remark_updates["team_lead_remark"] = str(payload.get("team_lead_remark") or "")[:8000]
 
     for dispatch_name in dispatches:
+        dispatch_fields = ["name", "poid", "line_amount", "qty", "im", "region_type", "center_area"]
+        if frappe.db.has_column("PO Dispatch", "is_internal_work"):
+            dispatch_fields.append("is_internal_work")
         dispatch = frappe.db.get_value(
             "PO Dispatch",
             dispatch_name,
-            ["name", "poid", "line_amount", "qty", "im", "region_type", "center_area"],
+            dispatch_fields,
             as_dict=True,
         )
         if not dispatch:
             continue
+        # Internal work has no QC/CIAG stage — force off regardless of the
+        # modal choice so mixed internal+POID batches stay simple for the IM.
+        is_internal_row = bool(cint(dispatch.get("is_internal_work") or 0))
+        row_qc_required = 0 if is_internal_row else qc_required
+        row_ciag_required = 0 if is_internal_row else ciag_required
 
         target_team = team_override
 
@@ -3483,9 +3711,9 @@ def create_rollout_plans(payload):
         doc.access_period = access_period or None
         doc.visit_type = visit_type
         if hasattr(doc, "qc_required"):
-            doc.qc_required = qc_required
+            doc.qc_required = row_qc_required
         if hasattr(doc, "ciag_required"):
-            doc.ciag_required = ciag_required
+            doc.ciag_required = row_ciag_required
         # Visit # advances per POID: 1st plan = 1, 2nd = 2 (Re-Visit), etc.
         doc.visit_number = _next_visit_number_for_dispatch(dispatch_name)
         doc.visit_multiplier = visit_multiplier
@@ -3532,11 +3760,11 @@ def create_rollout_plans(payload):
         # drops the assignment and the row falls back to the default 1).
         if frappe.db.has_column("Rollout Plan", "qc_required"):
             frappe.db.set_value(
-                "Rollout Plan", doc.name, "qc_required", qc_required, update_modified=False,
+                "Rollout Plan", doc.name, "qc_required", row_qc_required, update_modified=False,
             )
         if frappe.db.has_column("Rollout Plan", "ciag_required"):
             frappe.db.set_value(
-                "Rollout Plan", doc.name, "ciag_required", ciag_required, update_modified=False,
+                "Rollout Plan", doc.name, "ciag_required", row_ciag_required, update_modified=False,
             )
 
         try:
@@ -4643,6 +4871,24 @@ def update_execution(payload):
             )
 
     _sync_rollout_plan_from_daily_execution(doc.rollout_plan, doc)
+
+    # Internal work has no Work Done record — the IM confirming
+    # execution_status = Completed (via the status pill, Bulk Exec Status,
+    # or any other path) IS the "done" signal, so finalize the dispatch
+    # here instead of requiring a separate action.
+    if doc.execution_status == "Completed" and doc.rollout_plan:
+        _int_dispatch = frappe.db.get_value("Rollout Plan", doc.rollout_plan, "po_dispatch")
+        if _is_internal_dispatch(_int_dispatch):
+            if frappe.db.has_column("Rollout Plan", "issue_status"):
+                frappe.db.sql(
+                    """UPDATE `tabRollout Plan`
+                       SET issue_status = 'Resolved', modified = NOW()
+                       WHERE po_dispatch = %s
+                       AND IFNULL(issue_status,'') NOT IN ('','Resolved')""",
+                    (_int_dispatch,),
+                )
+            frappe.db.set_value("PO Dispatch", _int_dispatch, "dispatch_status", "Completed")
+
     qc = str(getattr(doc, "qc_status", None) or "")
 
     # Stage 6: QC fail should return work to planning and create a new revisit plan.
@@ -4703,6 +4949,53 @@ def bulk_update_execution_field(names, field, value):
     return {"updated": updated, "errors": errors}
 
 
+@frappe.whitelist()
+def mark_internal_work_done(execution_name):
+    """
+    Close an internal-work execution: the internal counterpart of Work Done
+    creation, minus the Work Done record (internal work has no revenue).
+
+    Sets the execution Completed (update_execution syncs plan_status), resolves
+    open plan issues and completes the dispatch — mirroring generate_work_done's
+    post-insert status flips.
+    """
+    roles = set(frappe.get_roles(frappe.session.user))
+    if not roles & {"Administrator", "System Manager", "INET Admin", "INET IM"}:
+        frappe.throw(
+            "Only an Implementation Manager or administrator can mark internal work done.",
+            frappe.PermissionError,
+        )
+
+    execution_name = (execution_name or "").strip()
+    if not execution_name or not frappe.db.exists("Daily Execution", execution_name):
+        frappe.throw(f"Daily Execution not found: {execution_name}")
+
+    rollout_plan = frappe.db.get_value("Daily Execution", execution_name, "rollout_plan")
+    dispatch_name = (
+        frappe.db.get_value("Rollout Plan", rollout_plan, "po_dispatch") if rollout_plan else None
+    )
+    if not _is_internal_dispatch(dispatch_name):
+        frappe.throw("Not an internal-work execution — create Work Done instead.")
+
+    if frappe.db.get_value("Daily Execution", execution_name, "execution_status") != "Completed":
+        update_execution({"name": execution_name, "execution_status": "Completed"})
+    if not frappe.db.get_value("Daily Execution", execution_name, "tl_status"):
+        frappe.db.set_value("Daily Execution", execution_name, "tl_status", "Completed")
+
+    if frappe.db.has_column("Rollout Plan", "issue_status"):
+        frappe.db.sql(
+            """UPDATE `tabRollout Plan`
+               SET issue_status = 'Resolved', modified = NOW()
+               WHERE po_dispatch = %s
+               AND IFNULL(issue_status,'') NOT IN ('','Resolved')""",
+            (dispatch_name,),
+        )
+    frappe.db.set_value("PO Dispatch", dispatch_name, "dispatch_status", "Completed")
+
+    frappe.db.commit()
+    return {"name": execution_name, "dispatch": dispatch_name, "status": "Completed"}
+
+
 _ALLOWED_WD_ISSUE_FLAGS = frozenset((
     "", "POD/PPT required", "TFM Check list", "Spare part return",
     "PAT/HO Final Approval", "FPDC/FM Survey report Approval", "Partial Work done",
@@ -4731,6 +5024,11 @@ def generate_work_done(execution_name, issue_flag=None):
         )
 
     exec_doc = frappe.get_doc("Daily Execution", execution_name)
+
+    if exec_doc.rollout_plan and _is_internal_dispatch(
+        frappe.db.get_value("Rollout Plan", exec_doc.rollout_plan, "po_dispatch")
+    ):
+        frappe.throw("Internal work never gets a Work Done record — use Mark Done instead.")
 
     if exec_doc.execution_status != "Completed":
         frappe.throw(
@@ -5017,6 +5315,9 @@ def _auto_issue_materials_for_execution(exec_doc):
 
 def _ensure_work_done_for_execution(execution_name):
     if not execution_name:
+        return None
+    rp = frappe.db.get_value("Daily Execution", execution_name, "rollout_plan")
+    if rp and _is_internal_dispatch(frappe.db.get_value("Rollout Plan", rp, "po_dispatch")):
         return None
     existing = frappe.db.get_value("Work Done", {"execution": execution_name}, "name")
     if existing:
@@ -5355,6 +5656,9 @@ def list_execution_monitor_rows(filters=None, limit=500):
             d_fields.append("original_dummy_poid")
         if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
             d_fields.append("is_dummy_po")
+        for ik in ("is_internal_work", "internal_work_type", "internal_domain"):
+            if frappe.db.has_column("PO Dispatch", ik):
+                d_fields.append(ik)
         for rk in ("general_remark", "manager_remark", "team_lead_remark"):
             if frappe.db.has_column("PO Dispatch", rk):
                 d_fields.append(rk)
@@ -5455,6 +5759,9 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "manager_remark": d.get("manager_remark") if d else None,
                 "team_lead_remark": d.get("team_lead_remark") if d else None,
                 "is_dummy_po": d.get("is_dummy_po") if d else None,
+                "is_internal_work": d.get("is_internal_work") if d else None,
+                "internal_work_type": d.get("internal_work_type") if d else None,
+                "internal_domain": d.get("internal_domain") if d else None,
                 "original_dummy_poid": (
                     (d.get("original_dummy_poid") or "").strip()
                     if d and frappe.db.has_column("PO Dispatch", "original_dummy_poid")
@@ -6951,14 +7258,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )[0][0] or 0
 
     _backend_pending_rows = frappe.db.sql(
-        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Pending' AND dispatch_status = 'Backend Assigned'",
+        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Pending' AND dispatch_status = 'Backend Assigned' AND IFNULL(is_internal_work, 0) = 0",
         as_dict=True,
     )
     backend_assigned_pending = cint(_backend_pending_rows[0].cnt if _backend_pending_rows else 0)
     backend_pending_value = flt(_backend_pending_rows[0].val if _backend_pending_rows else 0)
 
     _backend_done_rows = frappe.db.sql(
-        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status = 'Completed' AND subcon_completed_on BETWEEN %s AND %s",
+        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status = 'Completed' AND subcon_completed_on BETWEEN %s AND %s AND IFNULL(is_internal_work, 0) = 0",
         (first_day, last_day),
         as_dict=True,
     )
@@ -7401,6 +7708,7 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND pd.im IS NOT NULL AND pd.im != ''
+          AND IFNULL(pd.is_internal_work, 0) = 0
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
         GROUP BY pd.im
         """,
@@ -7419,6 +7727,7 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         ) plans
         JOIN `tabPO Dispatch` pd ON pd.name = plans.po_dispatch
         WHERE pd.im IS NOT NULL AND pd.im != ''
+          AND IFNULL(pd.is_internal_work, 0) = 0
         GROUP BY pd.im
         """,
         (fd, td), as_dict=True,
@@ -7932,6 +8241,7 @@ def get_revenue_forecast_report(**kwargs):
                COALESCE(SUM(line_amount), 0)        AS planned
         FROM `tabPO Dispatch`
         WHERE target_month IS NOT NULL AND target_month != '0000-00-00'
+          AND IFNULL(is_internal_work, 0) = 0
         GROUP BY DATE_FORMAT(target_month, '%%Y-%%m')
         """,
         as_dict=True,
@@ -8071,6 +8381,14 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         im_plan_extras.append("pd.original_dummy_poid AS original_dummy_poid")
     else:
         im_plan_extras.append("NULL AS original_dummy_poid")
+    if frappe.db.has_column("PO Dispatch", "is_internal_work"):
+        im_plan_extras.append("pd.is_internal_work AS is_internal_work")
+        im_plan_extras.append("pd.internal_work_type AS internal_work_type")
+        im_plan_extras.append("pd.internal_domain AS internal_domain")
+    else:
+        im_plan_extras.append("0 AS is_internal_work")
+        im_plan_extras.append("NULL AS internal_work_type")
+        im_plan_extras.append("NULL AS internal_domain")
     im_plan_extra_sql = ", " + ", ".join(im_plan_extras)
     rp_im_join = ""
     im_full_sql = "im_pd.full_name AS im_full_name"
@@ -8243,6 +8561,14 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         im_ex_extras.append("pd.original_dummy_poid AS original_dummy_poid")
     else:
         im_ex_extras.append("NULL AS original_dummy_poid")
+    if frappe.db.has_column("PO Dispatch", "is_internal_work"):
+        im_ex_extras.append("pd.is_internal_work AS is_internal_work")
+        im_ex_extras.append("pd.internal_work_type AS internal_work_type")
+        im_ex_extras.append("pd.internal_domain AS internal_domain")
+    else:
+        im_ex_extras.append("0 AS is_internal_work")
+        im_ex_extras.append("NULL AS internal_work_type")
+        im_ex_extras.append("NULL AS internal_domain")
     im_ex_extra_sql = ", " + ", ".join(im_ex_extras)
     rp_im_join_ex = ""
     im_full_sql_ex = "im_pd.full_name AS im_full_name"
@@ -9710,7 +10036,7 @@ def get_project_summary(project_code):
     # PO Dispatches for this project (full rows for detail / rollout grouping)
     dispatches = frappe.get_all(
         "PO Dispatch",
-        filters={"project_code": project_code},
+        filters={"project_code": project_code, "is_internal_work": ["!=", 1]},
         fields=["*"],
         order_by="site_code asc, modified desc",
         limit_page_length=500,
@@ -11151,6 +11477,8 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
     poid = pd.get("poid") or name
     if pd.get("is_dummy_po"):
         return False, {"po_dispatch": name, "poid": poid, "error": "Cannot direct-close a dummy PO"}
+    if _is_internal_dispatch(name):
+        return False, {"po_dispatch": name, "poid": poid, "error": "Cannot direct-close internal work"}
 
     cur_status = pd.get("dispatch_status") or ""
     if cur_status in ("Cancelled", "Closed"):
@@ -11557,6 +11885,8 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
     ) or {}
     if not pd.get("name"):
         return False, {"po_dispatch": name, "error": "PO Dispatch not found"}
+    if _is_internal_dispatch(name):
+        return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Internal work cannot be marked done via the backend flow."}
     if (pd.get("subcon_status") or "") != "Pending":
         return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Not in 'Sub-Contract Pending' state."}
     if role == "im" and not _can_assign_backend_dispatch(role, im_identifiers, pd):

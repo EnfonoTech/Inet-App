@@ -527,7 +527,7 @@ export default function RolloutPlanning() {
                     data-doc-name={row.name}
                     className={selected.has(row.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(row.name)}
-                    style={{ cursor: "pointer", ...(row.is_dummy_po ? { background: "#fffbeb" } : {}) }}
+                    style={{ cursor: "pointer", ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}
                   >
                     <td onClick={(e) => e.stopPropagation()}>
                       <input

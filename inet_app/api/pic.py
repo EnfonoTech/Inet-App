@@ -157,7 +157,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     limit_page_length = _portal_row_limit(limit, 500)
     with_team_type = bool(cint(with_team_type))
 
-    where = ["1=1"]
+    where = ["1=1", "IFNULL(pd.is_internal_work, 0) = 0"]
     params = []
 
     for col, key in (
@@ -380,7 +380,7 @@ def pic_invoicing_summary(portal_filters=None):
     pf = _portal_filters_dict(portal_filters)
 
     # ── Common WHERE (applies to both MS1 and MS2 queries) ──────────────
-    where_common = ["1=1"]
+    where_common = ["1=1", "IFNULL(pd.is_internal_work, 0) = 0"]
     params_common = []
 
     for col, key in (
@@ -582,6 +582,8 @@ def update_pic_row(po_dispatch, fields):
 
     if not frappe.db.exists("PO Dispatch", po_dispatch):
         frappe.throw(f"PO Dispatch not found: {po_dispatch}")
+    if cint(frappe.db.get_value("PO Dispatch", po_dispatch, "is_internal_work") or 0):
+        frappe.throw("Internal work does not enter the PIC / invoicing flow.")
 
     doc = frappe.get_doc("PO Dispatch", po_dispatch)
     touched = []
@@ -731,6 +733,9 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
             continue
         if not frappe.db.exists("PO Dispatch", name):
             errors.append({"po_dispatch": name, "error": "Not found"})
+            continue
+        if cint(frappe.db.get_value("PO Dispatch", name, "is_internal_work") or 0):
+            errors.append({"po_dispatch": name, "error": "Internal work — no PIC flow"})
             continue
         try:
             payload = {status_field: pic_status}
@@ -885,7 +890,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
               ELSE 0
             END AS ms2_amount
           {_PIC_FROM_JOIN}
-          WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
           {applied_clause}
           UNION ALL
           -- MS2 row: only emitted when ms2_amount > 0 AND its bucket differs
@@ -895,7 +900,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
             0 AS ms1_amount,
             pd.ms2_amount AS ms2_amount
           {_PIC_FROM_JOIN}
-          WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
             AND IFNULL(pd.ms2_amount, 0) > 0
             AND COALESCE(NULLIF(pd.pic_status_ms2,''),'Work Not Done')
                 != ({_PIC_INITIAL_RULE_SQL.strip()})
@@ -916,7 +921,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
                COALESCE(SUM(pd.ms1_amount), 0) AS amount_ms1,
                COALESCE(SUM(pd.ms2_amount), 0) AS amount_ms2
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
           AND IFNULL(pd.ibuy_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under I-BUY'
           {applied_clause}
@@ -934,7 +939,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
                COALESCE(SUM(pd.ms1_amount), 0) AS amount_ms1,
                COALESCE(SUM(pd.ms2_amount), 0) AS amount_ms2
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
           AND IFNULL(pd.isdp_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under ISDP'
           {applied_clause}
@@ -990,7 +995,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
               {split_ms2_cond}
               THEN IFNULL(pd.ms2_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 ELSE 0 END) AS subcon_ms2
         {_PIC_FROM_JOIN_LEAN}
-        WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
         """,
         tuple(split_params),
         as_dict=True,
@@ -1015,7 +1020,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
           COALESCE(SUM(pd.ms2_unbilled), 0) AS unbilled_ms2,
           COUNT(*) AS line_count
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
         {applied_clause}
         """,
         tuple(applied_params),
@@ -1092,7 +1097,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                     ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
                     pd.ms1_amount, pd.ms2_amount
                   {_PIC_FROM_JOIN}
-                  WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+                  WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
                   {project_clause}
                 ) t
                 GROUP BY bucket
@@ -1180,7 +1185,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        DATEDIFF(CURDATE(), pd.ms1_applied_date) AS days_since_applied,
                        pd.ms1_amount
                 {_PIC_FROM_JOIN}
-                WHERE IFNULL(pd.dispatch_status,'') != 'Cancelled'
+                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
                   AND pd.pic_status IN ('Under I-BUY', 'Under ISDP')
                   AND pd.ms1_applied_date IS NOT NULL
                   {project_clause}
@@ -1229,7 +1234,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        pd.ms2_amount,
                        (pd.ms1_amount + pd.ms2_amount) AS total
                 {_PIC_FROM_JOIN}
-                WHERE pd.pic_status = 'Commercial Invoice Closed'
+                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND pd.pic_status = 'Commercial Invoice Closed'
                   {project_clause}
                   {date_clause}
                 ORDER BY pd.ms1_payment_received_date DESC, pd.ms1_invoice_month DESC
@@ -1263,7 +1268,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        pd.pic_detail_remark,
                        pd.ms1_amount
                 {_PIC_FROM_JOIN}
-                WHERE pd.pic_status IN ('I-BUY Rejected', 'ISDP Rejected')
+                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND pd.pic_status IN ('I-BUY Rejected', 'ISDP Rejected')
                   AND IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
                   {project_clause}
                 ORDER BY pd.modified DESC
@@ -1325,6 +1330,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
             parts.append(f"IFNULL(pd.pic_status_ms2,'') IN ({ph2})")
             params.extend(ms2_vals)
         wheres = [f"({' OR '.join(parts)})"]
+    wheres.append("IFNULL(pd.is_internal_work, 0) = 0")
     wheres.append("IFNULL(pd.dispatch_status,'') != 'Cancelled'")
 
     # Optional filters
@@ -1473,6 +1479,8 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
         pd = frappe.db.get_value("PO Dispatch", dname, "*", as_dict=True)
         if not pd:
             frappe.throw(f"PO Dispatch {dname} not found.")
+        if cint(pd.get("is_internal_work") or 0):
+            frappe.throw(f"{dname} is internal work — it cannot be invoiced.")
         pds_raw.append(pd)
 
     # Resolve the Ready milestone per row. When the caller already picked a

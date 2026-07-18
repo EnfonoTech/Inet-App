@@ -471,7 +471,7 @@ export default function IMPlanning() {
                     data-doc-name={p.name}
                     className={selected.has(p.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(p.name)}
-                    style={{ cursor: "pointer", ...(p.is_dummy_po ? { background: "#fffbeb" } : {}) }}
+                    style={{ cursor: "pointer", ...(p.is_dummy_po ? { background: "#fffbeb" } : Number(p.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}
                   >
                     <td onClick={(e) => e.stopPropagation()}>
                       <input
@@ -482,11 +482,18 @@ export default function IMPlanning() {
                     </td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.poid || p.po_dispatch || "—"}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(p.original_dummy_poid || "").trim() ? `Dummy POID: ${p.original_dummy_poid}` : ""}>{(p.original_dummy_poid || "").trim() || "—"}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(p.original_dummy_poid || "").trim() ? `Dummy POID: ${p.original_dummy_poid}` : ""}>
+                      {Number(p.is_internal_work || 0) ? (
+                        <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontWeight: 700, fontFamily: "inherit", background: "#ccfbf1", color: "#0f766e", border: "1px solid #99f6e4" }}
+                          title={p.internal_work_type ? `Internal work — ${p.internal_work_type}${p.internal_domain ? ` (${p.internal_domain})` : ""}` : "Internal work"}>
+                          Internal
+                        </span>
+                      ) : ((p.original_dummy_poid || "").trim() || "—")}
+                    </td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.item_description || ""}>{p.item_description || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{p.activity_type || "—"}</td>
                     <td>{p.site_code || "—"}</td>
-                    <td>{p.project_domain || "—"}</td>
+                    <td>{p.project_domain || p.internal_domain || "—"}</td>
                     <td>{p.huawei_im || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={p.center_area || ""}>
                       {p.center_area || "—"}

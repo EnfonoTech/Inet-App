@@ -155,6 +155,15 @@ export default function ExecutionMonitor() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [tab, setTab] = useState("all"); // "all" | "internal_done"
+  const [internalSearch, setInternalSearch] = useState("");
+  const [internalImFilter, setInternalImFilter] = useState([]);
+  const [internalTeamFilter, setInternalTeamFilter] = useState([]);
+  const [internalDomainFilter, setInternalDomainFilter] = useState([]);
+  const [internalTypeFilter, setInternalTypeFilter] = useState([]);
+  const [internalFromDate, setInternalFromDate] = useState("");
+  const [internalToDate, setInternalToDate] = useState("");
+  const internalSearchDebounced = useDebounced(internalSearch, 300);
   const [detailRow, setDetailRow] = useState(null);
   const [tlStatusFor, setTlStatusFor] = useState(null);
   const [tlStatusPick, setTlStatusPick] = useState("In Progress");
@@ -269,7 +278,57 @@ export default function ExecutionMonitor() {
 
   const hasFilters = !!(searchDebounced || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || imFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
-  const totals = rows.reduce(
+  // Internal work has no Work Done record — once its Execution Status is
+  // Completed it moves out of the main table and into its own archive tab,
+  // mirroring the IM's Rollout Work Done page.
+  const mainRows = useMemo(
+    () => rows.filter((r) => !(Number(r.is_internal_work || 0) && r.execution_status === "Completed")),
+    [rows],
+  );
+  const internalDoneRows = useMemo(
+    () => rows.filter((r) => !!Number(r.is_internal_work || 0) && r.execution_status === "Completed"),
+    [rows],
+  );
+
+  const internalTeamOptions = useMemo(() => {
+    const seen = new Map();
+    internalDoneRows.forEach((r) => { if (r.team && !seen.has(r.team)) seen.set(r.team, r.team_name || r.team); });
+    return [...seen.entries()].map(([id, label]) => ({ id, label }));
+  }, [internalDoneRows]);
+  const internalImOptions = useMemo(() => {
+    const seen = new Map();
+    internalDoneRows.forEach((r) => { if (r.im && !seen.has(r.im)) seen.set(r.im, r.im_full_name || r.im); });
+    return [...seen.entries()].map(([id, label]) => ({ id, label }));
+  }, [internalDoneRows]);
+  const internalDomainOptions = useMemo(() => {
+    const seen = new Set();
+    internalDoneRows.forEach((r) => { if (r.internal_domain) seen.add(r.internal_domain); });
+    return [...seen].sort().map((d) => ({ id: d, label: d }));
+  }, [internalDoneRows]);
+
+  const filteredInternalDone = useMemo(() => {
+    let out = internalDoneRows;
+    const q = internalSearchDebounced.trim().toLowerCase();
+    if (q) {
+      out = out.filter((r) =>
+        [r.name, r.poid, r.item_code, r.item_description, r.team_name, r.team, r.im_full_name, r.im]
+          .some((v) => (v || "").toString().toLowerCase().includes(q)));
+    }
+    if (internalImFilter.length) out = out.filter((r) => internalImFilter.includes(r.im));
+    if (internalTeamFilter.length) out = out.filter((r) => internalTeamFilter.includes(r.team));
+    if (internalDomainFilter.length) out = out.filter((r) => internalDomainFilter.includes(r.internal_domain));
+    if (internalTypeFilter.length) out = out.filter((r) => internalTypeFilter.includes(r.internal_work_type));
+    if (internalFromDate) out = out.filter((r) => (r.execution_date || "") >= internalFromDate);
+    if (internalToDate) out = out.filter((r) => (r.execution_date || "") <= internalToDate);
+    return out;
+  }, [internalDoneRows, internalSearchDebounced, internalImFilter, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate]);
+
+  const hasInternalFilters = !!(
+    internalSearch || internalImFilter.length || internalTeamFilter.length ||
+    internalDomainFilter.length || internalTypeFilter.length || internalFromDate || internalToDate
+  );
+
+  const totals = mainRows.reduce(
     (acc, r) => ({
       target: acc.target + (parseFloat(r.target_amount) || 0),
     }),
@@ -298,7 +357,29 @@ export default function ExecutionMonitor() {
         </div>
       </div>
 
+      <div role="tablist" aria-label="Work type" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 8px", width: "fit-content" }}>
+        {[
+          { id: "all", label: "Execution Monitor" },
+          { id: "internal_done", label: "Internal Work Done", count: internalDoneRows.length },
+        ].map((tt) => {
+          const active = tab === tt.id;
+          const teal = tt.id === "internal_done";
+          return (
+            <button key={tt.id} type="button" role="tab" aria-selected={active} onClick={() => setTab(tt.id)}
+              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? (teal ? "#0d9488" : "#1d4ed8") : "transparent", color: active ? "#fff" : "#475569", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {tt.label}
+              {!!tt.count && (
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, fontSize: "0.66rem", fontWeight: 800, background: active ? "#fff" : "#14b8a6", color: active ? "#0d9488" : "#fff" }}>
+                  {tt.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       {/* ── Toolbar ─────────────────────────────────────────── */}
+      {tab === "all" && (
       <div className="toolbar">
         <input
           type="search"
@@ -339,6 +420,36 @@ export default function ExecutionMonitor() {
           </button>
         )}
       </div>
+      )}
+
+      {tab === "internal_done" && (
+      <div className="toolbar">
+        <input
+          type="search"
+          placeholder="Search Plan, Item, Team, IM…"
+          value={internalSearch}
+          onChange={(e) => setInternalSearch(e.target.value)}
+          style={{
+            padding: "7px 14px", borderRadius: 8,
+            border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240,
+          }}
+        />
+        <SearchableSelect multi value={internalImFilter} onChange={setInternalImFilter} options={internalImOptions} placeholder="All IMs" minWidth={150} />
+        <SearchableSelect multi value={internalTeamFilter} onChange={setInternalTeamFilter} options={internalTeamOptions} placeholder="All Teams" minWidth={150} />
+        <SearchableSelect multi value={internalDomainFilter} onChange={setInternalDomainFilter} options={internalDomainOptions} placeholder="All Domains" minWidth={150} />
+        <SearchableSelect multi value={internalTypeFilter} onChange={setInternalTypeFilter} options={["Domain", "General"]} placeholder="All Types" minWidth={130} />
+        <DateRangePicker value={{ from: internalFromDate, to: internalToDate }} onChange={({ from, to }) => { setInternalFromDate(from); setInternalToDate(to); }} />
+        {hasInternalFilters && (
+          <button
+            className="btn-secondary"
+            style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setInternalSearch(""); setInternalImFilter([]); setInternalTeamFilter([]); setInternalDomainFilter([]); setInternalTypeFilter([]); setInternalFromDate(""); setInternalToDate(""); }}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      )}
 
       <div className="page-content">
         {error && (
@@ -348,11 +459,87 @@ export default function ExecutionMonitor() {
         )}
 
         <DataTableWrapper>
-          {loading ? (
+          {tab === "internal_done" ? (
+            loading ? (
+              <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+                Loading execution data…
+              </div>
+            ) : filteredInternalDone.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">✅</div>
+                <h3>{hasInternalFilters ? "No results match your filters" : "No internal work done yet"}</h3>
+                <p>
+                  {hasInternalFilters
+                    ? "Try adjusting your search or filter criteria."
+                    : "Internal work moves here once its Execution Status is set to Completed."}
+                </p>
+              </div>
+            ) : (
+              <table className="data-table" data-table-key="execution-monitor-internal-done">
+                <thead>
+                  <tr>
+                    <th>Plan</th>
+                    <th>Execution</th>
+                    <th>Item</th>
+                    <th>Description</th>
+                    <th>Type</th>
+                    <th>Domain</th>
+                    <th>Team</th>
+                    <th>IM</th>
+                    <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
+                    <th>TL Status</th>
+                    <th style={{ textAlign: "right" }}>Qty</th>
+                    <th title="Remark set by IM">Manager</th>
+                    <th title="Remark set by Field Team Lead">Team Lead</th>
+                    <th>Open</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredInternalDone.map((row) => (
+                    <tr key={row.name} style={{ background: "#f0fdfa" }}>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.execution_name || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.item_code || row.site_name || "—"}</td>
+                      <td style={{ fontSize: "0.82rem", maxWidth: 260 }} title={row.item_description || ""}>{row.item_description || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.internal_work_type || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.internal_domain || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.team_name || row.team || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.im_full_name || row.im || "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{row.execution_date || "—"}</td>
+                      <td><StatusPill value={row.tl_status || "—"} /></td>
+                      <td style={{ textAlign: "right" }}>{row.execution_achieved_qty ?? "—"}</td>
+                      <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.manager_remark || ""}>{row.manager_remark || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.team_lead_remark || ""}>{row.team_lead_remark || "—"}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: "0.72rem", padding: "4px 10px" }}
+                          onClick={() => setDetailRow(row)}
+                        >
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                      {filteredInternalDone.length} row{filteredInternalDone.length !== 1 ? "s" : ""} done
+                      {filteredInternalDone.length !== internalDoneRows.length && (
+                        <span style={{ color: "#64748b", marginLeft: 10, fontWeight: 500 }}>of {internalDoneRows.length} total</span>
+                      )}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            )
+          ) : loading ? (
             <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
               Loading execution data…
             </div>
-          ) : rows.length === 0 ? (
+          ) : mainRows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">📊</div>
               <h3>{hasFilters ? "No results match your filters" : "No active executions"}</h3>
@@ -398,10 +585,10 @@ export default function ExecutionMonitor() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
+                {mainRows.map((row) => {
                   const target = row.target_amount || 0;
                   return (
-                    <tr key={row.name} style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
+                    <tr key={row.name} style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() ? `Dummy POID: ${row.original_dummy_poid}` : ""}>
@@ -498,7 +685,7 @@ export default function ExecutionMonitor() {
               <tfoot>
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                   <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                    {rows.length} rows
+                    {mainRows.length} rows
                   </td>
                   <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                   <td style={{ textAlign: "right", padding: "8px 16px" }} />
@@ -516,8 +703,8 @@ export default function ExecutionMonitor() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={rows.length}
+          loadedCount={mainRows.length}
+          filteredCount={mainRows.length}
           filterActive={hasFilters}
         />
       </div>
