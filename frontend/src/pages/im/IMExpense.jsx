@@ -74,7 +74,7 @@ function ExpenseLines({ lines, claim }) {
       <thead>
         <tr style={{ background: "#f1f5f9" }}>
           <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Expense Type</th>
-          <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>POID / Project</th>
+          <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>DUID / Project</th>
           <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Description</th>
           <th style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: "#475569" }}>Amount (SAR)</th>
         </tr>
@@ -83,8 +83,8 @@ function ExpenseLines({ lines, claim }) {
         {lines.map((l, i) => (
           <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
             <td style={{ padding: "6px 10px" }}>{l.expense_type}</td>
-            <td style={{ padding: "6px 10px", fontFamily: "monospace", fontSize: "0.78rem", color: l.poid ? "#1e40af" : "#7c3aed" }}>
-              {l.poid || (l.project ? `${l.project} (General)` : "—")}
+            <td style={{ padding: "6px 10px", fontFamily: "monospace", fontSize: "0.78rem", color: l.duid ? "#1e40af" : "#7c3aed" }}>
+              {l.duid || (l.project ? `${l.project} (General)` : "—")}
             </td>
             <td style={{ padding: "6px 10px", color: "#64748b" }}>{l.description || "—"}</td>
             <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600 }}>{fmtAmt(l.amount)}</td>

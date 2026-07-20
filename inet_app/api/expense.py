@@ -1,4 +1,4 @@
-"""Project Expense Claim API — team-lead-filed, IM-approved expense claims mapped to POIDs."""
+"""Project Expense Claim API — team-lead-filed, IM-approved expense claims mapped to DUIDs (sites)."""
 import frappe
 from frappe.utils import flt, nowdate
 
@@ -38,16 +38,37 @@ def _get_expense_tax_settings():
     return rate, account
 
 
-def _resolve_poid_display(system_id):
-    """Return the human-readable POID string for a PO Dispatch name (system_id)."""
-    if not system_id:
-        return system_id
-    poid = frappe.db.get_value("PO Dispatch", system_id, "poid")
-    return poid or system_id
+def _resolve_project_for_duid(duid, im_name):
+    """Best-effort: derive the project a DUID belongs to from the IM's own PO
+    Dispatches at that site. Project Control Center is autonamed by project_code,
+    so the value returned here is already the Link value for project_control_center.
+    """
+    if not duid or not im_name:
+        return None
+    row = frappe.db.sql(
+        """
+        SELECT project_code
+        FROM `tabPO Dispatch`
+        WHERE site_code = %s AND im = %s AND IFNULL(project_code, '') != ''
+        ORDER BY modified DESC
+        LIMIT 1
+        """,
+        (duid, im_name),
+    )
+    return row[0][0] if row else None
 
 
-def _enrich_lines_with_poid(rows, parent_field="parent"):
-    """For a list of claim records, attach their detail lines with resolved POID display."""
+def _enrich_lines_with_duid(rows, parent_field="parent"):
+    """For a list of claim records, attach their detail lines with DUID / project info.
+
+    Unlike POID (a PO Dispatch document name that needs a join to resolve to the
+    human-readable code), the DUID accounting dimension Links straight to DUID
+    Master, whose `name` IS the DUID code — no resolution join needed for it.
+
+    POID is still stored when known (e.g. filed from a rollout execution, which
+    knows both) — resolved here for reference, but DUID remains the field the UI
+    displays and groups by.
+    """
     if not rows:
         return rows
     claim_names = [r.name for r in rows]
@@ -56,8 +77,8 @@ def _enrich_lines_with_poid(rows, parent_field="parent"):
         f"""
         SELECT
             ecd.parent,
+            ecd.duid,
             COALESCE(pd.poid, ecd.poid, '') AS poid_display,
-            ecd.poid AS poid_raw,
             ecd.project_control_center AS project,
             COALESCE(pcc.project_code, ecd.project_control_center, '') AS project_display,
             ecd.expense_type,
@@ -78,7 +99,8 @@ def _enrich_lines_with_poid(rows, parent_field="parent"):
             "expense_type": d.expense_type,
             "amount": d.amount,
             "description": d.description,
-            "poid": d.poid_display,  # human-readable POID
+            "duid": d.duid,
+            "poid": d.poid_display or None,  # set only when mapped from a rollout execution
             "project": d.project_display,  # set for general (project-level) expenses
         })
     for r in rows:
@@ -203,11 +225,12 @@ def get_expense_claim_types():
 
 
 @frappe.whitelist()
-def get_available_poids(team=None):
-    """Return PO Dispatches available for expense claim POID selection.
+def get_available_duids(team=None):
+    """Return DUIDs (sites) available for expense claim allocation.
 
-    Scoped to the IM who manages the given team (or the session user's team).
-    Excludes Closed / Cancelled dispatches.
+    Scoped to the IM who manages the given team (or the session user's team):
+    a DUID qualifies if it has at least one non-Closed/Cancelled PO Dispatch
+    under that IM.
     """
     if not team:
         t = _get_team_for_user()
@@ -221,11 +244,12 @@ def get_available_poids(team=None):
 
     rows = frappe.db.sql(
         """
-        SELECT name, poid, system_id, site_code, item_code, dispatch_status
-        FROM `tabPO Dispatch`
-        WHERE im = %s
-          AND dispatch_status NOT IN ('Closed', 'Cancelled')
-        ORDER BY poid ASC
+        SELECT DISTINCT dm.name AS duid, dm.site_name, dm.center_area, dm.region_type
+        FROM `tabDUID Master` dm
+        JOIN `tabPO Dispatch` pd ON pd.site_code = dm.name
+        WHERE pd.im = %s
+          AND pd.dispatch_status NOT IN ('Closed', 'Cancelled')
+        ORDER BY dm.name ASC
         LIMIT 500
         """,
         (im_name,),
@@ -293,9 +317,9 @@ def get_expense_tax_info():
 def create_project_expense_claim(date=None, remarks=None, inet_team=None, expense_lines=None, attachments=None):
     """Create a draft ERPNext Expense Claim for a project team lead.
 
-    expense_lines: JSON list of {expense_type, description, amount, poids: [po_dispatch_name, ...]}
+    expense_lines: JSON list of {expense_type, description, amount, duids: [duid, ...]}
     Amounts entered are VAT-INCLUSIVE: the net portion is stored on the expense
-    rows (split equally across selected POIDs) and the VAT portion is added as
+    rows (split equally across selected DUIDs) and the VAT portion is added as
     an Expense Taxes and Charges row, so grand_total equals the entered amount.
     attachments: JSON list of already-uploaded file URLs to attach to the claim.
     """
@@ -359,15 +383,36 @@ def create_project_expense_claim(date=None, remarks=None, inet_team=None, expens
     if remarks:
         doc.remark = remarks
 
-    # Build expense detail rows
-    total_tax = 0.0
+    # Validate every line first and total the entered (VAT-inclusive) amounts.
+    #
+    # The net/tax split is deliberately computed ONCE on that combined total,
+    # not per line: HRMS's Expense Claim.calculate_taxes() always recomputes
+    # the tax row as rate% of total_sanctioned_amount on save, overriding
+    # whatever tax_amount we set here. Rounding each line's VAT split
+    # independently and then summing those roundings produces a
+    # total_sanctioned_amount that differs from a single aggregate rounding
+    # by a cent — e.g. two SAR 100 lines at 15% VAT: 100/1.15 rounds to 86.96
+    # per line (173.92 combined), but 200/1.15 rounds to 173.91 in one step.
+    # ERPNext then recomputes tax as 15% of whichever total actually lands,
+    # so the double-rounding surfaces as a grand_total a cent off from what
+    # was entered (200.01 instead of 200.00). Splitting from one aggregate
+    # rounding — then distributing to rows with a remainder correction, same
+    # technique already used for the per-line DUID split — keeps
+    # total_sanctioned_amount exactly equal to the single rounded net, so
+    # ERPNext's own recompute reproduces the entered total exactly.
+    entries = []
+    total_gross_all = 0.0
     for line in expense_lines:
         exp_type = line.get("expense_type")
         description = line.get("description") or ""
         gross_amount = flt(line.get("amount") or 0)
-        poids = line.get("poids") or []
+        duids = line.get("duids") or []
         is_general = bool(line.get("is_general"))
         project = line.get("project")
+        # Optional — set when the caller already knows the exact POID (e.g. filed
+        # straight from a rollout execution). Mapping both is fine; DUID stays
+        # the required field, POID is just extra context when available.
+        poid = line.get("poid")
 
         if not exp_type:
             frappe.throw("Expense Type is required for each line.")
@@ -375,49 +420,80 @@ def create_project_expense_claim(date=None, remarks=None, inet_team=None, expens
             frappe.throw(f"Amount must be greater than zero for expense type '{exp_type}'.")
         if is_general and not project:
             frappe.throw(f"A project must be selected for general expense '{exp_type}'.")
-        if not is_general and not poids:
-            frappe.throw(f"At least one POID must be selected for expense type '{exp_type}'.")
+        if not is_general and not duids:
+            frappe.throw(f"At least one DUID must be selected for expense type '{exp_type}'.")
 
-        # Back out the VAT portion: entered amount is tax-inclusive
+        entries.append({
+            "exp_type": exp_type, "description": description, "gross": gross_amount,
+            "duids": duids, "is_general": is_general, "project": project, "poid": poid,
+        })
+        total_gross_all += gross_amount
+
+    if tax_rate > 0:
+        total_net_all = flt(total_gross_all / (1 + tax_rate / 100), 2)
+        total_tax = flt(total_gross_all - total_net_all, 2)
+    else:
+        total_net_all = total_gross_all
+        total_tax = 0.0
+
+    # Build rows: each line's net share is proportional to its gross share of
+    # the aggregate, with the running remainder corrected on the LAST line so
+    # the true row-level sum always equals total_net_all exactly.
+    net_running = 0.0
+    last_idx = len(entries) - 1
+    for i, e in enumerate(entries):
         if tax_rate > 0:
-            total_amount = flt(gross_amount / (1 + tax_rate / 100), 2)
-            total_tax += flt(gross_amount - total_amount, 2)
+            if i == last_idx:
+                line_net = flt(total_net_all - net_running, 2)
+            else:
+                line_net = flt(e["gross"] / total_gross_all * total_net_all, 2)
         else:
-            total_amount = gross_amount
+            line_net = e["gross"]
+        net_running = flt(net_running + line_net, 2)
 
         # General expense — booked against the project, not a POID
-        if is_general:
+        if e["is_general"]:
             row = doc.append("expenses", {})
             row.expense_date = posting_date
-            row.expense_type = exp_type
-            row.description = description
-            row.amount = total_amount
-            row.sanctioned_amount = total_amount
+            row.expense_type = e["exp_type"]
+            row.description = e["description"]
+            row.amount = line_net
+            row.sanctioned_amount = line_net
             if default_cost_center and hasattr(row, "cost_center"):
                 row.cost_center = default_cost_center
             # field auto-created by the Project Control Center accounting dimension
             if not hasattr(row, "project_control_center"):
                 frappe.throw("Project accounting dimension is not set up yet. Run bench migrate.")
-            row.project_control_center = project
+            row.project_control_center = e["project"]
             continue
 
-        split_amount = flt(total_amount / len(poids), 2)
+        duids = e["duids"]
+        split_amount = flt(line_net / len(duids), 2)
         # Distribute any rounding remainder to the last row
-        remainder = flt(total_amount - split_amount * len(poids), 2)
+        remainder = flt(line_net - split_amount * len(duids), 2)
 
-        for idx, poid in enumerate(poids):
-            row_amount = split_amount + (remainder if idx == len(poids) - 1 else 0)
+        for idx, duid in enumerate(duids):
+            row_amount = split_amount + (remainder if idx == len(duids) - 1 else 0)
             row = doc.append("expenses", {})
             row.expense_date = posting_date
-            row.expense_type = exp_type
-            row.description = description
+            row.expense_type = e["exp_type"]
+            row.description = e["description"]
             row.amount = row_amount
             row.sanctioned_amount = row_amount
             if default_cost_center and hasattr(row, "cost_center"):
                 row.cost_center = default_cost_center
-            # poid field is auto-created by the POID accounting dimension (stores PO Dispatch name)
-            if hasattr(row, "poid"):
-                row.poid = poid
+            # duid field is auto-created by the DUID accounting dimension (Links to DUID Master)
+            if not hasattr(row, "duid"):
+                frappe.throw("DUID accounting dimension is not set up yet. Run bench migrate.")
+            row.duid = duid
+            # poid field still exists (POID accounting dimension) — set it too when known
+            if e["poid"] and hasattr(row, "poid"):
+                row.poid = e["poid"]
+            # Auto-map the project this DUID belongs to — no extra IM/TL input needed.
+            if hasattr(row, "project_control_center"):
+                auto_project = _resolve_project_for_duid(duid, im_name)
+                if auto_project:
+                    row.project_control_center = auto_project
 
     # VAT row — with rate set, ERPNext recomputes tax_amount as rate% of the
     # sanctioned total, so the tax follows any adjustment accounts makes later.
@@ -496,7 +572,7 @@ def list_my_expense_claims():
         as_dict=True,
     )
 
-    return _enrich_lines_with_poid(rows)
+    return _enrich_lines_with_duid(rows)
 
 
 @frappe.whitelist()
@@ -534,7 +610,7 @@ def list_pending_expense_approvals():
         as_dict=True,
     )
 
-    return _enrich_lines_with_poid(rows)
+    return _enrich_lines_with_duid(rows)
 
 
 @frappe.whitelist()
@@ -570,7 +646,7 @@ def list_im_all_claims():
         as_dict=True,
     )
 
-    return _enrich_lines_with_poid(rows)
+    return _enrich_lines_with_duid(rows)
 
 
 @frappe.whitelist()
@@ -633,7 +709,7 @@ def list_all_expense_claims(filters=None):
         as_dict=True,
     )
 
-    return _enrich_lines_with_poid(rows)
+    return _enrich_lines_with_duid(rows)
 
 
 @frappe.whitelist()
@@ -645,17 +721,18 @@ def get_expense_claim_detail(claim_name):
 
     lines = []
     for row in doc.expenses:
-        raw_poid = getattr(row, "poid", None)
         raw_project = getattr(row, "project_control_center", None)
         project_display = None
         if raw_project:
             project_display = frappe.db.get_value("Project Control Center", raw_project, "project_code") or raw_project
+        raw_poid = getattr(row, "poid", None)
         lines.append({
             "expense_type": row.expense_type,
             "description": row.description,
             "amount": row.amount,
             "sanctioned_amount": row.sanctioned_amount,
-            "poid": _resolve_poid_display(raw_poid),  # human-readable POID
+            "duid": getattr(row, "duid", None),
+            "poid": (frappe.db.get_value("PO Dispatch", raw_poid, "poid") or raw_poid) if raw_poid else None,
             "project": project_display,  # set for general (project-level) expenses
             "expense_date": str(row.expense_date) if row.expense_date else None,
         })

@@ -120,20 +120,20 @@ function Modal({ open, onClose, title, children, footer, width = 600 }) {
   );
 }
 
-// ── POID Multi-Select ─────────────────────────────────────────────────────────
+// ── DUID Multi-Select ─────────────────────────────────────────────────────────
 
-function PoidMultiSelect({ poids, value, onChange }) {
+function DuidMultiSelect({ duids, value, onChange }) {
   const [query, setQuery] = useState("");
-  const filtered = poids.filter((p) => {
+  const filtered = duids.filter((d) => {
     const q = query.toLowerCase();
-    return !q || (p.poid || "").toLowerCase().includes(q) || (p.site_code || "").toLowerCase().includes(q);
+    return !q || (d.duid || "").toLowerCase().includes(q) || (d.site_name || "").toLowerCase().includes(q);
   });
 
-  const toggle = (name) => {
-    if (value.includes(name)) {
-      onChange(value.filter((v) => v !== name));
+  const toggle = (duid) => {
+    if (value.includes(duid)) {
+      onChange(value.filter((v) => v !== duid));
     } else {
-      onChange([...value, name]);
+      onChange([...value, duid]);
     }
   };
 
@@ -141,31 +141,31 @@ function PoidMultiSelect({ poids, value, onChange }) {
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
       <input
         type="text"
-        placeholder="Search POID or site..."
+        placeholder="Search DUID or site..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         style={{ ...inp, border: "none", borderBottom: "1px solid #e2e8f0", borderRadius: 0, padding: "7px 10px" }}
       />
       <div style={{ maxHeight: 180, overflowY: "auto" }}>
         {filtered.length === 0 && (
-          <div style={{ padding: "10px 12px", fontSize: "0.8rem", color: "#94a3b8" }}>No POIDs found</div>
+          <div style={{ padding: "10px 12px", fontSize: "0.8rem", color: "#94a3b8" }}>No DUIDs found</div>
         )}
-        {filtered.map((p) => (
-          <label key={p.name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", fontSize: "0.82rem", background: value.includes(p.name) ? "#eff6ff" : "transparent" }}>
+        {filtered.map((d) => (
+          <label key={d.duid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", fontSize: "0.82rem", background: value.includes(d.duid) ? "#eff6ff" : "transparent" }}>
             <input
               type="checkbox"
-              checked={value.includes(p.name)}
-              onChange={() => toggle(p.name)}
+              checked={value.includes(d.duid)}
+              onChange={() => toggle(d.duid)}
               style={{ cursor: "pointer" }}
             />
-            <span style={{ fontFamily: "monospace", color: "#1e40af", fontWeight: 600 }}>{p.poid || p.name}</span>
-            {p.site_code && <span style={{ color: "#64748b", fontSize: "0.76rem" }}>{p.site_code}</span>}
+            <span style={{ fontFamily: "monospace", color: "#1e40af", fontWeight: 600 }}>{d.duid}</span>
+            {d.site_name && <span style={{ color: "#64748b", fontSize: "0.76rem" }}>{d.site_name}</span>}
           </label>
         ))}
       </div>
       {value.length > 0 && (
         <div style={{ padding: "5px 10px", borderTop: "1px solid #e2e8f0", fontSize: "0.75rem", color: "#475569", background: "#f8fafc" }}>
-          {value.length} POID{value.length > 1 ? "s" : ""} selected
+          {value.length} DUID{value.length > 1 ? "s" : ""} selected
         </div>
       )}
     </div>
@@ -174,8 +174,8 @@ function PoidMultiSelect({ poids, value, onChange }) {
 
 // ── Expense Line ──────────────────────────────────────────────────────────────
 
-function ExpenseLine({ line, idx, expenseTypes, poids, projects, onChange, onRemove, taxRate = 0 }) {
-  const mode = line.poid_mode || "single";
+function ExpenseLine({ line, idx, expenseTypes, duids, projects, onChange, onRemove, taxRate = 0 }) {
+  const mode = line.duid_mode || "single";
   const isMulti = mode === "multi";
   const isGeneral = mode === "general";
 
@@ -242,9 +242,9 @@ function ExpenseLine({ line, idx, expenseTypes, poids, projects, onChange, onRem
       <div style={{ marginBottom: 8 }}>
         {lbl("Allocation", true)}
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          {modeBtn("single", "Single POID", () => onChange({ ...line, poid_mode: "single", poids: line.poids.slice(0, 1), project: "" }))}
-          {modeBtn("multi", "Split POIDs", () => onChange({ ...line, poid_mode: "multi", project: "" }))}
-          {modeBtn("general", "General (Project)", () => onChange({ ...line, poid_mode: "general", poids: [] }))}
+          {modeBtn("single", "Single DUID", () => onChange({ ...line, duid_mode: "single", duids: line.duids.slice(0, 1), project: "" }))}
+          {modeBtn("multi", "Split DUIDs", () => onChange({ ...line, duid_mode: "multi", project: "" }))}
+          {modeBtn("general", "General (Project)", () => onChange({ ...line, duid_mode: "general", duids: [] }))}
         </div>
 
         {isGeneral ? (
@@ -261,28 +261,28 @@ function ExpenseLine({ line, idx, expenseTypes, poids, projects, onChange, onRem
           />
         ) : !isMulti ? (
           <SearchableSelect
-            value={line.poids[0] || ""}
-            onChange={(id) => onChange({ ...line, poids: id ? [id] : [] })}
-            options={poids.map((p) => ({
-              id: p.name,
-              label: p.poid ? (p.site_code ? `${p.poid} — ${p.site_code}` : p.poid) : p.name,
+            value={line.duids[0] || ""}
+            onChange={(id) => onChange({ ...line, duids: id ? [id] : [] })}
+            options={duids.map((d) => ({
+              id: d.duid,
+              label: d.site_name ? `${d.duid} — ${d.site_name}` : d.duid,
             }))}
-            placeholder="Select POID..."
+            placeholder="Select DUID..."
             style={{ width: "100%", display: "block" }}
             triggerStyle={{ width: "100%", boxSizing: "border-box", padding: "8px 30px 8px 10px", fontSize: "0.86rem", borderRadius: 8 }}
           />
         ) : (
-          <PoidMultiSelect
-            poids={poids}
-            value={line.poids}
-            onChange={(selected) => onChange({ ...line, poids: selected })}
+          <DuidMultiSelect
+            duids={duids}
+            value={line.duids}
+            onChange={(selected) => onChange({ ...line, duids: selected })}
           />
         )}
       </div>
 
-      {isMulti && line.poids.length > 1 && line.amount > 0 && (
+      {isMulti && line.duids.length > 1 && line.amount > 0 && (
         <div style={{ fontSize: "0.76rem", color: "#475569", background: "#eff6ff", padding: "6px 10px", borderRadius: 6, marginTop: 4 }}>
-          SAR {fmtAmt(line.amount)} ÷ {line.poids.length} POIDs = <strong>SAR {fmtAmt(Number(line.amount) / line.poids.length)}</strong> each
+          SAR {fmtAmt(line.amount)} ÷ {line.duids.length} DUIDs = <strong>SAR {fmtAmt(Number(line.amount) / line.duids.length)}</strong> each
         </div>
       )}
     </div>
@@ -292,7 +292,7 @@ function ExpenseLine({ line, idx, expenseTypes, poids, projects, onChange, onRem
 // ── Create Expense Modal ──────────────────────────────────────────────────────
 
 function emptyLine() {
-  return { expense_type: "", description: "", amount: "", poid_mode: "single", poids: [], project: "" };
+  return { expense_type: "", description: "", amount: "", duid_mode: "single", duids: [], project: "" };
 }
 
 function CreateExpenseModal({ open, onClose, team, onCreated }) {
@@ -301,7 +301,7 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
   const [lines, setLines] = useState([emptyLine()]);
   const [attachments, setAttachments] = useState([]);
   const [expenseTypes, setExpenseTypes] = useState([]);
-  const [poids, setPoids] = useState([]);
+  const [duids, setDuids] = useState([]);
   const [projects, setProjects] = useState([]);
   const [taxRate, setTaxRate] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -316,13 +316,13 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
     setError(null);
     Promise.all([
       pmApi.getExpenseClaimTypes(),
-      pmApi.getAvailablePoids(team?.name),
+      pmApi.getAvailableDuids(team?.name),
       pmApi.getAvailableProjects(team?.name),
       pmApi.getExpenseTaxInfo(),
     ])
-      .then(([types, ps, projs, tax]) => {
+      .then(([types, ds, projs, tax]) => {
         setExpenseTypes(types || []);
-        setPoids(ps || []);
+        setDuids(ds || []);
         setProjects(projs || []);
         setTaxRate(Number(tax?.tax_rate) || 0);
       })
@@ -344,9 +344,9 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
     for (const l of lines) {
       if (!l.expense_type) { setError("Select expense type for all lines."); return; }
       if (!l.amount || Number(l.amount) <= 0) { setError("Enter a valid amount for all lines."); return; }
-      if (l.poid_mode === "general") {
+      if (l.duid_mode === "general") {
         if (!l.project) { setError("Select a project for each general expense line."); return; }
-      } else if (l.poids.length === 0) { setError("Select at least one POID for each line."); return; }
+      } else if (l.duids.length === 0) { setError("Select at least one DUID for each line."); return; }
     }
 
     setSaving(true);
@@ -359,9 +359,9 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
           expense_type: l.expense_type,
           description: l.description,
           amount: Number(l.amount),
-          is_general: l.poid_mode === "general",
-          project: l.poid_mode === "general" ? l.project : "",
-          poids: l.poid_mode === "general" ? [] : l.poids,
+          is_general: l.duid_mode === "general",
+          project: l.duid_mode === "general" ? l.project : "",
+          duids: l.duid_mode === "general" ? [] : l.duids,
         })),
         attachments,
       });
@@ -435,7 +435,7 @@ function CreateExpenseModal({ open, onClose, team, onCreated }) {
             idx={idx}
             line={line}
             expenseTypes={expenseTypes}
-            poids={poids}
+            duids={duids}
             projects={projects}
             taxRate={taxRate}
             onChange={(updated) => updateLine(idx, updated)}
@@ -493,7 +493,7 @@ function ClaimDetailModal({ open, onClose, claim }) {
         <thead>
           <tr style={{ background: "#f1f5f9" }}>
             <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Expense Type</th>
-            <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>POID / Project</th>
+            <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color: "#475569" }}>DUID / Project</th>
             <th style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700, color: "#475569" }}>Amount</th>
           </tr>
         </thead>
@@ -501,8 +501,8 @@ function ClaimDetailModal({ open, onClose, claim }) {
           {(claim.lines || []).map((l, i) => (
             <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
               <td style={{ padding: "7px 10px" }}>{l.expense_type}</td>
-              <td style={{ padding: "7px 10px", fontFamily: "monospace", fontSize: "0.78rem", color: l.poid ? "#1e40af" : "#7c3aed" }}>
-                {l.poid || (l.project ? `${l.project} (General)` : "—")}
+              <td style={{ padding: "7px 10px", fontFamily: "monospace", fontSize: "0.78rem", color: l.duid ? "#1e40af" : "#7c3aed" }}>
+                {l.duid || (l.project ? `${l.project} (General)` : "—")}
               </td>
               <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600 }}>SAR {fmtAmt(l.amount)}</td>
             </tr>
@@ -727,10 +727,10 @@ export default function FieldExpense() {
                   <div className="history-card-row" style={{ marginTop: 8 }}>
                     <span style={{ fontSize: "0.76rem", color: "#64748b" }}>
                       {(c.lines || []).length} line{(c.lines || []).length !== 1 ? "s" : ""}
-                      {(c.lines || []).some((l) => l.poid) && (
-                        <> · {[...new Set((c.lines || []).map((l) => l.poid).filter(Boolean))].length} POID{[...new Set((c.lines || []).map((l) => l.poid).filter(Boolean))].length !== 1 ? "s" : ""}</>
+                      {(c.lines || []).some((l) => l.duid) && (
+                        <> · {[...new Set((c.lines || []).map((l) => l.duid).filter(Boolean))].length} DUID{[...new Set((c.lines || []).map((l) => l.duid).filter(Boolean))].length !== 1 ? "s" : ""}</>
                       )}
-                      {(c.lines || []).some((l) => !l.poid && l.project) && <> · General</>}
+                      {(c.lines || []).some((l) => !l.duid && l.project) && <> · General</>}
                     </span>
                     <span style={{ fontWeight: 700, color: "#1d4ed8", fontSize: "0.9rem" }}>
                       SAR {fmtAmt(grossAmt(c))}

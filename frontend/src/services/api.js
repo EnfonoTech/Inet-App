@@ -735,7 +735,7 @@ export const pmApi = {
   // ── Project Expense Claims ─────────────────────────────────
   getFieldUserTeam:        ()             => call("inet_app.api.expense.get_field_user_team"),
   getExpenseClaimTypes:    ()             => callCached("inet_app.api.expense.get_expense_claim_types", {}, 300_000),
-  getAvailablePoids:       (team)         => call("inet_app.api.expense.get_available_poids", team ? { team } : {}),
+  getAvailableDuids:       (team)         => call("inet_app.api.expense.get_available_duids", team ? { team } : {}),
   getAvailableProjects:    (team)         => call("inet_app.api.expense.get_available_projects", team ? { team } : {}),
   createProjectExpenseClaim: (payload)   => call("inet_app.api.expense.create_project_expense_claim", {
     date: payload.date || "",

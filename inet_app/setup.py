@@ -23,6 +23,7 @@ def after_migrate():
     _ensure_outbound_custom_fields()
     _ensure_poid_accounting_dimension()
     _ensure_project_accounting_dimension()
+    _ensure_duid_accounting_dimension()
     _ensure_material_permissions()
     _ensure_material_return_field()
 
@@ -436,6 +437,41 @@ def _ensure_project_accounting_dimension():
         frappe.db.commit()
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Project Accounting Dimension setup failed")
+
+
+def _ensure_duid_accounting_dimension():
+    """Create the DUID Accounting Dimension (linked to DUID Master) if it does not exist.
+
+    Expense claims key directly on DUID (the site), not on POID — a site can carry
+    several POIDs over time and the client wants expenses tracked per site.
+    The POID dimension is left untouched; other doctypes/reports still use it.
+    Fields are created synchronously — after_insert only enqueues them, and the
+    expense API needs the `duid` column right after migrate.
+    """
+    if not frappe.db.exists("DocType", "Accounting Dimension"):
+        return
+    if frappe.db.exists("Accounting Dimension", "DUID"):
+        return
+    if not frappe.db.exists("DocType", "DUID Master"):
+        return
+    try:
+        dim = frappe.get_doc({
+            "doctype": "Accounting Dimension",
+            "name": "DUID",
+            "document_type": "DUID Master",
+            "label": "DUID",
+            "fieldname": "duid",
+            "disabled": 0,
+        })
+        dim.insert(ignore_permissions=True)
+
+        from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
+            make_dimension_in_accounting_doctypes,
+        )
+        make_dimension_in_accounting_doctypes(doc=dim)
+        frappe.db.commit()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "DUID Accounting Dimension setup failed")
 
 
 def _ensure_material_permissions():

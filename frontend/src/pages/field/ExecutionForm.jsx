@@ -667,7 +667,7 @@ export default function ExecutionForm() {
       }
       } // end else (not "Not Attended")
       // Create expense claim if lines were added — same submit, one claim per execution.
-      if (execStatus !== "Not Attended" && expenseLines.length > 0 && plan?.po_dispatch) {
+      if (execStatus !== "Not Attended" && expenseLines.length > 0 && plan?.site_code) {
         try {
           await pmApi.createProjectExpenseClaim({
             date: new Date().toISOString().slice(0, 10),
@@ -676,7 +676,8 @@ export default function ExecutionForm() {
               expense_type: l.expense_type,
               description: l.description || "",
               amount: l.amount,
-              poids: [plan.po_dispatch],
+              duids: [plan.site_code],
+              poid: plan.po_dispatch,
             })),
           });
           window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
@@ -1241,7 +1242,8 @@ export default function ExecutionForm() {
           </div>
 
           {/* ── Expenses ─────────────────────────────────────── */}
-          {plan?.po_dispatch && (
+          {/* Internal Work plans have no DUID (no site) — nothing to map an expense to. */}
+          {plan?.site_code && (
             <div className="exec-section">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <div className="exec-section-title" style={{ marginBottom: 0 }}>Expenses</div>
