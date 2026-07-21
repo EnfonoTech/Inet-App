@@ -871,7 +871,9 @@ export default function IMPlanning() {
                   setExtendBusy(true); setExtendError(null);
                   try {
                     const plans = extendModalRow._plans || [extendModalRow];
-                    await Promise.all(plans.map((p) => pmApi.extendPlanEndDate(p.name, extendNewDate, extendNote)));
+                    for (const p of plans) {
+                      await pmApi.extendPlanEndDate(p.name, extendNewDate, extendNote);
+                    }
                     setExtendModalRow(null); setExtendNote(""); setExtendNewDate("");
                     setRescheduleSuccessMsg(`End date extended to ${extendNewDate} for ${plans.length} plan${plans.length !== 1 ? "s" : ""}.`);
                     setSelected(new Set());
