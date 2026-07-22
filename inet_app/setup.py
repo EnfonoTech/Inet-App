@@ -26,6 +26,8 @@ def after_migrate():
     _ensure_duid_accounting_dimension()
     _ensure_material_permissions()
     _ensure_material_return_field()
+    _ensure_material_confirmation_fields()
+    _declutter_stock_entry_list_view()
 
 
 def _resync_pms_workspace():
@@ -142,6 +144,48 @@ def _drop_unused_customer_activity_type_doctype():
     except Exception:
         # Best-effort — don't break migrate if the delete fails.
         pass
+
+
+def _declutter_stock_entry_list_view():
+    """Pin the Stock Entry list view's default columns to what the
+    Warehouse Manager actually needs: Stock Entry Type, (Status — Frappe's
+    automatic docstatus indicator, always shown), Default Source/Target
+    Warehouse, and our own Confirmation Stage. "Purpose" and "Is Return"
+    aren't used by this app's flow (warehouses are always set per-item,
+    never at the header level) and are hidden, along with the less useful
+    Huawei Outbound Plan / Per Transferred columns. Done via Property
+    Setter (Frappe-idiomatic) so we never touch the ERPNext source doctype
+    JSON.
+    """
+    try:
+        from frappe.custom.doctype.property_setter.property_setter import (
+            make_property_setter,
+        )
+    except Exception:
+        return
+
+    show = ("stock_entry_type", "from_warehouse", "to_warehouse")
+    hide = ("purpose", "is_return", "per_transferred")
+    for fieldname in show:
+        try:
+            make_property_setter(
+                "Stock Entry", fieldname, "in_list_view", 1, "Check",
+                for_doctype=False, validate_fields_for_doctype=False,
+            )
+        except Exception:
+            # Best-effort — don't break migrate if Frappe internals shift.
+            pass
+    for fieldname in hide:
+        try:
+            make_property_setter(
+                "Stock Entry", fieldname, "in_list_view", 0, "Check",
+                for_doctype=False, validate_fields_for_doctype=False,
+            )
+        except Exception:
+            pass
+
+    if frappe.db.exists("Custom Field", "Stock Entry-huawei_outbound_plan"):
+        frappe.db.set_value("Custom Field", "Stock Entry-huawei_outbound_plan", "in_list_view", 0)
 
 
 def _hide_unused_activity_type_fields():
@@ -330,6 +374,33 @@ def _ensure_duid_inventory_dimension():
 def _ensure_outbound_custom_fields():
     """Add custom fields on Stock Entry and Material Request doctypes (idempotent)."""
     from frappe.custom.doctype.custom_field.custom_field import create_custom_field
+
+    # Visible on the Stock Entry itself — plain "Draft" doesn't tell a Desk
+    # user (e.g. the Warehouse Manager) that a transfer is specifically
+    # staged and awaiting the OTHER side's confirmation, not just an
+    # ordinary unfinished draft they can submit themselves.
+    CONFIRMATION_STAGE_OPTIONS = (
+        "\nAwaiting Team Confirmation\nAwaiting Warehouse Confirmation\nConfirmed\nRejected"
+    )
+    _add_field("Stock Entry", "Stock Entry-confirmation_stage", {
+        "fieldname": "confirmation_stage",
+        "label": "Confirmation Stage",
+        "fieldtype": "Select",
+        "options": CONFIRMATION_STAGE_OPTIONS,
+        "insert_after": "stock_entry_type",
+        "read_only": 1,
+        "in_standard_filter": 1,
+        "in_list_view": 1,
+        "module": "Inet App",
+    })
+    # _add_field() only sets fields on first creation — retrofit in_list_view
+    # and the expanded option list for sites where this custom field already
+    # existed before those were added.
+    if frappe.db.exists("Custom Field", "Stock Entry-confirmation_stage"):
+        frappe.db.set_value("Custom Field", "Stock Entry-confirmation_stage", {
+            "in_list_view": 1,
+            "options": CONFIRMATION_STAGE_OPTIONS,
+        })
 
     _add_field("Stock Entry", "Stock Entry-huawei_outbound_plan", {
         "fieldname": "huawei_outbound_plan",
@@ -558,6 +629,45 @@ def _ensure_material_return_field():
         "label": "Return Reason",
         "fieldtype": "Small Text",
         "insert_after": "is_return_request",
+        "hidden": 1,
+    })
+    # IM initiated this return on the team's behalf, without them requesting
+    # it themselves — the source team's Team Lead must explicitly approve
+    # releasing the stock (see material_management.approve_material_return_request)
+    # before anything gets staged, otherwise IM could pull materials out of a
+    # team's declared stock without their knowledge.
+    _add_field("Material Request", "Material Request-is_direct_return_by_im", {
+        "fieldname": "is_direct_return_by_im",
+        "label": "Is Direct Return By IM",
+        "fieldtype": "Check",
+        "default": "0",
+        "insert_after": "return_reason",
+        "hidden": 1,
+    })
+    frappe.db.commit()
+
+
+def _ensure_material_confirmation_fields():
+    """Track the staged (not-yet-submitted) transfer awaiting confirmation
+    from the receiving side — Team Lead for an outbound transfer, Warehouse
+    Manager for a return. See material_management.approve_material_request /
+    approve_material_return_request / confirm_material_transfer /
+    confirm_material_return."""
+    _add_field("Material Request", "Material Request-pending_transfer_se", {
+        "fieldname": "pending_transfer_se",
+        "label": "Pending Transfer (awaiting confirmation)",
+        "fieldtype": "Link",
+        "options": "Stock Entry",
+        "insert_after": "return_reason",
+        "read_only": 1,
+        "hidden": 1,
+    })
+    _add_field("Material Request", "Material Request-confirm_rejection_reason", {
+        "fieldname": "confirm_rejection_reason",
+        "label": "Confirmation Rejection Reason",
+        "fieldtype": "Small Text",
+        "insert_after": "pending_transfer_se",
+        "read_only": 1,
         "hidden": 1,
     })
     frappe.db.commit()

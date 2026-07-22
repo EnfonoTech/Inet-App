@@ -1084,53 +1084,41 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
     if "CANCELLED" in bucket_set or "CANCELED" in bucket_set:
         line_status_filter.append("Cancelled")
 
-    if has_date_filter:
-        parents = frappe.db.sql(
-            """
-            SELECT name, po_no, status, DATE(creation) AS upload_date
-            FROM `tabPO Intake`
-            WHERE DATE(creation) BETWEEN %s AND %s
-            ORDER BY creation DESC
-            """,
-            (fd, td),
-            as_dict=True,
-        )
-    else:
-        parents = frappe.db.sql(
-            """
-            SELECT name, po_no, status, DATE(creation) AS upload_date
-            FROM `tabPO Intake`
-            ORDER BY creation DESC
-            """,
-            as_dict=True,
-        )
-    parent_map = {p.name: p for p in parents}
-    parent_names = list(parent_map.keys())
     rows_out = []
+
+    # Restrict to the date range via a SQL JOIN + WHERE, never by pulling
+    # every matching `PO Intake` name into Python and re-injecting it as a
+    # `parent IN (...)` list — with tens of thousands of PO Intake records,
+    # that list is long enough to blow past sqlparse's 10,000-token query
+    # validation cap (SQLParseError: "Maximum number of tokens exceeded").
+    date_where = ""
+    date_params = []
+    if has_date_filter:
+        date_where = "AND DATE(pi.creation) BETWEEN %s AND %s"
+        date_params = [fd, td]
 
     # Total counts per bucket for the active date range — independent of which
     # buckets the caller is fetching, so the FE can always show full counts.
     bucket_totals = {"open": 0, "closed": 0, "cancelled": 0}
-    if parent_names:
-        ph_p = ", ".join(["%s"] * len(parent_names))
-        agg = frappe.db.sql(
-            f"""
-            SELECT
-              SUM(CASE WHEN IFNULL(po_line_status, 'New') IN ('New','Dispatched','Completed','') THEN 1 ELSE 0 END) AS open_cnt,
-              SUM(CASE WHEN po_line_status = 'Closed' THEN 1 ELSE 0 END) AS closed_cnt,
-              SUM(CASE WHEN po_line_status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelled_cnt
-            FROM `tabPO Intake Line`
-            WHERE parent IN ({ph_p})
-            """,
-            tuple(parent_names),
-            as_dict=True,
-        )
-        if agg:
-            bucket_totals["open"] = cint(agg[0].open_cnt or 0)
-            bucket_totals["closed"] = cint(agg[0].closed_cnt or 0)
-            bucket_totals["cancelled"] = cint(agg[0].cancelled_cnt or 0)
+    agg = frappe.db.sql(
+        f"""
+        SELECT
+          SUM(CASE WHEN IFNULL(pil.po_line_status, 'New') IN ('New','Dispatched','Completed','') THEN 1 ELSE 0 END) AS open_cnt,
+          SUM(CASE WHEN pil.po_line_status = 'Closed' THEN 1 ELSE 0 END) AS closed_cnt,
+          SUM(CASE WHEN pil.po_line_status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelled_cnt
+        FROM `tabPO Intake Line` pil
+        JOIN `tabPO Intake` pi ON pi.name = pil.parent
+        WHERE 1=1 {date_where}
+        """,
+        date_params,
+        as_dict=True,
+    )
+    if agg:
+        bucket_totals["open"] = cint(agg[0].open_cnt or 0)
+        bucket_totals["closed"] = cint(agg[0].closed_cnt or 0)
+        bucket_totals["cancelled"] = cint(agg[0].cancelled_cnt or 0)
 
-    if not parent_names:
+    if not sum(bucket_totals.values()):
         return {
             "from_date": str(fd),
             "to_date": str(td),
@@ -1173,42 +1161,49 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
     # to 1) from the FE row-limit selector — previously we floored at 100,
     # which made "20" and "100" return the same result.
     lim = min(max(int(limit or 100000), 1), 100000)
-    line_filters = {"parent": ["in", parent_names]}
+
+    where_clauses = ["1=1"]
+    params = []
+    if has_date_filter:
+        where_clauses.append("DATE(pi.creation) BETWEEN %s AND %s")
+        params += [fd, td]
     if line_status_filter:
-        line_filters["po_line_status"] = ["in", list({s for s in line_status_filter})]
-    or_filters = None
+        statuses_uniq = list({s for s in line_status_filter})
+        ph_status = ", ".join(["%s"] * len(statuses_uniq))
+        where_clauses.append(f"IFNULL(pil.po_line_status, '') IN ({ph_status})")
+        params += statuses_uniq
     if search and search.strip():
         like = f"%{search.strip()}%"
-        or_filters = [
-            ["source_id", "like", like],
-            ["poid", "like", like],
-            ["item_code", "like", like],
-            ["item_description", "like", like],
-            ["site_code", "like", like],
-            ["site_name", "like", like],
-            ["project_code", "like", like],
-            ["project_name", "like", like],
-            ["sub_contract_no", "like", like],
-            ["payment_terms", "like", like],
-            ["center_area", "like", like],
-            ["shipment_number", "like", like],
+        search_fields = [
+            "pil.source_id", "pil.poid", "pil.item_code", "pil.item_description",
+            "pil.site_code", "pil.site_name", "pil.project_code", "pil.project_name",
+            "pil.sub_contract_no", "pil.payment_terms", "pil.center_area", "pil.shipment_number",
         ]
-    lines = frappe.get_all(
-        "PO Intake Line",
-        filters=line_filters,
-        or_filters=or_filters,
-        fields=fields,
-        order_by="parent desc, idx asc",
-        limit_page_length=lim,
+        where_clauses.append("(" + " OR ".join(f"{f} LIKE %s" for f in search_fields) + ")")
+        params += [like] * len(search_fields)
+
+    fields_sql = ", ".join(f"pil.`{f}`" for f in fields)
+    lines = frappe.db.sql(
+        f"""
+        SELECT {fields_sql},
+               pi.po_no AS parent_po_no, pi.status AS parent_status,
+               DATE(pi.creation) AS parent_upload_date
+        FROM `tabPO Intake Line` pil
+        JOIN `tabPO Intake` pi ON pi.name = pil.parent
+        WHERE {' AND '.join(where_clauses)}
+        ORDER BY pil.parent DESC, pil.idx ASC
+        LIMIT {lim}
+        """,
+        params,
+        as_dict=True,
     )
     for ln in lines:
-        par = parent_map.get(ln.parent) or {}
         # The PO Dump column reads from the per-line status (po_line_status)
         # so each POID shows its own state. Treat New / Dispatched / Completed
         # as Open for filter / display roll-ups.
         line_status = (ln.get("po_line_status") or "").strip()
         if not line_status:
-            line_status = (par.get("status") or "OPEN").strip()
+            line_status = (ln.get("parent_status") or "OPEN").strip()
         upper = line_status.upper()
         if upper in ("NEW", "DISPATCHED", "COMPLETED", "OPEN"):
             display_status = "OPEN"
@@ -1223,7 +1218,7 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
                 "id": ln.get("source_id") or "",
                 "po_status": display_status,
                 "po_line_status": line_status,
-                "po_no": par.get("po_no") or "",
+                "po_no": ln.get("parent_po_no") or "",
                 "po_line_no": ln.get("po_line_no"),
                 "shipment_no": ln.get("shipment_number") or "",
                 "site_name": ln.get("site_name") or "",
@@ -1248,7 +1243,7 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
                 "project_name": ln.get("project_name") or "",
                 "center_area": ln.get("center_area") or "",
                 "publish_date": ln.get("publish_date"),
-                "upload_date": str(par.get("upload_date") or ""),
+                "upload_date": str(ln.get("parent_upload_date") or ""),
             }
         )
 

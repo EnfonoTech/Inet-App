@@ -9,7 +9,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 function statusClass(status) {
   const s = (status || "").toLowerCase().replace(/\s+/g, "-");
   if (s === "transferred" || s === "issued") return "completed";
-  if (s === "pending-approval") return "in-progress";
+  if (s === "pending-approval" || s === "pending-team-confirmation" || s === "pending-warehouse-confirmation") return "in-progress";
   if (s === "rejected") return "cancelled";
   return "new";
 }
@@ -84,15 +84,19 @@ function CompanyBadge() {
 // ─── New Request Form ─────────────────────────────────────────────────────────
 
 function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
-  // POID
+  // DUID (selected first — POID below is filtered by this)
+  const [duid, setDuid]             = useState(prefillDuid || "");
+  const [duidSearch, setDuidSearch] = useState("");
+  const [duidOptions, setDuidOptions] = useState([]);
+
+  // POID (filtered by duid)
   const [selectedPoid, setSelectedPoid] = useState("");
   const [poidSearch, setPoidSearch]     = useState("");
   const [poidOptions, setPoidOptions]   = useState([]);
   const [poidInfo, setPoidInfo]         = useState(null);
   const [poidLoading, setPoidLoading]   = useState(false);
 
-  // DUID / team / IM (IM auto-fetched from POID for admin users who have no IM record)
-  const [duid, setDuid]   = useState(prefillDuid || "");
+  // Team / IM (IM auto-fetched from POID for admin users who have no IM record)
   const [team, setTeam]   = useState("");
   const [teams, setTeams] = useState([]);
   const [poidIm, setPoidIm] = useState("");
@@ -144,14 +148,33 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
     return () => { cancelled = true; };
   }, [duid]);
 
-  // Search PO Dispatches for the IM
+  // Search DUIDs (first step — POID below is filtered by the chosen one)
   useEffect(() => {
     let cancelled = false;
-    pmApi.searchPoDispatches({ query: poidSearch, im: imName, limit: 30 })
+    pmApi.searchDuids({ query: duidSearch, im: imName, limit: 30 })
+      .then((r) => { if (!cancelled) setDuidOptions(Array.isArray(r) ? r : []); })
+      .catch(() => { if (!cancelled) setDuidOptions([]); });
+    return () => { cancelled = true; };
+  }, [duidSearch, imName]);
+
+  function handleDuidSelect(value) {
+    setDuid(value);
+    // Downstream selections depended on the previous DUID — reset them.
+    setSelectedPoid("");
+    setPoidInfo(null);
+    setTeam("");
+    setPoidIm("");
+  }
+
+  // Search PO Dispatches for the IM, restricted to the selected DUID
+  useEffect(() => {
+    if (!duid) { setPoidOptions([]); return; }
+    let cancelled = false;
+    pmApi.searchPoDispatches({ query: poidSearch, im: imName, duid, limit: 30 })
       .then((r) => { if (!cancelled) setPoidOptions(Array.isArray(r) ? r : []); })
       .catch(() => { if (!cancelled) setPoidOptions([]); });
     return () => { cancelled = true; };
-  }, [poidSearch, imName]);
+  }, [poidSearch, imName, duid]);
 
   // Search company items
   useEffect(() => {
@@ -165,12 +188,11 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
 
   async function handlePoidSelect(poidValue) {
     setSelectedPoid(poidValue);
-    if (!poidValue) { setPoidInfo(null); setDuid(prefillDuid || ""); setTeam(""); setPoidIm(""); return; }
+    if (!poidValue) { setPoidInfo(null); setTeam(""); setPoidIm(""); return; }
     setPoidLoading(true);
     try {
       const res = await pmApi.getPoidDetails(poidValue);
       setPoidInfo(res);
-      if (res.site_code) setDuid(res.site_code);
       setTeam(res.team || "");
       // For admin users who have no IM record, fetch IM from the POID
       setPoidIm(res.im || "");
@@ -198,6 +220,7 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
 
   async function submit() {
     setErr("");
+    if (!duid.trim()) { setErr("Please select a DUID."); return; }
     if (!selectedPoid) { setErr("Please select a POID."); return; }
     if (!team.trim()) { setErr("Please select a team."); return; }
 
@@ -246,16 +269,37 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
     }
   }
 
+  const duidSelectOptions = duidOptions.map((d) => ({
+    id: d.duid,
+    label: d.duid + (d.site_name ? ` — ${d.site_name}` : "") + ` (${d.poid_count} POID${d.poid_count !== 1 ? "s" : ""})`,
+  }));
   const poidSelectOptions = poidOptions.map((p) => ({
     id: p.poid,
-    label: p.poid + (p.project_code ? ` — ${p.project_code}` : "") + (p.site_code ? ` · ${p.site_code}` : ""),
+    label: p.poid + (p.project_code ? ` — ${p.project_code}` : ""),
   }));
 
   return (
     <div>
       {err && <div className="notice error" style={{ marginBottom: 12 }}>{err}</div>}
 
-      {/* POID */}
+      {/* DUID — selected first; POID below is filtered by it */}
+      <div style={{ marginBottom: 14 }}>
+        {label("DUID", true)}
+        <SearchableSelect
+          value={duid}
+          onChange={handleDuidSelect}
+          onSearch={setDuidSearch}
+          options={duidSelectOptions}
+          placeholder="Search DUID…"
+          allLabel="Search DUID…"
+          style={{ display: "block", width: "100%" }}
+          minWidth={0}
+          triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.86rem" }}
+          panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
+        />
+      </div>
+
+      {/* POID — filtered to the selected DUID */}
       <div style={{ marginBottom: 14 }}>
         {label("POID", true)}
         <SearchableSelect
@@ -263,18 +307,18 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
           onChange={handlePoidSelect}
           onSearch={setPoidSearch}
           options={poidSelectOptions}
-          placeholder="Search POID…"
+          placeholder={duid ? "Search POID…" : "Select a DUID first"}
           allLabel="Search POID…"
+          disabled={!duid}
           style={{ display: "block", width: "100%" }}
           minWidth={0}
-          triggerStyle={{ width: "100%", padding: "8px 28px 8px 10px", borderRadius: 8, fontSize: "0.86rem", boxSizing: "border-box" }}
+          triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.86rem" }}
           panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
         />
         {poidLoading && <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginTop: 3 }}>Loading POID details…</div>}
         {poidInfo && (
           <div style={{ marginTop: 5, padding: "6px 10px", borderRadius: 6, background: "#ecfdf5", fontSize: "0.78rem", color: "#047857" }}>
-            DUID: <strong>{poidInfo.site_code || "—"}</strong>
-            {poidInfo.project_code && <> · Project: <strong>{poidInfo.project_code}</strong></>}
+            {poidInfo.project_code && <>Project: <strong>{poidInfo.project_code}</strong></>}
             {poidInfo.im && <> · IM: <strong>{poidInfo.im}</strong></>}
             {poidInfo.team
               ? <> · Team: <strong>{poidInfo.team}</strong> ✓</>
@@ -285,14 +329,6 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
             )}
           </div>
         )}
-      </div>
-
-      {/* DUID */}
-      <div style={{ marginBottom: 14 }}>
-        {label("DUID")}
-        <input style={{ ...inp, background: poidInfo ? "#f8fafc" : "#fff" }}
-          value={duid} onChange={(e) => { if (!poidInfo) setDuid(e.target.value); }}
-          readOnly={!!poidInfo} placeholder="Auto-filled from POID" />
       </div>
 
       {/* Team */}
@@ -324,7 +360,7 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
           <div style={{ fontSize: "0.78rem", color: "#64748b" }}>
             {duid
               ? "No remaining Huawei items to request for this DUID — all received items have already been requested."
-              : "Select a POID or enter a DUID to see received materials."}
+              : "Select a DUID to see received materials."}
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
@@ -450,22 +486,38 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
 
 // ─── Request Detail ───────────────────────────────────────────────────────────
 
-function RequestDetail({ row, onClose }) {
+function RequestDetail({ row, isAdmin, onClose, onActioned }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
+    setLoading(true);
     pmApi.getMaterialRequest(row.name).then((d) => {
-      if (!cancelled) { setDetail(d); setLoading(false); }
+      setDetail(d); setLoading(false);
     }).catch((e) => {
-      if (!cancelled) { setErr(e.message || "Failed to load"); setLoading(false); }
+      setErr(e.message || "Failed to load"); setLoading(false);
     });
-    return () => { cancelled = true; };
   }, [row.name]);
 
+  useEffect(() => { load(); }, [load]);
+
   const status = detail?.request_status || row.request_status;
+
+  async function act(fn, successMsg) {
+    setBusy(true);
+    setErr("");
+    try {
+      await fn();
+      onActioned?.(successMsg);
+    } catch (e) {
+      setErr(e.message || "Action failed");
+      setBusy(false);
+    }
+  }
+
   function DItem({ label: l, value }) {
     return value ? (
       <div style={{ marginBottom: 8 }}>
@@ -494,6 +546,7 @@ function RequestDetail({ row, onClose }) {
             <DItem label="Source Warehouse" value={detail?.source_warehouse} />
             <DItem label="Team Warehouse" value={detail?.team_warehouse} />
             {detail?.rejection_reason && <DItem label="Rejection Reason" value={detail.rejection_reason} />}
+            {detail?.confirm_rejection_reason && <DItem label="Declined at Confirmation" value={detail.confirm_rejection_reason} />}
             {detail?.stock_entry_transfer && <DItem label="Transfer Entry" value={detail.stock_entry_transfer} />}
             {detail?.stock_entry_issue && <DItem label="Issue Entry" value={detail.stock_entry_issue} />}
           </div>
@@ -532,6 +585,53 @@ function RequestDetail({ row, onClose }) {
             </div>
           )}
 
+          {isAdmin && status === "Pending Approval" && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "0.76rem", color: "#94a3b8", marginBottom: 8 }}>
+                Approving stages the transfer only — stock moves after the team confirms receipt.
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} disabled={busy}
+                  placeholder="Reason (required to reject)…"
+                  style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button type="button" className="btn-secondary" style={{ color: "#dc2626", borderColor: "#fca5a5" }}
+                  disabled={busy || !rejectReason.trim()}
+                  onClick={() => act(() => pmApi.rejectMaterialRequest(detail.name, rejectReason.trim()), "Request rejected.")}>
+                  {busy ? "…" : "Reject"}
+                </button>
+                <button type="button" className="btn-primary" disabled={busy}
+                  onClick={() => act(() => pmApi.approveMaterialRequest(detail.name), "Transfer staged — awaiting team confirmation.")}>
+                  {busy ? "…" : "Approve (Stage Transfer)"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isAdmin && status === "Pending Team Confirmation" && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "0.76rem", color: "#94a3b8", marginBottom: 8 }}>
+                Normally the receiving Team Lead confirms this from the Field app. Use this only as an admin override.
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} disabled={busy}
+                  placeholder="Reason (required to reject)…"
+                  style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button type="button" className="btn-secondary" style={{ color: "#dc2626", borderColor: "#fca5a5" }}
+                  disabled={busy || !rejectReason.trim()}
+                  onClick={() => act(() => pmApi.rejectMaterialTransferConfirmation(detail.name, rejectReason.trim()), "Transfer declined — back to Pending Approval.")}>
+                  {busy ? "…" : "Reject"}
+                </button>
+                <button type="button" className="btn-primary" disabled={busy}
+                  onClick={() => act(() => pmApi.confirmMaterialTransfer(detail.name), "Transfer confirmed — stock moved.")}>
+                  {busy ? "…" : "Confirm Receipt"}
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -682,9 +782,157 @@ function DuidStockTab({ onRequest }) {
   );
 }
 
+// ─── Stock Balance Tab (DUID-wise, Main + Team warehouses) ───────────────────
+
+function StockBalanceTab() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [warehouseFilter, setWarehouseFilter] = useState(""); // "" | "Main" | "Team"
+  const [typeFilter, setTypeFilter] = useState("");           // "" | "customer" | "company"
+  const [duidFilter, setDuidFilter] = useState("");           // "" | "assigned" | "none"
+
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError("");
+    try {
+      const res = await pmApi.getDuidStockBalance();
+      setRows(Array.isArray(res) ? res : []);
+    } catch (e) {
+      setError(e.message || "Failed to load");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const visible = rows.filter((r) => {
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      const hay = `${r.duid || "no duid unassigned"} ${r.item_code} ${r.item_name} ${r.warehouse_label} ${r.project_name || ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (warehouseFilter && r.warehouse_type !== warehouseFilter) return false;
+    if (typeFilter && r.item_type !== typeFilter) return false;
+    if (duidFilter === "assigned" && !r.duid) return false;
+    if (duidFilter === "none" && r.duid) return false;
+    return true;
+  });
+
+  const duidCount = new Set(visible.filter((r) => r.duid).map((r) => r.duid)).size;
+  const hasFilters = search.trim() || warehouseFilter || typeFilter || duidFilter;
+
+  let prevDuid = null;
+
+  return (
+    <>
+      <div className="toolbar">
+        <input type="search" placeholder="Search DUID, item, warehouse…"
+          value={search} onChange={(e) => setSearch(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 220 }} />
+        <select value={warehouseFilter} onChange={(e) => setWarehouseFilter(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}>
+          <option value="">All Warehouses</option>
+          <option value="Main">Main Warehouse</option>
+          <option value="Team">Team Warehouses</option>
+        </select>
+        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}>
+          <option value="">All Types</option>
+          <option value="customer">Huawei</option>
+          <option value="company">Company</option>
+        </select>
+        <select value={duidFilter} onChange={(e) => setDuidFilter(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}>
+          <option value="">DUID: All</option>
+          <option value="assigned">DUID: Assigned only</option>
+          <option value="none">DUID: Unassigned only</option>
+        </select>
+        {hasFilters && (
+          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setSearch(""); setWarehouseFilter(""); setTypeFilter(""); setDuidFilter(""); }}>
+            Clear
+          </button>
+        )}
+        <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{visible.length} rows · {duidCount} DUIDs</span>
+        <button className="btn-secondary" style={{ marginLeft: "auto", fontSize: "0.78rem", padding: "5px 12px" }}
+          onClick={() => load(true)} disabled={refreshing}>
+          {refreshing ? "…" : "Refresh"}
+        </button>
+      </div>
+
+      {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
+
+      <div className="page-content">
+      <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+        ) : visible.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">📊</div>
+            <h3>No stock found</h3>
+            <p>Stock currently held in the main warehouse or a team warehouse, by DUID, will appear here.</p>
+          </div>
+        ) : (
+          <table className="data-table" data-table-key="im-stock-balance-v1">
+            <thead>
+              <tr>
+                <th>DUID</th>
+                <th>Project</th>
+                <th>Warehouse</th>
+                <th>Item</th>
+                <th>Type</th>
+                <th style={{ textAlign: "right" }}>Qty</th>
+                <th>UOM</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((row, i) => {
+                const newGroup = row.duid !== prevDuid;
+                prevDuid = row.duid;
+                return (
+                  <tr key={`${row.duid}-${row.warehouse}-${row.item_code}-${i}`}
+                    style={newGroup && i > 0 ? { borderTop: "2px solid #e2e8f0" } : undefined}>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.8rem", fontWeight: 600 }}>
+                      {row.duid
+                        ? row.duid
+                        : <span style={{ fontFamily: "inherit", fontStyle: "italic", fontWeight: 500, color: "#94a3b8" }}>No DUID</span>}
+                    </td>
+                    <td style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.project_name}>{row.project_name || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>
+                      {row.warehouse_type === "Main"
+                        ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700, background: "#f1f5f9", color: "#334155" }}>Main</span>
+                        : row.warehouse_label}
+                    </td>
+                    <td style={{ fontSize: "0.82rem" }}>
+                      <div style={{ fontWeight: 600 }}>{row.item_code}</div>
+                      {row.item_name && row.item_name !== row.item_code && (
+                        <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{row.item_name}</div>
+                      )}
+                    </td>
+                    <td>{row.item_type === "customer" ? <HuaweiBadge /> : <CompanyBadge />}</td>
+                    <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{row.qty}</td>
+                    <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{row.uom || "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </DataTableWrapper>
+      </div>
+    </>
+  );
+}
+
 // ─── Requests Tab ─────────────────────────────────────────────────────────────
 
-const ALL_STATUSES = ["Pending Approval", "Transferred", "Rejected", "Issued"];
+const ALL_STATUSES = ["Pending Approval", "Pending Team Confirmation", "Transferred", "Rejected", "Issued"];
 
 function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
   const [rows, setRows] = useState([]);
@@ -692,6 +940,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [detailRow, setDetailRow] = useState(null);
+  const [successMsg, setSuccessMsg] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -713,6 +962,13 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
 
   useEffect(() => { load(); }, [load, refresh]);
 
+  function handleActioned(msg) {
+    setDetailRow(null);
+    setSuccessMsg(msg);
+    load();
+    setTimeout(() => setSuccessMsg(""), 5000);
+  }
+
   return (
     <>
       <div className="toolbar">
@@ -729,6 +985,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
         </button>
       </div>
 
+      {successMsg && <div className="notice success" style={{ margin: "0 16px 12px" }}>✓ {successMsg}</div>}
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
@@ -756,7 +1013,9 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {rows.map((row) => {
+                const actionable = isAdmin && (row.request_status === "Pending Approval" || row.request_status === "Pending Team Confirmation");
+                return (
                 <tr key={row.name}>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                   <td style={{ fontSize: "0.82rem" }}>{row.request_date}</td>
@@ -766,13 +1025,14 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
                   <td style={{ fontSize: "0.82rem" }}>{row.im_full_name || row.im || "—"}</td>
                   <td><StatusBadge status={row.request_status} /></td>
                   <td>
-                    <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 10px" }}
+                    <button type="button" className={actionable ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.7rem", padding: "3px 10px" }}
                       onClick={() => setDetailRow(row)}>
-                      View
+                      {actionable ? "Review" : "View"}
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -782,7 +1042,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
       <Modal open={!!detailRow} onClose={() => setDetailRow(null)}
         title={`Request · ${detailRow?.name || ""}`} width={660}>
         {detailRow && (
-          <RequestDetail row={detailRow} onClose={() => setDetailRow(null)} />
+          <RequestDetail row={detailRow} isAdmin={isAdmin} onClose={() => setDetailRow(null)} onActioned={handleActioned} />
         )}
       </Modal>
     </>
@@ -834,7 +1094,7 @@ function DirectReturnForm({ teams, onClose, onDone }) {
     setBusy(true);
     try {
       const res = await pmApi.createDirectReturn({ team_id: teamId, items });
-      onDone(`Materials returned to main warehouse. Stock Entry: ${res.stock_entry}`);
+      onDone(`Transfer staged (${res.stock_entry}) — awaiting Warehouse Manager confirmation before stock moves.`);
     } catch (e) {
       setErr(e.message || "Transfer failed.");
     } finally { setBusy(false); }
@@ -843,7 +1103,7 @@ function DirectReturnForm({ teams, onClose, onDone }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <p style={{ margin: 0, fontSize: "0.84rem", color: "#475569" }}>
-        Creates a Material Transfer SE directly from team warehouse → main warehouse. No approval needed.
+        Skips the field-team request step, but the Warehouse Manager still has to confirm receipt before stock actually moves.
       </p>
 
       <div>
@@ -905,7 +1165,7 @@ function DirectReturnForm({ teams, onClose, onDone }) {
 
 // ─── Return Requests Tab ──────────────────────────────────────────────────────
 
-const RETURN_STATUSES = ["Pending Approval", "Transferred", "Rejected"];
+const RETURN_STATUSES = ["Pending Approval", "Pending Warehouse Confirmation", "Transferred", "Rejected"];
 
 function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) {
   const [rows, setRows] = useState([]);
@@ -957,6 +1217,32 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
     setActionErr("");
     try {
       await pmApi.rejectReturnRequest(name, rejectReason.trim());
+      setActionRow(null);
+      setRejectReason("");
+      load();
+    } catch (e) {
+      setActionErr(e.message || "Rejection failed.");
+    } finally { setActionBusy(false); }
+  }
+
+  async function confirmReturn(name) {
+    setActionBusy(true);
+    setActionErr("");
+    try {
+      await pmApi.confirmMaterialReturn(name);
+      setActionRow(null);
+      load();
+    } catch (e) {
+      setActionErr(e.message || "Confirmation failed.");
+    } finally { setActionBusy(false); }
+  }
+
+  async function rejectConfirmation(name) {
+    if (!rejectReason.trim()) { setActionErr("Please enter a reason."); return; }
+    setActionBusy(true);
+    setActionErr("");
+    try {
+      await pmApi.rejectMaterialReturnConfirmation(name, rejectReason.trim());
       setActionRow(null);
       setRejectReason("");
       load();
@@ -1033,7 +1319,10 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
               </tr>
             </thead>
             <tbody>
-              {rows.map(row => (
+              {rows.map(row => {
+                const actionable = row.request_status === "Pending Approval"
+                  || (isAdmin && row.request_status === "Pending Warehouse Confirmation");
+                return (
                 <tr key={row.name}>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                   <td style={{ fontSize: "0.82rem" }}>{row.request_date}</td>
@@ -1042,7 +1331,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
                   <td style={{ fontSize: "0.82rem", color: "#64748b", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.reason}>{row.reason || "—"}</td>
                   <td><StatusBadge status={row.request_status} /></td>
                   <td>
-                    {row.request_status === "Pending Approval" ? (
+                    {actionable ? (
                       <button type="button" className="btn-primary" style={{ fontSize: "0.7rem", padding: "3px 10px" }}
                         onClick={() => openAction(row)}>
                         Review
@@ -1055,7 +1344,8 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -1075,6 +1365,9 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
               <div><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Date</span><br />{actionRow.request_date}</div>
               {actionRow.team_warehouse && <div><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Team WH</span><br />{actionRow.team_warehouse}</div>}
               {actionRow.reason && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Reason</span><br />{actionRow.reason}</div>}
+              {actionDetail?.confirm_rejection_reason && (
+                <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>Declined at Confirmation</span><br />{actionDetail.confirm_rejection_reason}</div>
+              )}
             </div>
 
             {/* Items */}
@@ -1109,8 +1402,15 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
               </div>
             )}
 
-            {actionRow.request_status === "Pending Approval" && (
+            {actionRow.request_status === "Pending Approval" && actionRow.is_direct_return_by_im ? (
+              <div style={{ fontSize: "0.82rem", color: "#78350f", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 12px" }}>
+                This is a direct return you initiated on the team's behalf — only <strong>{actionRow.team_name || "the team's"}</strong> Team Lead can approve releasing the stock (via the Field app), not IM/Stock Manager. This prevents materials leaving a team's declared stock without their knowledge.
+              </div>
+            ) : actionRow.request_status === "Pending Approval" && (
               <>
+                <div style={{ fontSize: "0.76rem", color: "#94a3b8" }}>
+                  Approving stages the transfer only — stock moves back after the Warehouse Manager confirms receipt.
+                </div>
                 <div>
                   {label("Rejection reason (required to reject)")}
                   <input style={inp} value={rejectReason} onChange={e => setRejectReason(e.target.value)}
@@ -1124,7 +1424,31 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
                   </button>
                   <button type="button" className="btn-primary"
                     onClick={() => approve(actionRow.name)} disabled={actionBusy}>
-                    {actionBusy ? "Processing…" : "Approve & Transfer"}
+                    {actionBusy ? "Processing…" : "Approve (Stage Transfer)"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {actionRow.request_status === "Pending Warehouse Confirmation" && isAdmin && (
+              <>
+                <div style={{ fontSize: "0.76rem", color: "#94a3b8" }}>
+                  The materials should have physically arrived at the main warehouse. Confirm receipt to post the stock movement, or reject to send it back.
+                </div>
+                <div>
+                  {label("Rejection reason (required to reject)")}
+                  <input style={inp} value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                    placeholder="Enter reason if rejecting…" disabled={actionBusy} />
+                </div>
+                {actionErr && <div style={{ color: "#dc2626", fontSize: "0.82rem" }}>{actionErr}</div>}
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-secondary" style={{ color: "#dc2626", borderColor: "#fca5a5" }}
+                    onClick={() => rejectConfirmation(actionRow.name)} disabled={actionBusy || !rejectReason.trim()}>
+                    {actionBusy ? "…" : "Reject"}
+                  </button>
+                  <button type="button" className="btn-primary"
+                    onClick={() => confirmReturn(actionRow.name)} disabled={actionBusy}>
+                    {actionBusy ? "Processing…" : "Confirm Receipt"}
                   </button>
                 </div>
               </>
@@ -1187,6 +1511,7 @@ export default function IMMaterialRequest() {
   const TABS = [
     { id: "requests", label: "Requests", count: pendingCount },
     { id: "duid", label: "DUID Stock" },
+    { id: "balance", label: "Stock Balance" },
     { id: "returns", label: "Returns", count: pendingReturnCount },
   ];
 
@@ -1250,6 +1575,9 @@ export default function IMMaterialRequest() {
       )}
       {tab === "duid" && (
         <DuidStockTab onRequest={(duid) => openNew(duid)} />
+      )}
+      {tab === "balance" && (
+        <StockBalanceTab />
       )}
       {tab === "returns" && (
         <ReturnRequestsTab

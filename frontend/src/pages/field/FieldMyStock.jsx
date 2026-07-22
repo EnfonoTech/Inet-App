@@ -252,13 +252,20 @@ function ReturnForm({ items, teamId, onClose, onDone }) {
 
 // ─── Return request detail modal ────────────────────────────────────────────
 
-function ReturnDetailSheet({ row, onClose }) {
+function ReturnDetailSheet({ row, onClose, onActioned }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [showReject, setShowReject] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [actionErr, setActionErr] = useState("");
 
   useEffect(() => {
     if (!row) return;
     setLoading(true);
+    setShowReject(false);
+    setRejectReason("");
+    setActionErr("");
     pmApi.getMaterialRequest(row.name)
       .then(d => setDetail(d))
       .catch(() => setDetail(null))
@@ -266,6 +273,34 @@ function ReturnDetailSheet({ row, onClose }) {
   }, [row?.name]);
 
   if (!row) return null;
+
+  const needsMyApproval = row.is_direct_return_by_im && row.request_status === "Pending Approval";
+
+  async function approve() {
+    setBusy(true);
+    setActionErr("");
+    try {
+      await pmApi.approveReturnRequest(row.name);
+      onActioned?.(`${row.name} approved — the Warehouse Manager will confirm receipt next.`);
+    } catch (e) {
+      setActionErr(e.message || "Approval failed.");
+      setBusy(false);
+    }
+  }
+
+  async function reject() {
+    if (!rejectReason.trim()) { setActionErr("Please enter a reason."); return; }
+    setBusy(true);
+    setActionErr("");
+    try {
+      await pmApi.rejectReturnRequest(row.name, rejectReason.trim());
+      onActioned?.(`${row.name} rejected.`);
+    } catch (e) {
+      setActionErr(e.message || "Rejection failed.");
+      setBusy(false);
+    }
+  }
+
   const borderColor = returnStatusClass(row.request_status) === "completed" ? "var(--green)" : returnStatusClass(row.request_status) === "cancelled" ? "var(--red, #ef4444)" : "var(--amber)";
 
   return (
@@ -338,15 +373,199 @@ function ReturnDetailSheet({ row, onClose }) {
               )}
             </div>
           )}
+
+          {needsMyApproval && (
+            <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: "0.8rem", color: "#1e40af", marginBottom: 10 }}>
+                Your IM initiated this return on your team's behalf. Approve only if you agree to release these materials back to the main warehouse.
+              </div>
+
+              {actionErr && (
+                <div style={{ marginBottom: 8, padding: "6px 10px", borderRadius: 6, background: "#fef2f2", color: "#dc2626", fontSize: "0.78rem" }}>
+                  {actionErr}
+                </div>
+              )}
+
+              {showReject ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <input
+                    value={rejectReason}
+                    onChange={e => setRejectReason(e.target.value)}
+                    placeholder="Reason for declining…"
+                    disabled={busy}
+                    style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border)", fontSize: "0.84rem" }}
+                  />
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem" }}
+                      onClick={() => { setShowReject(false); setActionErr(""); }} disabled={busy}>
+                      Cancel
+                    </button>
+                    <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "#fca5a5" }}
+                      onClick={reject} disabled={busy || !rejectReason.trim()}>
+                      {busy ? "…" : "Confirm Decline"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "#fca5a5" }}
+                    onClick={() => setShowReject(true)} disabled={busy}>
+                    Reject
+                  </button>
+                  <button type="button" className="btn-primary" style={{ fontSize: "0.78rem" }}
+                    onClick={approve} disabled={busy}>
+                    {busy ? "Approving…" : "Approve Release"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
+// ─── Incoming transfers (staged outbound — Team Lead confirms/rejects) ──────
+
+function IncomingTransferCard({ row, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [showReject, setShowReject] = useState(false);
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState("");
+
+  async function confirm() {
+    setBusy(true);
+    setErr("");
+    try {
+      await pmApi.confirmMaterialTransfer(row.name);
+      onDone(`${row.name} confirmed — materials added to your stock.`);
+    } catch (e) {
+      setErr(e.message || "Confirmation failed.");
+      setBusy(false);
+    }
+  }
+
+  async function reject() {
+    if (!reason.trim()) { setErr("Please enter a reason."); return; }
+    setBusy(true);
+    setErr("");
+    try {
+      await pmApi.rejectMaterialTransferConfirmation(row.name, reason.trim());
+      onDone(`${row.name} declined — sent back to the Warehouse Manager.`);
+    } catch (e) {
+      setErr(e.message || "Rejection failed.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="history-card" style={{ borderLeftColor: "var(--amber)" }}>
+      <div className="history-card-row">
+        <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 700 }}>{row.name}</span>
+        <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{row.request_date}</span>
+      </div>
+      {row.poid && (
+        <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: 2 }}>POID: {row.poid}</div>
+      )}
+
+      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+        {(row.items || []).map((it, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem" }}>
+            <span>{it.item_name || it.item_code}</span>
+            <strong>{fmt(it.qty)} {it.uom || "pcs"}</strong>
+          </div>
+        ))}
+      </div>
+
+      {err && (
+        <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: "#fef2f2", color: "#dc2626", fontSize: "0.78rem" }}>
+          {err}
+        </div>
+      )}
+
+      {showReject ? (
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+          <input
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder="Reason for declining…"
+            disabled={busy}
+            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border)", fontSize: "0.84rem" }}
+          />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem" }}
+              onClick={() => { setShowReject(false); setErr(""); }} disabled={busy}>
+              Cancel
+            </button>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "#fca5a5" }}
+              onClick={reject} disabled={busy || !reason.trim()}>
+              {busy ? "…" : "Confirm Decline"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "#fca5a5" }}
+            onClick={() => setShowReject(true)} disabled={busy}>
+            Decline
+          </button>
+          <button type="button" className="btn-primary" style={{ fontSize: "0.78rem" }}
+            onClick={confirm} disabled={busy}>
+            {busy ? "Confirming…" : "Confirm Receipt"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IncomingTransfers({ refresh, onCount, onDone }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await pmApi.listPendingTeamConfirmations();
+      const list = Array.isArray(res) ? res : [];
+      setRows(list);
+      onCount?.(list.length);
+    } catch { setRows([]); }
+    finally { setLoading(false); }
+  }, [onCount]);
+
+  useEffect(() => { load(); }, [load, refresh]);
+
+  function handleDone(msg) {
+    onDone(msg);
+    load();
+  }
+
+  if (loading) return (
+    <div className="history-card" style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: 18 }}>
+      Loading incoming transfers…
+    </div>
+  );
+
+  if (rows.length === 0) return (
+    <div className="empty-state" style={{ padding: "24px 0" }}>
+      <div className="empty-icon">📥</div>
+      <h3>Nothing awaiting confirmation</h3>
+      <p>Transfers the Warehouse Manager stages for your team will show up here for you to confirm before stock moves.</p>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {rows.map(r => <IncomingTransferCard key={r.name} row={r} onDone={handleDone} />)}
+    </div>
+  );
+}
+
 // ─── Return request history ──────────────────────────────────────────────────
 
-function ReturnHistory({ refresh }) {
+function ReturnHistory({ refresh, onDone }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
@@ -361,6 +580,12 @@ function ReturnHistory({ refresh }) {
   }, []);
 
   useEffect(() => { load(); }, [load, refresh]);
+
+  function handleActioned(msg) {
+    setSelected(null);
+    onDone?.(msg);
+    load();
+  }
 
   if (loading) return (
     <div className="history-card" style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: 18 }}>
@@ -379,6 +604,7 @@ function ReturnHistory({ refresh }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {rows.map(r => {
           const sc = returnStatusClass(r.request_status);
+          const needsMyApproval = r.is_direct_return_by_im && r.request_status === "Pending Approval";
           return (
             <button
               key={r.name}
@@ -386,7 +612,7 @@ function ReturnHistory({ refresh }) {
               onClick={() => setSelected(r)}
               style={{ all: "unset", display: "block", cursor: "pointer" }}
             >
-              <div className="history-card" style={{ borderLeftColor: sc === "completed" ? "var(--green)" : sc === "cancelled" ? "var(--red, #ef4444)" : "var(--amber)" }}>
+              <div className="history-card" style={{ borderLeftColor: needsMyApproval ? "#1d4ed8" : sc === "completed" ? "var(--green)" : sc === "cancelled" ? "var(--red, #ef4444)" : "var(--amber)" }}>
                 <div className="history-card-row">
                   <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>{r.name}</span>
                   <ReturnStatusBadge status={r.request_status} />
@@ -395,14 +621,18 @@ function ReturnHistory({ refresh }) {
                   {r.request_date}
                   {r.reason && <span style={{ marginLeft: 8 }}>· {r.reason}</span>}
                 </div>
-                <div style={{ fontSize: "0.72rem", color: "#3b82f6", marginTop: 4 }}>Tap to view items →</div>
+                {needsMyApproval ? (
+                  <div style={{ fontSize: "0.72rem", color: "#1d4ed8", fontWeight: 700, marginTop: 4 }}>Needs your approval →</div>
+                ) : (
+                  <div style={{ fontSize: "0.72rem", color: "#3b82f6", marginTop: 4 }}>Tap to view items →</div>
+                )}
               </div>
             </button>
           );
         })}
       </div>
 
-      <ReturnDetailSheet row={selected} onClose={() => setSelected(null)} />
+      <ReturnDetailSheet row={selected} onClose={() => setSelected(null)} onActioned={handleActioned} />
     </>
   );
 }
@@ -420,6 +650,8 @@ export default function FieldMyStock() {
   const [showReturn, setShowReturn] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [returnRefresh, setReturnRefresh] = useState(0);
+  const [incomingRefresh, setIncomingRefresh] = useState(0);
+  const [incomingCount, setIncomingCount] = useState(0);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -440,6 +672,18 @@ export default function FieldMyStock() {
     setReturnRefresh(k => k + 1);
     setTab("returns");
     load(true);
+    setTimeout(() => setSuccessMsg(""), 6000);
+  }
+
+  function handleIncomingDone(msg) {
+    setSuccessMsg(msg);
+    setIncomingRefresh(k => k + 1);
+    load(true);
+    setTimeout(() => setSuccessMsg(""), 6000);
+  }
+
+  function handleReturnActioned(msg) {
+    setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(""), 6000);
   }
 
@@ -500,6 +744,19 @@ export default function FieldMyStock() {
         </div>
         <div style={{ display: "flex", padding: "0 16px" }}>
           <button type="button" style={tabStyle("stock")} onClick={() => setTab("stock")}>Stock</button>
+          <button type="button" style={tabStyle("incoming")} onClick={() => setTab("incoming")}>
+            Incoming
+            {incomingCount > 0 && (
+              <span style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                minWidth: 16, height: 16, padding: "0 5px", marginLeft: 5,
+                borderRadius: 999, fontSize: "0.62rem", fontWeight: 800,
+                background: "#f59e0b", color: "#fff",
+              }}>
+                {incomingCount}
+              </span>
+            )}
+          </button>
           <button type="button" style={tabStyle("returns")} onClick={() => setTab("returns")}>Return Requests</button>
         </div>
       </div>
@@ -578,10 +835,17 @@ export default function FieldMyStock() {
           )
         )}
 
+        {/* Incoming transfers tab */}
+        {tab === "incoming" && (
+          <div className="exec-section">
+            <IncomingTransfers refresh={incomingRefresh} onCount={setIncomingCount} onDone={handleIncomingDone} />
+          </div>
+        )}
+
         {/* Return requests tab */}
         {tab === "returns" && (
           <div className="exec-section">
-            <ReturnHistory refresh={returnRefresh} />
+            <ReturnHistory refresh={returnRefresh} onDone={handleReturnActioned} />
           </div>
         )}
       </div>

@@ -292,6 +292,117 @@ def create_material_receipt_from_outbound(bill_no):
     }
 
 
+def stock_entry_has_permission(doc, ptype=None, user=None, debug=False):
+    """Controller permission hook (see hooks.py `has_permission`) — DENIES
+    submit/cancel of an outbound (main → team) Material Transfer to anyone
+    except the receiving team's Team Lead or an Administrator/System Manager.
+
+    Stock Manager needs broad submit/cancel on Stock Entry for Material
+    Receipts and for confirming Returns (confirm_material_return), so that
+    grant can't simply be removed. This hook is what actually stops a
+    Warehouse Manager from bypassing the team's confirmation step by opening
+    the staged Draft Stock Entry directly in Desk and clicking Submit —
+    unlike the checks inside confirm_material_transfer()/
+    reject_material_transfer_confirmation(), which only apply to that one
+    code path, `has_permission` hooks are consulted by Frappe's core
+    permission engine everywhere (Desk, REST API, bulk actions, ...).
+
+    Per Frappe's contract, controllers can only DENY on top of the
+    role-based grant, never grant beyond it — so returning None here always
+    means "defer to normal rules" and this never affects read/write/create,
+    Material Receipts, or Returns (t_warehouse = main warehouse).
+
+    On denial this raises frappe.throw() with a plain-business-language
+    message (instead of returning False) — a plain False here would surface
+    as Frappe's generic "You need the 'submit' permission..." message, which
+    doesn't explain WHY to a Warehouse Manager who normally does have that
+    permission. Raising here propagates straight through Frappe's permission
+    check (nothing downstream catches it), so this message is what the user
+    actually sees.
+    """
+    if ptype not in ("submit", "cancel"):
+        return None
+    if doc.get("stock_entry_type") != "Material Transfer":
+        return None
+
+    source_wh = frappe.db.get_single_value("INET Settings", "source_warehouse") or ""
+    team_warehouses = {
+        i.t_warehouse for i in doc.items
+        if i.t_warehouse and i.t_warehouse != source_wh
+        and frappe.db.exists("INET Team", {"warehouse": i.t_warehouse})
+    }
+    if not team_warehouses:
+        return None  # not an outbound-to-team transfer (e.g. a return into main)
+
+    user = user or frappe.session.user
+    roles = set(frappe.get_roles(user))
+    if roles & {"Administrator", "System Manager"}:
+        return None
+
+    for wh in team_warehouses:
+        field_user = frappe.db.get_value("INET Team", {"warehouse": wh}, "field_user")
+        if field_user and field_user == user:
+            return None  # the correct Team Lead — don't override
+
+    team_names = ", ".join(
+        frappe.db.get_value("INET Team", {"warehouse": wh}, "team_name") or wh
+        for wh in team_warehouses
+    )
+    action = "submitted" if ptype == "submit" else "cancelled"
+    frappe.throw(
+        f"This transfer is staged and awaiting confirmation from {team_names}'s Team Lead — "
+        f"it can only be {action} once they confirm receipt from the Field app. "
+        f"If something needs to change, reject it back to Pending Approval instead of submitting it here.",
+        frappe.PermissionError,
+        title="Awaiting Team Confirmation",
+    )
+
+
+def before_stock_entry_insert(doc, method=None):
+    """Auto-stage a Material Transfer Stock Entry that links back to a
+    submitted (outbound or return) Material Request, regardless of how it
+    was created.
+
+    approve_material_request()/approve_material_return_request() already
+    set confirmation_stage explicitly before insert — this only fires for
+    Stock Entries created some OTHER way, e.g. a Warehouse Manager using
+    ERPNext's own native "Create > Stock Entry" button directly on the
+    Material Request form. Without this, such a Stock Entry would still be
+    correctly blocked from submission by stock_entry_has_permission() (that
+    check is structural, not dependent on this bookkeeping) but would never
+    show up for the team to confirm and would carry no visible indication
+    of why it's stuck — see the confirmation_stage banner in stock_entry.js.
+    """
+    if doc.stock_entry_type != "Material Transfer" or doc.get("confirmation_stage"):
+        return
+
+    mr_names = list({i.get("material_request") for i in doc.items if i.get("material_request")})
+    if len(mr_names) != 1:
+        return  # only handle the single-MR shape our flow always produces
+
+    mr = frappe.db.get_value(
+        "Material Request", mr_names[0],
+        ["docstatus", "is_return_request", "pending_transfer_se"],
+        as_dict=True,
+    )
+    if not mr or mr.docstatus != 1 or mr.pending_transfer_se:
+        return
+
+    doc.confirmation_stage = (
+        "Awaiting Warehouse Confirmation" if mr.is_return_request else "Awaiting Team Confirmation"
+    )
+    doc.flags._inet_stage_mr = mr_names[0]
+
+
+def after_stock_entry_insert(doc, method=None):
+    """Companion to before_stock_entry_insert — backfill the Material
+    Request's pending_transfer_se once the Stock Entry has its final name."""
+    mr_name = doc.flags.get("_inet_stage_mr")
+    if mr_name:
+        frappe.db.set_value("Material Request", mr_name, "pending_transfer_se", doc.name)
+        frappe.db.commit()
+
+
 def before_stock_entry_submit(doc, method=None):
     """Fill DUID inventory dimension on Stock Entry items following the
     correct direction per entry type:
@@ -349,6 +460,27 @@ def before_stock_entry_submit(doc, method=None):
             item.to_duid = duid
 
 
+def _clear_stale_confirmation_bookkeeping(doc):
+    """A staged Material Transfer normally gets submitted through
+    confirm_material_transfer()/confirm_material_return(), which clear
+    confirmation_stage on the Stock Entry and pending_transfer_se on the
+    Material Request as part of that same call. But Administrator/System
+    Manager is allowed to submit a staged transfer directly (see the
+    override in stock_entry_has_permission), bypassing that cleanup —
+    leaving both fields stuck showing "awaiting confirmation" on a
+    transfer that actually already completed. Clean up here so the state
+    is correct regardless of which path did the submit.
+    """
+    if not doc.get("confirmation_stage"):
+        return
+    frappe.db.set_value("Stock Entry", doc.name, "confirmation_stage", "Confirmed")
+    mr_names = {i.get("material_request") for i in doc.items if i.get("material_request")}
+    for mr_name in mr_names:
+        if frappe.db.get_value("Material Request", mr_name, "pending_transfer_se") == doc.name:
+            frappe.db.set_value("Material Request", mr_name, "pending_transfer_se", "")
+    frappe.db.commit()
+
+
 def on_stock_entry_submit(doc, method=None):
     """When a Material Receipt is submitted, link the Huawei Outbound Plan
     and set its status to Received.
@@ -356,6 +488,9 @@ def on_stock_entry_submit(doc, method=None):
     Primary: uses huawei_outbound_plan field on the Stock Entry header.
     Fallback: matches by duid field on items for receipts without a header link.
     """
+    if doc.stock_entry_type == "Material Transfer":
+        _clear_stale_confirmation_bookkeeping(doc)
+
     if doc.stock_entry_type != "Material Receipt":
         return
 
@@ -395,12 +530,20 @@ def on_stock_entry_submit(doc, method=None):
 
 # ─── Phase 2: Material Request — uses standard ERPNext Material Request ───────
 
-def _request_status(status, transfer_status):
-    """Map ERPNext status + transfer_status to a portal-friendly label."""
+def _request_status(status, transfer_status, has_pending_se=False, is_return=False):
+    """Map ERPNext status + transfer_status to a portal-friendly label.
+
+    A staged-but-unconfirmed transfer (pending_transfer_se set on the
+    Material Request) sits between "Pending Approval" and "Transferred":
+    the Stock Entry exists as a Draft, so transfer_status is still
+    "Not Started" until the receiving side confirms and it gets submitted.
+    """
     if status == "Cancelled":
         return "Rejected"
     if transfer_status == "Completed":
         return "Transferred"
+    if has_pending_se:
+        return "Pending Warehouse Confirmation" if is_return else "Pending Team Confirmation"
     if status in ("Submitted", "Pending") and transfer_status in ("Not Started", "", None):
         return "Pending Approval"
     return status or "Draft"
@@ -438,6 +581,7 @@ def list_material_requests(im=None, status=None, limit=50):
         fields=[
             "name", "transaction_date", "owner", "im", "poid", "duid",
             "status", "transfer_status", "set_warehouse", "set_from_warehouse",
+            "pending_transfer_se",
         ],
         order_by="`tabMaterial Request`.transaction_date desc, `tabMaterial Request`.creation desc",
         limit=int(limit),
@@ -472,7 +616,9 @@ def list_material_requests(im=None, status=None, limit=50):
 
     for r in rows:
         r["request_date"] = str(r.pop("transaction_date", "") or "")
-        r["request_status"] = _request_status(r["status"], r["transfer_status"])
+        r["request_status"] = _request_status(
+            r["status"], r["transfer_status"], has_pending_se=bool(r.get("pending_transfer_se")),
+        )
         wh = r.pop("set_warehouse", "")
         r["team_warehouse"] = wh
         r["team_name"] = wh_team_map.get(wh) or wh
@@ -519,12 +665,18 @@ def get_material_request(name):
         "im": doc.get("im"),
         "poid": poid_display or poid_link,
         "duid": doc.get("duid"),
-        "request_status": _request_status(doc.status, doc.transfer_status),
+        "request_status": _request_status(
+            doc.status, doc.transfer_status,
+            has_pending_se=bool(doc.get("pending_transfer_se")),
+            is_return=bool(doc.get("is_return_request")),
+        ),
         "status": doc.status,
         "transfer_status": doc.transfer_status,
         "team_warehouse": doc.set_warehouse,
         "source_warehouse": doc.set_from_warehouse,
         "rejection_reason": doc.get("rejection_reason"),
+        "pending_transfer_se": doc.get("pending_transfer_se"),
+        "confirm_rejection_reason": doc.get("confirm_rejection_reason"),
         "stock_entry_transfer": transfer_se,
         "stock_entry_issue": issue_se,
         "items": [
@@ -735,11 +887,17 @@ def search_items(query="", warehouse=None, limit=20):
 
 
 @frappe.whitelist()
-def search_po_dispatches(query="", im=None, limit=20):
-    """Search PO Dispatches by business POID field for the current IM."""
+def search_po_dispatches(query="", im=None, duid=None, limit=20):
+    """Search PO Dispatches by business POID field for the current IM.
+
+    When duid is given, results are restricted to that site (site_code) —
+    used by the New Material Request form's DUID-first flow.
+    """
     conditions = [["docstatus", "!=", 2]]
     if im:
         conditions.append(["im", "=", im])
+    if duid:
+        conditions.append(["site_code", "=", duid])
     if (query or "").strip():
         conditions.append(["poid", "like", f"%{query.strip()}%"])
     return frappe.db.get_all(
@@ -748,6 +906,36 @@ def search_po_dispatches(query="", im=None, limit=20):
         fields=["name", "poid", "site_code", "project_code"],
         order_by="poid asc",
         limit=int(limit),
+    )
+
+
+@frappe.whitelist()
+def search_duids(query="", im=None, limit=20):
+    """Search DUIDs (site codes) that have at least one non-cancelled PO
+    Dispatch — the first step of the New Material Request form (DUID, then
+    POID filtered by that DUID).
+    """
+    conditions = ["pd.docstatus != 2", "pd.site_code IS NOT NULL", "pd.site_code != ''"]
+    values = []
+    if im:
+        conditions.append("pd.im = %s")
+        values.append(im)
+    q = (query or "").strip()
+    if q:
+        conditions.append("(pd.site_code LIKE %s OR dm.site_name LIKE %s)")
+        values.extend([f"%{q}%", f"%{q}%"])
+    where = " AND ".join(conditions)
+    return frappe.db.sql(
+        f"""
+        SELECT pd.site_code AS duid, MAX(dm.site_name) AS site_name, COUNT(*) AS poid_count
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN `tabDUID Master` dm ON dm.name = pd.site_code
+        WHERE {where}
+        GROUP BY pd.site_code
+        ORDER BY pd.site_code ASC
+        LIMIT {int(limit)}
+        """,
+        values, as_dict=True,
     )
 
 
@@ -1069,10 +1257,24 @@ def create_material_request(payload):
     return {"name": doc.name, "status": "Pending Approval"}
 
 
+def _check_team_lead_for_warehouse(warehouse):
+    """Only the Team Lead (INET Team.field_user) of the team that owns this
+    warehouse — or an Administrator/System Manager override — may confirm or
+    reject a transfer staged into that team's warehouse."""
+    roles = set(frappe.get_roles(frappe.session.user))
+    if roles & {"Administrator", "System Manager"}:
+        return
+    field_user = frappe.db.get_value("INET Team", {"warehouse": warehouse}, "field_user")
+    if not field_user or field_user != frappe.session.user:
+        frappe.throw("Only the team's Team Lead can confirm or reject this transfer.", frappe.PermissionError)
+
+
 @frappe.whitelist()
 def approve_material_request(name):
-    """Stock Manager approves: creates Material Transfer via ERPNext make_stock_entry,
-    then sets duid + poid on the generated Stock Entry before submitting."""
+    """Stock Manager stages a Material Transfer via ERPNext make_stock_entry
+    (duid + poid set on it), but does NOT submit it — stock does not move
+    yet. The receiving team's Team Lead must confirm receipt via
+    confirm_material_transfer() before the Stock Entry is submitted."""
     frappe.only_for(["System Manager", "Stock Manager"])
 
     mr = frappe.get_doc("Material Request", name)
@@ -1080,6 +1282,8 @@ def approve_material_request(name):
         frappe.throw("This request has been cancelled.")
     if mr.transfer_status == "Completed":
         frappe.throw("Material Transfer already completed for this request.")
+    if mr.get("pending_transfer_se"):
+        frappe.throw("A transfer is already staged for this request, awaiting team confirmation.")
     if mr.docstatus != 1:
         frappe.throw(f"Cannot approve a request in status '{mr.status}'. Submit it first.")
 
@@ -1090,29 +1294,168 @@ def approve_material_request(name):
     duid = mr.get("duid") or ""
     poid_val = mr.get("poid") or ""
     se.poid = poid_val
+    se.confirmation_stage = "Awaiting Team Confirmation"
     for item in se.items:
         item.duid = duid
 
     se.insert(ignore_permissions=True)
-    se.submit()
+    frappe.db.set_value("Material Request", name, "pending_transfer_se", se.name)
     frappe.db.commit()
-    return {"name": name, "stock_entry": se.name, "status": "Approved"}
+    return {"name": name, "stock_entry": se.name, "status": "Pending Team Confirmation"}
+
+
+@frappe.whitelist()
+def confirm_material_transfer(name):
+    """Team Lead confirms receipt of a staged outbound transfer. This is what
+    actually submits the Stock Entry and moves stock into the team warehouse."""
+    mr = frappe.get_doc("Material Request", name)
+    se_name = mr.get("pending_transfer_se")
+    if not se_name:
+        frappe.throw("No transfer is staged for this request.")
+
+    _check_team_lead_for_warehouse(mr.set_warehouse)
+
+    se = frappe.get_doc("Stock Entry", se_name)
+    if se.docstatus != 0:
+        frappe.throw("This transfer is no longer awaiting confirmation.")
+    # _check_team_lead_for_warehouse() above is the real authorization gate —
+    # the Team Lead role has no base Stock Entry permission at all (they're
+    # not meant to touch Stock Entry via Desk), so submit() would otherwise
+    # fail with a permission error even for the correct, authorized user.
+    se.confirmation_stage = "Confirmed"
+    se.flags.ignore_permissions = True
+    se.submit()
+    frappe.db.set_value("Material Request", name, "pending_transfer_se", "")
+    frappe.db.commit()
+    return {"name": name, "stock_entry": se.name, "status": "Transferred"}
+
+
+@frappe.whitelist()
+def reject_material_transfer_confirmation(name, reason=None):
+    """Team Lead declines a staged outbound transfer. The Stock Entry is kept
+    (marked Rejected, never submitted) rather than deleted, so there's a
+    visible record of the attempt; the request goes back to Pending Approval
+    so the Warehouse Manager can re-stage it (e.g. after fixing quantities),
+    which creates a fresh Stock Entry for the new attempt."""
+    mr = frappe.get_doc("Material Request", name)
+    se_name = mr.get("pending_transfer_se")
+    if not se_name:
+        frappe.throw("No transfer is staged for this request.")
+
+    _check_team_lead_for_warehouse(mr.set_warehouse)
+
+    se = frappe.get_doc("Stock Entry", se_name)
+    if se.docstatus != 0:
+        frappe.throw("This transfer is no longer awaiting confirmation.")
+    frappe.db.set_value("Stock Entry", se_name, "confirmation_stage", "Rejected")
+    frappe.db.set_value("Material Request", name, {
+        "pending_transfer_se": "",
+        "confirm_rejection_reason": reason or "",
+    })
+    frappe.db.commit()
+    return {"name": name, "status": "Pending Approval"}
+
+
+@frappe.whitelist()
+def list_pending_team_confirmations():
+    """Outbound transfers staged (Warehouse Manager already approved) and
+    awaiting this Team Lead's confirmation — powers the Field portal's
+    "Incoming Transfers" tab. Only the exact INET Team.field_user for a
+    warehouse resolves anything here (Administrator/System Manager see
+    nothing since they don't own a team warehouse)."""
+    team = frappe.db.get_value(
+        "INET Team", {"field_user": frappe.session.user, "status": "Active"},
+        ["name", "warehouse", "team_name"], as_dict=True,
+    )
+    if not team or not team.warehouse:
+        return []
+
+    rows = frappe.db.get_all(
+        "Material Request",
+        filters={
+            "material_request_type": "Material Transfer",
+            "is_return_request": ["!=", 1],
+            "set_warehouse": team.warehouse,
+            "docstatus": 1,
+            "pending_transfer_se": ["not in", ["", None]],
+        },
+        fields=["name", "transaction_date", "poid", "duid", "pending_transfer_se"],
+        order_by="creation asc",
+    )
+    if not rows:
+        return []
+
+    poid_links = list({r["poid"] for r in rows if r.get("poid")})
+    poid_map = {}
+    if poid_links:
+        for row in frappe.db.get_all("PO Dispatch", filters={"name": ["in", poid_links]}, fields=["name", "poid"]):
+            poid_map[row["name"]] = row["poid"]
+
+    for r in rows:
+        r["request_date"] = str(r.pop("transaction_date", "") or "")
+        if r.get("poid"):
+            r["poid"] = poid_map.get(r["poid"], r["poid"])
+        r["items"] = frappe.db.get_all(
+            "Stock Entry Detail",
+            filters={"parent": r["pending_transfer_se"]},
+            fields=["item_code", "item_name", "qty", "uom"],
+        )
+    return rows
 
 
 @frappe.whitelist()
 def reject_material_request(name, reason=None):
-    """Stock Manager rejects: stores reason then cancels the Material Request."""
-    frappe.only_for(["System Manager", "Stock Manager"])
+    """Stock Manager rejects: stores reason then cancels the Material Request.
 
+    Exception: a direct return initiated by IM (is_direct_return_by_im) is
+    awaiting the source team's Team Lead approval at this stage, not Stock
+    Manager's — so that Team Lead may reject it here too.
+
+    If a transfer was already staged (approved but not yet confirmed by the
+    receiving side), its Draft Stock Entry is removed first so nothing is
+    left dangling against the now-cancelled request.
+    """
     mr = frappe.get_doc("Material Request", name)
-    if mr.status not in ("Draft", "Submitted"):
+
+    if mr.get("is_direct_return_by_im"):
+        roles = set(frappe.get_roles(frappe.session.user))
+        if not roles & {"Administrator", "System Manager"}:
+            field_user = frappe.db.get_value("INET Team", {"warehouse": mr.set_from_warehouse}, "field_user")
+            if not field_user or field_user != frappe.session.user:
+                frappe.throw("Only the team's Team Lead can reject this.", frappe.PermissionError)
+    else:
+        frappe.only_for(["System Manager", "Stock Manager"])
+
+    # ERPNext's actual status string for a submitted-but-unfulfilled Material
+    # Transfer request is "Pending", not "Submitted" — matches the same set
+    # _request_status() already treats as "Pending Approval".
+    if mr.status not in ("Draft", "Submitted", "Pending"):
         frappe.throw(f"Cannot reject a request in status '{mr.status}'.")
 
+    # Set every field change on the already-loaded `mr` object rather than
+    # via frappe.db.set_value() — that writes straight to the DB and bumps
+    # `modified` out from under this in-memory doc, so the mr.cancel() below
+    # would fail with "Document has been modified" (TimestampMismatchError)
+    # every time a reason was given, since cancel()/save() checks that the
+    # in-memory `modified` still matches the DB.
+    se_name = mr.get("pending_transfer_se")
+    if se_name and frappe.db.get_value("Stock Entry", se_name, "docstatus") == 0:
+        frappe.delete_doc("Stock Entry", se_name, ignore_permissions=True, force=True)
+        mr.pending_transfer_se = ""
+
     if reason:
-        frappe.db.set_value("Material Request", name, "rejection_reason", reason)
+        mr.rejection_reason = reason
 
     if mr.docstatus == 1:
+        # The role checks above are the real authorization gate — a Team
+        # Lead rejecting their own team's direct return has no base
+        # Material Request permission at all (same reasoning as
+        # confirm_material_transfer's ignore_permissions).
+        mr.flags.ignore_permissions = True
         mr.cancel()
+    elif se_name or reason:
+        mr.flags.ignore_permissions = True
+        mr.save()
     frappe.db.commit()
     return {"name": name, "status": "Rejected"}
 
@@ -1244,6 +1587,22 @@ def issue_materials_for_work_done(name, qty_overrides=None):
 
 
 # ─── Phase 3: Stock Balance & POID Material APIs ─────────────────────────────
+
+def _classify_item_types(item_codes):
+    """Return {item_code: 'customer'|'company'} — customer = Huawei-supplied
+    (Item.is_customer_provided_item=1), company = purchased by INET."""
+    if not item_codes:
+        return {}
+    ph = ", ".join(["%s"] * len(item_codes))
+    cust_items = frappe.db.sql(
+        f"""SELECT name FROM `tabItem`
+            WHERE name IN ({ph})
+              AND is_customer_provided_item = 1""",
+        item_codes, as_list=True,
+    )
+    customer_set = {r[0] for r in cust_items}
+    return {ic: ("customer" if ic in customer_set else "company") for ic in item_codes}
+
 
 @frappe.whitelist()
 def get_team_material_stock(team_id=None):
@@ -1419,22 +1778,9 @@ def get_team_material_stock(team_id=None):
                         s["material_request"] = info.get("material_request", "")
 
             # ── Step 4: classify item_type from Item master, build final list ──
-            # "customer" = is_customer_provided_item=1 (Huawei-supplied)
-            # "company"  = purchased by INET (allow purchase, not customer-provided)
-            customer_set = set()
-            if item_map:
-                ic_list_cls = list(item_map.keys())
-                ph_cls = ", ".join(["%s"] * len(ic_list_cls))
-                cust_items = frappe.db.sql(
-                    f"""SELECT name FROM `tabItem`
-                        WHERE name IN ({ph_cls})
-                          AND is_customer_provided_item = 1""",
-                    ic_list_cls, as_list=True,
-                )
-                customer_set = {r[0] for r in cust_items}
-
+            type_map = _classify_item_types(list(item_map.keys()))
             for item in item_map.values():
-                item["item_type"] = "customer" if item["item_code"] in customer_set else "company"
+                item["item_type"] = type_map.get(item["item_code"], "company")
                 items.append(item)
 
         out.append({
@@ -1444,6 +1790,203 @@ def get_team_material_stock(team_id=None):
             "items": items,
         })
     return out
+
+
+@frappe.whitelist()
+def get_main_warehouse_stock():
+    """DUID-wise item stock currently sitting in the main/source warehouse.
+
+    Mirrors get_team_material_stock's per-DUID reconstruction from Stock Entry
+    Detail, but for the single source warehouse. Inbound sources are Material
+    Receipts (to_duid, with legacy duid fallback) plus return Material
+    Transfers arriving from a team warehouse (duid = the returning team's
+    DUID). Outbound is the normal team-bound Material Transfer (duid).
+    """
+    source_wh = frappe.db.get_single_value("INET Settings", "source_warehouse") or ""
+    if not source_wh:
+        return {"warehouse": "", "items": []}
+
+    bins = frappe.db.sql(
+        """SELECT b.item_code,
+                  IFNULL(i.item_name, b.item_code) AS item_name,
+                  b.actual_qty                     AS qty,
+                  IFNULL(i.stock_uom, '')          AS uom
+           FROM `tabBin` b
+           LEFT JOIN `tabItem` i ON i.name = b.item_code
+           WHERE b.warehouse = %s AND b.actual_qty > 0
+           ORDER BY i.item_name""",
+        (source_wh,), as_dict=True,
+    )
+    if not bins:
+        return {"warehouse": source_wh, "items": []}
+
+    ic_list = [r["item_code"] for r in bins]
+    placeholders = ", ".join(["%s"] * len(ic_list))
+
+    # IN: Material Receipts arriving at the main warehouse
+    in_receipt_rows = frappe.db.sql(
+        f"""SELECT sed.item_code,
+                   COALESCE(NULLIF(sed.to_duid,''), NULLIF(sed.duid,'')) AS duid,
+                   SUM(sed.qty) AS qty
+            FROM `tabStock Entry Detail` sed
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.docstatus = 1
+              AND se.stock_entry_type = 'Material Receipt'
+              AND sed.t_warehouse = %s
+              AND (NULLIF(sed.to_duid,'') IS NOT NULL OR NULLIF(sed.duid,'') IS NOT NULL)
+              AND sed.item_code IN ({placeholders})
+            GROUP BY sed.item_code, duid""",
+        (source_wh, *ic_list), as_dict=True,
+    )
+
+    # IN: Return transfers arriving back from a team warehouse
+    in_return_rows = frappe.db.sql(
+        f"""SELECT sed.item_code, sed.duid, SUM(sed.qty) AS qty
+            FROM `tabStock Entry Detail` sed
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.docstatus = 1
+              AND se.stock_entry_type = 'Material Transfer'
+              AND sed.t_warehouse = %s
+              AND sed.duid IS NOT NULL AND sed.duid != ''
+              AND sed.item_code IN ({placeholders})
+            GROUP BY sed.item_code, sed.duid""",
+        (source_wh, *ic_list), as_dict=True,
+    )
+
+    # OUT: outbound transfers leaving the main warehouse to a team
+    out_rows = frappe.db.sql(
+        f"""SELECT sed.item_code, sed.duid, SUM(sed.qty) AS qty
+            FROM `tabStock Entry Detail` sed
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.docstatus = 1
+              AND se.stock_entry_type = 'Material Transfer'
+              AND sed.s_warehouse = %s
+              AND sed.duid IS NOT NULL AND sed.duid != ''
+              AND sed.item_code IN ({placeholders})
+            GROUP BY sed.item_code, sed.duid""",
+        (source_wh, *ic_list), as_dict=True,
+    )
+
+    duid_balance = {}
+    for r in in_receipt_rows:
+        key = (r["item_code"], r["duid"])
+        duid_balance[key] = duid_balance.get(key, 0.0) + flt(r["qty"])
+    for r in in_return_rows:
+        key = (r["item_code"], r["duid"])
+        duid_balance[key] = duid_balance.get(key, 0.0) + flt(r["qty"])
+    for r in out_rows:
+        key = (r["item_code"], r["duid"])
+        duid_balance[key] = duid_balance.get(key, 0.0) - flt(r["qty"])
+
+    type_map = _classify_item_types(ic_list)
+
+    items = []
+    for r in bins:
+        ic = r["item_code"]
+        uom = r["uom"] or ""
+        sources = [
+            {"duid": duid, "qty": round(qty, 4)}
+            for (item_code, duid), qty in duid_balance.items()
+            if item_code == ic and qty > 0
+        ]
+        items.append({
+            "item_code": ic,
+            "item_name": r["item_name"] or ic,
+            "uom": uom,
+            "qty": flt(r["qty"]),
+            "item_type": type_map.get(ic, "company"),
+            "sources": sources,
+        })
+
+    return {"warehouse": source_wh, "items": items}
+
+
+def _append_stock_rows(rows, items, warehouse_type, warehouse_label, warehouse, team_id=""):
+    """Append one row per (item, duid) source, plus one "No DUID" row for
+    whatever qty isn't attributed to any DUID.
+
+    Company-owned items are usually bought via Purchase Receipt with no site
+    tagging, so most of their qty has no DUID — that's expected, not a data
+    gap, and needs to stay visible rather than being silently dropped.
+    """
+    for item in items:
+        tagged_qty = 0.0
+        for src in item.get("sources", []):
+            if not src.get("duid"):
+                continue
+            tagged_qty += flt(src["qty"])
+            rows.append({
+                "duid": src["duid"],
+                "warehouse_type": warehouse_type,
+                "warehouse_label": warehouse_label,
+                "warehouse": warehouse,
+                "team_id": team_id,
+                "item_code": item["item_code"],
+                "item_name": item["item_name"],
+                "item_type": item["item_type"],
+                "qty": src["qty"],
+                "uom": item["uom"],
+            })
+
+        remaining = round(flt(item["qty"]) - tagged_qty, 4)
+        if remaining > 0:
+            rows.append({
+                "duid": "",
+                "warehouse_type": warehouse_type,
+                "warehouse_label": warehouse_label,
+                "warehouse": warehouse,
+                "team_id": team_id,
+                "item_code": item["item_code"],
+                "item_name": item["item_name"],
+                "item_type": item["item_type"],
+                "qty": remaining,
+                "uom": item["uom"],
+            })
+
+
+@frappe.whitelist()
+def get_duid_stock_balance():
+    """Flattened DUID-wise stock balance across the main warehouse and every
+    (permission-scoped) team warehouse — powers the Material Requests
+    "Stock Balance" tab for IM and PM.
+
+    Admin / Stock Manager / System Manager: all teams.
+    IM: only their own teams (same scoping as get_team_material_stock).
+    One row per (duid, warehouse, item); untagged qty is grouped under a
+    "No DUID" row rather than dropped (see _append_stock_rows).
+    """
+    rows = []
+
+    main = get_main_warehouse_stock()
+    main_wh = main.get("warehouse") or ""
+    _append_stock_rows(rows, main.get("items", []), "Main", "Main Warehouse", main_wh)
+
+    for team in get_team_material_stock():
+        _append_stock_rows(
+            rows, team.get("items", []), "Team",
+            team.get("team_name") or team.get("warehouse"),
+            team.get("warehouse"), team.get("team_id"),
+        )
+
+    duids = list({r["duid"] for r in rows if r["duid"]})
+    project_map = {}
+    if duids:
+        ph = ", ".join(["%s"] * len(duids))
+        for r in frappe.db.sql(
+            f"""SELECT du_id, MAX(project_name) AS project_name
+                FROM `tabHuawei Outbound Plan`
+                WHERE du_id IN ({ph}) AND project_name != ''
+                GROUP BY du_id""",
+            duids, as_dict=True,
+        ):
+            project_map[r["du_id"]] = r["project_name"]
+
+    for r in rows:
+        r["project_name"] = project_map.get(r["duid"], "")
+
+    # Untagged ("No DUID") rows sort after every real DUID, per warehouse.
+    rows.sort(key=lambda r: (r["duid"] or "￿", r["warehouse_type"], r["item_code"]))
+    return rows
 
 
 @frappe.whitelist()
@@ -1683,6 +2226,7 @@ def list_return_requests(team_id=None, status=None, limit=50):
         fields=[
             "name", "transaction_date", "owner", "im",
             "status", "transfer_status", "set_from_warehouse", "set_warehouse",
+            "pending_transfer_se", "is_direct_return_by_im",
             *( ["return_reason"] if frappe.db.has_column("Material Request", "return_reason") else [] ),
         ],
         order_by="`tabMaterial Request`.transaction_date desc, `tabMaterial Request`.creation desc",
@@ -1711,7 +2255,9 @@ def list_return_requests(team_id=None, status=None, limit=50):
 
     for r in rows:
         r["request_date"] = str(r.pop("transaction_date", "") or "")
-        r["request_status"] = _request_status(r["status"], r["transfer_status"])
+        r["request_status"] = _request_status(
+            r["status"], r["transfer_status"], has_pending_se=bool(r.get("pending_transfer_se")), is_return=True,
+        )
         team_info = wh_team_map.get(r.get("set_from_warehouse") or "", {})
         r["team_id"] = team_info.get("team_id", "")
         r["team_name"] = team_info.get("team_name") or r.get("set_from_warehouse", "—")
@@ -1727,25 +2273,60 @@ def list_return_requests(team_id=None, status=None, limit=50):
 
 @frappe.whitelist()
 def approve_material_return_request(name):
-    """IM/Stock Manager approves a return request.
+    """IM (or Stock Manager) approves a return request — this only STAGES
+    the Material Transfer (s_warehouse = team WH → t_warehouse = source WH,
+    duid = team DUID per item) as a Draft Stock Entry. Stock does not move
+    back yet: the Warehouse Manager must confirm receipt via
+    confirm_material_return() before it is submitted.
 
-    Creates a Material Transfer SE: s_warehouse = team WH → t_warehouse = source WH.
-    Sets duid = team DUID per item (inventory dimension for source-side tracking).
+    Exception: a direct return initiated by IM (is_direct_return_by_im) —
+    since the field team never requested this themselves, THIS approval
+    step must come from the source team's own Team Lead instead of IM/Stock
+    Manager, otherwise IM could pull materials out of a team's declared
+    stock without their knowledge or consent.
     """
-    frappe.only_for(["System Manager", "Stock Manager"])
-
     mr = frappe.get_doc("Material Request", name)
     if not mr.get("is_return_request"):
         frappe.throw("This is not a return request. Use approve_material_request instead.")
+
+    if mr.get("is_direct_return_by_im"):
+        roles = set(frappe.get_roles(frappe.session.user))
+        if not roles & {"Administrator", "System Manager"}:
+            field_user = frappe.db.get_value("INET Team", {"warehouse": mr.set_from_warehouse}, "field_user")
+            if not field_user or field_user != frappe.session.user:
+                frappe.throw(
+                    "Only the team's Team Lead can approve releasing this stock back to the main warehouse.",
+                    frappe.PermissionError,
+                )
+    else:
+        roles = set(frappe.get_roles(frappe.session.user))
+        if not roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin", "INET IM"}:
+            frappe.throw("Not permitted.", frappe.PermissionError)
+
     if mr.docstatus == 2:
         frappe.throw("This request has been cancelled.")
     if mr.transfer_status == "Completed":
         frappe.throw("Transfer already completed for this request.")
+    if mr.get("pending_transfer_se"):
+        frappe.throw("A transfer is already staged for this request, awaiting warehouse confirmation.")
     if mr.docstatus != 1:
         frappe.throw(f"Cannot approve a request in status '{mr.status}'. Submit it first.")
 
     from erpnext.stock.doctype.material_request.material_request import make_stock_entry
-    se = make_stock_entry(name)
+
+    # ERPNext's make_stock_entry() checks "create" permission on Stock Entry
+    # internally (via get_mapped_doc) with no way to bypass it — and a Team
+    # Lead approving their own team's direct return has no base Stock Entry
+    # permission at all (same reasoning as confirm_material_transfer's
+    # ignore_permissions). The checks above are the real authorization gate,
+    # so briefly elevate for this one call rather than widening their role's
+    # actual DocType permissions.
+    _caller = frappe.session.user
+    frappe.set_user("Administrator")
+    try:
+        se = make_stock_entry(name)
+    finally:
+        frappe.set_user(_caller)
 
     # Tag each item with the team DUID (inventory dimension — source side of transfer)
     team_wh = mr.set_from_warehouse
@@ -1757,19 +2338,75 @@ def approve_material_return_request(name):
         if duid:
             item.duid = duid   # before_stock_entry_submit respects pre-set values
 
+    se.confirmation_stage = "Awaiting Warehouse Confirmation"
     se.insert(ignore_permissions=True)
-    se.submit()
+    frappe.db.set_value("Material Request", name, "pending_transfer_se", se.name)
     frappe.db.commit()
-    return {"name": name, "stock_entry": se.name, "status": "Approved"}
+    return {"name": name, "stock_entry": se.name, "status": "Pending Warehouse Confirmation"}
+
+
+@frappe.whitelist()
+def confirm_material_return(name):
+    """Warehouse Manager confirms receipt of a staged return. This is what
+    actually submits the Stock Entry and moves stock back into the main
+    warehouse."""
+    frappe.only_for(["System Manager", "Stock Manager"])
+
+    mr = frappe.get_doc("Material Request", name)
+    se_name = mr.get("pending_transfer_se")
+    if not se_name:
+        frappe.throw("No return transfer is staged for this request.")
+
+    se = frappe.get_doc("Stock Entry", se_name)
+    if se.docstatus != 0:
+        frappe.throw("This transfer is no longer awaiting confirmation.")
+    se.confirmation_stage = "Confirmed"
+    se.flags.ignore_permissions = True
+    se.submit()
+    frappe.db.set_value("Material Request", name, "pending_transfer_se", "")
+    frappe.db.commit()
+    return {"name": name, "stock_entry": se.name, "status": "Transferred"}
+
+
+@frappe.whitelist()
+def reject_material_return_confirmation(name, reason=None):
+    """Warehouse Manager declines a staged return. The Stock Entry is kept
+    (marked Rejected, never submitted) rather than deleted, so there's a
+    visible record of the attempt; the request goes back to Pending
+    Approval."""
+    frappe.only_for(["System Manager", "Stock Manager"])
+
+    mr = frappe.get_doc("Material Request", name)
+    se_name = mr.get("pending_transfer_se")
+    if not se_name:
+        frappe.throw("No return transfer is staged for this request.")
+
+    se = frappe.get_doc("Stock Entry", se_name)
+    if se.docstatus != 0:
+        frappe.throw("This transfer is no longer awaiting confirmation.")
+    frappe.db.set_value("Stock Entry", se_name, "confirmation_stage", "Rejected")
+    frappe.db.set_value("Material Request", name, {
+        "pending_transfer_se": "",
+        "confirm_rejection_reason": reason or "",
+    })
+    frappe.db.commit()
+    return {"name": name, "status": "Pending Approval"}
 
 
 @frappe.whitelist()
 def create_direct_return_transfer(payload):
-    """IM creates a Material Transfer SE directly (team WH → source WH) without MR.
-
-    Used when the IM wants to return materials without a field-team request.
+    """Warehouse Manager or IM initiates a direct return (team WH → source
+    WH) without waiting on a field-team request. This creates and submits a
+    Material Request behind the scenes, flagged is_direct_return_by_im — but
+    does NOT auto-approve/stage it. Since the field team never requested
+    this themselves, the source team's own Team Lead must first approve
+    releasing the stock via approve_material_return_request() (which stages
+    a Draft Stock Entry only once they do); the Warehouse Manager still has
+    to confirm receipt via confirm_material_return() after that.
     """
-    frappe.only_for(["System Manager", "Stock Manager"])
+    roles = set(frappe.get_roles(frappe.session.user))
+    if not roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin", "INET IM"}:
+        frappe.throw("Not permitted.", frappe.PermissionError)
     import json
 
     data = json.loads(payload) if isinstance(payload, str) else payload
@@ -1790,26 +2427,35 @@ def create_direct_return_transfer(payload):
         frappe.throw("Source Warehouse not configured in INET Settings.")
 
     company = frappe.defaults.get_global_default("company")
-    item_codes = [i["item_code"] for i in items]
-    duid_by_item = _get_team_duid_per_item(team_wh, item_codes)
+    req_date = nowdate()
+    im = frappe.db.get_value("INET Team", team_id, "im") or ""
 
-    se = frappe.get_doc({
-        "doctype": "Stock Entry",
-        "stock_entry_type": "Material Transfer",
+    mr = frappe.get_doc({
+        "doctype": "Material Request",
+        "material_request_type": "Material Transfer",
+        "transaction_date": req_date,
+        "schedule_date": req_date,
         "company": company,
+        "set_from_warehouse": team_wh,
+        "set_warehouse": source_wh,
+        "is_return_request": 1,
+        "is_direct_return_by_im": 1,
+        "im": im,
+        "return_reason": f"Direct return initiated by {frappe.session.user} — awaiting Team Lead approval",
         "items": [
             {
                 "item_code": i["item_code"],
                 "qty": flt(i["qty"]),
                 "uom": i.get("uom") or frappe.db.get_value("Item", i["item_code"], "stock_uom") or "",
-                "s_warehouse": team_wh,
-                "t_warehouse": source_wh,
-                "duid": duid_by_item.get(i["item_code"], ""),
+                "warehouse": source_wh,
+                "from_warehouse": team_wh,
+                "schedule_date": req_date,
             }
             for i in items
         ],
     })
-    se.insert(ignore_permissions=True)
-    se.submit()
+    mr.insert(ignore_permissions=True)
+    mr.submit()
     frappe.db.commit()
-    return {"stock_entry": se.name, "status": "Transferred"}
+
+    return {"name": mr.name, "status": "Pending Approval"}

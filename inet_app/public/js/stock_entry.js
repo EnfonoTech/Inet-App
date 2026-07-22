@@ -15,6 +15,7 @@ frappe.ui.form.on('Stock Entry', {
             _fetch_and_cache_du_id_from_plan(frm);
         }
         _backfill_duid_from_items(frm);
+        _show_confirmation_stage_banner(frm);
     },
 
     huawei_outbound_plan: function(frm) {
@@ -113,4 +114,41 @@ function _fetch_and_cache_du_id_from_plan(frm, callback) {
         frm._inet_du_id = (r && (r.duid_master || r.du_id)) || null;
         if (callback) callback();
     });
+}
+
+// A Draft Stock Entry staged by the Material Request flow isn't just an
+// ordinary unfinished draft — it's specifically waiting on the OTHER side
+// (Team Lead or Warehouse Manager) to confirm before it can be submitted.
+// Plain "Draft" on the form gives no hint of that, so show it explicitly.
+function _show_confirmation_stage_banner(frm) {
+    var stage = frm.doc.confirmation_stage;
+    if (!stage) return;
+
+    if (stage === 'Rejected') {
+        // Kept (not deleted) as a visible record of the declined attempt —
+        // this Draft is abandoned; a fresh Stock Entry was staged for any
+        // retry, so this one should not be acted on again.
+        frm.dashboard.set_headline_alert(
+            '<div class="row"><div class="col-xs-12">' +
+            '<span class="indicator-pill red">' + __('Rejected') + '</span>&nbsp; ' +
+            __('This staged transfer was declined and was never submitted. It is kept only as a record — see the Material Request for the current, re-staged attempt.') +
+            '</div></div>',
+            'red'
+        );
+        return;
+    }
+
+    if (frm.doc.docstatus !== 0) return;  // "Confirmed" on an already-submitted doc needs no banner
+
+    var is_team_stage = stage === 'Awaiting Team Confirmation';
+    var who = is_team_stage ? "the receiving team's Team Lead (via the Field app)" : 'the Warehouse Manager';
+    frm.dashboard.set_headline_alert(
+        '<div class="row"><div class="col-xs-12">' +
+        '<span class="indicator-pill orange">' +
+        __('Awaiting Confirmation') +
+        '</span>&nbsp; ' +
+        __('This transfer is staged and can only be submitted once {0} confirms receipt.', [who]) +
+        '</div></div>',
+        'orange'
+    );
 }

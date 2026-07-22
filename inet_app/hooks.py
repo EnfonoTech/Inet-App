@@ -183,6 +183,8 @@ doc_events = {
 		"on_cancel": "inet_app.api.pic.on_payment_entry_cancel",
 	},
 	"Stock Entry": {
+		"before_insert": "inet_app.api.material_management.before_stock_entry_insert",
+		"after_insert": "inet_app.api.material_management.after_stock_entry_insert",
 		"before_submit": "inet_app.api.material_management.before_stock_entry_submit",
 		"on_submit": [
 			"inet_app.api.material_management.on_stock_entry_submit",
@@ -208,6 +210,17 @@ doc_events = {
 	"Huawei Outbound Plan": {
 		"after_insert": "inet_app.api.notifications.on_huawei_plan_insert",
 	},
+}
+
+# Permission Hooks
+# ----------------
+# Controllers can only DENY permission on top of the role-based grant, never
+# grant beyond it. Used to stop the Warehouse Manager (Stock Manager role —
+# which needs broad submit/cancel on Stock Entry for Material Receipts and
+# for confirming Returns) from bypassing the receiving team's confirmation
+# step by submitting a staged outbound transfer directly from the Desk UI.
+has_permission = {
+	"Stock Entry": "inet_app.api.material_management.stock_entry_has_permission",
 }
 
 # Scheduled Tasks
