@@ -6,6 +6,7 @@ import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
@@ -228,6 +229,7 @@ export default function IMBackend() {
           placeholder="Search POID, PO, Item, Project, DUID, Team…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
         />
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           {STATUS_TABS.map((t) => (

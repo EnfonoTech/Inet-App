@@ -218,8 +218,9 @@ def _sql_like_tokens(term, max_tokens=1000):
 
 
 def _sql_raw_tokens(term, max_tokens=1000):
-    """Split a search term into raw (un-wildcarded) tokens. Used for exact IN
-    matching when the caller knows the user is pasting exact values."""
+    """Split a search term into raw (un-wildcarded) WORD-level tokens — used
+    to build the AND-across-words LIKE clause, where every individual word
+    must be found somewhere in the row (possibly in different columns)."""
     if not term:
         return []
     raw = re.split(r"[\s,;|]+", str(term))
@@ -236,24 +237,70 @@ def _sql_raw_tokens(term, max_tokens=1000):
     return out
 
 
-def _sql_search_clause(concat_expr, term, exact_col=None):
-    """Build a search clause for pasted tokens.
+def _sql_value_tokens(term, max_tokens=1000):
+    """Split a search term into raw, un-wildcarded WHOLE-VALUE tokens, for
+    exact IN matching against a batch of pasted identifiers. Splits only on
+    hard separators (newline/CR/tab/comma/semicolon/pipe) — deliberately NOT
+    on a plain space — so a single pasted value that itself contains a space
+    (e.g. a DUID like "...M24_rack Fuse Upgrade") survives as one token
+    instead of being shredded into unrelated words, the same way
+    `_sql_raw_tokens` above would."""
+    if not term:
+        return []
+    raw = re.split(r"[\n\r\t,;|]+", str(term))
+    seen = set()
+    out = []
+    for piece in raw:
+        s = (piece or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+        if len(out) >= max_tokens:
+            break
+    return out
 
-    When ``exact_col`` is provided AND the term has multiple tokens, emits
-    ``exact_col IN (...)`` (fast exact match) instead of OR'd LIKE conditions
-    on the big CONCAT expression. Falls back to LIKE for single-token partial
-    searches so normal typing still works.
+
+def _sql_search_clause(concat_expr, term, exact_cols=None):
+    """Build a search clause requiring every word in `term` to be found
+    somewhere in `concat_expr` (AND across words) — a multi-word search only
+    matches rows containing all the words, not rows that merely contain any
+    one of them (so a single value with its own internal space, e.g. a DUID
+    like "...M24_rack Fuse Upgrade", is treated as one thing to find, not a
+    string of unrelated keywords).
+
+    That AND rule alone breaks pasting several DISTINCT exact values at once
+    (e.g. 3 different DUIDs copied from Excel into a search box) — no single
+    row can ever contain all 3, so the AND clause would match nothing. When
+    `exact_cols` (a list of raw SQL column expressions) is given, this adds
+    "OR this row's own code exactly equals one of the pasted values" as an
+    alternative — so either a described single target OR a batch of exact
+    pasted values works from the same box, in one query, no retry needed.
+
+    The exact-match side uses WHOLE-VALUE tokens (`_sql_value_tokens`, split
+    only on hard separators), not the word-level `tokens` used for the AND
+    clause — otherwise a pasted value that itself has an internal space
+    (e.g. a DUID) would get shredded into unrelated words there too, and a
+    batch paste containing exactly one such value would silently drop it
+    (reproduced: pasting "SITE-1" + "DUID with a space" only ever matched
+    "SITE-1").
 
     Returns (clause_sql_or_None, params_list). Empty term → (None, [])."""
     tokens = _sql_raw_tokens(term)
     if not tokens:
         return None, []
-    if exact_col and len(tokens) > 1:
-        ph = ", ".join(["%s"] * len(tokens))
-        return f"({exact_col} IN ({ph}))", tokens
     patterns = ["%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for t in tokens]
-    ors = " OR ".join([f"{concat_expr} LIKE %s"] * len(patterns))
-    return f"({ors})", patterns
+    ands = " AND ".join([f"{concat_expr} LIKE %s"] * len(patterns))
+    clause = f"({ands})"
+    params = list(patterns)
+    value_tokens = _sql_value_tokens(term)
+    if exact_cols and len(value_tokens) > 1:
+        ph = ", ".join(["%s"] * len(value_tokens))
+        exact_ors = " OR ".join(f"{col} IN ({ph})" for col in exact_cols)
+        clause = f"({clause} OR ({exact_ors}))"
+        for _ in exact_cols:
+            params.extend(value_tokens)
+    return clause, params
 
 
 def _apply_dummy_description(rows):
@@ -724,10 +771,15 @@ def get_distinct_field_values(doctype, fields):
         if not isinstance(f, str) or f not in allowed:
             continue
         try:
+            # This must return every distinct value, not a sample — filter
+            # dropdowns silently drop whatever falls past the cap (e.g. DUID
+            # codes sorting after position 5000 used to just never appear).
+            # 25000 is comfortably above any single field's real cardinality
+            # in this app while still bounding a truly pathological doctype.
             rows = frappe.db.sql(
                 f"SELECT DISTINCT `{f}` FROM `{table_name}` "
                 f"WHERE `{f}` IS NOT NULL AND `{f}` != '' "
-                f"ORDER BY `{f}` LIMIT 5000",
+                f"ORDER BY `{f}` LIMIT 25000",
                 as_list=True,
             )
             out[f] = [r[0] for r in rows if r[0]]
@@ -2017,7 +2069,10 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
             "IFNULL(pil.project_code,''), IFNULL(pil.site_code,''), IFNULL(pi.po_no,''), "
             "IFNULL(pi.customer,''), IFNULL(pil.center_area,''), IFNULL(pil.region_type,''))"
         )
-        clause, cparams = _sql_search_clause(concat_expr_intake, pf.get("search") or pf.get("q") or "")
+        clause, cparams = _sql_search_clause(
+            concat_expr_intake, pf.get("search") or pf.get("q") or "",
+            exact_cols=["IFNULL(pil.poid,'')", "IFNULL(pil.site_code,'')", "IFNULL(pil.name,'')"],
+        )
         if clause:
             wheres.append(clause)
             params.extend(cparams)
@@ -2712,14 +2767,39 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             if c in fields
         ]
         if like_cols:
-            # Each token matches if ANY column contains it; any-token-matches
-            # wins, so OR everything together.
-            ors = []
-            for _ in tokens:
-                ors.extend(f"IFNULL(`{c}`, '') LIKE %s" for c in like_cols)
-            wheres.append("(" + " OR ".join(ors) + ")")
+            # Every token must be found in SOME column (each token ORs across
+            # columns; tokens themselves are ANDed together) — a multi-word
+            # search only matches rows containing all the words, not rows
+            # that merely contain any one of them. Without this, searching a
+            # DUID name with its own internal space (e.g. "...M24_rack Fuse
+            # Upgrade") pulls in every unrelated row that happens to contain
+            # a generic word like "Fuse" or "Upgrade" anywhere.
+            ands = []
             for tok in tokens:
+                ands.append("(" + " OR ".join(f"IFNULL(`{c}`, '') LIKE %s" for c in like_cols) + ")")
                 params.extend([tok] * len(like_cols))
+            clause = "(" + " AND ".join(ands) + ")"
+
+            # Bulk-paste fallback: pasting several *distinct* exact POID/DUID
+            # values (one per row) can never satisfy the AND-across-tokens
+            # clause above, since no single row contains all of them at once.
+            # OR in an exact-IN match on the identifying columns so each
+            # pasted value can match its own row. Uses whole-VALUE tokens
+            # (hard separators only — newline/tab/comma/semicolon/pipe, not
+            # a plain space) so a pasted value that itself has an internal
+            # space (e.g. a DUID) survives as one token instead of being
+            # shredded into unrelated words, which would silently drop it
+            # from a batch paste containing other, space-free values.
+            value_tokens = _sql_value_tokens(pf.get("search") or pf.get("q") or "")
+            exact_cols = [c for c in ("poid", "site_code", "name") if c in fields]
+            if exact_cols and len(value_tokens) > 1:
+                ph = ", ".join(["%s"] * len(value_tokens))
+                exact_ors = " OR ".join(f"IFNULL(`{c}`, '') IN ({ph})" for c in exact_cols)
+                clause = f"({clause} OR ({exact_ors}))"
+                for _ in exact_cols:
+                    params.extend(value_tokens)
+
+            wheres.append(clause)
 
     return wheres, params
 
@@ -5560,7 +5640,10 @@ def list_execution_monitor_rows(filters=None, limit=500):
             pd_im_join = "LEFT JOIN `tabIM Master` rim_pd ON rim_pd.name = pd.im"
             concat_parts.append("IFNULL(rim_pd.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "")
+        clause, cparams = _sql_search_clause(
+            concat_expr, filters.get("search") or filters.get("q") or "",
+            exact_cols=["COALESCE(NULLIF(pd.poid,''), pd.name)", "IFNULL(pd.site_code,'')"],
+        )
         if clause:
             wheres.append(clause)
             params.extend(cparams)
@@ -5977,8 +6060,13 @@ def list_work_done_rows(filters=None, limit=500):
         if frappe.db.has_column("PO Dispatch", "im"):
             concat_parts.append("IFNULL(rim_pd.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        poid_col = "COALESCE(NULLIF(pd.poid,''), NULLIF(pd_sys.poid,''), pd.name, pd_sys.name)"
-        clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "", exact_col=poid_col)
+        clause, cparams = _sql_search_clause(
+            concat_expr, filters.get("search") or filters.get("q") or "",
+            exact_cols=[
+                "COALESCE(NULLIF(pd.poid,''), NULLIF(pd_sys.poid,''), pd.name, pd_sys.name)",
+                "COALESCE(NULLIF(pd.site_code,''), pd_sys.site_code, '')",
+            ],
+        )
         if clause:
             wheres.append(clause)
             params.extend(cparams)
@@ -6279,6 +6367,7 @@ def _synthesize_subcon_workdone_rows(filters):
             "IFNULL(pd.center_area,''), IFNULL(pd.region_type,''), "
             "IFNULL(t.team_id,''), IFNULL(t.team_name,''), IFNULL(pd.im,''))",
             search,
+            exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
         )
         if clause:
             where.append(clause)
@@ -6832,7 +6921,10 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        clause, cparams = _sql_search_clause(concat_expr, search or "")
+        clause, cparams = _sql_search_clause(
+            concat_expr, search or "",
+            exact_cols=["COALESCE(NULLIF(pd.poid,''), pd.name)", "IFNULL(pd.site_code,'')"],
+        )
         if clause:
             wheres.append(clause)
             params.extend(cparams)
@@ -8359,7 +8451,10 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        clause, cparams = _sql_search_clause(concat_expr, pf.get("search") or pf.get("q") or "")
+        clause, cparams = _sql_search_clause(
+            concat_expr, pf.get("search") or pf.get("q") or "",
+            exact_cols=["COALESCE(NULLIF(pd.poid,''), pd.name)", "IFNULL(pd.site_code,'')"],
+        )
         if clause:
             portal_clause += f" AND {clause}"
             params.extend(cparams)
@@ -8538,7 +8633,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
-        clause, cparams = _sql_search_clause(concat_expr, pf.get("search") or pf.get("q") or "")
+        clause, cparams = _sql_search_clause(
+            concat_expr, pf.get("search") or pf.get("q") or "",
+            exact_cols=["COALESCE(NULLIF(pd.poid,''), pd.name)", "IFNULL(pd.site_code,'')"],
+        )
         if clause:
             portal_clause += f" AND {clause}"
             params.extend(cparams)
@@ -12082,6 +12180,7 @@ def list_backend_dispatches(
         clause, like_params = _sql_search_clause(
             "CONCAT_WS(' ', pd.poid, pd.po_no, pd.item_code, pd.item_description, pd.site_name, pd.site_code, pd.project_code, IFNULL(t.team_name,''), IFNULL(t.team_id,''))",
             search,
+            exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
         )
         if clause:
             where.append(clause)

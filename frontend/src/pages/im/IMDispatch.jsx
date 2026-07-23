@@ -11,6 +11,7 @@ import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/R
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import AttachmentsSection from "../../components/AttachmentsSection";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
@@ -970,6 +971,7 @@ export default function IMDispatch() {
             placeholder="Search PO, DUID, POID, Project, Center area, Region…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onPaste={(e) => handleSearchPaste(e, setSearch)}
             style={{
               padding: "7px 14px",
               borderRadius: 8,

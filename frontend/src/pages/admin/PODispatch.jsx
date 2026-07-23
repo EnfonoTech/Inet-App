@@ -9,6 +9,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -515,6 +516,7 @@ export default function PODispatch() {
             placeholder="Filter by POID, PO No, Item, Project, DUID..."
             value={tableSearch}
             onChange={e => setTableSearch(e.target.value)}
+            onPaste={(e) => handleSearchPaste(e, setTableSearch)}
             style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
           />
           <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />

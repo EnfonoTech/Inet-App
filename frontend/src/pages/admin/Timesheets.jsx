@@ -7,6 +7,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import SearchableSelect from "../../components/SearchableSelect";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -99,6 +100,7 @@ export default function Timesheets() {
           placeholder="Search user, plan, team, project…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{
             padding: "7px 14px",
             borderRadius: 8,

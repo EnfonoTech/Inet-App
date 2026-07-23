@@ -9,6 +9,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { useDebounced } from "../../hooks/useDebounced";
 import SearchableSelect from "../../components/SearchableSelect";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -124,6 +125,7 @@ export default function IMTimesheets() {
           placeholder="Search user, plan, team…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{
             padding: "7px 14px",
             borderRadius: 8,

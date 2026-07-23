@@ -137,6 +137,27 @@ function DuidMultiSelect({ duids, value, onChange }) {
     }
   };
 
+  // Pasting a column/row from Excel selects exactly those DUIDs (exact
+  // match, replacing the current selection) — same behavior as the shared
+  // SearchableSelect component, so every DUID picker in the app is
+  // consistent. A single-line <input> collapses real newlines before
+  // onChange ever sees them, so we read the clipboard directly here to
+  // tell "pasted several values" apart from "one value with a space in it".
+  const handlePaste = (e) => {
+    const raw = e.clipboardData?.getData("text") ?? "";
+    if (!/[\r\n\t]/.test(raw)) return; // one value, possibly with its own spaces — let default paste happen
+    const pasted = raw.split(/[\r\n\t,;]+/).map((t) => t.trim().toLowerCase()).filter(Boolean);
+    if (pasted.length === 0) return;
+    e.preventDefault();
+    const matched = [];
+    for (const t of pasted) {
+      const hit = duids.find((d) => (d.duid || "").toLowerCase() === t || (d.site_name || "").toLowerCase() === t);
+      if (hit) matched.push(hit.duid);
+    }
+    if (matched.length) onChange(Array.from(new Set(matched)));
+    setQuery(pasted.join(", "));
+  };
+
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
       <input
@@ -144,6 +165,7 @@ function DuidMultiSelect({ duids, value, onChange }) {
         placeholder="Search DUID or site..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        onPaste={handlePaste}
         style={{ ...inp, border: "none", borderBottom: "1px solid #e2e8f0", borderRadius: 0, padding: "7px 10px" }}
       />
       <div style={{ maxHeight: 180, overflowY: "auto" }}>

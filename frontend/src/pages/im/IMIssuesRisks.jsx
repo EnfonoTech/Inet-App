@@ -12,6 +12,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import AttachmentsSection from "../../components/AttachmentsSection";
 import DateRangePicker from "../../components/DateRangePicker";
 import useFilterOptions from "../../hooks/useFilterOptions";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -286,6 +287,7 @@ export default function IMIssuesRisks() {
           placeholder="Search POID, Plan, Project, DUID, Team…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240 }}
         />
         <SearchableSelect multi value={issueCatFilter} onChange={setIssueCatFilter} options={ISSUE_CATEGORY_OPTIONS} placeholder="All Categories" minWidth={160} />

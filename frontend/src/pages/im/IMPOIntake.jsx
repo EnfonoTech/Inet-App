@@ -11,6 +11,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import RecordDetailView from "../../components/RecordDetailView";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
@@ -683,12 +684,12 @@ export default function IMPOIntake() {
       .map((s) => ({ id: s, label: s }));
   }, [ovRows]);
 
-  const ovDuidOptions = useMemo(() => {
-    const seen = new Set();
-    return ovRows.map((r) => r.site_code).filter(Boolean)
-      .filter((d) => { if (seen.has(d)) return false; seen.add(d); return true; }).sort()
-      .map((d) => ({ id: d, label: d }));
-  }, [ovRows]);
+  // NOTE: intentionally NOT derived from ovRows — that would only ever list
+  // DUIDs already present in the currently-loaded (row-limited) Overview
+  // rows, making it impossible to filter TO a DUID that isn't already
+  // visible. duidOptions comes from get_distinct_field_values, which is
+  // comprehensive across all PO Dispatch rows regardless of what's loaded.
+  const ovDuidOptions = duidOptions;
 
   const ovTeamOptions = useMemo(() => {
     const seen = new Set();
@@ -811,7 +812,7 @@ export default function IMPOIntake() {
       {/* ── PO INTAKE TOOLBAR ─────────────────────────────────────────── */}
       {tab === "intake" && (
         <div className="toolbar">
-          <input type="search" placeholder="Search POID, PO, Item, Project, DUID…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input type="search" placeholder="Search POID, PO, Item, Project, DUID…" value={search} onChange={(e) => setSearch(e.target.value)} onPaste={(e) => handleSearchPaste(e, setSearch)} />
           <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)}>
             <option value="all">All modes</option>
             <option value="Auto">Auto</option>
@@ -871,7 +872,7 @@ export default function IMPOIntake() {
               );
             })}
           </div>
-          <input type="search" placeholder="Search POID, PO No, Item, Project, DUID…" value={dummySearch} onChange={(e) => setDummySearch(e.target.value)} />
+          <input type="search" placeholder="Search POID, PO No, Item, Project, DUID…" value={dummySearch} onChange={(e) => setDummySearch(e.target.value)} onPaste={(e) => handleSearchPaste(e, setDummySearch)} />
           <SearchableSelect multi value={dummyProjectFilter} onChange={setDummyProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={160} />
           <SearchableSelect multi value={dummyDomainFilter} onChange={setDummyDomainFilter} options={domainOptions} placeholder="All Domains" minWidth={150} />
           <SearchableSelect multi value={dummyDuidFilter} onChange={setDummyDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={140} />
@@ -891,7 +892,7 @@ export default function IMPOIntake() {
       {/* ── ALL POIDs TOOLBAR ─────────────────────────────────────────── */}
       {tab === "overview" && (
         <div className="toolbar" style={{ flexWrap: "wrap", rowGap: 6 }}>
-          <input type="search" placeholder="Search POID, PO No, item, DUID…" value={ovSearch} onChange={(e) => setOvSearch(e.target.value)} style={{ minWidth: 220 }} />
+          <input type="search" placeholder="Search POID, PO No, item, DUID…" value={ovSearch} onChange={(e) => setOvSearch(e.target.value)} onPaste={(e) => handleSearchPaste(e, setOvSearch)} style={{ minWidth: 220 }} />
           <SearchableSelect multi value={ovProjectFilter} onChange={setOvProjectFilter} options={projectOptions} placeholder="Project" minWidth={150} />
           <SearchableSelect multi value={ovDomainFilter} onChange={setOvDomainFilter} options={ovDomainOptions} placeholder="Domain" minWidth={130} />
           <SearchableSelect multi value={ovStatusFilter} onChange={setOvStatusFilter} options={ovStatusOptions} placeholder="Status" minWidth={140} />

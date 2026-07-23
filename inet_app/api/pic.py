@@ -266,6 +266,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             " IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''),"
             " IFNULL(pd.payment_terms,''))",
             search,
+            exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
         )
         if clause:
             where.append(clause)
@@ -1375,7 +1376,11 @@ def list_invoice_tracker_rows(filters=None, limit=500):
             " IFNULL(pd.site_code,''), IFNULL(pd.customer,''),"
             " IFNULL(pd.pic_status,''), IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''))"
         )
-        clause, cparams = _sql_search_clause(concat_expr, filters.get("search") or filters.get("q") or "")
+        clause, cparams = _sql_search_clause(
+            concat_expr,
+            filters.get("search") or filters.get("q") or "",
+            exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
+        )
         if clause:
             wheres.append(clause)
             params.extend(cparams)

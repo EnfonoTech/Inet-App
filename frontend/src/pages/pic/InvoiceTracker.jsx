@@ -5,6 +5,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import { handleSearchPaste } from "../../utils/searchPaste";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import DateRangePicker from "../../components/DateRangePicker";
 
@@ -252,6 +253,7 @@ export default function InvoiceTracker() {
             placeholder="Search POID, PO, Item, Project, DUID, Customer…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onPaste={(e) => handleSearchPaste(e, setSearch)}
             style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260 }}
           />
           <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />

@@ -1,0 +1,1 @@
+function o(t,n){var r;const a=((r=t.clipboardData)==null?void 0:r.getData("text"))??"";if(!/[\r\n\t]/.test(a))return;const e=a.split(/[\r\n\t]+/).map(i=>i.trim()).filter(Boolean);e.length&&(t.preventDefault(),n(e.join("; ")))}export{o as h};

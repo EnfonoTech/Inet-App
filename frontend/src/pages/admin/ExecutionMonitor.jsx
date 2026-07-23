@@ -18,6 +18,7 @@ import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -386,6 +387,7 @@ export default function ExecutionMonitor() {
           placeholder="Search POID, dummy POID, Plan, Team, IM, Date, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{
             padding: "7px 14px", borderRadius: 8,
             border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240,

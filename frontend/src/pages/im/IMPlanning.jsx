@@ -8,6 +8,7 @@ import { pmApi } from "../../services/api";
 import IMPlanningExecutionModal from "./IMPlanningExecutionModal";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import { handleSearchPaste } from "../../utils/searchPaste";
 import RecordDetailView from "../../components/RecordDetailView";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
@@ -343,6 +344,7 @@ export default function IMPlanning() {
             placeholder="Search Plan ID, POID, DUID, PO, Team, Center area, Region…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onPaste={(e) => handleSearchPaste(e, setSearch)}
             style={{
               padding: "7px 14px", borderRadius: 8,
               border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,

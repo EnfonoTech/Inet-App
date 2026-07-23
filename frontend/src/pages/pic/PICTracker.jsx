@@ -9,6 +9,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { useAuth } from "../../context/AuthContext";
 import DateRangePicker from "../../components/DateRangePicker";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -410,6 +411,7 @@ export default function PICTracker() {
           placeholder="Search POID, PO, Item, Project, DUID, Owner…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{ minWidth: 280 }}
         />
         <SearchableSelect multi value={picFilter} onChange={setPicFilter} options={PIC_STATUSES} placeholder="All PIC Status (MS1)" minWidth={180} />

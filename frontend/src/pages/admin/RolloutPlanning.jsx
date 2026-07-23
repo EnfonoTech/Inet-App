@@ -10,6 +10,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -412,6 +413,7 @@ export default function RolloutPlanning() {
             placeholder="Search POID, Item, Project, IM, DUID, Center area, Region…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onPaste={(e) => handleSearchPaste(e, setSearch)}
             style={{
               padding: "7px 14px",
               borderRadius: 8,

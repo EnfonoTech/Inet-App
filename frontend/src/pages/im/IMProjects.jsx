@@ -8,6 +8,7 @@ import RecordDetailView from "../../components/RecordDetailView";
 import { pmApi } from "../../services/api";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import SearchableSelect from "../../components/SearchableSelect";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -144,6 +145,7 @@ export default function IMProjects() {
           placeholder="Search project code, name, customer…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{
             padding: "7px 14px", borderRadius: 8,
             border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280,

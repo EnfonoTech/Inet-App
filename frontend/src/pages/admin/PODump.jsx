@@ -7,6 +7,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmtNum = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -176,6 +177,7 @@ export default function PODump() {
           placeholder="Search PO, POID, Item, Project, DUID, Site, Status…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           disabled={!rows.length}
         />
         {search && (

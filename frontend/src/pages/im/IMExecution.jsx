@@ -17,6 +17,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import RescheduleModal from "../../components/RescheduleModal";
+import { handleSearchPaste } from "../../utils/searchPaste";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -1100,6 +1101,7 @@ export default function IMExecution() {
           placeholder="Search Execution ID, Plan, DUID, PO, Team, Center area, Region…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{
             padding: "7px 14px", borderRadius: 8,
             border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,

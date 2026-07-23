@@ -6,6 +6,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import { isNotRequired } from "../../utils/qcCiagFlags";
+import { handleSearchPaste } from "../../utils/searchPaste";
 
 const TEAM_QC_OPTIONS = ["Pending", "Pass", "Fail"];
 const TEAM_CIAG_OPTIONS = ["Open", "Approved", "Not Applicable"];
@@ -275,6 +276,7 @@ export default function FieldQcCiag() {
           placeholder="Search plan, project, site…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid var(--border)", fontSize: "0.84rem", flex: 1, minWidth: 0 }}
         />
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>

@@ -7,9 +7,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
  * the new id or "" for clear.
  *
  * Multi-select mode (`multi`): `value` is a string[] of ids; `onChange(ids)`
- * gets a new string[]. Paste multiple whitespace/comma/newline-separated
- * tokens into the search box and press Enter — every option whose id or
- * label contains any token is auto-selected.
+ * gets a new string[]. Pasting multiple newline/tab/comma/semicolon-separated
+ * values (e.g. an Excel column or row) directly selects exactly those exact
+ * matches, replacing any prior selection. A plain space does NOT split
+ * values — it's kept as part of one value, since many real values (DUID
+ * names, etc.) contain internal spaces. Typing (not pasting) several
+ * comma/semicolon-separated values and pressing Enter uses the "Add N
+ * matches" button instead, which is substring-matched and additive.
  */
 export default function SearchableSelect({
   value,
@@ -30,6 +34,16 @@ export default function SearchableSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(-1);
+  // Set right after a multi-value paste to the exact rows that matched (see
+  // handlePaste). While set, the panel shows ONLY those rows instead of the
+  // normal substring-matched list — otherwise a pasted value that happens to
+  // be a prefix of a different, unrelated option (e.g. pasting
+  // "ZJB192-Incremental-Mod-L700" when "ZJB192-Incremental-Mod-L700-Dis"
+  // also exists) would show that unrelated row alongside the real matches,
+  // even though it was correctly left unchecked — confusing, since the
+  // panel would show one more row than values you actually pasted. Typing
+  // anything afterwards clears it and resumes normal search.
+  const [pasteFocusIds, setPasteFocusIds] = useState(null);
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
@@ -49,8 +63,14 @@ export default function SearchableSelect({
   const tokens = useMemo(() => {
     const q = query.trim();
     if (!q) return [];
+    // Split only on separators that mean "these are different pasted values"
+    // (Excel column paste = newlines, row paste = tabs, or an explicit
+    // comma/semicolon list) — NOT a plain space, which is very often part
+    // of a single value's own name (e.g. a DUID like "...M24_rack Fuse
+    // Upgrade"). Splitting on space there wrongly treats "Fuse" and
+    // "Upgrade" as separate search terms and pulls in unrelated matches.
     return q
-      .split(/[\s,;|]+/)
+      .split(/[\n\r\t,;|]+/)
       .map((t) => t.trim().toLowerCase())
       .filter(Boolean);
   }, [query]);
@@ -63,12 +83,16 @@ export default function SearchableSelect({
   }, [query, onSearch]);
 
   const filtered = useMemo(() => {
+    if (pasteFocusIds !== null) {
+      const idSet = new Set(pasteFocusIds);
+      return normalized.filter((o) => idSet.has(o.id));
+    }
     if (tokens.length === 0) return normalized;
     return normalized.filter((o) => {
       const hay = `${o.label} ${o.id}`.toLowerCase();
       return tokens.some((t) => hay.includes(t));
     });
-  }, [normalized, tokens]);
+  }, [normalized, tokens, pasteFocusIds]);
 
   // Cap rendered rows. With 5,000+ DUIDs the dropdown used to commit one DOM
   // node per option, freezing scroll on lower-end machines. We render the
@@ -116,6 +140,7 @@ export default function SearchableSelect({
     if (open) {
       setQuery("");
       setActiveIdx(-1);
+      setPasteFocusIds(null);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [open]);
@@ -142,6 +167,52 @@ export default function SearchableSelect({
   function clearAll() {
     onChange?.(multi ? [] : "");
     setOpen(false);
+  }
+
+  // A single-line <input> can't reliably keep real newlines from a paste —
+  // browsers commonly collapse them into spaces (or strip them) before our
+  // onChange ever sees the value, which is why splitting on space seemed to
+  // "support Excel paste" before: it was really splitting on what used to be
+  // a newline. That made a single value with a genuine internal space (e.g.
+  // a DUID like "...M24_rack Fuse Upgrade") get wrongly split into pieces.
+  // Reading the clipboard directly in onPaste sidesteps the problem: we see
+  // the real newlines/tabs from an Excel column/row copy before the browser
+  // can mangle them, so a genuine multi-value paste and a single value that
+  // merely contains spaces are never confused with each other again.
+  function handlePaste(e) {
+    const raw = e.clipboardData?.getData("text") ?? "";
+    if (!/[\r\n\t]/.test(raw)) return; // no real separators — treat as one value, let default paste happen
+    const pasted = raw
+      .split(/[\r\n\t,;]+/)
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean);
+    if (pasted.length === 0) return;
+    e.preventDefault();
+    if (multi) {
+      // Exact match only — a pasted value should select exactly the row it
+      // names, never an unrelated row that merely contains it as a
+      // substring (e.g. pasting "SITE-1" must not also select "SITE-10").
+      const matchedIds = [];
+      for (const t of pasted) {
+        const hit = normalized.find((o) => o.id.toLowerCase() === t || o.label.toLowerCase() === t);
+        if (hit) matchedIds.push(hit.id);
+      }
+      // Paste sets the selection to exactly what you pasted, rather than
+      // adding to whatever was already selected — the count always matches
+      // what you just pasted. (The "Add N matches" button stays additive;
+      // that's a separate, deliberate action.) If nothing matched, leave
+      // any existing selection alone instead of wiping it out.
+      if (matchedIds.length) onChange?.(Array.from(new Set(matchedIds)));
+      // Show ONLY the exact matches in the panel (see pasteFocusIds above) —
+      // not a substring-matched superset that could include an unrelated
+      // row and make it look like more came back than you pasted.
+      setQuery(pasted.join(", "));
+      setPasteFocusIds(matchedIds);
+    } else {
+      // Single-select can't bulk-pick, but still benefit from a clean
+      // (trimmed, newline-free) value instead of whatever the raw paste held.
+      setQuery(pasted[0] || "");
+    }
   }
 
   function selectAllTokenMatches() {
@@ -268,9 +339,10 @@ export default function SearchableSelect({
               ref={inputRef}
               type="text"
               value={query}
-              onChange={(e) => { setQuery(e.target.value); setActiveIdx(0); }}
+              onChange={(e) => { setQuery(e.target.value); setActiveIdx(0); setPasteFocusIds(null); }}
               onKeyDown={onKeyDownInput}
-              placeholder={multi ? "Search (paste space/comma separated, press Enter)…" : "Search…"}
+              onPaste={handlePaste}
+              placeholder={multi ? "Search (paste comma/newline separated, press Enter)…" : "Search…"}
               style={{
                 width: "100%",
                 padding: "7px 10px",
