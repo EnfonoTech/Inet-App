@@ -498,7 +498,7 @@ export default function WorkDone() {
     }
     setBulkResult({ updated, errors });
     setBulkBusy(false);
-    if (updated > 0) { setSelectedRows(new Set()); loadData(); }
+    if (updated > 0) { loadData(); }
   }
 
   // Single useEffect with cancellation guard. Replaces the older

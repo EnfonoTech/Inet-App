@@ -489,7 +489,6 @@ export default function IMWorkDone() {
         file_urls: Object.keys(fileUrls).length ? fileUrls : undefined,
       });
       setBulkResult(res);
-      setSelectedRows(new Set());
       loadData();
     } catch (err) {
       setBulkErr(err.message || "Bulk submit failed");

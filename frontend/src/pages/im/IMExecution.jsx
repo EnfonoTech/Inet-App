@@ -505,7 +505,6 @@ export default function IMExecution() {
         // eslint-disable-next-line no-await-in-loop
         await pmApi.generateWorkDone(row.name, wdIssueFlag);
       }
-      setSelectedExecs(new Set());
       await loadExecutions();
     } catch (err) {
       setWdErr(err.message || "Could not create Work Done");
@@ -594,7 +593,6 @@ export default function IMExecution() {
     try {
       const res = await pmApi.bulkUpdateExecutionField(names, "qc_status", bulkQcPick);
       setBulkQcOpen(false);
-      setSelectedExecs(new Set());
       if (res?.errors?.length) setBulkQcErr(`Updated ${res.updated}. ${res.errors.length} failed.`);
       await loadExecutions();
     } catch (err) {
@@ -612,7 +610,6 @@ export default function IMExecution() {
     try {
       const res = await pmApi.bulkUpdateExecutionField(names, "ciag_status", bulkCiagPick);
       setBulkCiagOpen(false);
-      setSelectedExecs(new Set());
       if (res?.errors?.length) setBulkCiagErr(`Updated ${res.updated}. ${res.errors.length} failed.`);
       await loadExecutions();
     } catch (err) {
@@ -629,7 +626,6 @@ export default function IMExecution() {
     try {
       const res = await pmApi.bulkUpdateExecutionField([...selectedExecs], "execution_status", bulkExecPick);
       setBulkExecOpen(false);
-      setSelectedExecs(new Set());
       if (res?.errors?.length) setBulkExecErr(`Updated ${res.updated}. ${res.errors.length} failed.`);
       await loadExecutions();
     } catch (err) {
@@ -1710,7 +1706,6 @@ export default function IMExecution() {
                 ? `${ok} rescheduled, ${fail} failed.`
                 : `${ok} plan${ok !== 1 ? "s" : ""} rescheduled.`
             );
-            setSelectedExecs(new Set());
             loadExecutions();
           }}
         />
@@ -1753,7 +1748,6 @@ export default function IMExecution() {
                   try {
                     await Promise.all(extendableExecs.map((e) => pmApi.extendPlanEndDate(e.rollout_plan, extendNewDate, extendNote)));
                     setExtendOpen(false); setExtendNote(""); setExtendNewDate("");
-                    setSelectedExecs(new Set());
                     loadExecutions();
                   } catch (err) {
                     setExtendError(err.message || "Extension failed.");

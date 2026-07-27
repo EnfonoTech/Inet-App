@@ -618,7 +618,6 @@ export default function IMPlanning() {
         onClose={() => setExecutionModalOpen(false)}
         selectedPlans={executionSelectionOk ? eligiblePlans : []}
         onSubmitted={async () => {
-          setSelected(new Set());
           await loadPlans();
         }}
       />
@@ -830,7 +829,6 @@ export default function IMPlanning() {
                 ? `${ok} rescheduled, ${fail} failed.`
                 : `${ok} plan${ok !== 1 ? "s" : ""} rescheduled.`
             );
-            setSelected(new Set());
             loadPlans();
           }}
         />
@@ -878,7 +876,6 @@ export default function IMPlanning() {
                     }
                     setExtendModalRow(null); setExtendNote(""); setExtendNewDate("");
                     setRescheduleSuccessMsg(`End date extended to ${extendNewDate} for ${plans.length} plan${plans.length !== 1 ? "s" : ""}.`);
-                    setSelected(new Set());
                     loadPlans();
                   } catch (err) {
                     setExtendError(err.message || "Extension failed.");

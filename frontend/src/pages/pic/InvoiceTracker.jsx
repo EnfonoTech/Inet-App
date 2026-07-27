@@ -188,7 +188,6 @@ export default function InvoiceTracker() {
       if (ms1Count) parts.push(`${ms1Count} MS1`);
       if (ms2Count) parts.push(`${ms2Count} MS2`);
       setMsg(`Marked ${parts.join(" + ")} as "${newStatus}"`);
-      setSelected(new Set());
       await load();
     } catch (e) {
       setError(e?.message || "Status update failed");

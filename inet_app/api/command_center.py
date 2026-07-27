@@ -8739,10 +8739,11 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
 
 
 @frappe.whitelist()
-def get_duid_overview(duid=None, po_no=None):
+def get_duid_overview(duid=None, po_no=None, poid=None):
     """
     DUID-wise (site_code) rollout view: PO line, plans, executions.
-    Optional po_no narrows dispatch rows. Expenses / acceptance: placeholders for Phase 2.
+    Optional po_no / poid narrows dispatch rows. Expenses / acceptance:
+    placeholders for Phase 2.
 
     PM / desk admin only — not for INET IM / field roles.
     """
@@ -8759,14 +8760,17 @@ def get_duid_overview(duid=None, po_no=None):
 
     duid = (duid or "").strip()
     po_no = (po_no or "").strip()
-    if not duid and not po_no:
-        frappe.throw("Provide duid (site / DUID) and/or po_no")
+    poid = (poid or "").strip()
+    if not duid and not po_no and not poid:
+        frappe.throw("Provide duid (site / DUID), po_no, and/or poid")
 
     dfilters = {}
     if duid:
         dfilters["site_code"] = duid
     if po_no:
         dfilters["po_no"] = po_no
+    if poid:
+        dfilters["poid"] = poid
 
     dispatches = frappe.get_all(
         "PO Dispatch",
@@ -8799,6 +8803,7 @@ def get_duid_overview(duid=None, po_no=None):
     return {
         "duid": duid or None,
         "po_no": po_no or None,
+        "poid": poid or None,
         "dispatches": dispatches,
         "rollout_plans": plans,
         "executions": executions,

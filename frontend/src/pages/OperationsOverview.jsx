@@ -9,6 +9,7 @@ import { pmApi } from "../services/api";
 export default function OperationsOverview() {
   const [duid, setDuid] = useState("");
   const [poNo, setPoNo] = useState("");
+  const [poid, setPoid] = useState("");
   const [tab, setTab] = useState("duid");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -19,12 +20,17 @@ export default function OperationsOverview() {
     setData(null);
     const d = tab === "duid" ? duid.trim() : "";
     const p = tab === "po" ? poNo.trim() : "";
+    const pid = tab === "poid" ? poid.trim() : "";
     if (tab === "duid" && !d && !poNo.trim()) {
       setErr("Enter a DUID (site code), or use the PO tab.");
       return;
     }
     if (tab === "po" && !p) {
       setErr("Enter a PO number.");
+      return;
+    }
+    if (tab === "poid" && !pid) {
+      setErr("Enter a POID.");
       return;
     }
     if (tab === "acceptance") {
@@ -35,6 +41,8 @@ export default function OperationsOverview() {
     try {
       const res = tab === "po"
         ? await pmApi.getDuidOverview("", p)
+        : tab === "poid"
+        ? await pmApi.getDuidOverview("", "", pid)
         : await pmApi.getDuidOverview(d, poNo.trim() || "");
       setData(res);
     } catch (e) {
@@ -56,6 +64,7 @@ export default function OperationsOverview() {
       <div className="toolbar" style={{ flexWrap: "wrap", gap: 12 }}>
         {[
           { id: "duid", label: "DUID / Site" },
+          { id: "poid", label: "POID" },
           { id: "po", label: "PO" },
           { id: "acceptance", label: "Acceptance" },
         ].map((t) => (
@@ -95,6 +104,12 @@ export default function OperationsOverview() {
           <div>
             <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: 4 }}>PO No</label>
             <input value={poNo} onChange={(e) => setPoNo(e.target.value)} placeholder="PO number" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e2e8f0", minWidth: 220 }} />
+          </div>
+        )}
+        {tab === "poid" && (
+          <div>
+            <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: 4 }}>POID</label>
+            <input value={poid} onChange={(e) => setPoid(e.target.value)} placeholder="POID" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e2e8f0", minWidth: 220 }} />
           </div>
         )}
         {tab === "acceptance" && (
@@ -139,7 +154,7 @@ export default function OperationsOverview() {
                       <tbody>
                         {data.dispatches.map((d) => (
                           <tr key={d.name}>
-                            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{d.name}</td>
+                            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{d.poid || d.name}</td>
                             <td>{d.po_no}</td>
                             <td>{d.site_code}</td>
                             <td>{d.item_code}</td>

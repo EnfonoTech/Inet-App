@@ -221,8 +221,8 @@ export const pmApi = {
     }
     return call("inet_app.api.command_center.list_im_daily_executions", args);
   },
-  getDuidOverview:      (duid, poNo) =>
-    call("inet_app.api.command_center.get_duid_overview", { duid: duid || "", po_no: poNo || "" }),
+  getDuidOverview:      (duid, poNo, poid) =>
+    call("inet_app.api.command_center.get_duid_overview", { duid: duid || "", po_no: poNo || "", poid: poid || "" }),
   reopenRolloutForRevisit: (rolloutPlan, issueCategory, issueRemarks) =>
     call("inet_app.api.command_center.reopen_rollout_for_revisit", {
       rollout_plan: rolloutPlan,
