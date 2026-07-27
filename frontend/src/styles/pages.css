@@ -747,10 +747,18 @@
   line-height: 1.2;
 }
 
-/* Sort button is the rightmost control on the toolbar. Pushing it via
-   margin-left:auto keeps the rest of the buttons left-anchored. */
-.tablepro-btn-sort {
+/* Clear Sort + Sort by are the rightmost controls on the toolbar, grouped
+   together so Clear Sort always sits immediately left of Sort by. The
+   group (not the individual buttons) gets margin-left:auto so the pair
+   stays adjacent and right-anchored regardless of whether Clear Sort is
+   currently shown or hidden. */
+.tablepro-sort-group {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tablepro-btn-sort {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -936,7 +944,8 @@
   background: #f8fafc;
 }
 
-.tablepro-btn-clear-filters {
+.tablepro-btn-clear-filters,
+.tablepro-btn-clear-sort {
   color: #dc2626 !important;
   border-color: #fca5a5 !important;
 }

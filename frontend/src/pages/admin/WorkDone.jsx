@@ -1031,6 +1031,7 @@ export default function WorkDone() {
                   return (
                     <tr key={row.name}
                       data-doc-name={row.name}
+                      data-modified={row.modified}
                       className={selectedRows.has(row.name) ? "row-selected" : ""}
                       style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}), cursor: "pointer" }}
                       onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(row.name) ? next.delete(row.name) : next.add(row.name); return next; })}

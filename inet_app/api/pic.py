@@ -1437,7 +1437,7 @@ def list_invoice_tracker_rows(filters=None, limit=500):
         {si_join}
         WHERE {where_str}
         GROUP BY pd.name
-        ORDER BY pd.modified DESC
+        ORDER BY pd.creation DESC
         {_sql_limit_suffix(lim)}
         """,
         tuple(params),

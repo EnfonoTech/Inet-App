@@ -6082,7 +6082,7 @@ def list_work_done_rows(filters=None, limit=500):
         "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
         f"{rp_im_join_wd} {pd_im_join_wd} "
         f"WHERE {' AND '.join(wheres)} "
-        "ORDER BY wd.modified DESC "
+        "ORDER BY wd.creation DESC "
         f"{_sql_limit_suffix(lim)}"
     )
     wd_id_rows = frappe.db.sql(id_sql, tuple(params), as_dict=True)
@@ -8488,7 +8488,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
     lim_rp = _portal_row_limit(limit, 500)
     rows = frappe.db.sql(
         f"""
-        SELECT rp.name, rp.po_dispatch AS system_id, rp.po_dispatch,
+        SELECT rp.name, rp.modified, rp.po_dispatch AS system_id, rp.po_dispatch,
                COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
                rp.team, rp.plan_date, rp.plan_end_date, rp.visit_type,
                rp.visit_number, rp.visit_multiplier, rp.target_amount, rp.achieved_amount,
@@ -8516,7 +8516,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         {rp_im_join}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         WHERE pd.im IN ({ph}){status_clause}{portal_clause}
-        ORDER BY rp.plan_date DESC, rp.modified DESC
+        ORDER BY rp.plan_date DESC, rp.creation DESC
         {_sql_limit_suffix(lim_rp)}
         """,
         tuple(params),
@@ -8675,7 +8675,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     lim_de = _portal_row_limit(limit, 500)
     rows = frappe.db.sql(
         f"""
-        SELECT de.name, rp.po_dispatch AS system_id, de.rollout_plan,
+        SELECT de.name, de.modified, rp.po_dispatch AS system_id, de.rollout_plan,
                COALESCE(NULLIF(pd.poid, ''), pd.name) AS poid,
                rp.visit_number, rp.visit_type, rp.plan_date, rp.plan_end_date, rp.plan_status AS plan_status,
                IFNULL(rp.reschedule_count, 0) AS reschedule_count,
@@ -8722,7 +8722,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             IFNULL(rp.issue_status,'') = 'Reported'
             OR (IFNULL(rp.issue_status,'') = '' AND rp.plan_status = 'Planning with Issue')
         )
-        ORDER BY de.execution_date DESC, de.modified DESC
+        ORDER BY de.execution_date DESC, de.creation DESC
         {_sql_limit_suffix(lim_de)}
         """,
         tuple(params),

@@ -800,6 +800,7 @@ export default function IMWorkDone() {
                   <tr
                     key={r.name}
                     data-doc-name={r.name}
+                    data-modified={r.modified}
                     className={selectedRows.has(r.name) ? "row-selected" : ""}
                     onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(r.name) ? next.delete(r.name) : next.add(r.name); return next; })}
                     style={{ cursor: "pointer", ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}

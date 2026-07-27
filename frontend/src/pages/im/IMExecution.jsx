@@ -1220,7 +1220,7 @@ export default function IMExecution() {
                 </thead>
                 <tbody>
                   {filteredInternalDone.map((e) => (
-                    <tr key={e.name} data-doc-name={e.name} style={{ background: "#f0fdfa" }}>
+                    <tr key={e.name} data-doc-name={e.name} data-modified={e.modified} style={{ background: "#f0fdfa" }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{e.item_code || e.site_name || "—"}</td>
@@ -1329,7 +1329,7 @@ export default function IMExecution() {
               </thead>
               <tbody>
                 {filteredExecutions.map((e) => (
-                  <tr key={e.name} data-doc-name={e.name} style={e.is_dummy_po ? { background: "#fffbeb" } : Number(e.is_internal_work || 0) ? { background: "#f0fdfa" } : undefined}>
+                  <tr key={e.name} data-doc-name={e.name} data-modified={e.modified} style={e.is_dummy_po ? { background: "#fffbeb" } : Number(e.is_internal_work || 0) ? { background: "#f0fdfa" } : undefined}>
                     <td>
                       <input
                         type="checkbox"

@@ -471,6 +471,7 @@ export default function IMPlanning() {
                   <tr
                     key={p.name}
                     data-doc-name={p.name}
+                    data-modified={p.modified}
                     className={selected.has(p.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(p.name)}
                     style={{ cursor: "pointer", ...(p.is_dummy_po ? { background: "#fffbeb" } : Number(p.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}

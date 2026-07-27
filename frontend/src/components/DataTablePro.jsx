@@ -8,6 +8,13 @@ import { pmApi } from "../services/api";
 const TABLEPRO_SELECT_COL_PX = 44;
 /** Floor width for visible columns without a saved width — min table width so many columns can scroll horizontally. */
 const TABLEPRO_DEFAULT_COL_MIN_PX = 120;
+/**
+ * Synthetic Sort-by option sourced from each row's data-modified attribute
+ * rather than a visible column — offered only on tables whose rows opt in
+ * by setting that attribute (see pages that pass row.modified through).
+ */
+const TABLEPRO_MODIFIED_SORT_KEY = "__modified";
+const TABLEPRO_MODIFIED_SORT_LABEL = "Last Updated On";
 
 function keyFromLabel(label, i) {
   const base = String(label || "")
@@ -242,6 +249,25 @@ export default function DataTablePro() {
             : { key: null, dir: "desc" },
           dynamic_fields: savedDyn,
         };
+        // Row order as the server/React last delivered it (before any DataTablePro
+        // sort ever touched the DOM) — captured whenever fresh rows arrive so
+        // "Clear Sort" can restore it instead of leaving rows wherever the last
+        // active sort's appendChild calls left them.
+        let naturalOrderIds = null;
+        // Reference to the tbody childList observer, assigned once it's created
+        // further down. applySort() uses it to drain the mutation records its
+        // OWN appendChild reordering generates — without this, every sort click
+        // re-triggers the "fresh data arrived" observer, which would recapture
+        // the just-sorted order as if it were the natural default.
+        let tbodyMo = null;
+        const captureNaturalOrder = () => {
+          const tbody = table.querySelector("tbody");
+          if (!tbody) return;
+          naturalOrderIds = Array.from(tbody.children)
+            .filter((r) => r.tagName === "TR")
+            .map((r) => r.dataset.docName || "");
+        };
+
         let availableFields = [];
         if (tableDoctype) {
           try {
@@ -574,18 +600,36 @@ export default function DataTablePro() {
         /**
          * Reorder tbody rows by the chosen sort key + direction. Reads each
          * row's cell text content for that column (numeric-aware compare).
-         * No-op when state.sort.key is null or the column isn't found.
+         * When state.sort.key is null (sort cleared), restores the server's
+         * default order captured in naturalOrderIds — appendChild during a
+         * sort physically moves rows, so without this they'd stay wherever
+         * the last active sort left them instead of reverting to default.
          */
         const applySort = () => {
           refreshHeaderSortIndicators();
           const key = state.sort?.key;
-          if (!key) return;
           const tbody = table.querySelector("tbody");
           if (!tbody) return;
+          if (!key) {
+            if (!naturalOrderIds) return;
+            const rows = Array.from(tbody.children).filter((r) => r.tagName === "TR");
+            const byId = new Map(rows.map((r) => [r.dataset.docName || "", r]));
+            naturalOrderIds.forEach((id) => {
+              const r = id && byId.get(id);
+              if (r) tbody.appendChild(r);
+            });
+            // Our own appendChild calls just triggered the tbody childList
+            // observer — drain those records so it doesn't mistake this for
+            // fresh data and re-capture this (already-reordered) state as
+            // the new "natural" baseline.
+            tbodyMo?.takeRecords();
+            return;
+          }
           const rows = Array.from(tbody.children).filter((r) => r.tagName === "TR");
           if (rows.length < 2) return;
 
           const valueFor = (row) => {
+            if (key === TABLEPRO_MODIFIED_SORT_KEY) return (row.dataset.modified || "").trim();
             // Avoid CSS.escape edge cases — iterate children directly.
             let cell = null;
             for (const c of row.children) {
@@ -619,6 +663,9 @@ export default function DataTablePro() {
           // appendChild on an already-attached node moves it. Reattaching in
           // sorted order is the cheapest way to reorder rows.
           sorted.forEach((r) => tbody.appendChild(r));
+          // Same reasoning as the clear-sort branch above — this reorder must
+          // not be mistaken for a fresh data delivery.
+          tbodyMo?.takeRecords();
         };
 
         const applyWidths = () => {
@@ -802,6 +849,7 @@ export default function DataTablePro() {
           applyFrozen();
           applySort();
           updateSortButtonLabel();
+          updateClearSortBtn();
           // Mark ready here so the table shows before dynamic-column values load.
           table.classList.add("data-table--tablepro-ready");
 
@@ -824,11 +872,14 @@ export default function DataTablePro() {
           <button type="button" class="btn-secondary tablepro-btn-filters">Filters</button>
           <button type="button" class="btn-secondary tablepro-btn-clear-filters" style="display:none;">✕ Clear Filters</button>
           <button type="button" class="btn-secondary tablepro-btn-reset">Reset</button>
-          <button type="button" class="btn-secondary tablepro-btn-sort" title="Sort rows by column">
-            <span class="tablepro-sort-icon">↕</span>
-            <span class="tablepro-sort-label">Sort by</span>
-            <span class="tablepro-sort-dir"></span>
-          </button>
+          <div class="tablepro-sort-group">
+            <button type="button" class="btn-secondary tablepro-btn-clear-sort" style="display:none;">✕ Clear Sort</button>
+            <button type="button" class="btn-secondary tablepro-btn-sort" title="Sort rows by column">
+              <span class="tablepro-sort-icon">↕</span>
+              <span class="tablepro-sort-label">Sort by</span>
+              <span class="tablepro-sort-dir"></span>
+            </button>
+          </div>
         `;
         wrapper.parentElement?.insertBefore(toolbar, wrapper);
         tracked.push({ table, toolbar });
@@ -903,11 +954,39 @@ export default function DataTablePro() {
               }
               renderSortPanel();
               updateSortButtonLabel();
+              updateClearSortBtn();
               applySort();
               persist();
             });
             sortPanel.appendChild(row);
           });
+
+          // Synthetic option sourced from data-modified rather than a visible
+          // column — only offered when the page's rows actually carry it.
+          if (table.querySelector("tbody tr[data-modified]")) {
+            const key = TABLEPRO_MODIFIED_SORT_KEY;
+            const row = document.createElement("div");
+            const isActive = state.sort?.key === key;
+            row.className = `tablepro-sort-row${isActive ? " is-active" : ""}`;
+            const arrow = isActive ? (state.sort.dir === "asc" ? "↑" : "↓") : "";
+            row.innerHTML = `
+              <span class="arrow">${arrow}</span>
+              <span style="flex:1;">${escAttr(TABLEPRO_MODIFIED_SORT_LABEL)}</span>
+            `;
+            row.addEventListener("click", () => {
+              if (state.sort?.key === key) {
+                state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+              } else {
+                state.sort = { key, dir: "desc" };
+              }
+              renderSortPanel();
+              updateSortButtonLabel();
+              updateClearSortBtn();
+              applySort();
+              persist();
+            });
+            sortPanel.appendChild(row);
+          }
 
           if (state.sort?.key) {
             const clear = document.createElement("div");
@@ -917,6 +996,7 @@ export default function DataTablePro() {
               state.sort = { key: null, dir: "desc" };
               renderSortPanel();
               updateSortButtonLabel();
+              updateClearSortBtn();
               await applyAll();
               persist();
             });
@@ -925,6 +1005,9 @@ export default function DataTablePro() {
         };
 
         const getColumnMeta = (key) => {
+          if (key === TABLEPRO_MODIFIED_SORT_KEY) {
+            return { key: TABLEPRO_MODIFIED_SORT_KEY, label: TABLEPRO_MODIFIED_SORT_LABEL };
+          }
           const col = columns.find((c) => c.key === key);
           if (col) return col;
           const dyn = state.dynamic_fields.find((d) => d.key === key);
@@ -1042,6 +1125,18 @@ export default function DataTablePro() {
           const btn = toolbar.querySelector(".tablepro-btn-clear-filters");
           if (btn) btn.style.display = hasActive ? "" : "none";
         };
+        const updateClearSortBtn = () => {
+          const btn = toolbar.querySelector(".tablepro-btn-clear-sort");
+          if (btn) btn.style.display = state.sort?.key ? "" : "none";
+        };
+        toolbar.querySelector(".tablepro-btn-clear-sort")?.addEventListener("click", async () => {
+          state.sort = { key: null, dir: "desc" };
+          renderSortPanel();
+          updateSortButtonLabel();
+          updateClearSortBtn();
+          await applyAll();
+          persist();
+        });
         toolbar.querySelector(".tablepro-btn-filters")?.addEventListener("click", () => {
           state.show_filters = !state.show_filters;
           ensureFilterRow();
@@ -1072,6 +1167,7 @@ export default function DataTablePro() {
           state.dynamic_fields = [];
           renderPanel();
           renderSortPanel();
+          updateClearSortBtn();
           await applyAll();
           persist();
         });
@@ -1083,8 +1179,10 @@ export default function DataTablePro() {
         };
         document.addEventListener("mousedown", onDocClick);
 
+        captureNaturalOrder();
         await applyAll();
         updateClearFiltersBtn();
+        updateClearSortBtn();
         renderPanel();
         // data-table--tablepro-ready is added inside applyAll (before the async
         // dynamic-column fetch) so the table is visible as fast as possible.
@@ -1107,7 +1205,7 @@ export default function DataTablePro() {
         // the identity shift here and do a full re-init instead of applying stale state.
         const tableKey = customKey || "";
         let tbodyReapplyTimer = null;
-        const tbodyMo = new MutationObserver(() => {
+        tbodyMo = new MutationObserver(() => {
           if (destroyed) return;
           // Detect tab-switch reuse: React updated data-table-key to a different value
           const nowKey = table.getAttribute("data-table-key") || "";
@@ -1127,6 +1225,10 @@ export default function DataTablePro() {
             scheduleReinitFromDom();
             return;
           }
+          // The mutation has already landed in the DOM by the time this callback
+          // runs, so this reflects React's freshly-delivered (unsorted-by-us) row
+          // order — the right moment to (re)baseline what "Clear Sort" restores.
+          captureNaturalOrder();
           if (tbodyReapplyTimer) clearTimeout(tbodyReapplyTimer);
           tbodyReapplyTimer = setTimeout(async () => {
             tbodyReapplyTimer = null;

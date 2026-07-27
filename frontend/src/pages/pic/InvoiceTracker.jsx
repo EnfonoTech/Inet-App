@@ -350,6 +350,7 @@ export default function InvoiceTracker() {
                     <tr
                       key={r.name}
                       data-doc-name={r.name}
+                      data-modified={r.modified}
                       className={selected.has(r.name) ? "row-selected" : ""}
                       onClick={() => toggleRow(r.name)}
                       style={{ cursor: "pointer" }}
