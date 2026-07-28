@@ -1,0 +1,164 @@
+{
+ "actions": [],
+ "autoname": "format:PTR-{YYYY}-{#####}",
+ "creation": "2026-07-27 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "from_im",
+  "to_im",
+  "requested_by",
+  "request_status",
+  "column_break_ptr1",
+  "poid_count",
+  "total_amount",
+  "approved_by",
+  "approved_at",
+  "section_remarks",
+  "reason",
+  "pm_remark",
+  "section_lines",
+  "poids"
+ ],
+ "fields": [
+  {
+   "fieldname": "from_im",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "From IM",
+   "options": "IM Master",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_im",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "To IM",
+   "options": "IM Master",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "Pending PM Approval",
+   "fieldname": "request_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending PM Approval\nApproved\nRejected by PM\nCancelled",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_ptr1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "poid_count",
+   "fieldtype": "Int",
+   "label": "POID Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_amount",
+   "fieldtype": "Currency",
+   "label": "Total Amount (SAR)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "PM Decision By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_at",
+   "fieldtype": "Datetime",
+   "label": "PM Decision At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_remarks",
+   "fieldtype": "Section Break",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason (Requester)"
+  },
+  {
+   "fieldname": "pm_remark",
+   "fieldtype": "Small Text",
+   "label": "PM Remark"
+  },
+  {
+   "fieldname": "section_lines",
+   "fieldtype": "Section Break",
+   "label": "POIDs"
+  },
+  {
+   "fieldname": "poids",
+   "fieldtype": "Table",
+   "label": "POIDs",
+   "options": "PO Transfer Request Line",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-07-27 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PO Transfer Request",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

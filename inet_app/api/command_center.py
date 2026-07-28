@@ -13676,6 +13676,380 @@ def list_team_allocation_requests(scope="all", status=None, limit=200):
     return rows
 
 
+# PO Transfer Request — IM requests batch transfer of Intake-tab POIDs to
+# another IM, one single PM approval covers every POID in the batch.
+# ---------------------------------------------------------------------------
+# Lifecycle:
+#   None → (IM requests, N POIDs) → Pending PM Approval
+#   Pending PM Approval → (PM approve) → Approved (atomic flip: every line's
+#                                          PO Dispatch.im → to_im)
+#   Pending PM Approval → (PM reject)  → Rejected by PM (no changes)
+#   Pending PM Approval → (requester cancel) → Cancelled (no changes)
+#
+# Scoped to Intake-tab rows only (no target_month yet — no Rollout Plan /
+# Daily Execution exists for these, so there is nothing to cascade).
+# ---------------------------------------------------------------------------
+
+_PO_TRANSFER_BLOCKED_STATUSES = frozenset({
+    "Backend Assigned", "Closed", "Cancelled", "Cancelled (in System)",
+    "Completed", "Planned",
+})
+
+
+def _po_transfer_candidate_snapshot(name):
+    return frappe.db.get_value(
+        "PO Dispatch", name,
+        ["name", "poid", "po_no", "site_code", "project_code", "im",
+         "item_code", "item_description",
+         "line_amount", "dispatch_status", "target_month",
+         "is_dummy_po", "is_internal_work"],
+        as_dict=True,
+    ) or {}
+
+
+def _assert_po_transfer_eligible(pd, im_identifiers=None, expected_from_im=None):
+    """Shared eligibility check, used both at request-creation time (against
+    the caller's own IM identifiers) and at PM-approve time (re-validated
+    against the IM snapshotted when the request was made)."""
+    label = pd.get("poid") or pd.get("name") or "?"
+    if not pd or not pd.get("name"):
+        frappe.throw(f"{label}: PO Dispatch not found")
+    if im_identifiers is not None and (pd.get("im") or "") not in im_identifiers:
+        frappe.throw(f"{label}: not assigned to you")
+    if expected_from_im is not None and pd.get("im") != expected_from_im:
+        frappe.throw(
+            f"{label}: ownership changed since the request was made "
+            f"(now: {pd.get('im') or '—'}). Reject and ask the IM to re-request."
+        )
+    if (pd.get("dispatch_status") or "") in _PO_TRANSFER_BLOCKED_STATUSES:
+        frappe.throw(f"{label}: status '{pd.get('dispatch_status')}' cannot be transferred")
+    if (pd.get("target_month") or "").strip():
+        frappe.throw(f"{label}: already has a target month — outside Intake scope")
+    if cint(pd.get("is_dummy_po")) and not (pd.get("poid") or "").strip():
+        frappe.throw(f"{label}: unmapped dummy PO — map it to a real PO line before transferring")
+    if cint(pd.get("is_internal_work")):
+        frappe.throw(f"{label}: internal work cannot be transferred")
+    # Duplicate-pending check only applies at request-creation time
+    # (im_identifiers set). At PM-approve time this would otherwise find the
+    # very request being decided (still "Pending PM Approval" until the
+    # write phase below) and falsely reject every approval.
+    if im_identifiers is not None:
+        existing = frappe.db.sql(
+            "SELECT h.name FROM `tabPO Transfer Request Line` l "
+            "INNER JOIN `tabPO Transfer Request` h ON h.name = l.parent "
+            "WHERE l.po_dispatch = %s AND h.request_status = 'Pending PM Approval' "
+            "LIMIT 1",
+            (pd.get("name"),),
+        )
+        if existing:
+            frappe.throw(f"{label}: already has a pending transfer request ({existing[0][0]})")
+
+
+def _po_transfer_serialize(name):
+    d = frappe.db.get_value(
+        "PO Transfer Request", name,
+        ["name", "from_im", "to_im", "requested_by", "request_status",
+         "poid_count", "total_amount", "reason", "pm_remark",
+         "approved_by", "approved_at", "creation", "modified"],
+        as_dict=True,
+    )
+    if not d:
+        return None
+    for key in ("from_im", "to_im"):
+        v = d.get(key)
+        if v:
+            d[f"{key}_name"] = frappe.db.get_value("IM Master", v, "full_name") or v
+    d["lines"] = frappe.db.get_all(
+        "PO Transfer Request Line",
+        filters={"parent": name},
+        fields=["po_dispatch", "poid", "po_no", "site_code", "project_code",
+                "item_code", "item_description", "line_amount", "line_status"],
+        order_by="idx asc",
+    )
+    return d
+
+
+@frappe.whitelist()
+def request_po_transfer(po_dispatches, to_im, reason=None):
+    """IM requests transferring one or more of their own Intake-tab POIDs to
+    a different IM. Creates one PO Transfer Request covering every POID —
+    all-or-nothing validation, nothing is created if any line is ineligible."""
+    _im_resolved, im_identifiers = _require_inet_im_session()
+    from_im = _resolve_caller_im_or_throw()
+
+    if isinstance(po_dispatches, str):
+        try:
+            po_dispatches = frappe.parse_json(po_dispatches)
+        except Exception:
+            po_dispatches = [po_dispatches]
+    names = []
+    seen = set()
+    for n in (po_dispatches or []):
+        n = (n or "").strip()
+        if n and n not in seen:
+            seen.add(n)
+            names.append(n)
+    if not names:
+        frappe.throw("Select at least one POID to transfer")
+
+    to_im = (to_im or "").strip()
+    if not to_im:
+        frappe.throw("Target IM is required")
+    if not frappe.db.exists("IM Master", to_im):
+        frappe.throw("Target IM not found")
+    if to_im == from_im:
+        frappe.throw("You already own these POIDs — pick a different target IM.")
+
+    snapshots = []
+    for n in names:
+        pd = _po_transfer_candidate_snapshot(n)
+        _assert_po_transfer_eligible(pd, im_identifiers=im_identifiers)
+        snapshots.append(pd)
+
+    doc = frappe.new_doc("PO Transfer Request")
+    doc.from_im = from_im
+    doc.to_im = to_im
+    doc.requested_by = frappe.session.user
+    doc.request_status = "Pending PM Approval"
+    if reason:
+        doc.reason = str(reason)[:2000]
+    doc.poid_count = len(snapshots)
+    doc.total_amount = sum(flt(s.get("line_amount")) for s in snapshots)
+    for s in snapshots:
+        doc.append("poids", {
+            "po_dispatch": s.get("name"),
+            "poid": s.get("poid") or s.get("name"),
+            "po_no": s.get("po_no"),
+            "site_code": s.get("site_code"),
+            "project_code": s.get("project_code"),
+            "item_code": s.get("item_code"),
+            "item_description": s.get("item_description"),
+            "line_amount": s.get("line_amount"),
+            "line_status": "Pending",
+        })
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    try:
+        from inet_app.api.notifications import notify_pm_po_transfer_requested
+        notify_pm_po_transfer_requested(doc.name)
+    except Exception:
+        pass
+    return _po_transfer_serialize(doc.name)
+
+
+@frappe.whitelist()
+def pm_decide_po_transfer(request, action, remark=None):
+    """PM approves or rejects a batch POID transfer. On approve: every
+    line's PO Dispatch.im is flipped to to_im atomically — validated in a
+    read-only pass first so a single ineligible line aborts the whole
+    approval before any write happens."""
+    request = (request or "").strip()
+    action = (action or "").strip().lower()
+    if action not in ("approve", "reject"):
+        frappe.throw("action must be 'approve' or 'reject'")
+    req = frappe.get_doc("PO Transfer Request", request)
+    if req.request_status != "Pending PM Approval":
+        frappe.throw(f"Request is not awaiting PM approval (current status: {req.request_status}).")
+    _assert_request_caller_role(req, "pm")
+
+    if action == "reject":
+        frappe.db.set_value(
+            "PO Transfer Request", request,
+            {
+                "request_status": "Rejected by PM",
+                "approved_by": frappe.session.user,
+                "approved_at": now_datetime(),
+                "pm_remark": str(remark or "")[:2000] or None,
+            },
+            update_modified=True,
+        )
+        frappe.db.commit()
+        try:
+            from inet_app.api.notifications import notify_ims_po_transfer_pm_decided
+            notify_ims_po_transfer_pm_decided(request, "reject")
+        except Exception:
+            pass
+        return _po_transfer_serialize(request)
+
+    # Approve — read-only validation pass first (no writes), so a single
+    # ineligible line throws before anything is written; only if every line
+    # passes do we proceed to the writes below.
+    lines = frappe.db.get_all("PO Transfer Request Line", filters={"parent": request}, fields=["po_dispatch"])
+    if not lines:
+        frappe.throw("This request has no POID lines.")
+    for l in lines:
+        pd = _po_transfer_candidate_snapshot(l.po_dispatch)
+        _assert_po_transfer_eligible(pd, expected_from_im=req.from_im)
+
+    for l in lines:
+        frappe.db.set_value("PO Dispatch", l.po_dispatch, "im", req.to_im, update_modified=True)
+    frappe.db.sql(
+        "UPDATE `tabPO Transfer Request Line` SET line_status = 'Transferred' WHERE parent = %s",
+        (request,),
+    )
+    frappe.db.set_value(
+        "PO Transfer Request", request,
+        {
+            "request_status": "Approved",
+            "approved_by": frappe.session.user,
+            "approved_at": now_datetime(),
+            "pm_remark": str(remark or "")[:2000] or None,
+        },
+        update_modified=True,
+    )
+    frappe.db.commit()
+    try:
+        from inet_app.api.notifications import notify_ims_po_transfer_pm_decided
+        notify_ims_po_transfer_pm_decided(request, "approve")
+    except Exception:
+        pass
+    return _po_transfer_serialize(request)
+
+
+@frappe.whitelist()
+def cancel_po_transfer(request):
+    """Requester withdraws a request that's still awaiting PM approval."""
+    request = (request or "").strip()
+    req = frappe.get_doc("PO Transfer Request", request)
+    if req.request_status != "Pending PM Approval":
+        frappe.throw("Cannot cancel — request has already been decided.")
+    _assert_request_caller_role(req, "requester")
+    frappe.db.set_value("PO Transfer Request", request, {"request_status": "Cancelled"}, update_modified=True)
+    frappe.db.commit()
+    return _po_transfer_serialize(request)
+
+
+@frappe.whitelist()
+def list_po_transfer_requests(scope="all", status=None, limit=200):
+    """Return PO Transfer Requests visible to the caller.
+
+    `scope` ∈ {"all", "outgoing", "incoming", "pending_pm"}.
+      - "outgoing"   — requests where caller IM is `from_im` (their own requests)
+      - "incoming"   — requests where caller IM is `to_im` (read-only visibility;
+                       the receiving IM has no action to take before the PM decides)
+      - "pending_pm" — PM/Admin approval queue (status = Pending PM Approval)
+      - "all"        — all rows the caller has read access to
+    """
+    scope = (scope or "all").strip().lower()
+    wheres = []
+    params = []
+    if scope in ("outgoing", "incoming"):
+        try:
+            caller_im = _resolve_caller_im_or_throw()
+        except Exception:
+            return []
+        col = "from_im" if scope == "outgoing" else "to_im"
+        wheres.append(f"{col} = %s")
+        params.append(caller_im)
+    elif scope == "pending_pm":
+        wheres.append("request_status = %s")
+        params.append("Pending PM Approval")
+    if status:
+        wheres.append("request_status = %s")
+        params.append(status)
+    where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+    try:
+        limit = max(1, min(int(limit or 200), 500))
+    except Exception:
+        limit = 200
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, from_im, to_im, requested_by, request_status,
+               poid_count, total_amount, reason, pm_remark,
+               approved_by, approved_at, creation, modified
+        FROM `tabPO Transfer Request`
+        {where_sql}
+        ORDER BY modified DESC
+        LIMIT {limit}
+        """,
+        tuple(params), as_dict=True,
+    )
+    if not rows:
+        return []
+    im_ids = list({i for r in rows for i in (r.get("from_im"), r.get("to_im")) if i})
+    im_labels = {}
+    if im_ids:
+        for m in frappe.db.sql(
+            "SELECT name, full_name FROM `tabIM Master` WHERE name IN %(ids)s",
+            {"ids": tuple(im_ids)}, as_dict=True,
+        ):
+            im_labels[m["name"]] = m["full_name"] or m["name"]
+    names = [r["name"] for r in rows]
+    all_lines = frappe.db.sql(
+        "SELECT parent, poid, site_code, project_code, item_code, item_description, line_amount "
+        "FROM `tabPO Transfer Request Line` WHERE parent IN %(names)s ORDER BY parent, idx ASC",
+        {"names": tuple(names)}, as_dict=True,
+    )
+    lines_by_parent = {}
+    for l in all_lines:
+        lines_by_parent.setdefault(l["parent"], []).append(l)
+    for r in rows:
+        r["from_im_name"] = im_labels.get(r.get("from_im"), r.get("from_im"))
+        r["to_im_name"] = im_labels.get(r.get("to_im"), r.get("to_im"))
+        line_rows = lines_by_parent.get(r["name"], [])
+        r["lines"] = line_rows
+        poids = [l["poid"] for l in line_rows]
+        shown = poids[:5]
+        more = len(poids) - len(shown)
+        r["poid_list"] = ", ".join(shown) + (f" +{more} more" if more > 0 else "")
+    return rows
+
+
+@frappe.whitelist()
+def list_my_pending_po_transfer_poids():
+    """Flat list of PO Dispatch names the caller IM currently has tied up
+    in a pending transfer request — used to block re-selecting them into a
+    second request on the Intake tab."""
+    try:
+        caller_im = _resolve_caller_im_or_throw()
+    except Exception:
+        return []
+    rows = frappe.db.sql(
+        "SELECT l.po_dispatch FROM `tabPO Transfer Request Line` l "
+        "INNER JOIN `tabPO Transfer Request` h ON h.name = l.parent "
+        "WHERE h.from_im = %s AND h.request_status = 'Pending PM Approval'",
+        (caller_im,),
+    )
+    return [r[0] for r in rows]
+
+
+@frappe.whitelist()
+def list_im_masters_for_transfer_picker(search=None, limit=200):
+    """IM Master picker for the Intake-tab Transfer modal — IM-facing
+    (unlike list_im_masters_for_picker, which is PM-only), excludes the
+    caller's own IM since transferring to yourself is a no-op."""
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    exclude_im = None
+    try:
+        exclude_im = _resolve_caller_im_or_throw()
+    except Exception:
+        exclude_im = None
+    where = ["IFNULL(status,'Active') = 'Active'"]
+    params = []
+    if exclude_im:
+        where.append("name != %s")
+        params.append(exclude_im)
+    s = (search or "").strip()
+    if s:
+        where.append("(name LIKE %s OR IFNULL(full_name,'') LIKE %s)")
+        like = f"%{s}%"
+        params.extend([like, like])
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, IFNULL(full_name, name) AS full_name
+        FROM `tabIM Master`
+        WHERE {' AND '.join(where)}
+        ORDER BY full_name ASC
+        LIMIT %s
+        """,
+        tuple(params) + (int(limit),),
+        as_dict=True,
+    )
+    return rows
+
+
 # Rollout Plan Cancel Request — IM requests PM approval to cancel a plan
 # ---------------------------------------------------------------------------
 # Lifecycle:

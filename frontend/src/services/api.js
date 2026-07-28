@@ -561,6 +561,16 @@ export const pmApi = {
   pmDecideTeamAllocation: (request, action, remark) => call("inet_app.api.command_center.pm_decide_team_allocation", { request, action, remark: remark || "" }),
   cancelTeamAllocation:  (request)            => call("inet_app.api.command_center.cancel_team_allocation", { request }),
   listTeamAllocationRequests: (scope, status) => call("inet_app.api.command_center.list_team_allocation_requests", { scope: scope || "all", status: status || "" }),
+  // PO Transfer Request — IM requests batch transfer of Intake-tab POIDs to another IM, one PM approval covers the whole batch.
+  requestPoTransfer: (poDispatches, toIm, reason) => call("inet_app.api.command_center.request_po_transfer", {
+    po_dispatches: JSON.stringify(Array.isArray(poDispatches) ? poDispatches : [poDispatches]),
+    to_im: toIm, reason: reason || "",
+  }),
+  pmDecidePoTransfer: (request, action, remark) => call("inet_app.api.command_center.pm_decide_po_transfer", { request, action, remark: remark || "" }),
+  cancelPoTransfer:   (request) => call("inet_app.api.command_center.cancel_po_transfer", { request }),
+  listPoTransferRequests: (scope, status) => call("inet_app.api.command_center.list_po_transfer_requests", { scope: scope || "all", status: status || "" }),
+  listMyPendingPoTransferPoids: () => call("inet_app.api.command_center.list_my_pending_po_transfer_poids", {}),
+  listIMMastersForTransferPicker: (search) => call("inet_app.api.command_center.list_im_masters_for_transfer_picker", { search: search || "", limit: 200 }),
   // Plan Cancel Request — IM requests PM approval to cancel a Rollout Plan.
   requestCancelPlan:  (rolloutPlan, reason) => call("inet_app.api.command_center.request_cancel_plan", { rollout_plan: rolloutPlan, reason: reason || "" }),
   pmDecideCancelPlan: (rolloutPlan, action, remark) => call("inet_app.api.command_center.pm_decide_cancel_plan", { rollout_plan: rolloutPlan, action, remark: remark || "" }),

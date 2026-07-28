@@ -98,6 +98,13 @@ function planStatusColor(status) {
   return { bg: "#fefce8", fg: "#92400e", bd: "#fde68a" };
 }
 
+function statusToneForTransfer(status) {
+  const s = (status || "").toLowerCase();
+  if (s.includes("approved")) return { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" };
+  if (s.includes("reject") || s.includes("cancel")) return { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" };
+  return { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" };
+}
+
 // ── Shared Modal shell ────────────────────────────────────────────────────
 function Modal({ open, onClose, title, children, width = 480, footer = null }) {
   if (!open) return null;
@@ -185,6 +192,26 @@ export default function IMPOIntake() {
   const [dcBusy, setDcBusy] = useState(false);
   const [dcError, setDcError] = useState(null);
 
+  // ── Transfer to another IM (intake tab) ──────────────────────────────
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferIMs, setTransferIMs] = useState([]);
+  const [transferIMsLoading, setTransferIMsLoading] = useState(false);
+  const [transferToIM, setTransferToIM] = useState("");
+  const [transferReason, setTransferReason] = useState("");
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferError, setTransferError] = useState(null);
+  const [pendingTransferIds, setPendingTransferIds] = useState(new Set());
+
+  // ── Transfers tab (outgoing / incoming / history) ────────────────────
+  const [transferListRows, setTransferListRows] = useState([]);
+  const [transferListLoading, setTransferListLoading] = useState(false);
+  const [transferListError, setTransferListError] = useState(null);
+  const [transferSubTab, setTransferSubTab] = useState("outgoing"); // "outgoing" | "incoming" | "history"
+  const [cancelTransferTarget, setCancelTransferTarget] = useState(null);
+  const [cancelTransferBusy, setCancelTransferBusy] = useState(false);
+  const [cancelTransferError, setCancelTransferError] = useState(null);
+  const [viewTransferTarget, setViewTransferTarget] = useState(null);
+
   // ── Dummy tab state ──────────────────────────────────────────────────
   const [dummyRows, setDummyRows] = useState([]);
   const [dummyLoading, setDummyLoading] = useState(false);
@@ -222,6 +249,9 @@ export default function IMPOIntake() {
   const [ovRefreshKey, setOvRefreshKey] = useState(0);
   const loadOv = useCallback(() => setOvRefreshKey((k) => k + 1), []);
   const [ovPlanSummaries, setOvPlanSummaries] = useState({});
+
+  const [transferRefreshKey, setTransferRefreshKey] = useState(0);
+  const loadTransfers = useCallback(() => setTransferRefreshKey((k) => k + 1), []);
 
   // Create dummy PO
   const [showCreateDummy, setShowCreateDummy] = useState(false);
@@ -282,6 +312,21 @@ export default function IMPOIntake() {
     return () => { cancelled = true; };
   }, [imName, rowLimit, searchDebounced, modeFilter, projectFilter, duidFilter, refreshKey]);
 
+  // ── Pending transfer requests (blocks re-selecting a POID already mid-request) ──
+  useEffect(() => {
+    if (!imName) { setPendingTransferIds(new Set()); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const ids = await pmApi.listMyPendingPoTransferPoids();
+        if (!cancelled) setPendingTransferIds(new Set(Array.isArray(ids) ? ids : []));
+      } catch {
+        if (!cancelled) setPendingTransferIds(new Set());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, refreshKey]);
+
   // ── Dummy load ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!imName || tab !== "dummy") return;
@@ -335,6 +380,68 @@ export default function IMPOIntake() {
     })();
     return () => { cancelled = true; };
   }, [imName, tab, rowLimit, ovSearchDebounced, ovProjectFilter, ovDuidFilter, ovFromDate, ovToDate, ovRefreshKey]);
+
+  // ── Transfers load (outgoing + incoming, merged; split by sub-tab client-side) ──
+  useEffect(() => {
+    if (!imName || tab !== "transfers") return;
+    let cancelled = false;
+    setTransferListLoading(true);
+    setTransferListError(null);
+    (async () => {
+      try {
+        const [outgoing, incoming] = await Promise.all([
+          pmApi.listPoTransferRequests("outgoing"),
+          pmApi.listPoTransferRequests("incoming"),
+        ]);
+        if (cancelled) return;
+        const merged = [
+          ...(Array.isArray(outgoing) ? outgoing : []).map((r) => ({ ...r, _direction: "outgoing" })),
+          ...(Array.isArray(incoming) ? incoming : []).map((r) => ({ ...r, _direction: "incoming" })),
+        ];
+        setTransferListRows(merged);
+      } catch (err) {
+        if (!cancelled) setTransferListError(err.message || "Failed to load transfers");
+      } finally {
+        if (!cancelled) setTransferListLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, tab, transferRefreshKey]);
+
+  const transferOutgoingPending = useMemo(
+    () => transferListRows.filter((r) => r._direction === "outgoing" && r.request_status === "Pending PM Approval"),
+    [transferListRows],
+  );
+  const transferIncomingPending = useMemo(
+    () => transferListRows.filter((r) => r._direction === "incoming" && r.request_status === "Pending PM Approval"),
+    [transferListRows],
+  );
+  const transferHistoryRows = useMemo(
+    () => transferListRows.filter((r) => r.request_status !== "Pending PM Approval")
+      .sort((a, b) => new Date(b.modified || b.creation || 0) - new Date(a.modified || a.creation || 0)),
+    [transferListRows],
+  );
+  const transferVisibleRows = transferSubTab === "outgoing" ? transferOutgoingPending
+    : transferSubTab === "incoming" ? transferIncomingPending
+    : transferHistoryRows;
+
+  async function submitCancelTransfer() {
+    if (!cancelTransferTarget) return;
+    setCancelTransferBusy(true);
+    setCancelTransferError(null);
+    try {
+      await pmApi.cancelPoTransfer(cancelTransferTarget.name);
+      setCancelTransferTarget(null);
+      setToastMsg("Transfer request cancelled.");
+      setTimeout(() => setToastMsg(null), 4000);
+      loadTransfers();
+      load();
+    } catch (err) {
+      setCancelTransferError(err.message || "Failed to cancel transfer");
+    } finally {
+      setCancelTransferBusy(false);
+    }
+  }
 
   // ── Overview plan summaries ──────────────────────────────────────────
   useEffect(() => {
@@ -647,6 +754,48 @@ export default function IMPOIntake() {
     }
   }
 
+  async function openTransferModal() {
+    if (selected.size < 1) return;
+    setTransferError(null);
+    setTransferToIM("");
+    setTransferReason("");
+    setShowTransferModal(true);
+    setTransferIMsLoading(true);
+    try {
+      const list = await pmApi.listIMMastersForTransferPicker();
+      setTransferIMs(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setTransferError(err.message || "Failed to load IM list");
+      setTransferIMs([]);
+    } finally {
+      setTransferIMsLoading(false);
+    }
+  }
+
+  async function submitTransfer() {
+    if (selected.size < 1 || !transferToIM) return;
+    const ids = Array.from(selected);
+    const blocked = rows.filter((r) => selected.has(r.name) && pendingTransferIds.has(r.name));
+    if (blocked.length > 0) {
+      setTransferError(`${blocked.length} POID(s) already have a pending transfer request. Deselect to continue.`);
+      return;
+    }
+    setTransferBusy(true);
+    setTransferError(null);
+    try {
+      await pmApi.requestPoTransfer(ids, transferToIM, transferReason);
+      setShowTransferModal(false);
+      setToastMsg(`Transfer request sent for ${ids.length} POID${ids.length !== 1 ? "s" : ""} — awaiting PM approval.`);
+      setTimeout(() => setToastMsg(null), 4500);
+      setSelected(new Set());
+      await load();
+    } catch (err) {
+      setTransferError(err.message || "Failed to request transfer");
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
@@ -766,6 +915,8 @@ export default function IMPOIntake() {
               ? "Lines dispatched to you that still need a target month. Assign a month to move them to My Dispatches."
               : tab === "dummy"
               ? "Create and manage dummy POs. Map them to real PO intake lines when available."
+              : tab === "transfers"
+              ? "POIDs you've requested to transfer away, ones coming to you, and past decisions."
               : "All your POIDs across every status — full overview."}
           </div>
         </div>
@@ -773,6 +924,7 @@ export default function IMPOIntake() {
           {tab === "intake" && <ExportExcelButton filename="im-po-intake" rows={rows} />}
           {tab === "dummy" && <ExportExcelButton filename="dummy-pos" rows={filteredDummyRows} />}
           {tab === "overview" && <ExportExcelButton filename="all-poids" rows={ovFilteredRows} />}
+          {tab === "transfers" && <ExportExcelButton filename="po-transfers" rows={transferVisibleRows} />}
           {tab === "dummy" && (
             <button
               type="button"
@@ -784,9 +936,9 @@ export default function IMPOIntake() {
             </button>
           )}
           <button type="button" className="btn-secondary"
-            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : load}
-            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : ovLoading}>
-            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : ovLoading) ? "Loading…" : "Refresh"}
+            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : tab === "transfers" ? loadTransfers : load}
+            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : ovLoading}>
+            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : ovLoading) ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
@@ -801,6 +953,12 @@ export default function IMPOIntake() {
           )}
         </button>
         <button type="button" style={tabStyle(tab === "overview")} onClick={() => setTab("overview")}>All POIDs</button>
+        <button type="button" style={tabStyle(tab === "transfers")} onClick={() => setTab("transfers")}>
+          Transfers
+          {pendingTransferIds.size > 0 && tab !== "transfers" && (
+            <span style={{ marginLeft: 6, background: "#fef3c7", color: "#92400e", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{pendingTransferIds.size}</span>
+          )}
+        </button>
       </div>
 
       {toastMsg && (
@@ -842,6 +1000,9 @@ export default function IMPOIntake() {
                 Direct Close ({selected.size})
               </button>
             )}
+            <button type="button" className="btn-secondary" disabled={selected.size < 1} onClick={openTransferModal} style={{ borderColor: "#f59e0b", color: "#b45309" }}>
+              Transfer IM ({selected.size})
+            </button>
           </div>
         </div>
       )}
@@ -921,18 +1082,127 @@ export default function IMPOIntake() {
         </div>
       )}
 
+      {/* ── TRANSFERS TOOLBAR ─────────────────────────────────────────── */}
+      {tab === "transfers" && (
+        <div className="toolbar">
+          <div role="tablist" style={{ display: "inline-flex", padding: 3, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", flexShrink: 0 }}>
+            {[
+              { id: "outgoing", label: "Outgoing", count: transferOutgoingPending.length },
+              { id: "incoming", label: "Incoming", count: transferIncomingPending.length },
+              { id: "history",  label: "History" },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setTransferSubTab(opt.id)}
+                style={{
+                  padding: "5px 14px", fontSize: "0.8rem", fontWeight: transferSubTab === opt.id ? 700 : 500,
+                  border: "none", borderRadius: 6, cursor: "pointer",
+                  background: transferSubTab === opt.id ? "#fff" : "transparent",
+                  color: transferSubTab === opt.id ? "#0f172a" : "#64748b",
+                  boxShadow: transferSubTab === opt.id ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                {opt.label}
+                {!!opt.count && (
+                  <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 16, height: 16, padding: "0 5px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#f59e0b", color: "#fff" }}>{opt.count}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {tab === "intake" && error && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {error}</div>}
       {tab === "dummy" && dummyError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {dummyError}</div>}
       {tab === "overview" && ovError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {ovError}</div>}
+      {tab === "transfers" && transferListError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {transferListError}</div>}
 
       {/* ── ONE page-content always rendered (fixes tab-switch CSS) ────── */}
       <div className="page-content">
         <DataTableWrapper
-          loadedCount={tab === "intake" ? (loading ? null : rows.length) : tab === "dummy" ? (dummyLoading ? null : dummyRows.length) : (ovLoading ? null : ovRows.length)}
-          filteredCount={tab === "intake" ? rows.length : tab === "dummy" ? filteredDummyRows.length : ovFilteredRows.length}
-          filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
+          loadedCount={tab === "intake" ? (loading ? null : rows.length) : tab === "dummy" ? (dummyLoading ? null : dummyRows.length) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : (ovLoading ? null : ovRows.length)}
+          filteredCount={tab === "intake" ? rows.length : tab === "dummy" ? filteredDummyRows.length : tab === "transfers" ? transferVisibleRows.length : ovFilteredRows.length}
+          filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : tab === "transfers" ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
         >
-          {tab === "overview" ? (
+          {tab === "transfers" ? (
+            transferListLoading ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+            ) : transferVisibleRows.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">🔁</div>
+                <h3>
+                  {transferSubTab === "outgoing" ? "No outgoing transfers awaiting approval"
+                    : transferSubTab === "incoming" ? "No incoming transfers awaiting approval"
+                    : "No transfer history yet"}
+                </h3>
+                <p>
+                  {transferSubTab === "outgoing" ? "Requests you send from the PO Intake tab land here until a PM decides."
+                    : transferSubTab === "incoming" ? "POIDs another IM is sending your way show up here before the PM decides."
+                    : "Approved, rejected, and cancelled transfers show up here for reference."}
+                </p>
+              </div>
+            ) : (
+              <table className="data-table" data-table-key="im-po-transfers">
+                <thead>
+                  <tr>
+                    <th>Request</th>
+                    <th>Direction</th>
+                    <th>From IM</th>
+                    <th>To IM</th>
+                    <th style={{ textAlign: "right" }}>POIDs</th>
+                    <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    <th>Status</th>
+                    <th style={{ minWidth: 200 }}>Reason</th>
+                    <th style={{ minWidth: 200 }}>PM Remark</th>
+                    <th>Raised</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transferVisibleRows.map((r) => {
+                    const sc = statusToneForTransfer(r.request_status);
+                    const canCancel = r._direction === "outgoing" && r.request_status === "Pending PM Approval";
+                    return (
+                      <tr key={r.name}>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{r.name}</td>
+                        <td>
+                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, background: r._direction === "outgoing" ? "#eef2ff" : "#ecfdf5", color: r._direction === "outgoing" ? "#3730a3" : "#047857" }}>
+                            {r._direction === "outgoing" ? "Outgoing" : "Incoming"}
+                          </span>
+                        </td>
+                        <td style={{ whiteSpace: "nowrap" }}>{r.from_im_name || r.from_im}</td>
+                        <td style={{ whiteSpace: "nowrap" }}>{r.to_im_name || r.to_im}</td>
+                        <td style={{ textAlign: "right" }}>{r.poid_count}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.total_amount || 0)}</td>
+                        <td>
+                          <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, background: sc.bg, color: sc.fg, border: `1px solid ${sc.bd}` }}>{r.request_status}</span>
+                        </td>
+                        <td style={{ fontSize: "0.78rem", color: "#475569", maxWidth: 200, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={r.reason || ""}>{r.reason || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: r.pm_remark ? "#1d4ed8" : "#cbd5e1", maxWidth: 200, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={r.pm_remark || ""}>{r.pm_remark || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>{r.creation ? new Date(r.creation).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "3px 10px" }}
+                              onClick={() => setViewTransferTarget(r)}>
+                              View
+                            </button>
+                            {canCancel && (
+                              <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "3px 10px", color: "#b91c1c" }}
+                                onClick={() => { setCancelTransferError(null); setCancelTransferTarget(r); }}>
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )
+          ) : tab === "overview" ? (
             ovLoading ? (
               <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
             ) : ovFilteredRows.length === 0 ? (
@@ -1083,7 +1353,14 @@ export default function IMPOIntake() {
                       <td onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(row.name)} onChange={() => toggleRow(row.name)} />
                       </td>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.name}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>
+                        {row.poid || row.name}
+                        {pendingTransferIds.has(row.name) && (
+                          <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#fef3c7", color: "#b45309" }}>
+                            Transfer Pending
+                          </span>
+                        )}
+                      </td>
                       <td>
                         <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.12)" : "rgba(100,116,139,0.12)", color: row.dispatch_mode === "Auto" ? "#6366f1" : "#475569" }}>
                           {row.dispatch_mode || "Manual"}
@@ -1866,6 +2143,132 @@ export default function IMPOIntake() {
               <button type="button" className="btn-primary" onClick={submitAssign} disabled={assigning || !assignMonth}>
                 {assigning ? "Dispatching…" : `Dispatch ${selected.size} line${selected.size !== 1 ? "s" : ""}`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TRANSFER TO ANOTHER IM MODAL ─────────────────────────────────── */}
+      {showTransferModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={transferBusy ? undefined : () => setShowTransferModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Transfer to another IM <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span></h3>
+              <button type="button" onClick={() => setShowTransferModal(false)} disabled={transferBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            {selectedRows.length > 0 && (
+              <div style={{ fontSize: "0.76rem", color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12, maxHeight: 140, overflowY: "auto" }}>
+                {selectedRows.map((r) => (
+                  <div key={r.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#0f172a" }}>{r.poid || r.name}</span>
+                    <span style={{ color: "#64748b" }}>{r.po_no || "—"} · {r.item_code || "—"} · {r.site_code || "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Target IM *</label>
+              <select value={transferToIM} onChange={(e) => setTransferToIM(e.target.value)} disabled={transferBusy || transferIMsLoading} required>
+                <option value="">{transferIMsLoading ? "Loading IMs…" : "— Select target IM —"}</option>
+                {transferIMs.map((m) => <option key={m.name} value={m.name}>{m.full_name || m.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Reason (optional)</label>
+              <textarea rows={3} value={transferReason} onChange={(e) => setTransferReason(e.target.value)} disabled={transferBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
+            </div>
+            <div style={{ fontSize: "0.76rem", color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+              This creates a transfer request. POIDs stay with you until a PM approves it.
+            </div>
+            {transferError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {transferError}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="btn-secondary" onClick={() => setShowTransferModal(false)} disabled={transferBusy}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitTransfer} disabled={transferBusy || !transferToIM} style={{ background: "#b45309", borderColor: "#b45309" }}>
+                {transferBusy ? "Requesting…" : `Request transfer · ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CANCEL TRANSFER REQUEST CONFIRM ──────────────────────────────── */}
+      {cancelTransferTarget && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={cancelTransferBusy ? undefined : () => setCancelTransferTarget(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(440px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Cancel transfer request</h3>
+            <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 12 }}>
+              Withdraw <strong>{cancelTransferTarget.name}</strong> — {cancelTransferTarget.poid_count} POID{cancelTransferTarget.poid_count !== 1 ? "s" : ""} to <strong>{cancelTransferTarget.to_im_name || cancelTransferTarget.to_im}</strong>? They'll stay with you and won't need PM approval anymore.
+            </div>
+            {cancelTransferError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {cancelTransferError}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="btn-secondary" onClick={() => setCancelTransferTarget(null)} disabled={cancelTransferBusy}>Keep it</button>
+              <button type="button" className="btn-primary" onClick={submitCancelTransfer} disabled={cancelTransferBusy} style={{ background: "#b91c1c", borderColor: "#b91c1c" }}>
+                {cancelTransferBusy ? "Cancelling…" : "Withdraw request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TRANSFER REQUEST DETAIL (POIDs involved) ─────────────────────── */}
+      {viewTransferTarget && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={() => setViewTransferTarget(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(760px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>{viewTransferTarget.name}</h3>
+              <button type="button" onClick={() => setViewTransferTarget(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 12 }}>
+              {viewTransferTarget._direction === "outgoing" ? "To" : "From"} <strong>{viewTransferTarget._direction === "outgoing" ? (viewTransferTarget.to_im_name || viewTransferTarget.to_im) : (viewTransferTarget.from_im_name || viewTransferTarget.from_im)}</strong>
+              {" · "}{viewTransferTarget.poid_count} POID{viewTransferTarget.poid_count !== 1 ? "s" : ""}, SAR {fmt.format(viewTransferTarget.total_amount || 0)}
+              {" · "}<span style={{ fontWeight: 700 }}>{viewTransferTarget.request_status}</span>
+            </div>
+            {viewTransferTarget.reason && (
+              <div style={{ marginBottom: 10, padding: "8px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.82rem", color: "#334155" }}>
+                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", marginBottom: 2 }}>REASON</div>
+                {viewTransferTarget.reason}
+              </div>
+            )}
+            {viewTransferTarget.pm_remark && (
+              <div style={{ marginBottom: 10, padding: "8px 10px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: "0.82rem", color: "#1e3a8a" }}>
+                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#3b82f6", marginBottom: 2 }}>PM REMARK</div>
+                {viewTransferTarget.pm_remark}
+              </div>
+            )}
+            <div style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8 }}>
+              <table className="data-table" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>POID</th>
+                    <th>DUID</th>
+                    <th>Project</th>
+                    <th>Item Code</th>
+                    <th>Description</th>
+                    <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(viewTransferTarget.lines || []).map((l, i) => (
+                    <tr key={l.po_dispatch || i}>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{l.poid || l.po_dispatch}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{l.site_code || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{l.project_code || "—"}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{l.item_code || "—"}</td>
+                      <td style={{ fontSize: "0.82rem", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.item_description || ""}>{l.item_description || "—"}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(l.line_amount || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+              <button type="button" className="btn-secondary" onClick={() => setViewTransferTarget(null)}>Close</button>
             </div>
           </div>
         </div>

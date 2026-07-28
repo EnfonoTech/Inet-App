@@ -473,6 +473,58 @@ def notify_ims_allocation_pm_decided(request_name, action):
 
 
 # ---------------------------------------------------------------------------
+# PO Transfer Request — batch IM-to-IM POID transfer, one PM approval
+# Direct injection (db.set_value never fires hooks)
+# ---------------------------------------------------------------------------
+
+def notify_pm_po_transfer_requested(request_name):
+	"""Notify all PM when an IM requests a batch POID transfer."""
+	req = frappe.db.get_value(
+		"PO Transfer Request", request_name,
+		["from_im", "to_im", "poid_count"], as_dict=True,
+	)
+	if not req:
+		return
+	from_label = _im_label(req.from_im)
+	to_label = _im_label(req.to_im)
+	subject = f"[ALERT] POID transfer awaiting approval — {req.poid_count} POID(s) from {from_label} to {to_label}"
+	for user in _users_by_role("INET Admin"):
+		_make_notification(user, subject, "PO Transfer Request", request_name, link="/pms/approvals")
+
+
+def notify_ims_po_transfer_pm_decided(request_name, action):
+	"""Notify both IMs when PM approves; only the requester (from_im) when PM rejects."""
+	req = frappe.db.get_value(
+		"PO Transfer Request", request_name,
+		["from_im", "to_im", "poid_count"], as_dict=True,
+	)
+	if not req:
+		return
+	from_user = frappe.db.get_value("IM Master", req.from_im, "user") if req.from_im else None
+	to_user = frappe.db.get_value("IM Master", req.to_im, "user") if req.to_im else None
+	if action == "approve":
+		_make_notification(
+			from_user,
+			f"[INFO] Transfer approved — {req.poid_count} POID(s) moved to {_im_label(req.to_im)}",
+			"PO Transfer Request", request_name,
+			link="/pms/im-po-intake",
+		)
+		_make_notification(
+			to_user,
+			f"[INFO] {req.poid_count} POID(s) transferred to you — check PO Control",
+			"PO Transfer Request", request_name,
+			link="/pms/im-po-intake",
+		)
+	else:
+		_make_notification(
+			from_user,
+			f"[CRITICAL] Transfer rejected by PM — {req.poid_count} POID(s)",
+			"PO Transfer Request", request_name,
+			link="/pms/im-po-intake",
+		)
+
+
+# ---------------------------------------------------------------------------
 # Rollout Plan Cancel Request — IM requests PM approval to cancel
 # Direct injection (db.set_value never fires hooks; on_rollout_plan_update
 # hook exists but is unreachable via the API functions)

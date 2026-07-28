@@ -4,8 +4,12 @@ import { pmApi } from "../../services/api";
 import ExportExcelButton from "../../components/ExportExcelButton";
 
 // PM / Admin queue for Team Allocation Requests that have cleared the
-// source IM and are awaiting PM approval. Approving fires the atomic
-// `INET Team.im` flip on the backend.
+// source IM and are awaiting PM approval, plus Rollout Plan cancel
+// requests and PO Transfer Requests — one shared inbox for all three.
+// Approving fires the relevant atomic flip on the backend (INET Team.im,
+// PO Dispatch.dispatch_status, or PO Dispatch.im).
+
+const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
 function statusTone(status) {
   const s = (status || "").toLowerCase();
@@ -30,13 +34,15 @@ export default function TeamAllocationApprovals() {
     setLoading(true);
     setErr(null);
     try {
-      const [teamList, cancelList] = await Promise.all([
+      const [teamList, cancelList, transferList] = await Promise.all([
         pmApi.listTeamAllocationRequests("all"),
         pmApi.listAllCancelRequests(),
+        pmApi.listPoTransferRequests("all"),
       ]);
       const all = [
         ...(Array.isArray(teamList) ? teamList : []).map((r) => ({ ...r, _type: "team" })),
         ...(Array.isArray(cancelList) ? cancelList : []).map((r) => ({ ...r, _type: "cancel" })),
+        ...(Array.isArray(transferList) ? transferList : []).map((r) => ({ ...r, _type: "transfer" })),
       ];
       all.sort((a, b) => new Date(b.cancel_requested_at || b.creation || 0) - new Date(a.cancel_requested_at || a.creation || 0));
       setRows(all);
@@ -64,6 +70,9 @@ export default function TeamAllocationApprovals() {
       if (decideTarget._type === "cancel") {
         await pmApi.pmDecideCancelPlan(decideTarget.name, decideAction, decideRemark);
         setMsg(`Plan cancellation ${decideAction === "approve" ? "approved" : "rejected"}.`);
+      } else if (decideTarget._type === "transfer") {
+        await pmApi.pmDecidePoTransfer(decideTarget.name, decideAction, decideRemark);
+        setMsg(`Transfer ${decideAction === "approve" ? "approved — POIDs moved" : "rejected"}.`);
       } else {
         await pmApi.pmDecideTeamAllocation(decideTarget.name, decideAction, decideRemark);
         setMsg(`Request ${decideAction === "approve" ? "approved — team transferred" : "rejected"}.`);
@@ -183,26 +192,36 @@ export default function TeamAllocationApprovals() {
               <tbody>
                 {visible.map((r) => {
                   const isCancel = r._type === "cancel";
+                  const isTransfer = r._type === "transfer";
                   const statusField = isCancel ? r.cancel_request_status : r.request_status;
                   const tone = statusTone(statusField);
                   const noteCellStyle = { fontSize: "0.78rem", color: "#475569", maxWidth: 280, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
                   const isPending = statusField === "Pending PM Approval";
+                  const typeLabel = isCancel ? "Plan Cancel" : isTransfer ? "POID Transfer" : "Team Transfer";
+                  const typeTone = isCancel
+                    ? { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" }
+                    : isTransfer
+                    ? { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" }
+                    : { bg: "#eef2ff", fg: "#3730a3", bd: "#c7d2fe" };
                   return (
                     <tr key={`${r._type}-${r.name}`}>
                       <td>
                         <span style={{
                           display: "inline-block", padding: "2px 8px", borderRadius: 999,
-                          background: isCancel ? "#ecfdf5" : "#eef2ff",
-                          color: isCancel ? "#047857" : "#3730a3",
-                          border: `1px solid ${isCancel ? "#a7f3d0" : "#c7d2fe"}`,
+                          background: typeTone.bg, color: typeTone.fg,
+                          border: `1px solid ${typeTone.bd}`,
                           fontSize: "0.66rem", fontWeight: 700, whiteSpace: "nowrap",
-                        }}>{isCancel ? "Plan Cancel" : "Team Transfer"}</span>
+                        }}>{typeLabel}</span>
                       </td>
                       <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.76rem", whiteSpace: "nowrap" }}>{r.name}</td>
-                      <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.team_name || r.team || "—"}</td>
+                      <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                        {isTransfer ? `${r.poid_count ?? r.lines?.length ?? "?"} POID(s)` : (r.team_name || r.team || "—")}
+                      </td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {isCancel ? (
                           <>Plan: {r.plan_status || "—"} · {r.plan_date || "—"} · IM: {r.im_name || r.im || "—"} · PO: {r.poid || r.po_dispatch || "—"}</>
+                        ) : isTransfer ? (
+                          <>{r.from_im_name || r.from_im || "—"} → {r.to_im_name || r.to_im || "—"} · {r.poid_list || "—"}</>
                         ) : (
                           <>{r.from_im_name || r.from_im || "—"} → {r.to_im_name || r.to_im || "—"}</>
                         )}
@@ -226,7 +245,10 @@ export default function TeamAllocationApprovals() {
                           : "—"}
                       </td>
                       <td>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "nowrap" }}>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "nowrap", alignItems: "center" }}>
+                          <button type="button" className="btn-secondary"
+                            style={{ fontSize: "0.72rem", padding: "4px 10px" }}
+                            onClick={() => openDecide(r, "view")}>View</button>
                           {isPending ? (
                             <>
                               <button type="button" className="btn-primary"
@@ -259,9 +281,9 @@ export default function TeamAllocationApprovals() {
       {/* PM decide modal */}
       {decideTarget && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => !busy && setDecideTarget(null)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: decideTarget._type === "transfer" ? "min(760px, 96vw)" : "min(520px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 12px", fontSize: "1.05rem" }}>
-              {decideAction === "approve" ? "Approve" : "Reject"} {decideTarget._type === "cancel" ? "plan cancellation" : "team transfer"}
+              {decideAction === "view" ? "View" : decideAction === "approve" ? "Approve" : "Reject"} {decideTarget._type === "cancel" ? "plan cancellation" : decideTarget._type === "transfer" ? "POID transfer" : "team transfer"}
             </h3>
             <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 12 }}>
               {decideTarget._type === "cancel" ? (
@@ -276,6 +298,40 @@ export default function TeamAllocationApprovals() {
                       This will cancel the plan and return the PO Dispatch to <strong>Dispatched</strong>.
                     </div>
                   )}
+                </>
+              ) : decideTarget._type === "transfer" ? (
+                <>
+                  <strong>{decideTarget.from_im_name || decideTarget.from_im}</strong> → <strong>{decideTarget.to_im_name || decideTarget.to_im}</strong>
+                  <br />
+                  {decideTarget.poid_count ?? decideTarget.lines?.length ?? 0} POID(s), SAR {fmt.format(decideTarget.total_amount || 0)}
+                  <div style={{ marginTop: 8, maxHeight: 220, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+                    {(decideTarget.lines || []).length > 0 ? (
+                      <table className="data-table" style={{ margin: 0, fontSize: "0.76rem" }}>
+                        <thead>
+                          <tr>
+                            <th>POID</th>
+                            <th>DUID</th>
+                            <th>Project</th>
+                            <th>Item</th>
+                            <th>Description</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {decideTarget.lines.map((l, i) => (
+                            <tr key={l.po_dispatch || i}>
+                              <td style={{ fontFamily: "ui-monospace, monospace" }}>{l.poid || l.po_dispatch}</td>
+                              <td style={{ fontFamily: "ui-monospace, monospace" }}>{l.site_code || "—"}</td>
+                              <td>{l.project_code || "—"}</td>
+                              <td style={{ fontFamily: "ui-monospace, monospace" }}>{l.item_code || "—"}</td>
+                              <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.item_description || ""}>{l.item_description || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div style={{ padding: "6px 8px", fontSize: "0.78rem", color: "#94a3b8" }}>{decideTarget.poid_list || "—"}</div>
+                    )}
+                  </div>
                 </>
               ) : (
                 <>
@@ -297,25 +353,41 @@ export default function TeamAllocationApprovals() {
                 {decideTarget.source_im_remark}
               </div>
             )}
-            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>PM remark (optional)</label>
-            <textarea
-              value={decideRemark}
-              onChange={(e) => setDecideRemark(e.target.value)}
-              rows={3}
-              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontSize: "0.84rem", fontFamily: "inherit", resize: "vertical" }}
-            />
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
-              <button type="button" className="btn-secondary" disabled={busy} onClick={() => setDecideTarget(null)}>Cancel</button>
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={busy}
-                onClick={submitDecide}
-                style={decideAction === "approve" ? { background: "#059669" } : { background: "#b91c1c" }}
-              >
-                {busy ? "…" : (decideAction === "approve" ? (decideTarget._type === "cancel" ? "Approve cancellation" : "Approve transfer") : "Reject")}
-              </button>
-            </div>
+            {decideAction === "view" ? (
+              <>
+                {(decideTarget.cancel_pm_remark || decideTarget.pm_remark) && (
+                  <div style={{ marginBottom: 10, padding: "8px 10px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: "0.82rem", color: "#1e3a8a", whiteSpace: "pre-wrap" }}>
+                    <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#3b82f6", marginBottom: 2 }}>PM REMARK</div>
+                    {decideTarget.cancel_pm_remark || decideTarget.pm_remark}
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+                  <button type="button" className="btn-secondary" onClick={() => setDecideTarget(null)}>Close</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>PM remark (optional)</label>
+                <textarea
+                  value={decideRemark}
+                  onChange={(e) => setDecideRemark(e.target.value)}
+                  rows={3}
+                  style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontSize: "0.84rem", fontFamily: "inherit", resize: "vertical" }}
+                />
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
+                  <button type="button" className="btn-secondary" disabled={busy} onClick={() => setDecideTarget(null)}>Cancel</button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={busy}
+                    onClick={submitDecide}
+                    style={decideAction === "approve" ? { background: "#059669" } : { background: "#b91c1c" }}
+                  >
+                    {busy ? "…" : (decideAction === "approve" ? (decideTarget._type === "cancel" ? "Approve cancellation" : "Approve transfer") : "Reject")}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

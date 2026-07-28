@@ -1,0 +1,100 @@
+{
+ "actions": [],
+ "creation": "2026-07-27 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "po_dispatch",
+  "poid",
+  "po_no",
+  "site_code",
+  "project_code",
+  "item_code",
+  "item_description",
+  "column_break_ptrl1",
+  "line_amount",
+  "line_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "po_dispatch",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "PO Dispatch",
+   "options": "PO Dispatch",
+   "reqd": 1
+  },
+  {
+   "fieldname": "poid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "POID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "po_no",
+   "fieldtype": "Data",
+   "label": "PO No",
+   "read_only": 1
+  },
+  {
+   "fieldname": "site_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "DUID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "project_code",
+   "fieldtype": "Data",
+   "label": "Project",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Data",
+   "label": "Item Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_description",
+   "fieldtype": "Data",
+   "label": "Description",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ptrl1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "line_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Line Amount (SAR)",
+   "read_only": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "line_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Line Status",
+   "options": "Pending\nTransferred",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-27 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PO Transfer Request Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
