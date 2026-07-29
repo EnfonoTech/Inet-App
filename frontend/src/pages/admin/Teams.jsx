@@ -276,6 +276,8 @@ export default function Teams() {
       team_category: d.team_category || "",
       im: d.im || "",
       status: d.status || "Active",
+      start_date: d.start_date || "",
+      end_date: d.end_date || "",
       subcontractor: d.subcontractor || "",
       field_user: d.field_user || "",
       isdp_account: d.isdp_account || "",
@@ -611,6 +613,12 @@ export default function Teams() {
                                 <option value="Inactive">Inactive</option>
                               </select>
                             </EditField>
+                            <EditField label="Start Date">
+                              <input type="date" style={inputStyle} value={form.start_date || ""} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} />
+                            </EditField>
+                            <EditField label="Stop Date">
+                              <input type="date" style={inputStyle} value={form.end_date || ""} onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))} />
+                            </EditField>
                             <EditField label="Team Type">
                               <select style={inputStyle} value={form.team_type} onChange={(e) => setForm((f) => ({ ...f, team_type: e.target.value }))}>
                                 <option value="INET">INET</option>
@@ -665,6 +673,8 @@ export default function Teams() {
                           <>
                             <FieldRow label="Team Name">{detail.team_name}</FieldRow>
                             <FieldRow label="Status"><StatusPill value={detail.status} /></FieldRow>
+                            <FieldRow label="Start Date">{detail.start_date || "—"}</FieldRow>
+                            <FieldRow label="Stop Date">{detail.end_date || "—"}</FieldRow>
                             <FieldRow label="Team Type"><StatusPill value={detail.team_type} /></FieldRow>
                             <FieldRow label="Category"><StatusPill value={detail.team_category} /></FieldRow>
                             <FieldRow label="IM">{detail.im_name || detail.im || "—"}</FieldRow>

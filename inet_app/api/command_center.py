@@ -7927,6 +7927,22 @@ def _days_in_month(today=None):
     return calendar.monthrange(today.year, today.month)[1]
 
 
+def _team_cost_days(start_date, end_date, period_from, period_to, cap=30):
+    """Days of `daily_cost` to charge for a team within [period_from, period_to].
+
+    A team only costs money for the days it actually existed - clip the report
+    period to [start_date, end_date] (either bound blank = unbounded on that
+    side, so an untouched team behaves exactly as before this field existed)
+    before applying the existing flat-monthly-salary cap.
+    """
+    period_from = getdate(period_from)
+    period_to = getdate(period_to)
+    overlap_start = max(period_from, getdate(start_date)) if start_date else period_from
+    overlap_end = min(period_to, getdate(end_date)) if end_date else period_to
+    days = (overlap_end - overlap_start).days + 1
+    return max(0, min(cap, days))
+
+
 @frappe.whitelist()
 def get_command_dashboard(from_date=None, to_date=None, etag=None):
     """
@@ -8089,7 +8105,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # ---- INET KPIs ---------------------------------------------------------
     inet_teams = frappe.db.sql(
         """
-        SELECT name, team_id, daily_cost, im
+        SELECT name, team_id, daily_cost, im, start_date, end_date
         FROM `tabINET Team`
         WHERE status = 'Active'
         AND team_type = 'INET'
@@ -8098,8 +8114,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )
     active_inet_teams = len(inet_teams)
 
-    # Teams are monthly-paid (fixed salary), so cost = monthly_cost = daily_cost × 30
-    inet_monthly_cost = sum(flt(t.daily_cost) * 30 for t in inet_teams)
+    # Teams are monthly-paid (fixed salary): cost = daily_cost × days, where
+    # days is however much of [first_day, last_day] this team was actually
+    # active for (capped at 30 - the flat-monthly-salary rule), not always 30.
+    inet_monthly_cost = sum(
+        flt(t.daily_cost) * _team_cost_days(t.start_date, t.end_date, first_day, last_day)
+        for t in inet_teams
+    )
 
     # Monthly target = cost × 1.25 (25% margin), consistent with Command Dashboard frontend
     inet_monthly_target = round(inet_monthly_cost * 1.25)
@@ -8231,7 +8252,6 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     coverage_pct = (total_achieved / company_target * 100.0) if company_target else 0.0
 
     # ---- Top 5 teams by revenue this month (same logic as get_top_teams_report) ----
-    _tt_period_days = (getdate(last_day) - getdate(first_day)).days + 1
     _tt_rev_rows = frappe.db.sql(
         """
         SELECT de.team,
@@ -8248,7 +8268,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     _tt_rev_by_team = {r.team: r for r in _tt_rev_rows}
     _tt_team_rows = frappe.db.sql(
         """
-        SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type
+        SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type,
+               start_date, end_date
         FROM `tabINET Team`
         WHERE IFNULL(status, 'Active') = 'Active'
           AND IFNULL(team_category, '') != 'Backend Team'
@@ -8264,7 +8285,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             _inet_margin = flt(_r.avg_inet_margin) or 100.0
             _team_cost   = round(_revenue * (100.0 - _inet_margin) / 100.0, 0)
         else:
-            _team_cost = round(flt(_ti.daily_cost) * min(_tt_period_days, 30), 0)
+            _tt_days   = _team_cost_days(_ti.start_date, _ti.end_date, first_day, last_day)
+            _team_cost = round(flt(_ti.daily_cost) * _tt_days, 0)
         _tt_data.append({
             "team":      _ti.name,
             "team_name": _ti.team_name or _ti.name,
@@ -8276,7 +8298,6 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     top_teams = _tt_data[:5]
 
     # ---- IM performance (same cost formula as top_teams) -------------------
-    _ip_period_days = (getdate(last_day) - getdate(first_day)).days + 1
     _ip_rev_rows = frappe.db.sql(
         """
         SELECT pd.im,
@@ -8311,7 +8332,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         (first_day, last_day), as_dict=True,
     )
     _ip_team_info_rows = frappe.db.sql(
-        "SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type FROM `tabINET Team` WHERE IFNULL(status,'Active')='Active'",
+        "SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type, start_date, end_date "
+        "FROM `tabINET Team` WHERE IFNULL(status,'Active')='Active'",
         as_dict=True,
     )
     _ip_team_info = {r.name: r for r in _ip_team_info_rows}
@@ -8323,7 +8345,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             _im_margin = flt(_tc.avg_inet_margin) or 100.0
             _tc_cost   = flt(_tc.team_revenue) * (100.0 - _im_margin) / 100.0
         else:
-            _tc_cost = flt(_ti.daily_cost if _ti else 0) * min(_ip_period_days, 30)
+            _ip_days = _team_cost_days(_ti.start_date if _ti else None, _ti.end_date if _ti else None, first_day, last_day)
+            _tc_cost = flt(_ti.daily_cost if _ti else 0) * _ip_days
         _ip_cost_by_im[_tc.im] = _ip_cost_by_im.get(_tc.im, 0.0) + _tc_cost
 
     _ip_rev_by_im  = {r.im: r for r in _ip_rev_rows}
@@ -8629,9 +8652,6 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     Rating thresholds (IM-level, stricter): >=100% Excellent, >=85% Good, >=70% NI, else Idle.
     """
     fd, td = _perf_date_range(from_date, to_date)
-    fd_date = getdate(fd)
-    td_date = getdate(td)
-    period_days = (td_date - fd_date).days + 1
 
     # Plans: assigned/completed lines + distinct teams per IM
     plan_rows = frappe.db.sql(
@@ -8707,7 +8727,7 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     )
     team_info_rows = frappe.db.sql(
         """
-        SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type
+        SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type, start_date, end_date
         FROM `tabINET Team`
         WHERE IFNULL(status, 'Active') = 'Active'
         """,
@@ -8724,7 +8744,8 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
             tc_cost     = flt(tc.team_revenue) * (100.0 - inet_margin) / 100.0
         else:
             daily_cost = flt(ti.daily_cost if ti else 0)
-            tc_cost    = daily_cost * min(period_days, 30)
+            days       = _team_cost_days(ti.start_date if ti else None, ti.end_date if ti else None, fd, td)
+            tc_cost    = daily_cost * days
         cost_by_im[tc.im] = cost_by_im.get(tc.im, 0.0) + tc_cost
 
     # All IMs from master — so IMs with 0 activity still appear
@@ -8784,7 +8805,8 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
 def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     """Top Teams — ranked by revenue.
     Team Cost:
-      INET  → daily_cost × 30  (Excel standard: month = 30 days)
+      INET  → daily_cost × days (days = the period clipped to the team's own
+              start_date/end_date, capped at 30 - Excel standard: month = 30 days)
       SUB   → revenue × (1 - inet_margin_pct/100)  i.e. revenue × subcon_rate
     Utilization % = distinct days worked / period days × 100
     """
@@ -8848,7 +8870,8 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     # Team master: daily_cost + team_type (INET vs SUB) + team_name
     team_info_rows = frappe.db.sql(
         """
-        SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type
+        SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type,
+               start_date, end_date
         FROM `tabINET Team`
         WHERE IFNULL(status, 'Active') = 'Active'
           AND IFNULL(team_category, '') != 'Backend Team'
@@ -8877,7 +8900,7 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
             team_cost   = round(revenue * subcon_rate, 0)
         else:
             daily_cost = flt(ti.daily_cost if ti else 0)
-            cost_days  = min(period_days, 30)
+            cost_days  = _team_cost_days(ti.start_date if ti else None, ti.end_date if ti else None, fd, td)
             team_cost  = round(daily_cost * cost_days, 0)
 
         profit          = round(revenue - team_cost, 0)
@@ -15429,6 +15452,7 @@ _ADMIN_TEAM_EDITABLE_FIELDS = [
     "team_name", "team_type", "team_category", "im", "status",
     "subcontractor", "field_user", "warehouse", "department",
     "isdp_account", "daily_cost", "daily_cost_applies", "note",
+    "start_date", "end_date",
 ]
 
 
@@ -15796,6 +15820,8 @@ def admin_get_team_detail(name):
         "warehouse": doc.get("warehouse"),
         "department": doc.get("department"),
         "status": doc.get("status"),
+        "start_date": doc.get("start_date"),
+        "end_date": doc.get("end_date"),
         "daily_cost": doc.get("daily_cost"),
         "daily_cost_applies": 1 if doc.get("daily_cost_applies") else 0,
         "note": doc.get("note"),

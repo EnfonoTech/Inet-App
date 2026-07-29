@@ -19,6 +19,8 @@
   "isdp_account",
   "column_break_feex",
   "status",
+  "start_date",
+  "end_date",
   "daily_cost_applies",
   "daily_cost",
   "note",
@@ -150,6 +152,19 @@
   {
    "fieldname": "column_break_feex",
    "fieldtype": "Column Break"
+  },
+  {
+   "description": "When this team joined - cost reports only count days from this date onward. Leave blank for no lower bound.",
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Team Start Date"
+  },
+  {
+   "description": "When this team stopped - cost reports don't count days after this date. Leave blank if still active.",
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "Team Stop Date"
   }
  ],
  "links": [],
