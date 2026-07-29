@@ -5,6 +5,7 @@ import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { pmApi } from "../../services/api";
 import { isNotRequired } from "../../utils/qcCiagFlags";
+import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -112,6 +113,25 @@ export default function FieldHistory() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_execution_monitor_rows).
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "field-history-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     if (!teamId) { setRecords([]); setLoading(false); return; }
@@ -123,7 +143,10 @@ export default function FieldHistory() {
         // project, DUID, qty, etc. enriched for free. Bare
         // /api/resource/Daily Execution returned only DE columns and
         // forced the table to render with mostly empty cells.
-        const list = await pmApi.listExecutionMonitorRows({ team: teamId }, rowLimit);
+        const teamFilters = { team: teamId };
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) teamFilters.column_filters = colFilters;
+        const list = await pmApi.listExecutionMonitorRows(teamFilters, rowLimit);
         // History = rows where the field team has actually started or
         // recorded execution. Plain plans with no Daily Execution yet
         // (no execution_name) are still in "today's work" territory and
@@ -139,7 +162,7 @@ export default function FieldHistory() {
       }
     })();
     return () => { cancelled = true; };
-  }, [teamId, rowLimit]);
+  }, [teamId, rowLimit, columnFiltersDebounced]);
 
   return (
     <div>
@@ -155,7 +178,11 @@ export default function FieldHistory() {
 
       {/* ── Mobile card list ──────────────────────────────── */}
       <div className="field-mobile-only">
-        {loading ? (
+        {records.length > 0 ? (
+          <div className="field-card-list">
+            {records.map((r) => <HistoryCard key={r.name} r={r} />)}
+          </div>
+        ) : loading ? (
           <div className="field-card-list">
             {[1, 2, 3].map((i) => (
               <div key={i} className="history-card">
@@ -165,15 +192,11 @@ export default function FieldHistory() {
               </div>
             ))}
           </div>
-        ) : records.length === 0 ? (
+        ) : (
           <div className="empty-state" style={{ marginTop: 40 }}>
             <div className="empty-icon">📜</div>
             <h3>No execution history</h3>
             <p>Complete today's tasks to see history here.</p>
-          </div>
-        ) : (
-          <div className="field-card-list">
-            {records.map((r) => <HistoryCard key={r.name} r={r} />)}
           </div>
         )}
       </div>
@@ -181,16 +204,8 @@ export default function FieldHistory() {
       {/* ── Desktop table ─────────────────────────────────── */}
       <div className="page-content field-desktop-only">
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
-          ) : records.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📜</div>
-              <h3>No execution history</h3>
-              <p>Complete today's tasks to see history here.</p>
-            </div>
-          ) : (
-            <table className="data-table">
+          {records.length > 0 ? (
+            <table className="data-table" data-table-key="field-history-v1">
               <thead>
                 <tr>
                   <th>Execution ID</th>
@@ -252,6 +267,14 @@ export default function FieldHistory() {
                 ))}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">📜</div>
+              <h3>No execution history</h3>
+              <p>Complete today's tasks to see history here.</p>
+            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />

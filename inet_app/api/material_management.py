@@ -549,8 +549,81 @@ def _request_status(status, transfer_status, has_pending_se=False, is_return=Fal
     return status or "Draft"
 
 
+def _apply_material_request_column_filters(filters, column_filters):
+    """Per-column "Manage Table" filters for list_material_requests /
+    list_return_requests — see list_im_rollout_plans (in command_center.py)
+    for the rationale. Mutates ``filters`` (a plain ORM filter dict) in place
+    so callers only need to pass the result to ``frappe.db.get_all``.
+
+    Several displayed columns are resolved from a raw link to another
+    doctype's display name (POID via PO Dispatch, Team via INET Team's
+    warehouse, IM via IM Master's linked User's full_name) rather than being
+    stored directly on Material Request — those are matched by first
+    resolving the set of matching raw IDs, then filtering on that set (an
+    ORM "in" filter), so no raw-SQL rewrite of this ORM-based query is
+    needed. "Status" is a Python-computed label (_request_status, combining
+    3 raw fields with custom logic) with no simple SQL equivalent — left
+    client-side only, same graceful-degradation approach used for other
+    genuinely-computed columns elsewhere.
+    """
+    from inet_app.api.command_center import _sql_like_pattern
+
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if not isinstance(column_filters, dict):
+        return
+
+    for col_key, raw_val in column_filters.items():
+        val = str(raw_val or "").strip()
+        if not val:
+            continue
+        pat = _sql_like_pattern(val)
+        if col_key in ("request_no", "name"):
+            filters["name"] = ["like", pat]
+        elif col_key == "date":
+            filters["transaction_date"] = ["like", pat]
+        elif col_key == "duid":
+            filters["duid"] = ["like", pat]
+        elif col_key == "poid":
+            # Material Request.poid is a Link storing the PO Dispatch docname
+            # (system id); the displayed POID is PO Dispatch's own `poid`
+            # field — resolve matching dispatch names first, then filter on
+            # that set.
+            dispatch_names = frappe.db.sql_list(
+                "SELECT name FROM `tabPO Dispatch` WHERE poid LIKE %s", (pat,)
+            )
+            filters["poid"] = ["in", list(set(dispatch_names or [])) or ["__none__"]]
+        elif col_key == "team":
+            warehouses = frappe.db.sql_list(
+                "SELECT warehouse FROM `tabINET Team` WHERE team_name LIKE %s AND IFNULL(warehouse,'') != ''",
+                (pat,),
+            )
+            filters["set_warehouse"] = ["in", list(set(warehouses or [])) or ["__none__"]]
+        elif col_key == "im":
+            im_names = set(frappe.db.sql_list(
+                """
+                SELECT imm.name FROM `tabIM Master` imm
+                INNER JOIN `tabUser` u ON u.name = imm.user
+                WHERE u.full_name LIKE %s
+                """,
+                (pat,),
+            ) or [])
+            existing_im = filters.get("im")
+            if existing_im and not isinstance(existing_im, (list, tuple)):
+                # Non-admin callers are already scoped to their own single IM
+                # above — never replace/widen that with a broader "in" list;
+                # just confirm it still matches, or force zero rows.
+                if existing_im not in im_names:
+                    filters["im"] = ["in", ["__none__"]]
+            else:
+                filters["im"] = ["in", list(im_names) or ["__none__"]]
+
+
 @frappe.whitelist()
-def list_material_requests(im=None, status=None, limit=50):
+def list_material_requests(im=None, status=None, limit=50, column_filters=None):
     """List Material Requests (type: Material Transfer) created via INET portal.
 
     IM users see only their own requests (filtered by im custom field).
@@ -574,6 +647,8 @@ def list_material_requests(im=None, status=None, limit=50):
 
     if im:
         filters["im"] = im
+
+    _apply_material_request_column_filters(filters, column_filters)
 
     rows = frappe.db.get_all(
         "Material Request",
@@ -2182,8 +2257,63 @@ def create_material_return_request(payload):
     return {"name": doc.name, "status": "Pending Approval"}
 
 
+def _apply_return_request_column_filters(filters, column_filters):
+    """Per-column "Manage Table" filters for list_return_requests — see
+    _apply_material_request_column_filters above for the rationale. "Team"
+    resolves via set_from_warehouse (opposite field from list_material_requests'
+    set_warehouse); "Status" stays client-side only (same reason as above)."""
+    from inet_app.api.command_center import _sql_like_pattern
+
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if not isinstance(column_filters, dict):
+        return
+
+    for col_key, raw_val in column_filters.items():
+        val = str(raw_val or "").strip()
+        if not val:
+            continue
+        pat = _sql_like_pattern(val)
+        if col_key in ("request_no", "name"):
+            filters["name"] = ["like", pat]
+        elif col_key == "date":
+            filters["transaction_date"] = ["like", pat]
+        elif col_key == "reason":
+            if frappe.db.has_column("Material Request", "return_reason"):
+                filters["return_reason"] = ["like", pat]
+        elif col_key == "team":
+            warehouses = set(frappe.db.sql_list(
+                "SELECT warehouse FROM `tabINET Team` WHERE team_name LIKE %s AND IFNULL(warehouse,'') != ''",
+                (pat,),
+            ) or [])
+            existing_wh = filters.get("set_from_warehouse")
+            if existing_wh and not isinstance(existing_wh, (list, tuple)):
+                if existing_wh not in warehouses:
+                    filters["set_from_warehouse"] = ["in", ["__none__"]]
+            else:
+                filters["set_from_warehouse"] = ["in", list(warehouses) or ["__none__"]]
+        elif col_key == "im":
+            im_names = set(frappe.db.sql_list(
+                """
+                SELECT imm.name FROM `tabIM Master` imm
+                INNER JOIN `tabUser` u ON u.name = imm.user
+                WHERE u.full_name LIKE %s
+                """,
+                (pat,),
+            ) or [])
+            existing_im = filters.get("im")
+            if existing_im and not isinstance(existing_im, (list, tuple)):
+                if existing_im not in im_names:
+                    filters["im"] = ["in", ["__none__"]]
+            else:
+                filters["im"] = ["in", list(im_names) or ["__none__"]]
+
+
 @frappe.whitelist()
-def list_return_requests(team_id=None, status=None, limit=50):
+def list_return_requests(team_id=None, status=None, limit=50, column_filters=None):
     """List Material Return Requests.
 
     Field team: sees their team's requests.
@@ -2219,6 +2349,8 @@ def list_return_requests(team_id=None, status=None, limit=50):
         team_wh_override = frappe.db.get_value("INET Team", team_id, "warehouse") or ""
         if team_wh_override:
             filters["set_from_warehouse"] = team_wh_override
+
+    _apply_return_request_column_filters(filters, column_filters)
 
     rows = frappe.db.get_all(
         "Material Request",

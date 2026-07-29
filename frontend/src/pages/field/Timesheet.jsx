@@ -9,6 +9,7 @@ import {
   formatElapsedSeconds,
   makeSkewMs,
 } from "../../utils/executionTimerDisplay";
+import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -117,12 +118,34 @@ export default function Timesheet() {
     } catch { setRunningTimers([]); }
   }
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map_etl in
+  // list_execution_time_logs).
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "field-timesheet-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     (async () => {
       try {
-        const res = await pmApi.listExecutionTimeLogs({}, rowLimit, 0);
+        const filters = {};
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
+        const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
         if (!cancelled) {
           setLogs(res?.logs || []);
           setTotal(res?.total ?? (res?.logs || []).length);
@@ -134,7 +157,7 @@ export default function Timesheet() {
       }
     })();
     return () => { cancelled = true; };
-  }, [teamId, rowLimit, refreshKey]);
+  }, [teamId, rowLimit, refreshKey, columnFiltersDebounced]);
 
   useEffect(() => { refreshRunning(); }, [teamId, rowLimit]);
 
@@ -338,7 +361,11 @@ export default function Timesheet() {
 
       {/* ── Mobile card list ──────────────────────────────────── */}
       <div className="field-mobile-only">
-        {loading ? (
+        {logs.length > 0 ? (
+          <div className="field-card-list">
+            {logs.map((row) => <TimelogCard key={row.name} row={row} />)}
+          </div>
+        ) : loading ? (
           <div className="field-card-list">
             {[1, 2, 3].map((i) => (
               <div key={i} className="timelog-card">
@@ -348,15 +375,11 @@ export default function Timesheet() {
               </div>
             ))}
           </div>
-        ) : logs.length === 0 ? (
+        ) : (
           <div className="empty-state" style={{ marginTop: 20 }}>
             <div className="empty-icon">⏱</div>
             <h3>No time logs yet</h3>
             <p>Use Start Timer on an execution, or add a manual entry.</p>
-          </div>
-        ) : (
-          <div className="field-card-list">
-            {logs.map((row) => <TimelogCard key={row.name} row={row} />)}
           </div>
         )}
       </div>
@@ -367,17 +390,9 @@ export default function Timesheet() {
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontSize: "0.82rem", color: "var(--text-muted)" }}>
             {loading ? "Loading…" : `${logs.length} of ${total} log(s) · ${fmt.format(totalHours)} h total`}
           </div>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading time logs…</div>
-          ) : logs.length === 0 ? (
-            <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">⏱</div>
-              <h3>No time logs yet</h3>
-              <p>Use Start timer on an execution, or add a manual entry.</p>
-            </div>
-          ) : (
+          {logs.length > 0 ? (
             <DataTableWrapper className="data-table-wrapper--nested">
-              <table className="data-table">
+              <table className="data-table" data-table-key="field-timesheet-v1">
                 <thead>
                   <tr>
                     <th>ID</th>
@@ -415,6 +430,14 @@ export default function Timesheet() {
                 </tbody>
               </table>
             </DataTableWrapper>
+          ) : loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading time logs…</div>
+          ) : (
+            <div className="empty-state" style={{ marginTop: 20 }}>
+              <div className="empty-icon">⏱</div>
+              <h3>No time logs yet</h3>
+              <p>Use Start timer on an execution, or add a manual entry.</p>
+            </div>
           )}
           <TableRowsLimitFooter placement="tableCard" loadedCount={logs.length} />
         </div>

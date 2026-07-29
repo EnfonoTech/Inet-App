@@ -92,16 +92,7 @@ export default function IMReports() {
             </p>
           </div>
         </div>
-      ) : loading ? (
-        <div style={{ padding: 48, textAlign: "center", color: "#94a3b8" }}>Loading reports…</div>
-      ) : !payload ? (
-        <div className="page-content">
-          <div className="empty-state">
-            <div className="empty-icon">📊</div>
-            <h3>No data returned</h3>
-          </div>
-        </div>
-      ) : (
+      ) : payload ? (
         <div className="page-content">
           <div className="tabs" style={{ marginBottom: 18 }}>
             {TABS.map((t) => (
@@ -300,6 +291,15 @@ export default function IMReports() {
               })()}
             </p>
           )}
+        </div>
+      ) : loading ? (
+        <div style={{ padding: 48, textAlign: "center", color: "#94a3b8" }}>Loading reports…</div>
+      ) : (
+        <div className="page-content">
+          <div className="empty-state">
+            <div className="empty-icon">📊</div>
+            <h3>No data returned</h3>
+          </div>
         </div>
       )}
     </div>

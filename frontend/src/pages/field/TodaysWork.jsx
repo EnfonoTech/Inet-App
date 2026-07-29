@@ -348,25 +348,7 @@ export default function TodaysWork() {
         </div>
       )}
 
-      {loading ? (
-        <div className="card-grid" style={{ padding: "0 16px" }}>
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
-      ) : !teamId ? (
-        <div className="empty-state" style={{ marginTop: 40 }}>
-          <div className="empty-icon">👤</div>
-          <h3>No team assigned</h3>
-          <p>Your account is not linked to a field team. Please contact your Implementation Manager.</p>
-        </div>
-      ) : plans.length === 0 ? (
-        <div className="empty-state" style={{ marginTop: 40 }}>
-          <div className="empty-icon">🗓</div>
-          <h3>All clear for today</h3>
-          <p>Your team has no planned activities for today. Check back later or contact your IM.</p>
-        </div>
-      ) : (
+      {plans.length > 0 ? (
         <>
           <SummaryChips plans={plans} />
           <div className="card-grid" style={{ padding: "0 16px 16px" }}>
@@ -379,6 +361,24 @@ export default function TodaysWork() {
             ))}
           </div>
         </>
+      ) : loading ? (
+        <div className="card-grid" style={{ padding: "0 16px" }}>
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+      ) : !teamId ? (
+        <div className="empty-state" style={{ marginTop: 40 }}>
+          <div className="empty-icon">👤</div>
+          <h3>No team assigned</h3>
+          <p>Your account is not linked to a field team. Please contact your Implementation Manager.</p>
+        </div>
+      ) : (
+        <div className="empty-state" style={{ marginTop: 40 }}>
+          <div className="empty-icon">🗓</div>
+          <h3>All clear for today</h3>
+          <p>Your team has no planned activities for today. Check back later or contact your IM.</p>
+        </div>
       )}
     </div>
   );

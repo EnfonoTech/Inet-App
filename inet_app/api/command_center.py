@@ -1103,7 +1103,7 @@ def backfill_po_dispatch_id_to_poid(limit=500):
 
 
 @frappe.whitelist()
-def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000, search=None):
+def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000, search=None, column_filters=None):
     """
     Export PO Intake lines whose parent PO was created in the date range (upload date).
     Returns uploaded PO lines in source column order for audit/export.
@@ -1233,6 +1233,40 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
         ]
         where_clauses.append("(" + " OR ".join(f"{f} LIKE %s" for f in search_fields) + ")")
         params += [like] * len(search_fields)
+
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale (each column matched independently and ANDed, not blended
+    # into the wide `search` box above).
+    col_filter_map_dump = {
+        "poid": "IFNULL(pil.poid,'')",
+        "line_status": "IFNULL(pil.po_line_status,'')",
+        "po_no": "IFNULL(pi.po_no,'')",
+        "project": "IFNULL(pil.project_code,'')",
+        "project_name": "IFNULL(pil.project_name,'')",
+        "duid": "IFNULL(pil.site_code,'')",
+        "item_code": "IFNULL(pil.item_code,'')",
+        "item_description": "IFNULL(pil.item_description,'')",
+        "qty": "CAST(pil.qty AS CHAR)",
+        "unit_price": "CAST(pil.rate AS CHAR)",
+        "amount": "CAST(pil.line_amount AS CHAR)",
+        "start_date": "CAST(pil.start_date AS CHAR)",
+        "end_date": "CAST(pil.end_date AS CHAR)",
+    }
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            pat_d = _sql_like_pattern(raw_val)
+            if not pat_d:
+                continue
+            expr_d = col_filter_map_dump.get(col_key)
+            if not expr_d:
+                continue
+            where_clauses.append(f"{expr_d} LIKE %s")
+            params.append(pat_d)
 
     fields_sql = ", ".join(f"pil.`{f}`" for f in fields)
     lines = frappe.db.sql(
@@ -2018,6 +2052,14 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         for k in ("search", "q", "project_code", "site_code", "item_code", "dispatched_im", "im", "from_date", "to_date"):
             if (pf.get(k) or "").strip() if isinstance(pf.get(k), str) else pf.get(k):
                 return True
+        cf = pf.get("column_filters")
+        if isinstance(cf, str):
+            try:
+                cf = frappe.parse_json(cf)
+            except Exception:
+                cf = None
+        if isinstance(cf, dict) and any(str(v or "").strip() for v in cf.values()):
+            return True
         return False
 
     line_fields_full = [
@@ -2064,10 +2106,65 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         elif pf.get("to_date"):
             wheres.append("(pd.name IS NULL OR pd.target_month <= %s)")
             params.append(pf["to_date"])
+        # Per-column "Manage Table" filters — see list_im_rollout_plans for
+        # the rationale. "Domain"/"Huawei IM" are normally Python post-query
+        # enrichments (_enrich_with_project_fields, by project_code) — the
+        # `pcc` join below makes them backend-filterable too, same pattern
+        # used for list_execution_monitor_rows/list_issue_risk_rows.
+        col_filter_map_intake = {
+            "poid": "IFNULL(pil.poid,'')",
+            "system_id": "IFNULL(pd.system_id,'')",
+            "po_no": "IFNULL(pi.po_no,'')",
+            "shipment_no": "IFNULL(pil.shipment_number,'')",
+            "item_code": "IFNULL(pil.item_code,'')",
+            "description": "IFNULL(pil.item_description,'')",
+            "qty": "CAST(pil.qty AS CHAR)",
+            "rate": "CAST(pil.rate AS CHAR)",
+            "amount": "CAST(pil.line_amount AS CHAR)",
+            "project": "IFNULL(pil.project_code,'')",
+            "duid": "IFNULL(pil.site_code,'')",
+            "domain": "IFNULL(pcc_pil.project_domain,'')",
+            "huawei_im": "IFNULL(pcc_pil.huawei_im,'')",
+            "mode": "COALESCE(NULLIF(pil.dispatch_mode,''), pd.dispatch_mode, '')",
+            "target_month": "CAST(pd.target_month AS CHAR)",
+        }
+        if frappe.db.has_column("PO Intake Line", "center_area"):
+            col_filter_map_intake["center_area"] = "IFNULL(pil.center_area,'')"
+        if frappe.db.has_column("PO Intake Line", "region_type"):
+            col_filter_map_intake["region"] = "IFNULL(pil.region_type,'')"
+        col_filter_map_intake["activity_type"] = (
+            "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pil.item_code), '')"
+        )
+        column_filters_intake = pf.get("column_filters")
+        if isinstance(column_filters_intake, str):
+            try:
+                column_filters_intake = frappe.parse_json(column_filters_intake)
+            except Exception:
+                column_filters_intake = None
+        if isinstance(column_filters_intake, dict):
+            for col_key, raw_val in column_filters_intake.items():
+                pat_i = _sql_like_pattern(raw_val)
+                if not pat_i:
+                    continue
+                if col_key == "im":
+                    wheres.append(
+                        "(IFNULL(pd.im,'') LIKE %s OR pd.im IN "
+                        "(SELECT name FROM `tabIM Master` WHERE full_name LIKE %s))"
+                    )
+                    params.extend([pat_i, pat_i])
+                    continue
+                expr_i = col_filter_map_intake.get(col_key)
+                if not expr_i:
+                    continue
+                wheres.append(f"{expr_i} LIKE %s")
+                params.append(pat_i)
+
         concat_expr_intake = (
             "CONCAT_WS(' ', IFNULL(pil.name,''), IFNULL(pil.poid,''), IFNULL(pil.item_code,''), "
+            "IFNULL(pil.item_description,''), "
             "IFNULL(pil.project_code,''), IFNULL(pil.site_code,''), IFNULL(pi.po_no,''), "
-            "IFNULL(pi.customer,''), IFNULL(pil.center_area,''), IFNULL(pil.region_type,''))"
+            "IFNULL(pi.customer,''), IFNULL(pil.center_area,''), IFNULL(pil.region_type,''), "
+            "IFNULL(pcc_pil.project_domain,''), IFNULL(pcc_pil.huawei_im,''))"
         )
         clause, cparams = _sql_search_clause(
             concat_expr_intake, pf.get("search") or pf.get("q") or "",
@@ -2081,6 +2178,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
             "FROM `tabPO Intake Line` pil "
             "INNER JOIN `tabPO Intake` pi ON pi.name = pil.parent "
             "LEFT JOIN `tabPO Dispatch` pd ON pd.po_intake = pil.parent AND pd.po_line_no = pil.po_line_no "
+            "LEFT JOIN `tabProject Control Center` pcc_pil ON pcc_pil.name = pil.project_code "
             f"WHERE {' AND '.join(wheres)} "
             "ORDER BY pil.parent DESC, pil.idx ASC "
             f"{_sql_limit_suffix(limit_page_length)}"
@@ -2219,6 +2317,12 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
             line["dispatched_im_full_name"] = im_fn_map.get(imn)
 
     _enrich_with_project_fields(lines)
+    # Pre-existing gap: this function never populated activity_type at all
+    # (admin/PODispatch.jsx's "Activity Type" column always showed blank),
+    # unrelated to the filter fix below but fixed alongside it.
+    act_map_pil = _batch_item_activity_types(lines)
+    for line in lines:
+        line["activity_type"] = act_map_pil.get(line.get("item_code") or "")
     return lines
 
 
@@ -2634,6 +2738,14 @@ def _po_dispatch_portal_pf_active(pf):
         return False
     if (pf.get("search") or pf.get("q") or "").strip():
         return True
+    cf = pf.get("column_filters")
+    if isinstance(cf, str):
+        try:
+            cf = frappe.parse_json(cf)
+        except Exception:
+            cf = None
+    if isinstance(cf, dict) and any(str(v or "").strip() for v in cf.values()):
+        return True
     for k in (
         "project_code",
         "site_code",
@@ -2644,6 +2756,9 @@ def _po_dispatch_portal_pf_active(pf):
         "dispatch_mode",
         "dummy_preset",
         "has_target_month",
+        "domain",
+        "dispatch_status",
+        "direct_close_only",
     ):
         v = pf.get(k)
         if v is None or v == "":
@@ -2710,6 +2825,29 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             wheres.append(f"`{k}` {op_l} %s")
             params.append(v)
 
+    # "Domain" (Project Control Center's project_domain, resolved via
+    # project_code — this single-table query has no join to it) and
+    # "Status" (dispatch_status) — dedicated toolbar filters on the IM PO
+    # Intake page's Dummy/Overview tabs, previously applied only to already-
+    # loaded rows client-side.
+    domain_vals = _ensure_list(pf.get("domain"))
+    if domain_vals and "project_code" in fields:
+        ph_dom = ", ".join(["%s"] * len(domain_vals))
+        wheres.append(
+            f"project_code IN (SELECT name FROM `tabProject Control Center` WHERE project_domain IN ({ph_dom}))"
+        )
+        params.extend(domain_vals)
+    status_vals_pd = _ensure_list(pf.get("dispatch_status"))
+    if status_vals_pd and "dispatch_status" in fields:
+        ph_st = ", ".join(["%s"] * len(status_vals_pd))
+        wheres.append(f"IFNULL(`dispatch_status`,'') IN ({ph_st})")
+        params.extend(status_vals_pd)
+
+    # "Direct Close" toggle on IMPOIntake.jsx's Overview tab (previously
+    # applied only to already-loaded rows client-side).
+    if str(pf.get("direct_close_only") or "").strip().lower() in ("1", "true", "yes") and "direct_close_by" in fields:
+        wheres.append("IFNULL(`direct_close_by`,'') != ''")
+
     dummy_preset = (pf.get("dummy_preset") or "all").strip().lower()
     if dummy_preset == "dummy" and "is_dummy_po" in fields:
         wheres.append("IFNULL(`is_dummy_po`, 0) = 1")
@@ -2748,6 +2886,125 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
     elif htm == "no" and "target_month" in fields:
         wheres.append("(`target_month` IS NULL OR `target_month` = '')")
 
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale (each column matched independently and ANDed, not blended
+    # into the wide `search` clause below).
+    col_filter_map = {
+        "poid": "poid",
+        "mode": "dispatch_mode",
+        "po_no": "po_no",
+        "project": "project_code",
+        "item": "item_code",
+        "item_code": "item_code",
+        "description": "item_description",
+        "qty": "qty",
+        "rate_sar": "rate",
+        "amount_sar": "line_amount",
+        "amount": "line_amount",
+        "line_amount": "line_amount",
+        "duid": "site_code",
+        "center_area": "center_area",
+        "dispatched_on": "modified",
+        "dummy_poid": "original_dummy_poid",
+        "original_dummy_poid": "original_dummy_poid",
+        "region": "region_type",
+        "target_month": "target_month",
+        "status": "dispatch_status",
+        "dispatch_status": "dispatch_status",
+        "line_amount_sar": "line_amount",
+        "pm_remark": "general_remark",
+        "im_remark": "manager_remark",
+        "tl_remark": "team_lead_remark",
+        "closed_via": "direct_close_by",
+        "created": "creation",
+    }
+    # "domain"/"huawei_im"/"activity_type" are Python post-query enrichments
+    # (see _enrich_with_project_fields / the activity_type special case
+    # below) - matched here via correlated subquery so Manage Table filters
+    # reach the full backend dataset too, not just the loaded page.
+    # "ms1"/"ms2" are computed badges - client-side only, no backend filter.
+    # "plan_status"/"plan_team"/"plan_date"/"issue_category"/"issue_flag"
+    # (IMPOIntake.jsx's Overview/Dummy tabs) come from a separate bulk call
+    # (getDispatchPlanSummaries -> Rollout Plan/Daily Execution), not this
+    # query - client-side only until/unless that's joined in here.
+    # "im" is handled specially below (matches the raw code AND the joined
+    # IM Master full name, since different pages show either/both).
+    column_filters = pf.get("column_filters")
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            if col_key == "im" and "im" in fields:
+                wheres.append(
+                    "(IFNULL(`im`,'') LIKE %s OR `im` IN "
+                    "(SELECT name FROM `tabIM Master` WHERE full_name LIKE %s))"
+                )
+                params.extend([pat, pat])
+                continue
+            # Dummy POs with no item_description show the manager's remark
+            # instead (see _apply_dummy_description) — mirror that fallback
+            # so filtering "Description" matches what the column displays.
+            if col_key == "description" and "item_description" in fields and "is_dummy_po" in fields and "manager_remark" in fields:
+                wheres.append(
+                    "(CASE WHEN IFNULL(`is_dummy_po`,0) = 1 AND IFNULL(`item_description`,'') = '' "
+                    "THEN IFNULL(`manager_remark`,'') ELSE IFNULL(`item_description`,'') END) LIKE %s"
+                )
+                params.append(pat)
+                continue
+            if col_key == "activity_type" and "item_code" in fields:
+                # tabItem has its own item_code column, so an unqualified
+                # `item_code` inside the subquery resolves to tabItem's own
+                # column instead of correlating to the outer row - qualify
+                # with the real (unaliased) outer table name to fix that.
+                wheres.append(
+                    "IFNULL((SELECT activity_type FROM `tabItem` "
+                    "WHERE name = `tabPO Dispatch`.`item_code`), '') LIKE %s"
+                )
+                params.append(pat)
+                continue
+            if col_key == "domain" and "project_code" in fields:
+                # tabProject Control Center also has its own project_code
+                # column, so this needs the same outer-qualification as the
+                # activity_type case above to correlate correctly.
+                wheres.append(
+                    "IFNULL((SELECT project_domain FROM `tabProject Control Center` "
+                    "WHERE name = `tabPO Dispatch`.`project_code`), '') LIKE %s"
+                )
+                params.append(pat)
+                continue
+            if col_key == "huawei_im" and "project_code" in fields:
+                wheres.append(
+                    "IFNULL((SELECT huawei_im FROM `tabProject Control Center` "
+                    "WHERE name = `tabPO Dispatch`.`project_code`), '') LIKE %s"
+                )
+                params.append(pat)
+                continue
+            if col_key == "billing_status" and "pic_status" in fields:
+                # Mirrors billingStatusFromPicStatus() in IMPOIntake.jsx - the
+                # Overview tab's "Billing Status" column is a computed label,
+                # not a raw column, so replicate that mapping here.
+                wheres.append(
+                    "(CASE WHEN `pic_status` IN ('Commercial Invoice Closed', 'PO Line Canceled') THEN 'Closed' "
+                    "WHEN `pic_status` IN ('Commercial Invoice Submitted', 'Ready for Invoice', 'Under I-BUY', 'Under ISDP') THEN 'Invoiced' "
+                    "WHEN IFNULL(`pic_status`, '') != '' THEN 'Pending' ELSE '' END) LIKE %s"
+                )
+                params.append(pat)
+                continue
+            col = col_filter_map.get(col_key)
+            if not col or col not in fields:
+                continue
+            if col in ("qty", "rate", "line_amount", "modified", "creation"):
+                wheres.append(f"CAST(`{col}` AS CHAR) LIKE %s")
+            else:
+                wheres.append(f"IFNULL(`{col}`, '') LIKE %s")
+            params.append(pat)
+
     tokens = _sql_like_tokens(pf.get("search") or pf.get("q") or "")
     if tokens:
         like_cols = [
@@ -2757,6 +3014,8 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
                 "poid",
                 "po_no",
                 "item_code",
+                "item_description",
+                "dispatch_mode",
                 "project_code",
                 "site_code",
                 "im",
@@ -5493,6 +5752,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
         "site_code": "exact DUID / site code",
         "execution_status": "Daily Execution.execution_status (e.g. Completed for Field QC)",
         "execution_team": "Daily Execution.team when filtering by execution_status",
+        "tab": "main|internal_done - which half of the main/internal-done split to return",
       }
     """
     if isinstance(filters, str):
@@ -5558,6 +5818,45 @@ def list_execution_monitor_rows(filters=None, limit=500):
         wheres.append("rp.plan_date <= %s")
         params.append(filters["to_date"])
 
+    # The "Internal Work Done" sub-table (client-side split of this same
+    # fetch by is_internal_work=1) has its own dedicated im/team/domain/type/
+    # date filters — previously applied only to the already-loaded rows.
+    # Each condition is OR'd with "not an internal-work row" so it only
+    # narrows the internal subset, leaving the main table's rows untouched.
+    if frappe.db.has_column("PO Dispatch", "is_internal_work"):
+        internal_im_vals = _ensure_list(filters.get("internal_im"))
+        if internal_im_vals:
+            ph_iim = ", ".join(["%s"] * len(internal_im_vals))
+            wheres.append(f"(IFNULL(pd.is_internal_work,0) = 0 OR IFNULL(pd.im,'') IN ({ph_iim}))")
+            params.extend(internal_im_vals)
+        internal_team_vals_em = _ensure_list(filters.get("internal_team"))
+        if internal_team_vals_em:
+            ph_item = ", ".join(["%s"] * len(internal_team_vals_em))
+            wheres.append(f"(IFNULL(pd.is_internal_work,0) = 0 OR IFNULL(rp.team,'') IN ({ph_item}))")
+            params.extend(internal_team_vals_em)
+        if frappe.db.has_column("PO Dispatch", "internal_domain"):
+            internal_domain_vals_em = _ensure_list(filters.get("internal_domain"))
+            if internal_domain_vals_em:
+                ph_idom = ", ".join(["%s"] * len(internal_domain_vals_em))
+                wheres.append(f"(IFNULL(pd.is_internal_work,0) = 0 OR IFNULL(pd.internal_domain,'') IN ({ph_idom}))")
+                params.extend(internal_domain_vals_em)
+        if frappe.db.has_column("PO Dispatch", "internal_work_type"):
+            internal_type_vals_em = _ensure_list(filters.get("internal_work_type"))
+            if internal_type_vals_em:
+                ph_ityp = ", ".join(["%s"] * len(internal_type_vals_em))
+                wheres.append(f"(IFNULL(pd.is_internal_work,0) = 0 OR IFNULL(pd.internal_work_type,'') IN ({ph_ityp}))")
+                params.extend(internal_type_vals_em)
+        _internal_de_date_expr = (
+            "(SELECT de3.execution_date FROM `tabDaily Execution` de3 "
+            "WHERE de3.rollout_plan = rp.name ORDER BY de3.modified DESC LIMIT 1)"
+        )
+        if filters.get("internal_from_date"):
+            wheres.append(f"(IFNULL(pd.is_internal_work,0) = 0 OR {_internal_de_date_expr} >= %s)")
+            params.append(filters["internal_from_date"])
+        if filters.get("internal_to_date"):
+            wheres.append(f"(IFNULL(pd.is_internal_work,0) = 0 OR {_internal_de_date_expr} <= %s)")
+            params.append(filters["internal_to_date"])
+
     exec_status_vals = _ensure_list(filters.get("execution_status"))
     if exec_status_vals:
         if len(exec_status_vals) == 1:
@@ -5607,6 +5906,158 @@ def list_execution_monitor_rows(filters=None, limit=500):
         ")"
     )
 
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale. This one backend serves 4 different table shapes (PM
+    # Execution Monitor's main + internal-done tables, Field History, Field
+    # QC/CIAG), so the map below is a superset covering every column any of
+    # them show; a page just sends whichever keys its own columns produce.
+    # "tl_status"/"execution_status"/"qc_status"/"ciag_status"/etc. live on
+    # the *latest* Daily Execution per plan (fetched separately in Python via
+    # `latest_exec_by_plan`, ordered by modified desc) — mirrored here as a
+    # correlated subquery picking the same latest row.
+    def _latest_de(col):
+        return (
+            f"(SELECT de1.{col} FROM `tabDaily Execution` de1 "
+            "WHERE de1.rollout_plan = rp.name ORDER BY de1.modified DESC LIMIT 1)"
+        )
+
+    # "tab" - which subset of this shared main+internal-done fetch to
+    # return. Mirrors the frontend's own client-side split (mainRows /
+    # internalDoneRows in ExecutionMonitor.jsx / IMExecution.jsx):
+    # "internal_done" = is_internal_work AND latest execution_status is
+    # Completed; "main" (default) = everything else. Without this, one
+    # row-limited fetch served both tabs, so whichever tab wasn't the
+    # majority of the loaded batch silently lost rows beyond the limit.
+    if frappe.db.has_column("PO Dispatch", "is_internal_work"):
+        tab_scope = (filters.get("tab") or "main").strip().lower()
+        if tab_scope in ("main", "internal_done"):
+            _is_internal_done_expr = (
+                "(IFNULL(pd.is_internal_work,0) = 1 AND IFNULL("
+                + _latest_de("execution_status") + ", '') = 'Completed')"
+            )
+            if tab_scope == "internal_done":
+                wheres.append(_is_internal_done_expr)
+            else:
+                wheres.append(f"NOT {_is_internal_done_expr}")
+
+    # Dummy POs with no item_description show the manager's remark instead
+    # (see _apply_dummy_description) — mirror that fallback here so filtering
+    # "Description" matches what the column actually displays.
+    _desc_expr = (
+        "CASE WHEN IFNULL(pd.is_dummy_po,0) = 1 AND IFNULL(pd.item_description,'') = '' "
+        "THEN IFNULL(pd.manager_remark,'') ELSE IFNULL(pd.item_description,'') END"
+        if frappe.db.has_column("PO Dispatch", "is_dummy_po") and frappe.db.has_column("PO Dispatch", "manager_remark")
+        else "IFNULL(pd.item_description,'')"
+    )
+    col_filter_map = {
+        "plan": "rp.name",
+        "project": "IFNULL(pd.project_code,'')",
+        "duid": "IFNULL(pd.site_code,'')",
+        "item": "IFNULL(pd.item_code,'')",
+        "item_code": "IFNULL(pd.item_code,'')",
+        "description": _desc_expr,
+        "team": "IFNULL(it.team_name,'')",
+        "plan_date": "CAST(rp.plan_date AS CHAR)",
+        "visit_type": "IFNULL(rp.visit_type,'')",
+        # "visit" is FieldHistory.jsx's bare "Visit" header (shows visit_type)
+        # — its ExecutionMonitor.jsx counterpart is renamed to "Visit No" to
+        # avoid the same slug collision fixed previously in IMPlanning.jsx.
+        "visit": "IFNULL(rp.visit_type,'')",
+        "visit_no": "CAST(rp.visit_number AS CHAR)",
+        "target": "CAST(rp.target_amount AS CHAR)",
+        "plan_status": "IFNULL(rp.plan_status,'')",
+        "tl_status": _latest_de("tl_status"),
+        "my_status": _latest_de("tl_status"),
+        "execution_status": _latest_de("execution_status"),
+        "exec_status": _latest_de("execution_status"),
+        "im_status": _latest_de("execution_status"),
+        "issue_category": _latest_de("issue_category"),
+        "qc": _latest_de("qc_status"),
+        "achieved_qty": f"CAST({_latest_de('achieved_qty')} AS CHAR)",
+        "qty": f"CAST({_latest_de('achieved_qty')} AS CHAR)",
+        "date": "CONCAT_WS(' ', CAST(" + _latest_de("execution_date") + " AS CHAR), CAST(rp.plan_date AS CHAR))",
+        "exec_date": f"CAST({_latest_de('execution_date')} AS CHAR)",
+        "gps": _latest_de("gps_location"),
+        "execution_id": _latest_de("name"),
+        "execution": _latest_de("name"),
+    }
+    if frappe.db.has_column("Daily Execution", "ciag_status"):
+        col_filter_map["ciag"] = _latest_de("ciag_status")
+    if frappe.db.has_column("PO Dispatch", "poid"):
+        col_filter_map["poid"] = "COALESCE(NULLIF(pd.poid,''), pd.name)"
+    else:
+        col_filter_map["poid"] = "IFNULL(pd.name,'')"
+    if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+        col_filter_map["dummy_poid"] = "IFNULL(pd.original_dummy_poid,'')"
+    if frappe.db.has_column("PO Dispatch", "center_area"):
+        col_filter_map["center_area"] = "IFNULL(pd.center_area,'')"
+    if frappe.db.has_column("PO Dispatch", "internal_work_type"):
+        col_filter_map["type"] = "IFNULL(pd.internal_work_type,'')"
+    region_parts = []
+    if frappe.db.has_column("Rollout Plan", "region_type"):
+        region_parts.append("IFNULL(rp.region_type,'')")
+    if frappe.db.has_column("PO Dispatch", "region_type"):
+        region_parts.append("IFNULL(pd.region_type,'')")
+    if region_parts:
+        col_filter_map["region"] = "CONCAT_WS(' ', " + ", ".join(region_parts) + ")"
+    # "Domain"/"Huawei IM" mean different things on different tables: the
+    # internal-work table shows pd.internal_domain (a real column); the
+    # normal tables show the *project's* domain/Huawei IM (a Project Control
+    # Center lookup by project_code, previously Python-only). The `pcc` join
+    # below covers both in one expression so either table's filter works.
+    domain_parts = []
+    if frappe.db.has_column("PO Dispatch", "internal_domain"):
+        domain_parts.append("IFNULL(pd.internal_domain,'')")
+    domain_parts.append("IFNULL(pcc.project_domain,'')")
+    col_filter_map["domain"] = "CONCAT_WS(' ', " + ", ".join(domain_parts) + ")"
+    col_filter_map["huawei_im"] = "IFNULL(pcc.huawei_im,'')"
+    if frappe.db.has_column("PO Dispatch", "general_remark"):
+        col_filter_map["general"] = "IFNULL(pd.general_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "manager_remark"):
+        col_filter_map["manager"] = "IFNULL(pd.manager_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "team_lead_remark"):
+        col_filter_map["team_lead"] = "IFNULL(pd.team_lead_remark,'')"
+    col_filter_map["activity_type"] = (
+        "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pd.item_code), '')"
+    )
+    if frappe.db.has_column("Rollout Plan", "access_time"):
+        col_filter_map["access_time"] = "IFNULL(CAST(rp.access_time AS CHAR), '')"
+    # Not backend-filterable: "access" is a computed badge.
+    column_filters_em = filters.get("column_filters")
+    if isinstance(column_filters_em, str):
+        try:
+            column_filters_em = frappe.parse_json(column_filters_em)
+        except Exception:
+            column_filters_em = None
+    if isinstance(column_filters_em, dict):
+        for col_key, raw_val in column_filters_em.items():
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            if col_key == "im":
+                im_parts = ["(IFNULL(pd.im,'') LIKE %s)"]
+                im_params = [pat]
+                if frappe.db.has_column("Rollout Plan", "im"):
+                    im_parts.append("(IFNULL(rp.im,'') LIKE %s)")
+                    im_params.append(pat)
+                im_parts.append(
+                    "(pd.im IN (SELECT name FROM `tabIM Master` WHERE full_name LIKE %s))"
+                )
+                im_params.append(pat)
+                if frappe.db.has_column("Rollout Plan", "im"):
+                    im_parts.append(
+                        "(rp.im IN (SELECT name FROM `tabIM Master` WHERE full_name LIKE %s))"
+                    )
+                    im_params.append(pat)
+                wheres.append("(" + " OR ".join(im_parts) + ")")
+                params.extend(im_params)
+                continue
+            expr = col_filter_map.get(col_key)
+            if not expr:
+                continue
+            wheres.append(f"{expr} LIKE %s")
+            params.append(pat)
+
     like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
     if like_pat:
         concat_parts = [
@@ -5619,7 +6070,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
             "COALESCE(NULLIF(pd.poid,''), pd.name, '')",
             "IFNULL(pd.po_no,'')",
             "IFNULL(pd.item_code,'')",
-            "IFNULL(pd.item_description,'')",
+            _desc_expr,
             "IFNULL(pd.project_code,'')",
             "IFNULL(pd.site_code,'')",
             "IFNULL(pd.site_name,'')",
@@ -5628,6 +6079,8 @@ def list_execution_monitor_rows(filters=None, limit=500):
             "IFNULL(pd.original_dummy_poid,'')",
             "IFNULL(it.team_name,'')",
             "IFNULL(pd.im,'')",
+            "IFNULL(pcc.project_domain,'')",
+            "IFNULL(pcc.huawei_im,'')",
         ]
         if frappe.db.has_column("Rollout Plan", "region_type"):
             concat_parts.append("IFNULL(rp.region_type,'')")
@@ -5663,6 +6116,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
         "FROM `tabRollout Plan` rp "
         "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
         "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
+        "LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code "
         f"{rp_im_join} {pd_im_join}"
     )
     id_sql = (
@@ -6021,7 +6475,79 @@ def list_work_done_rows(filters=None, limit=500):
     if filters.get("exclude_backend"):
         wheres.append("COALESCE(pd.dispatch_status, pd_sys.dispatch_status, '') != 'Backend Assigned'")
 
-    like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
+    # Work-type toggle (Field Work / Backend / Direct Close) — a dedicated
+    # toolbar filter on both WorkDone pages, previously applied only to the
+    # already-loaded rows client-side. Exact-match on the stored `source`
+    # value; the frontend decides whether "Rollout Execution" should also
+    # include legacy empty-source rows (admin/WorkDone.jsx does, IMWorkDone.jsx
+    # doesn't — that display nuance predates this fix and is left unchanged).
+    source_vals = _ensure_list(filters.get("source"))
+    if source_vals and frappe.db.has_column("Work Done", "source"):
+        ph_src = ", ".join(["%s"] * len(source_vals))
+        wheres.append(f"IFNULL(wd.source,'') IN ({ph_src})")
+        params.extend(source_vals)
+
+    # Same "loaded rows only" bug as source above, for 3 more dedicated
+    # toolbar filters on the WorkDone pages. "__NONE__" is a sentinel these
+    # pages already use client-side to mean "empty/not set".
+    def _in_or_none(col, vals):
+        none_wanted = "__NONE__" in vals
+        real_vals = [v for v in vals if v != "__NONE__"]
+        parts, p = [], []
+        if none_wanted:
+            parts.append(f"IFNULL({col},'') = ''")
+        if real_vals:
+            ph = ", ".join(["%s"] * len(real_vals))
+            parts.append(f"{col} IN ({ph})")
+            p.extend(real_vals)
+        if not parts:
+            return None, []
+        return "(" + " OR ".join(parts) + ")", p
+
+    submission_vals = _ensure_list(filters.get("submission_status"))
+    if submission_vals and frappe.db.has_column("Work Done", "submission_status"):
+        clause, p = _in_or_none("wd.submission_status", submission_vals)
+        if clause:
+            wheres.append(clause)
+            params.extend(p)
+
+    # "tab" - which of IMWorkDone.jsx's 3 mutually-exclusive tabs (Active /
+    # Confirmed / PIC Rejected) to return. Mirrors that page's own
+    # client-side split (tabRows) exactly, including the pic_rejection_remark
+    # fallback. Without this, one row-limited fetch served all 3 tabs, so
+    # whichever tab wasn't the majority of the loaded batch lost rows.
+    if frappe.db.has_column("Work Done", "submission_status"):
+        _pic_rej_expr = (
+            "COALESCE(pd.pic_rejection_remark, pd_sys.pic_rejection_remark)"
+            if frappe.db.has_column("PO Dispatch", "pic_rejection_remark")
+            else "NULL"
+        )
+        tab_scope_wd = (filters.get("tab") or "active").strip().lower()
+        if tab_scope_wd == "confirmed":
+            wheres.append("IFNULL(wd.submission_status,'') = 'Confirmation Done'")
+        elif tab_scope_wd == "pic_rejected":
+            wheres.append(
+                f"(IFNULL(wd.submission_status,'') = 'PIC Rejected' OR IFNULL({_pic_rej_expr},'') != '')"
+            )
+        elif tab_scope_wd == "active":
+            wheres.append(
+                "IFNULL(wd.submission_status,'') NOT IN ('Confirmation Done', 'PIC Rejected')"
+                f" AND IFNULL({_pic_rej_expr},'') = ''"
+            )
+
+    issue_flag_vals = _ensure_list(filters.get("issue_flag"))
+    if issue_flag_vals and frappe.db.has_column("Work Done", "issue_flag"):
+        clause, p = _in_or_none("wd.issue_flag", issue_flag_vals)
+        if clause:
+            wheres.append(clause)
+            params.extend(p)
+
+    exec_status_vals_wd = _ensure_list(filters.get("execution_status"))
+    if exec_status_vals_wd:
+        ph_ex = ", ".join(["%s"] * len(exec_status_vals_wd))
+        wheres.append(f"IFNULL(de.execution_status,'') IN ({ph_ex})")
+        params.extend(exec_status_vals_wd)
+
     rp_im_join_wd = (
         "LEFT JOIN `tabIM Master` rim_rp ON rim_rp.name = rp.im"
         if frappe.db.has_column("Rollout Plan", "im")
@@ -6032,6 +6558,88 @@ def list_work_done_rows(filters=None, limit=500):
         if frappe.db.has_column("PO Dispatch", "im")
         else ""
     )
+
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale (each column matched independently and ANDed, not blended
+    # into the wide `search` clause below; same expressions widen that
+    # search too, so both paths cover the same fields).
+    _wd_desc_raw = "COALESCE(NULLIF(pd.item_description,''), pd_sys.item_description, '')"
+    _wd_desc_expr = (
+        "CASE WHEN COALESCE(pd.is_dummy_po, pd_sys.is_dummy_po, 0) = 1 AND "
+        f"{_wd_desc_raw} = '' THEN "
+        "COALESCE(NULLIF(pd.manager_remark,''), pd_sys.manager_remark, '') "
+        f"ELSE {_wd_desc_raw} END"
+        if frappe.db.has_column("PO Dispatch", "is_dummy_po") and frappe.db.has_column("PO Dispatch", "manager_remark")
+        else _wd_desc_raw
+    )
+    col_filter_map = {
+        "project_code": "COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code, '')",
+        "poid": "COALESCE(NULLIF(pd.poid,''), NULLIF(pd_sys.poid,''), pd.name, pd_sys.name, '')",
+        "duid": "COALESCE(NULLIF(pd.site_code,''), pd_sys.site_code, '')",
+        "item_code": "IFNULL(wd.item_code,'')",
+        # "item_description" for IMWorkDone.jsx ("Item Description" header);
+        # "description" for admin/WorkDone.jsx ("Description" header) — same
+        # underlying column, two different header labels slug to two keys.
+        "item_description": _wd_desc_expr,
+        "description": _wd_desc_expr,
+        "line_amount": "CAST(COALESCE(pd.line_amount, pd_sys.line_amount) AS CHAR)",
+        "region": "COALESCE(NULLIF(pd.region_type,''), pd_sys.region_type, '')",
+        "planning_timestamp": "CAST(rp.creation AS CHAR)",
+        "dispatch_seq": "CAST(COALESCE(pd.po_line_no, pd_sys.po_line_no) AS CHAR)",
+        "plan_date": "CAST(rp.plan_date AS CHAR)",
+        "assigned_team": "IFNULL(it.team_name,'')",
+        "dispatch_status": "COALESCE(NULLIF(pd.dispatch_status,''), pd_sys.dispatch_status, '')",
+        "execution_date": "CAST(de.execution_date AS CHAR)",
+        "execution_status": "IFNULL(de.execution_status,'')",
+        "attempt": "CAST(rp.visit_number AS CHAR)",
+        "qc": "IFNULL(de.qc_status,'')",
+        "execution_remarks": "IFNULL(de.remarks,'')",
+        "revenue": "CAST(wd.revenue_sar AS CHAR)",
+        "billing_status": billing_expr,
+    }
+    im_filter_parts = ["COALESCE(NULLIF(pd.im,''), pd_sys.im, '')"]
+    if frappe.db.has_column("Rollout Plan", "im"):
+        im_filter_parts.append("IFNULL(rim_rp.full_name,'')")
+    if frappe.db.has_column("PO Dispatch", "im"):
+        im_filter_parts.append("IFNULL(rim_pd.full_name,'')")
+    col_filter_map["inet_im"] = "CONCAT_WS(' ', " + ", ".join(im_filter_parts) + ")"
+    if frappe.db.has_column("Daily Execution", "ciag_status"):
+        col_filter_map["ciag"] = "IFNULL(de.ciag_status,'')"
+    if frappe.db.has_column("Work Done", "submission_status"):
+        col_filter_map["submission_status"] = "IFNULL(wd.submission_status,'')"
+    if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
+        col_filter_map["pic_rejection_reason"] = "COALESCE(pd.pic_rejection_remark, pd_sys.pic_rejection_remark)"
+    if frappe.db.has_column("Work Done", "source"):
+        col_filter_map["source"] = "IFNULL(wd.source,'')"
+    if frappe.db.has_column("Work Done", "issue_flag"):
+        col_filter_map["issue_flag"] = "IFNULL(wd.issue_flag,'')"
+    if frappe.db.has_column("PO Dispatch", "general_remark"):
+        col_filter_map["general"] = "COALESCE(pd.general_remark, pd_sys.general_remark)"
+    if frappe.db.has_column("PO Dispatch", "manager_remark"):
+        col_filter_map["manager"] = "COALESCE(pd.manager_remark, pd_sys.manager_remark)"
+    if frappe.db.has_column("PO Dispatch", "team_lead_remark"):
+        col_filter_map["team_lead"] = "COALESCE(pd.team_lead_remark, pd_sys.team_lead_remark)"
+    col_filter_map["activity_type"] = "IFNULL(item_wd.activity_type,'')"
+    # Not backend-filterable: "domain"/"huawei_im"/"project_name" are Python
+    # post-query enrichments, "milestone" is a computed badge.
+    column_filters = filters.get("column_filters")
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            expr = col_filter_map.get(col_key)
+            if not expr:
+                continue
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            wheres.append(f"{expr} LIKE %s")
+            params.append(pat)
+
+    like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
     if like_pat:
         concat_parts = [
             "IFNULL(wd.name,'')",
@@ -6059,6 +6667,11 @@ def list_work_done_rows(filters=None, limit=500):
             concat_parts.append("IFNULL(rim_rp.full_name,'')")
         if frappe.db.has_column("PO Dispatch", "im"):
             concat_parts.append("IFNULL(rim_pd.full_name,'')")
+        seen_parts = set(concat_parts)
+        for expr in col_filter_map.values():
+            if expr not in seen_parts:
+                concat_parts.append(expr)
+                seen_parts.add(expr)
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
         clause, cparams = _sql_search_clause(
             concat_expr, filters.get("search") or filters.get("q") or "",
@@ -6079,6 +6692,7 @@ def list_work_done_rows(filters=None, limit=500):
         "LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
         "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
         "LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id "
+        "LEFT JOIN `tabItem` item_wd ON item_wd.name = wd.item_code "
         "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
         f"{rp_im_join_wd} {pd_im_join_wd} "
         f"WHERE {' AND '.join(wheres)} "
@@ -6329,6 +6943,27 @@ def _synthesize_subcon_workdone_rows(filters):
         if not any(str(v).strip().lower() in accept for v in bs_vals):
             return []
 
+    # Work-type toggle (Field Work / Backend / Direct Close) — every
+    # synthesized row here is emitted with source="Backend" (see below), so
+    # skip generating them entirely when the caller filtered to some other
+    # source.
+    source_vals_sub = _ensure_list(f.get("source"))
+    if source_vals_sub and "Backend" not in source_vals_sub:
+        return []
+
+    # execution_status is hardcoded "Completed" for every synthesized row
+    # (see the row-building block below) — skip entirely if the filter
+    # excludes that value.
+    exec_status_vals_sub = _ensure_list(f.get("execution_status"))
+    if exec_status_vals_sub and "Completed" not in exec_status_vals_sub:
+        return []
+
+    # issue_flag is never set on synthesized rows (always empty) — skip
+    # entirely unless the filter explicitly wants "no flag" or is unset.
+    issue_flag_vals_sub = _ensure_list(f.get("issue_flag"))
+    if issue_flag_vals_sub and "__NONE__" not in issue_flag_vals_sub:
+        return []
+
     where = [
         "IFNULL(pd.subcon_status,'') = 'Work Done'",
         # Exclude dispatches that already have a real Work Done record — they are
@@ -6357,6 +6992,44 @@ def _synthesize_subcon_workdone_rows(filters):
         where.append("pd.subcon_completed_on <= %s")
         params.append(f["to_date"])
 
+    submission_vals_sub = _ensure_list(f.get("submission_status"))
+    if submission_vals_sub and frappe.db.has_column("PO Dispatch", "subcon_submission_status"):
+        none_wanted_sub = "__NONE__" in submission_vals_sub
+        real_vals_sub = [v for v in submission_vals_sub if v != "__NONE__"]
+        parts_sub = []
+        if none_wanted_sub:
+            parts_sub.append("IFNULL(pd.subcon_submission_status,'') = ''")
+        if real_vals_sub:
+            ph_sub = ", ".join(["%s"] * len(real_vals_sub))
+            parts_sub.append(f"pd.subcon_submission_status IN ({ph_sub})")
+            params.extend(real_vals_sub)
+        if parts_sub:
+            where.append("(" + " OR ".join(parts_sub) + ")")
+    elif submission_vals_sub:
+        # Column doesn't exist on this site — subcon_submission_status is
+        # always effectively empty, so only "__NONE__" (or unset) can match.
+        if "__NONE__" not in submission_vals_sub:
+            return []
+
+    # "tab" - mirrors list_work_done_rows' own tab split (see there for the
+    # rationale). Without this, these synthesized rows were appended to
+    # EVERY tab's result unconditionally, regardless of their real status -
+    # the actual cause of the cross-tab overlap this guard fixes.
+    # Note: unlike the real Work Done query, synthesized rows never surface
+    # pic_rejection_remark in their output (pre-existing, this row type has
+    # no such field emitted below) - so unlike list_work_done_rows' own tab
+    # split, only subcon_submission_status is checked here, not that column.
+    if frappe.db.has_column("PO Dispatch", "subcon_submission_status"):
+        tab_scope_sub = (f.get("tab") or "active").strip().lower()
+        if tab_scope_sub == "confirmed":
+            where.append("IFNULL(pd.subcon_submission_status,'') = 'Confirmation Done'")
+        elif tab_scope_sub == "pic_rejected":
+            where.append("IFNULL(pd.subcon_submission_status,'') = 'PIC Rejected'")
+        elif tab_scope_sub == "active":
+            where.append(
+                "IFNULL(pd.subcon_submission_status,'') NOT IN ('Confirmation Done', 'PIC Rejected')"
+            )
+
     search = f.get("search") or f.get("q") or ""
     if search:
         clause, like_params = _sql_search_clause(
@@ -6372,6 +7045,56 @@ def _synthesize_subcon_workdone_rows(filters):
         if clause:
             where.append(clause)
             params.extend(like_params)
+
+    # Per-column "Manage Table" filters. These synthesized rows have no
+    # execution/rollout-plan chain, so only a subset of columns resolve here;
+    # a filter on a column that doesn't apply to subcon rows (execution
+    # status, QC, billing, etc.) must exclude these rows rather than show
+    # them unconditionally, which is exactly the bug this guards against.
+    _subcon_desc_expr = (
+        "CASE WHEN IFNULL(pd.is_dummy_po,0) = 1 AND IFNULL(pd.item_description,'') = '' "
+        "THEN IFNULL(pd.manager_remark,'') ELSE IFNULL(pd.item_description,'') END"
+        if frappe.db.has_column("PO Dispatch", "is_dummy_po") and frappe.db.has_column("PO Dispatch", "manager_remark")
+        else "IFNULL(pd.item_description,'')"
+    )
+    col_filter_map = {
+        "project_code": "IFNULL(pd.project_code,'')",
+        "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
+        "duid": "IFNULL(pd.site_code,'')",
+        "item_code": "IFNULL(pd.item_code,'')",
+        "item_description": _subcon_desc_expr,
+        "description": _subcon_desc_expr,
+        "line_amount": "CAST(pd.line_amount AS CHAR)",
+        "region": "IFNULL(pd.region_type,'')",
+        "assigned_team": "IFNULL(t.team_name,'')",
+        "dispatch_status": "IFNULL(pd.dispatch_status,'')",
+    }
+    if frappe.db.has_column("PO Dispatch", "general_remark"):
+        col_filter_map["general"] = "IFNULL(pd.general_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "manager_remark"):
+        col_filter_map["manager"] = "IFNULL(pd.manager_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "team_lead_remark"):
+        col_filter_map["team_lead"] = "IFNULL(pd.team_lead_remark,'')"
+    col_filter_map["activity_type"] = (
+        "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pd.item_code), '')"
+    )
+    column_filters = f.get("column_filters")
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            expr = col_filter_map.get(col_key)
+            if expr:
+                where.append(f"{expr} LIKE %s")
+                params.append(pat)
+            else:
+                where.append("1=0")
 
     sub_sub_col = (
         "pd.subcon_submission_status AS subcon_submission_status"
@@ -6811,7 +7534,8 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
     before the row limit is applied.
 
     ``portal_filters`` (JSON dict) may set exact ``project_code``, ``site_code``, ``team``
-    (rollout plan team id) — applied in SQL before the row limit.
+    (rollout plan team id), ``issue_category``, ``execution_status``, ``tl_status``,
+    ``qc_status``, ``ciag_status`` — applied in SQL before the row limit.
     """
     user = frappe.session.user
     roles = set(frappe.get_roles(user))
@@ -6902,6 +7626,129 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             wheres.append(f"IFNULL(pd.im,'') IN ({ph_ir})")
             params.extend(pf_im_vals)
 
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale. `id_sql` (below) doesn't join Daily Execution directly, so
+    # execution-sourced columns (tl_status/qc/ciag/etc.) are matched via a
+    # correlated subquery mirroring the exact "latest execution up to this
+    # visit" logic the second query's `de` JOIN uses.
+    def _latest_de_ir(col):
+        return (
+            f"(SELECT de2.{col} FROM `tabDaily Execution` de2 "
+            "INNER JOIN `tabRollout Plan` rp2 ON rp2.name = de2.rollout_plan "
+            "WHERE rp2.po_dispatch = rp.po_dispatch "
+            "AND IFNULL(rp2.visit_number, 0) <= IFNULL(rp.visit_number, 0) "
+            "ORDER BY IFNULL(rp2.visit_number,0) DESC, de2.modified DESC LIMIT 1)"
+        )
+
+    # Dedicated toolbar filters (Issue Category / Exec Status / date range) —
+    # same "loaded rows only" bug as the Manage Table column filters above,
+    # just on this page's own dropdown/date-range controls instead.
+    ic_vals = _ensure_list(pf_ir.get("issue_category"))
+    if ic_vals:
+        ph_ic = ", ".join(["%s"] * len(ic_vals))
+        wheres.append(f"IFNULL(rp.issue_category,'') IN ({ph_ic})")
+        params.extend(ic_vals)
+    es_vals = _ensure_list(pf_ir.get("execution_status"))
+    if es_vals:
+        ph_es = ", ".join(["%s"] * len(es_vals))
+        wheres.append(f"IFNULL({_latest_de_ir('execution_status')},'') IN ({ph_es})")
+        params.extend(es_vals)
+    tl_vals = _ensure_list(pf_ir.get("tl_status"))
+    if tl_vals:
+        ph_tl = ", ".join(["%s"] * len(tl_vals))
+        wheres.append(f"IFNULL({_latest_de_ir('tl_status')},'') IN ({ph_tl})")
+        params.extend(tl_vals)
+    qc_vals = _ensure_list(pf_ir.get("qc_status"))
+    if qc_vals:
+        ph_qc = ", ".join(["%s"] * len(qc_vals))
+        wheres.append(f"IFNULL({_latest_de_ir('qc_status')},'') IN ({ph_qc})")
+        params.extend(qc_vals)
+    if frappe.db.has_column("Daily Execution", "ciag_status"):
+        ciag_vals = _ensure_list(pf_ir.get("ciag_status"))
+        if ciag_vals:
+            ph_ciag = ", ".join(["%s"] * len(ciag_vals))
+            wheres.append(f"IFNULL({_latest_de_ir('ciag_status')},'') IN ({ph_ciag})")
+            params.extend(ciag_vals)
+    if pf_ir.get("from_date") and pf_ir.get("to_date"):
+        wheres.append("rp.plan_date BETWEEN %s AND %s")
+        params.extend([pf_ir["from_date"], pf_ir["to_date"]])
+    elif pf_ir.get("from_date"):
+        wheres.append("rp.plan_date >= %s")
+        params.append(pf_ir["from_date"])
+    elif pf_ir.get("to_date"):
+        wheres.append("rp.plan_date <= %s")
+        params.append(pf_ir["to_date"])
+
+    _desc_expr_ir = (
+        "CASE WHEN IFNULL(pd.is_dummy_po,0) = 1 AND IFNULL(pd.item_description,'') = '' "
+        "THEN IFNULL(pd.manager_remark,'') ELSE IFNULL(pd.item_description,'') END"
+        if frappe.db.has_column("PO Dispatch", "is_dummy_po") and frappe.db.has_column("PO Dispatch", "manager_remark")
+        else "IFNULL(pd.item_description,'')"
+    )
+    col_filter_map_ir = {
+        "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
+        "plan": "rp.name",
+        "item_code": "IFNULL(pd.item_code,'')",
+        "description": _desc_expr_ir,
+        "project": "IFNULL(pd.project_code,'')",
+        "duid": "IFNULL(pd.site_code,'')",
+        "team": "IFNULL(it.team_name,'')",
+        "plan_date": "CAST(rp.plan_date AS CHAR)",
+        "exec_date": f"CAST({_latest_de_ir('execution_date')} AS CHAR)",
+        "attempt": "CAST(rp.visit_number AS CHAR)",
+        "line_amount": "CAST(pd.line_amount AS CHAR)",
+        "region": "IFNULL(pd.region_type,'')",
+        "exec_status": _latest_de_ir("execution_status"),
+        "tl_status": _latest_de_ir("tl_status"),
+        "qc": _latest_de_ir("qc_status"),
+        "issue_status": "IFNULL(rp.issue_status,'')",
+        "issue_category": "IFNULL(rp.issue_category,'')",
+        "issue_remarks": "IFNULL(rp.issue_remarks,'')",
+        "execution_remarks": _latest_de_ir("remarks"),
+        "huawei_im": "IFNULL(pcc_ir.huawei_im,'')",
+        "domain": "IFNULL(pcc_ir.project_domain,'')",
+    }
+    if frappe.db.has_column("Daily Execution", "ciag_status"):
+        col_filter_map_ir["ciag"] = _latest_de_ir("ciag_status")
+    if frappe.db.has_column("PO Dispatch", "general_remark"):
+        col_filter_map_ir["general"] = "IFNULL(pd.general_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "manager_remark"):
+        col_filter_map_ir["manager"] = "IFNULL(pd.manager_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "team_lead_remark"):
+        col_filter_map_ir["team_lead"] = "IFNULL(pd.team_lead_remark,'')"
+    # Not backend-filterable: "activity_type" is a Python post-query
+    # enrichment (not used by this function's output at all, so N/A here).
+    column_filters_ir = pf_ir.get("column_filters")
+    if isinstance(column_filters_ir, str):
+        try:
+            column_filters_ir = frappe.parse_json(column_filters_ir)
+        except Exception:
+            column_filters_ir = None
+    if isinstance(column_filters_ir, dict):
+        for col_key, raw_val in column_filters_ir.items():
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            if col_key == "im":
+                im_parts_ir = ["(IFNULL(pd.im,'') LIKE %s)"]
+                im_params_ir = [pat]
+                if frappe.db.has_column("Rollout Plan", "im"):
+                    im_parts_ir.append("(IFNULL(rp.im,'') LIKE %s)")
+                    im_params_ir.append(pat)
+                im_parts_ir.append("(pd.im IN (SELECT name FROM `tabIM Master` WHERE full_name LIKE %s))")
+                im_params_ir.append(pat)
+                if frappe.db.has_column("Rollout Plan", "im"):
+                    im_parts_ir.append("(rp.im IN (SELECT name FROM `tabIM Master` WHERE full_name LIKE %s))")
+                    im_params_ir.append(pat)
+                wheres.append("(" + " OR ".join(im_parts_ir) + ")")
+                params.extend(im_params_ir)
+                continue
+            expr = col_filter_map_ir.get(col_key)
+            if not expr:
+                continue
+            wheres.append(f"{expr} LIKE %s")
+            params.append(pat)
+
     like_pat = _sql_like_pattern(search or "")
     if like_pat:
         concat_parts = [
@@ -6917,6 +7764,9 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             "IFNULL(pd.site_name,'')",
             "IFNULL(pd.im,'')",
             "IFNULL(im_pd.full_name,'')",
+            _desc_expr_ir,
+            "IFNULL(pcc_ir.project_domain,'')",
+            "IFNULL(pcc_ir.huawei_im,'')",
         ]
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
@@ -6934,6 +7784,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         "FROM `tabRollout Plan` rp "
         "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
         "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
+        "LEFT JOIN `tabProject Control Center` pcc_ir ON pcc_ir.name = pd.project_code "
         f"{rp_im_join_ir}"
         "\n        LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im"
         f"\n        WHERE {' AND '.join(wheres)} "
@@ -8431,6 +9282,87 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
     elif pf.get("to_date"):
         portal_clause += " AND rp.plan_date <= %s"
         params.append(pf["to_date"])
+    # "Dummy PO" toggle — a dedicated toolbar filter (previously applied only
+    # to already-loaded rows client-side). Matches list_po_dispatches' own
+    # dummy_preset convention: "dummy" = open dummy POs only.
+    if (pf.get("dummy_preset") or "").strip().lower() == "dummy":
+        portal_clause += " AND IFNULL(pd.is_dummy_po, 0) = 1"
+    rp_im_join = ""
+    im_full_sql = "im_pd.full_name AS im_full_name"
+    if frappe.db.has_column("Rollout Plan", "im"):
+        rp_im_join = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
+        im_full_sql = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
+
+    # Per-column "Manage Table" filters: each column is matched independently
+    # against its own SQL expression (plain substring LIKE, same semantics the
+    # old client-side filter used) and ANDed together — not blended into the
+    # wide multi-column `search` clause below, which searched every column at
+    # once and produced false/missing matches when more than one column filter
+    # (or a filter plus the top search box) was active together. These same
+    # expressions are also reused below to widen the general/top search box so
+    # it covers the same columns a per-column filter can reach (e.g. item
+    # description), instead of the two search paths covering different fields.
+    _desc_expr_rp = (
+        "CASE WHEN IFNULL(pd.is_dummy_po,0) = 1 AND IFNULL(pd.item_description,'') = '' "
+        "THEN IFNULL(pd.manager_remark,'') ELSE IFNULL(pd.item_description,'') END"
+        if frappe.db.has_column("PO Dispatch", "is_dummy_po") and frappe.db.has_column("PO Dispatch", "manager_remark")
+        else "IFNULL(pd.item_description,'')"
+    )
+    col_filter_map = {
+        "plan_id": "rp.name",
+        "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
+        "description": _desc_expr_rp,
+        "duid": "IFNULL(pd.site_code,'')",
+        "po": "IFNULL(pd.po_no,'')",
+        "team": "IFNULL(it.team_name,'')",
+        "im": im_full_sql.split(" AS ")[0],
+        "plan_date": "CAST(rp.plan_date AS CHAR)",
+        "end_date": "CAST(rp.plan_end_date AS CHAR)",
+        "visit": "IFNULL(rp.visit_type,'')",
+        "visit_no": "CAST(rp.visit_number AS CHAR)",
+        "status": "IFNULL(rp.plan_status,'')",
+        "target_sar": "CAST(rp.target_amount AS CHAR)",
+        "cancel": "IFNULL(rp.cancel_request_status,'')",
+        "domain": "IFNULL(pcc_rp.project_domain,'')",
+        "huawei_im": "IFNULL(pcc_rp.huawei_im,'')",
+    }
+    if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+        col_filter_map["dummy_poid"] = "IFNULL(pd.original_dummy_poid,'')"
+    if frappe.db.has_column("PO Dispatch", "center_area"):
+        col_filter_map["center_area"] = "IFNULL(pd.center_area,'')"
+    if frappe.db.has_column("Rollout Plan", "region_type"):
+        col_filter_map["region"] = "IFNULL(rp.region_type,'')"
+    if frappe.db.has_column("PO Dispatch", "general_remark"):
+        col_filter_map["general"] = "IFNULL(pd.general_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "manager_remark"):
+        col_filter_map["manager"] = "IFNULL(pd.manager_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "team_lead_remark"):
+        col_filter_map["team_lead"] = "IFNULL(pd.team_lead_remark,'')"
+    col_filter_map["activity_type"] = (
+        "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pd.item_code), '')"
+    )
+    if frappe.db.has_column("Rollout Plan", "access_time"):
+        col_filter_map["access_time"] = "IFNULL(CAST(rp.access_time AS CHAR), '')"
+    # Not backend-filterable here: "access" is a computed badge —
+    # it doesn't map to a single SQL expression. Left client-side only, same
+    # as before this change (no regression, just not yet full-dataset).
+    column_filters = pf.get("column_filters")
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            expr = col_filter_map.get(col_key)
+            if not expr:
+                continue
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            portal_clause += f" AND {expr} LIKE %s"
+            params.append(pat)
+
     like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
     if like_pat:
         concat_parts = [
@@ -8450,6 +9382,14 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         ]
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
+        # Widen with every backend-filterable column's expression too, so the
+        # top search box can find the same things a per-column filter can
+        # (e.g. item description, remarks) instead of covering fewer fields.
+        seen_parts = set(concat_parts)
+        for expr in col_filter_map.values():
+            if expr not in seen_parts:
+                concat_parts.append(expr)
+                seen_parts.add(expr)
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
         clause, cparams = _sql_search_clause(
             concat_expr, pf.get("search") or pf.get("q") or "",
@@ -8480,11 +9420,6 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         im_plan_extras.append("NULL AS internal_work_type")
         im_plan_extras.append("NULL AS internal_domain")
     im_plan_extra_sql = ", " + ", ".join(im_plan_extras)
-    rp_im_join = ""
-    im_full_sql = "im_pd.full_name AS im_full_name"
-    if frappe.db.has_column("Rollout Plan", "im"):
-        rp_im_join = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
-        im_full_sql = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
     lim_rp = _portal_row_limit(limit, 500)
     rows = frappe.db.sql(
         f"""
@@ -8513,6 +9448,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         FROM `tabRollout Plan` rp
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        LEFT JOIN `tabProject Control Center` pcc_rp ON pcc_rp.name = pd.project_code
         {rp_im_join}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         WHERE pd.im IN ({ph}){status_clause}{portal_clause}
@@ -8574,6 +9510,54 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     elif pf.get("to_date"):
         portal_clause += " AND de.execution_date <= %s"
         params.append(pf["to_date"])
+    # "Dummy PO" toggle — a dedicated toolbar filter (previously applied only
+    # to already-loaded rows client-side). Matches list_po_dispatches' own
+    # dummy_preset convention: "dummy" = open dummy POs only.
+    if (pf.get("dummy_preset") or "").strip().lower() == "dummy":
+        portal_clause += " AND IFNULL(pd.is_dummy_po, 0) = 1"
+
+    # The "Internal Work Done" sub-table (client-side split of this same
+    # fetch by is_internal_work=1) has its own dedicated team/domain/type/date
+    # filters — previously applied only to the already-loaded rows. Each
+    # condition is OR'd with "not an internal-work row" so it only narrows
+    # the internal subset, leaving the main table's rows untouched.
+    if frappe.db.has_column("PO Dispatch", "is_internal_work"):
+        internal_team_vals = _ensure_list(pf.get("internal_team"))
+        if internal_team_vals:
+            ph_it = ", ".join(["%s"] * len(internal_team_vals))
+            portal_clause += f" AND (IFNULL(pd.is_internal_work,0) = 0 OR IFNULL(de.team,'') IN ({ph_it}))"
+            params.extend(internal_team_vals)
+        if frappe.db.has_column("PO Dispatch", "internal_domain"):
+            internal_domain_vals = _ensure_list(pf.get("internal_domain"))
+            if internal_domain_vals:
+                ph_id = ", ".join(["%s"] * len(internal_domain_vals))
+                portal_clause += f" AND (IFNULL(pd.is_internal_work,0) = 0 OR IFNULL(pd.internal_domain,'') IN ({ph_id}))"
+                params.extend(internal_domain_vals)
+        if frappe.db.has_column("PO Dispatch", "internal_work_type"):
+            internal_type_vals = _ensure_list(pf.get("internal_work_type"))
+            if internal_type_vals:
+                ph_ty = ", ".join(["%s"] * len(internal_type_vals))
+                portal_clause += f" AND (IFNULL(pd.is_internal_work,0) = 0 OR IFNULL(pd.internal_work_type,'') IN ({ph_ty}))"
+                params.extend(internal_type_vals)
+        if pf.get("internal_from_date"):
+            portal_clause += " AND (IFNULL(pd.is_internal_work,0) = 0 OR de.execution_date >= %s)"
+            params.append(pf["internal_from_date"])
+        if pf.get("internal_to_date"):
+            portal_clause += " AND (IFNULL(pd.is_internal_work,0) = 0 OR de.execution_date <= %s)"
+            params.append(pf["internal_to_date"])
+
+        # "tab" - which subset of this shared main+internal-done fetch to
+        # return. Mirrors the frontend's own client-side split in
+        # IMExecution.jsx (filteredExecutions / internalDoneExecutions):
+        # "internal_done" = is_internal_work AND execution_status Completed;
+        # "main" (default) = everything else. Without this, one row-limited
+        # fetch served both tabs, so whichever tab wasn't the majority of
+        # that batch lost rows beyond the limit.
+        tab_scope_ex = (pf.get("tab") or "main").strip().lower()
+        if tab_scope_ex == "internal_done":
+            portal_clause += " AND IFNULL(pd.is_internal_work,0) = 1 AND de.execution_status = 'Completed'"
+        elif tab_scope_ex == "main":
+            portal_clause += " AND NOT (IFNULL(pd.is_internal_work,0) = 1 AND de.execution_status = 'Completed')"
 
     # Hide a DE once the IM has nothing left to do with it. Two rules (OR):
     # 1. Lead-DE rule: this DE's own QC/CIAG is done AND a WD exists for the plan.
@@ -8608,6 +9592,85 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         ")"
     )
 
+    rp_im_join_ex = ""
+    im_full_sql_ex = "im_pd.full_name AS im_full_name"
+    if frappe.db.has_column("Rollout Plan", "im"):
+        rp_im_join_ex = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
+        im_full_sql_ex = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
+
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale (each column matched independently and ANDed, not blended
+    # into the wide `search` clause; same expressions widen that search too).
+    _desc_expr_ex = (
+        "CASE WHEN IFNULL(pd.is_dummy_po,0) = 1 AND IFNULL(pd.item_description,'') = '' "
+        "THEN IFNULL(pd.manager_remark,'') ELSE IFNULL(pd.item_description,'') END"
+        if frappe.db.has_column("PO Dispatch", "is_dummy_po") and frappe.db.has_column("PO Dispatch", "manager_remark")
+        else "IFNULL(pd.item_description,'')"
+    )
+    col_filter_map = {
+        "execution": "IFNULL(de.name,'')",
+        "rollout_plan": "IFNULL(de.rollout_plan,'')",
+        "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
+        "item": "IFNULL(pd.item_code,'')",
+        "item_code": "IFNULL(pd.item_code,'')",
+        "description": _desc_expr_ex,
+        "project": "IFNULL(pd.project_code,'')",
+        "duid": "IFNULL(pd.site_code,'')",
+        "po": "IFNULL(pd.po_no,'')",
+        "team": "IFNULL(it.team_name,'')",
+        "im": im_full_sql_ex.split(" AS ")[0],
+        "plan_period": "CONCAT_WS(' ', CAST(rp.plan_date AS CHAR), CAST(rp.plan_end_date AS CHAR))",
+        "exec_date": "CAST(de.execution_date AS CHAR)",
+        "tl_status": "IFNULL(de.tl_status,'')",
+        "execution_status": "IFNULL(de.execution_status,'')",
+        "issue_category": "IFNULL(de.issue_category,'')",
+        "qc": "IFNULL(de.qc_status,'')",
+        "qty": "CAST(de.achieved_qty AS CHAR)",
+        "visit": "CAST(rp.visit_number AS CHAR)",
+        "domain": "IFNULL(pcc_ex.project_domain,'')",
+        "huawei_im": "IFNULL(pcc_ex.huawei_im,'')",
+    }
+    if frappe.db.has_column("Daily Execution", "ciag_status"):
+        col_filter_map["ciag"] = "IFNULL(de.ciag_status,'')"
+    if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
+        col_filter_map["dummy_poid"] = "IFNULL(pd.original_dummy_poid,'')"
+    if frappe.db.has_column("PO Dispatch", "center_area"):
+        col_filter_map["center_area"] = "IFNULL(pd.center_area,'')"
+    if frappe.db.has_column("Daily Execution", "region_type"):
+        col_filter_map["region"] = "IFNULL(de.region_type,'')"
+    if frappe.db.has_column("PO Dispatch", "general_remark"):
+        col_filter_map["general"] = "IFNULL(pd.general_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "manager_remark"):
+        col_filter_map["manager"] = "IFNULL(pd.manager_remark,'')"
+        col_filter_map["im_note"] = "IFNULL(pd.manager_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "team_lead_remark"):
+        col_filter_map["team_lead"] = "IFNULL(pd.team_lead_remark,'')"
+        col_filter_map["tl_remark"] = "IFNULL(pd.team_lead_remark,'')"
+    if frappe.db.has_column("PO Dispatch", "internal_work_type"):
+        col_filter_map["type"] = "IFNULL(pd.internal_work_type,'')"
+    col_filter_map["activity_type"] = (
+        "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pd.item_code), '')"
+    )
+    if frappe.db.has_column("Rollout Plan", "access_time"):
+        col_filter_map["access_time"] = "IFNULL(CAST(rp.access_time AS CHAR), '')"
+    # Not backend-filterable: "access" is a computed badge. Client-side only.
+    column_filters = pf.get("column_filters")
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            expr = col_filter_map.get(col_key)
+            if not expr:
+                continue
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            portal_clause += f" AND {expr} LIKE %s"
+            params.append(pat)
+
     like_pat = _sql_like_pattern(pf.get("search") or pf.get("q") or "")
     if like_pat:
         concat_parts = [
@@ -8632,6 +9695,11 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             concat_parts.append("IFNULL(de.ciag_status,'')")
         if frappe.db.has_column("Rollout Plan", "im"):
             concat_parts.append("IFNULL(im_rp.full_name,'')")
+        seen_parts = set(concat_parts)
+        for expr in col_filter_map.values():
+            if expr not in seen_parts:
+                concat_parts.append(expr)
+                seen_parts.add(expr)
         concat_expr = "CONCAT_WS(' ', " + ", ".join(concat_parts) + ")"
         clause, cparams = _sql_search_clause(
             concat_expr, pf.get("search") or pf.get("q") or "",
@@ -8663,11 +9731,6 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         im_ex_extras.append("NULL AS internal_work_type")
         im_ex_extras.append("NULL AS internal_domain")
     im_ex_extra_sql = ", " + ", ".join(im_ex_extras)
-    rp_im_join_ex = ""
-    im_full_sql_ex = "im_pd.full_name AS im_full_name"
-    if frappe.db.has_column("Rollout Plan", "im"):
-        rp_im_join_ex = "LEFT JOIN `tabIM Master` im_rp ON im_rp.name = rp.im"
-        im_full_sql_ex = "COALESCE(im_rp.full_name, im_pd.full_name) AS im_full_name"
     qc_req_sel = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
     ciag_req_sel = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
     access_time_sel = "rp.access_time" if frappe.db.has_column("Rollout Plan", "access_time") else "NULL"
@@ -8709,6 +9772,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabINET Team` it ON it.name = de.team
+        LEFT JOIN `tabProject Control Center` pcc_ex ON pcc_ex.name = pd.project_code
         {rp_im_join_ex}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         WHERE pd.im IN ({ph}){status_clause}{portal_clause}
@@ -10705,7 +11769,20 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
     lim_etl = _portal_row_limit(limit, 100)
     off_etl = cint(offset)
 
-    if like_tokens_etl:
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale. Forces the raw-SQL path below (like the free-text search
+    # already does) since the plain ORM path can't apply a LIKE filter.
+    column_filters_etl = filters.get("column_filters")
+    if isinstance(column_filters_etl, str):
+        try:
+            column_filters_etl = frappe.parse_json(column_filters_etl)
+        except Exception:
+            column_filters_etl = None
+    active_col_filters_etl = {
+        k: v for k, v in (column_filters_etl or {}).items() if str(v or "").strip()
+    } if isinstance(column_filters_etl, dict) else {}
+
+    if like_tokens_etl or active_col_filters_etl:
         wheres = ["1=1"]
         params = []
         joins = (
@@ -10761,14 +11838,41 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
             wheres.append("etl.start_time <= %s")
             params.append(f"{to_date} 23:59:59")
 
-        concat_etl = (
-            "CONCAT_WS(' ', IFNULL(etl.name,''), IFNULL(etl.rollout_plan,''), IFNULL(etl.team_id,''), "
-            "IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.notes,''), IFNULL(pd.project_code,''), "
-            "IFNULL(pd.item_description,''), IFNULL(pd.site_name,''), IFNULL(pd.po_no,''))"
-        )
-        ors_etl = " OR ".join([f"{concat_etl} LIKE %s"] * len(like_tokens_etl))
-        wheres.append(f"({ors_etl})")
-        params.extend(like_tokens_etl)
+        col_filter_map_etl = {
+            "id": "IFNULL(etl.name,'')",
+            "team": "IFNULL(etl.team_id,'')",
+            "rollout": "IFNULL(etl.rollout_plan,'')",
+            "work": "CONCAT_WS(' ', IFNULL(pd.item_description,''), IFNULL(pd.project_code,''))",
+            "work_project": "CONCAT_WS(' ', IFNULL(pd.item_description,''), IFNULL(pd.project_code,''))",
+            "start": "CAST(etl.start_time AS CHAR)",
+            "end": "CAST(etl.end_time AS CHAR)",
+            "hours": "CAST(etl.duration_hours AS CHAR)",
+        }
+        # Not backend-filterable: "state"/"status" is a client-computed
+        # Running/Done label derived from is_running, not a plain column.
+        for col_key, raw_val in active_col_filters_etl.items():
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            if col_key == "user":
+                wheres.append("(IFNULL(etl.user,'') LIKE %s OR IFNULL(u.full_name,'') LIKE %s)")
+                params.extend([pat, pat])
+                continue
+            expr = col_filter_map_etl.get(col_key)
+            if not expr:
+                continue
+            wheres.append(f"{expr} LIKE %s")
+            params.append(pat)
+
+        if like_tokens_etl:
+            concat_etl = (
+                "CONCAT_WS(' ', IFNULL(etl.name,''), IFNULL(etl.rollout_plan,''), IFNULL(etl.team_id,''), "
+                "IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.notes,''), IFNULL(pd.project_code,''), "
+                "IFNULL(pd.item_description,''), IFNULL(pd.site_name,''), IFNULL(pd.po_no,''))"
+            )
+            ors_etl = " OR ".join([f"{concat_etl} LIKE %s"] * len(like_tokens_etl))
+            wheres.append(f"({ors_etl})")
+            params.extend(like_tokens_etl)
 
         wc = " AND ".join(wheres)
         total = int(
@@ -12140,6 +13244,7 @@ def mark_backend_work_done(po_dispatch=None, po_dispatches=None, completed_on=No
 def list_backend_dispatches(
     im=None, search=None, status="all", limit=300,
     project_code=None, site_code=None, backend_team=None,
+    column_filters=None,
 ):
     """Sub-Contract list feed.
 
@@ -12181,9 +13286,49 @@ def list_backend_dispatches(
             where.append(clause)
             params.extend(in_params)
 
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale. "Domain"/"Huawei IM" are normally Python post-query
+    # enrichments (_enrich_with_project_fields, by project_code) — the `pcc`
+    # join below makes them backend-filterable too, same pattern used for
+    # list_execution_monitor_rows/list_issue_risk_rows/list_po_intake_lines.
+    col_filter_map_backend = {
+        "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
+        "po_no": "IFNULL(pd.po_no,'')",
+        "project": "IFNULL(pd.project_code,'')",
+        "domain": "IFNULL(pcc_bk.project_domain,'')",
+        "huawei_im": "IFNULL(pcc_bk.huawei_im,'')",
+        "item": "IFNULL(pd.item_code,'')",
+        "description": "IFNULL(pd.item_description,'')",
+        "qty": "CAST(pd.qty AS CHAR)",
+        "amount_sar": "CAST(pd.line_amount AS CHAR)",
+        "duid": "IFNULL(pd.site_code,'')",
+        "center_area": "IFNULL(pd.center_area,'')",
+        "backend_team": "IFNULL(t.team_name,'')",
+        "status": "IFNULL(pd.subcon_status,'')",
+        "completed": "CAST(pd.subcon_completed_on AS CHAR)",
+        "note": "IFNULL(pd.subcon_remark,'')",
+    }
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            pat_bk = _sql_like_pattern(raw_val)
+            if not pat_bk:
+                continue
+            expr_bk = col_filter_map_backend.get(col_key)
+            if not expr_bk:
+                continue
+            where.append(f"{expr_bk} LIKE %s")
+            params.append(pat_bk)
+
     if search:
         clause, like_params = _sql_search_clause(
-            "CONCAT_WS(' ', pd.poid, pd.po_no, pd.item_code, pd.item_description, pd.site_name, pd.site_code, pd.project_code, IFNULL(t.team_name,''), IFNULL(t.team_id,''))",
+            "CONCAT_WS(' ', pd.poid, pd.po_no, pd.item_code, pd.item_description, pd.site_name, pd.site_code, "
+            "pd.project_code, IFNULL(t.team_name,''), IFNULL(t.team_id,''), IFNULL(pcc_bk.project_domain,''), "
+            "IFNULL(pcc_bk.huawei_im,''), IFNULL(pd.subcon_remark,''))",
             search,
             exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
         )
@@ -12207,6 +13352,7 @@ def list_backend_dispatches(
                pd.modified
         FROM `tabPO Dispatch` pd
         LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team
+        LEFT JOIN `tabProject Control Center` pcc_bk ON pcc_bk.name = pd.project_code
         WHERE {' AND '.join(where)}
         ORDER BY pd.modified DESC
         LIMIT {limit_int}
@@ -14287,7 +15433,7 @@ _ADMIN_TEAM_EDITABLE_FIELDS = [
 
 
 @frappe.whitelist()
-def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None):
+def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None, column_filters=None):
     """List all INET Teams with active project/domain for the PM admin Teams page.
 
     for_date: ISO date string (YYYY-MM-DD).  Defaults to today when omitted.
@@ -14320,6 +15466,43 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
         pat = f"%{(search or '').strip()}%"
         wheres.append("(it.team_id LIKE %s OR it.team_name LIKE %s OR IFNULL(im_m.full_name,'') LIKE %s)")
         params.extend([pat, pat, pat])
+
+    # Per-column "Manage Table" filters — see list_im_rollout_plans for the
+    # rationale. "Current Project"/"Current Domain"/"Active Plans"/"Today"
+    # are computed via date-scoped correlated subqueries in the SELECT below;
+    # duplicating those into the WHERE clause too would couple this filter's
+    # param ordering to `for_date` in a fragile way, so those stay
+    # client-side only for now (same graceful-degradation approach used for
+    # genuinely Python-only columns elsewhere).
+    col_filter_map_teams = {
+        "team_id": "it.team_id",
+        "name": "it.team_name",
+        "category": "it.team_category",
+        "type": "it.team_type",
+        "status": "it.status",
+        "members": "CAST((SELECT COUNT(*) FROM `tabINET Team Member` itm WHERE itm.parent = it.name) AS CHAR)",
+    }
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            pat2 = _sql_like_pattern(raw_val)
+            if not pat2:
+                continue
+            if col_key == "im":
+                wheres.append(
+                    "(IFNULL(it.im,'') LIKE %s OR IFNULL(im_m.full_name,'') LIKE %s)"
+                )
+                params.extend([pat2, pat2])
+                continue
+            expr = col_filter_map_teams.get(col_key)
+            if not expr:
+                continue
+            wheres.append(f"{expr} LIKE %s")
+            params.append(pat2)
 
     where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 
@@ -14412,7 +15595,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
 
 
 @frappe.whitelist()
-def list_im_teams(im=None, status=None, team_type=None, team_category=None, search=None, limit=500, for_date=None):
+def list_im_teams(im=None, status=None, team_type=None, team_category=None, search=None, limit=500, for_date=None, column_filters=None):
     """Same computed fields as list_admin_teams but accessible to IM role."""
     import re as _re
     if for_date and not _re.match(r"^\d{4}-\d{2}-\d{2}$", str(for_date)):
@@ -14439,6 +15622,37 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
         pat = f"%{(search or '').strip()}%"
         wheres.append("(it.team_id LIKE %s OR it.team_name LIKE %s)")
         params.extend([pat, pat])
+
+    # Per-column "Manage Table" filters — see list_admin_teams / list_im_rollout_plans
+    # for the rationale. Date-scoped subquery columns (current project/domain,
+    # active plans, today) stay client-side only — see the comment there.
+    col_filter_map_teams = {
+        "team_id": "it.team_id",
+        "name": "it.team_name",
+        "category": "it.team_category",
+        "type": "it.team_type",
+        "status": "it.status",
+        "members": "CAST((SELECT COUNT(*) FROM `tabINET Team Member` itm WHERE itm.parent = it.name) AS CHAR)",
+    }
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            pat2 = _sql_like_pattern(raw_val)
+            if not pat2:
+                continue
+            if col_key == "im":
+                wheres.append("(IFNULL(it.im,'') LIKE %s OR IFNULL(im_m.full_name,'') LIKE %s)")
+                params.extend([pat2, pat2])
+                continue
+            expr = col_filter_map_teams.get(col_key)
+            if not expr:
+                continue
+            wheres.append(f"{expr} LIKE %s")
+            params.append(pat2)
 
     where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
     date_expr = "%s" if date_val else "CURDATE()"

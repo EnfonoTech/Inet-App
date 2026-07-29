@@ -124,6 +124,26 @@ export default function IMPlanning() {
     setPlanDocUrls(parseFileList(detailRow?.plan_documents));
   }, [detailRow]);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Per-column filter boxes — each column's typed value is matched only
+  // against that column's own value on the backend (see column_filters /
+  // col_filter_map in list_im_rollout_plans), not blended into the top
+  // search box's wide multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-planning-rollout") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -131,12 +151,15 @@ export default function IMPlanning() {
       try {
         const portal = {};
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         if (visitFilter.length) portal.visit_type = visitFilter;
         if (projectFilter.length) portal.project_code = projectFilter;
         if (teamFilter.length) portal.team = teamFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
+        if (dummyFilter) portal.dummy_preset = "dummy";
         const portalArg = Object.keys(portal).length ? portal : undefined;
         const res = await pmApi.listIMRolloutPlans(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
         if (!cancelled) setPlans(Array.isArray(res) ? res : []);
@@ -159,6 +182,8 @@ export default function IMPlanning() {
     fromDate,
     toDate,
     refreshKey,
+    columnFiltersDebounced,
+    dummyFilter,
   ]);
 
   // Distinct master values so dropdowns show all options regardless of row limit.
@@ -416,20 +441,8 @@ export default function IMPlanning() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {loading && plans.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : filteredPlans.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📅</div>
-              <h3>{hasFilters ? "No results match your filters" : "No rollout plans yet"}</h3>
-              <p>
-                {hasFilters
-                  ? "Try adjusting your search or filter criteria."
-                  : "No plans found for your current data."}
-              </p>
-            </div>
-          ) : (
-            <table className="data-table">
+          <>
+            <table className="data-table" data-table-key="im-planning-rollout">
               <thead>
                 <tr>
                   <th>
@@ -453,10 +466,11 @@ export default function IMPlanning() {
                   <th>Team</th>
                   <th>IM</th>
                   <th>Plan Date</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
                   <th style={{ whiteSpace: "nowrap" }}>Access</th>
                   <th>End Date</th>
                   <th>Visit</th>
-                  <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
+                  <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit No</th>
                   <th>Status</th>
                   <th style={{ textAlign: "right" }}>Target (SAR)</th>
                   <th title="Remark set by PM">General</th>
@@ -506,6 +520,9 @@ export default function IMPlanning() {
                     <td style={{ fontSize: "0.82rem" }}>{p.team_name || p.team || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{p.im_full_name || p.dispatch_im || "—"}</td>
                     <td>{p.plan_date}</td>
+                    <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+                      {p.access_time ? `${p.access_time.slice(0, 5)}${p.access_period ? ` · ${p.access_period}` : ""}` : "—"}
+                    </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {(() => {
                         const badge = accessTimeBadge(p.access_time, p.access_period, p.timer_start_ms, p.tl_status, p.plan_date);
@@ -587,25 +604,40 @@ export default function IMPlanning() {
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                  <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                    {filteredPlans.length} plan{filteredPlans.length !== 1 ? "s" : ""}
-                    {selected.size > 0 && (
-                      <span style={{ marginLeft: 12, color: "#6366f1", fontWeight: 600 }}>
-                        {selected.size} selected
-                      </span>
-                    )}
-                  </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
-                    {fmt.format(totalAmt)}
-                  </td>
-                  <td /><td /><td /><td /><td />
-                </tr>
-              </tfoot>
+              {filteredPlans.length > 0 && (
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                    <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      {filteredPlans.length} plan{filteredPlans.length !== 1 ? "s" : ""}
+                      {selected.size > 0 && (
+                        <span style={{ marginLeft: 12, color: "#6366f1", fontWeight: 600 }}>
+                          {selected.size} selected
+                        </span>
+                      )}
+                    </td>
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
+                      {fmt.format(totalAmt)}
+                    </td>
+                    <td /><td /><td /><td /><td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
-          )}
+            {loading && plans.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
+            ) : !loading && filteredPlans.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">📅</div>
+                <h3>{hasFilters ? "No results match your filters" : "No rollout plans yet"}</h3>
+                <p>
+                  {hasFilters
+                    ? "Try adjusting your search or filter criteria."
+                    : "No plans found for your current data."}
+                </p>
+              </div>
+            ) : null}
+          </>
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

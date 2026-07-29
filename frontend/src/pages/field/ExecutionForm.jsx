@@ -265,7 +265,7 @@ function MaterialsSection({ poDispatch, savedUsage, onUsageChange }) {
   }
 
   if (!poDispatch) return null;
-  if (loading) return (
+  if (materials.length === 0 && loading) return (
     <div style={{ padding: "8px 0", color: "var(--text-muted)", fontSize: 13 }}>Loading materials…</div>
   );
 

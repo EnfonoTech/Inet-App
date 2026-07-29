@@ -497,6 +497,28 @@ export default function IMWorkDone() {
     }
   }
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_work_done_rows), not blended into the top search box's wide
+  // multi-column search.
+  // One load effect serves every tab (table-key is `im-workdone-v1-${tab}`),
+  // so match any of those variants rather than one fixed key.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (!e.detail?.tableKey?.startsWith("im-workdone-v1-")) return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   // Single useEffect with cancellation guard. Replaces the older
   // useResetOnRowLimitChange + separate-load pattern that left the table
   // blank when going from a higher to a lower row limit.
@@ -505,13 +527,19 @@ export default function IMWorkDone() {
     setLoading(true);
     (async () => {
       try {
-        const filters = { im: imName || "" };
+        const filters = { im: imName || "", tab };
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         if (billingFilter.length) filters.billing_status = billingFilter;
         if (projectFilter.length) filters.project_code = projectFilter;
         if (duidFilter.length) filters.site_code = duidFilter;
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
+        if (sourceFilter.length) filters.source = sourceFilter;
+        if (submissionFilter.length) filters.submission_status = submissionFilter;
+        if (execStatusFilter.length) filters.execution_status = execStatusFilter;
+        if (issueFlagFilter.length) filters.issue_flag = issueFlagFilter;
         const list = await pmApi.listWorkDoneRows(filters, rowLimit);
         if (cancelled) return;
         setRows(Array.isArray(list) ? list : []);
@@ -522,7 +550,7 @@ export default function IMWorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, rowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [imName, rowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
 
   useEffect(() => {
     if (!detailRow) { setDetailAttachments([]); return; }
@@ -535,7 +563,7 @@ export default function IMWorkDone() {
       .finally(() => setDetailAttachLoading(false));
   }, [detailRow]);
 
-  useEffect(() => { setSelectedRows(new Set()); setSubmissionFilter([]); }, [tab]);
+  useEffect(() => { setSelectedRows(new Set()); setSubmissionFilter([]); setColumnFilters({}); }, [tab]);
 
   const tabRows = useMemo(() => {
     if (tab === "confirmed") return rows.filter((r) => r.submission_status === "Confirmation Done");
@@ -737,12 +765,8 @@ export default function IMWorkDone() {
       </div>
       <div className="page-content">
         <DataTableWrapper>
-          {loading && rows.length === 0 ? (
-            <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading work done…</div>
-          ) : filteredRows.length === 0 ? (
-            <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No work done rows"}</h3></div>
-          ) : (
-            <table className="data-table" data-table-key={`im-workdone-v1-${tab}`}>
+          <>
+            <table key={`im-workdone-v1-${tab}`} className="data-table" data-table-key={`im-workdone-v1-${tab}`}>
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -889,25 +913,32 @@ export default function IMWorkDone() {
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                  <td />
-                  <td style={{ fontSize: "0.75rem", fontWeight: 700, color: "#64748b", padding: "8px 12px", whiteSpace: "nowrap" }}>
-                    {filteredRows.length} rows
-                  </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td />
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
-                    {money.format(totals.lineAmount)}
-                  </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
-                    {fmt.format(totals.revenue)}
-                  </td>
-                  <td /><td /><td /><td /><td /><td />
-                </tr>
-              </tfoot>
+              {filteredRows.length > 0 && (
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                    <td />
+                    <td style={{ fontSize: "0.75rem", fontWeight: 700, color: "#64748b", padding: "8px 12px", whiteSpace: "nowrap" }}>
+                      {filteredRows.length} rows
+                    </td>
+                    <td /><td /><td /><td /><td /><td /><td /><td />
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
+                      {money.format(totals.lineAmount)}
+                    </td>
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
+                      {fmt.format(totals.revenue)}
+                    </td>
+                    <td /><td /><td /><td /><td /><td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
-          )}
+            {loading && rows.length === 0 ? (
+              <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading work done…</div>
+            ) : !loading && filteredRows.length === 0 ? (
+              <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No work done rows"}</h3></div>
+            ) : null}
+          </>
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

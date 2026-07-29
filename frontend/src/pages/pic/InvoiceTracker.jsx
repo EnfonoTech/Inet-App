@@ -46,12 +46,34 @@ export default function InvoiceTracker() {
   const [invoiceResult, setInvoiceResult] = useState(null);
   const [msg, setMsg] = useState(null);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_invoice_tracker_rows), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "invoice-tracker-v2") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const filters = {};
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) filters.column_filters = colFilters;
       if (projectFilter.length) filters.project_code = projectFilter;
       if (duidFilter.length) filters.site_code = duidFilter;
       if (ms1StatusFilter.length) filters.pic_status_ms1 = ms1StatusFilter;
@@ -68,7 +90,7 @@ export default function InvoiceTracker() {
     } finally {
       setLoading(false);
     }
-  }, [searchDebounced, projectFilter, duidFilter, ms1StatusFilter, ms2StatusFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit]);
+  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, ms1StatusFilter, ms2StatusFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -306,15 +328,7 @@ export default function InvoiceTracker() {
 
       <div className="page-content">
         <DataTableWrapper loadedCount={rows.length} filteredCount={rows.length} filterActive={hasFilters}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📄</div>
-              <h3>{hasFilters ? "No results match your filters" : "No invoice-tracker rows yet"}</h3>
-              <p>{hasFilters ? "Try adjusting your search or filter criteria." : "No lines have reached the invoicing stage."}</p>
-            </div>
-          ) : (
+          <>
             <table className="data-table" data-table-key="invoice-tracker-v2">
               <thead>
                 <tr>
@@ -406,7 +420,16 @@ export default function InvoiceTracker() {
                 })}
               </tbody>
             </table>
-          )}
+            {loading && rows.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
+            ) : !loading && rows.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">📄</div>
+                <h3>{hasFilters ? "No results match your filters" : "No invoice-tracker rows yet"}</h3>
+                <p>{hasFilters ? "Try adjusting your search or filter criteria." : "No lines have reached the invoicing stage."}</p>
+              </div>
+            ) : null}
+          </>
         </DataTableWrapper>
       </div>
 

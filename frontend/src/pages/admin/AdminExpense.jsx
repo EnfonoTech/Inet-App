@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { pmApi } from "../../services/api";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import { useDebounced } from "../../hooks/useDebounced";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -265,6 +266,30 @@ export default function AdminExpense() {
 
   useEffect(() => { load(tab, filters); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / _EXPENSE_COL_FILTER_MAP in
+  // expense.py), not blended into this page's own dropdown filters.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "admin-expense-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+  useEffect(() => {
+    const colFilters = JSON.parse(columnFiltersDebounced);
+    load(tab, { ...filters, column_filters: Object.keys(colFilters).length ? colFilters : undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnFiltersDebounced]);
+
   const switchTab = (t) => {
     setTab(t);
     setFilters((f) => {
@@ -332,13 +357,9 @@ export default function AdminExpense() {
           </div>
         )}
 
-        {loading ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>Loading...</div>
-        ) : claims.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>No expense claims found.</div>
-        ) : (
+        {claims.length > 0 ? (
           <DataTableWrapper ref={tableRef}>
-            <table className="data-table">
+            <table className="data-table" data-table-key="admin-expense-v1">
               <thead>
                 <tr>
                   <th>Claim #</th>
@@ -358,6 +379,10 @@ export default function AdminExpense() {
               </tbody>
             </table>
           </DataTableWrapper>
+        ) : loading ? (
+          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>Loading...</div>
+        ) : (
+          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>No expense claims found.</div>
         )}
       </div>
 

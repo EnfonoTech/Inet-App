@@ -6,6 +6,7 @@ import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import { useDebounced } from "../../hooks/useDebounced";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -275,17 +276,39 @@ export default function Projects() {
     pmApi.listHuaweiIMs().then(res => setHuaweiIms(res || [])).catch(() => {});
   }, []);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_projects), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "admin-projects-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     (async () => {
       try {
+        const colFilters = JSON.parse(columnFiltersDebounced);
         const res = await pmApi.listProjects({
           limit: rowLimit,
           search: search || undefined,
           status: statusFilter || undefined,
           domain: domainFilter || undefined,
           huawei_im: huaweiImFilter || undefined,
+          column_filters: Object.keys(colFilters).length ? colFilters : undefined,
         });
         if (!cancelled) setProjects(res || []);
       } catch {
@@ -295,7 +318,7 @@ export default function Projects() {
       }
     })();
     return () => { cancelled = true; };
-  }, [search, statusFilter, domainFilter, huaweiImFilter, rowLimit, refreshKey]);
+  }, [search, statusFilter, domainFilter, huaweiImFilter, rowLimit, refreshKey, columnFiltersDebounced]);
 
   return (
     <div>
@@ -357,12 +380,8 @@ export default function Projects() {
       {/* Table — scrollable on narrow viewports (data-table-wrapper) */}
       <div className="page-content">
         <DataTableWrapper>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading projects...</div>
-        ) : projects.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>No projects found.</div>
-        ) : (
-          <table className="data-table">
+        {projects.length > 0 ? (
+          <table className="data-table" data-table-key="admin-projects-v1">
             <thead>
               <tr>
                 <th>Code</th>
@@ -409,6 +428,10 @@ export default function Projects() {
               ))}
             </tbody>
           </table>
+        ) : loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading projects...</div>
+        ) : (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>No projects found.</div>
         )}
         </DataTableWrapper>
         <TableRowsLimitFooter placement="tableCard" loadedCount={projects.length} />

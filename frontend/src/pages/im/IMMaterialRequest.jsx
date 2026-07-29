@@ -3,6 +3,7 @@ import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import SearchableSelect from "../../components/SearchableSelect";
+import { useDebounced } from "../../hooks/useDebounced";
 
 // ─── Status ───────────────────────────────────────────────────────────────────
 
@@ -717,15 +718,7 @@ function DuidStockTab({ onRequest }) {
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-        ) : visible.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">📦</div>
-            <h3>No INET materials found</h3>
-            <p>Huawei Outbound Plans for INET subcon will appear here.</p>
-          </div>
-        ) : (
+        {visible.length > 0 ? (
           <table className="data-table" data-table-key="im-duid-stock-v2">
             <thead>
               <tr>
@@ -775,6 +768,14 @@ function DuidStockTab({ onRequest }) {
               ))}
             </tbody>
           </table>
+        ) : loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+        ) : (
+          <div className="empty-state">
+            <div className="empty-icon">📦</div>
+            <h3>No INET materials found</h3>
+            <p>Huawei Outbound Plans for INET subcon will appear here.</p>
+          </div>
         )}
       </DataTableWrapper>
       </div>
@@ -870,15 +871,7 @@ function StockBalanceTab() {
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-        ) : visible.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">📊</div>
-            <h3>No stock found</h3>
-            <p>Stock currently held in the main warehouse or a team warehouse, by DUID, will appear here.</p>
-          </div>
-        ) : (
+        {visible.length > 0 ? (
           <table className="data-table" data-table-key="im-stock-balance-v1">
             <thead>
               <tr>
@@ -923,6 +916,14 @@ function StockBalanceTab() {
               })}
             </tbody>
           </table>
+        ) : loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+        ) : (
+          <div className="empty-state">
+            <div className="empty-icon">📊</div>
+            <h3>No stock found</h3>
+            <p>Stock currently held in the main warehouse or a team warehouse, by DUID, will appear here.</p>
+          </div>
         )}
       </DataTableWrapper>
       </div>
@@ -942,6 +943,26 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
   const [detailRow, setDetailRow] = useState(null);
   const [successMsg, setSuccessMsg] = useState("");
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters /
+  // _apply_material_request_column_filters in material_management.py).
+  // "Status" stays client-side only (computed label, no simple SQL match).
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-material-requests-v2") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -949,6 +970,8 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
       const args = { limit: 100 };
       if (statusFilter) args.status = statusFilter;
       if (!isAdmin && imName) args.im = imName;
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) args.column_filters = colFilters;
       const res = await pmApi.listMaterialRequests(args);
       const list = Array.isArray(res) ? res : [];
       setRows(list);
@@ -958,7 +981,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, imName, statusFilter]);
+  }, [isAdmin, imName, statusFilter, columnFiltersDebounced]);
 
   useEffect(() => { load(); }, [load, refresh]);
 
@@ -990,15 +1013,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!statusFilter}>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-        ) : rows.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">📋</div>
-            <h3>No requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
-            <p>Click "+ New Request" to submit your first request.</p>
-          </div>
-        ) : (
+        {rows.length > 0 ? (
           <table className="data-table" data-table-key="im-material-requests-v2">
             <thead>
               <tr>
@@ -1035,6 +1050,14 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
               })}
             </tbody>
           </table>
+        ) : loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+        ) : (
+          <div className="empty-state">
+            <div className="empty-icon">📋</div>
+            <h3>No requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
+            <p>Click "+ New Request" to submit your first request.</p>
+          </div>
         )}
       </DataTableWrapper>
       </div>
@@ -1181,6 +1204,26 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
   const [showDirectReturn, setShowDirectReturn] = useState(false);
   const [directSuccessMsg, setDirectSuccessMsg] = useState("");
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters /
+  // _apply_return_request_column_filters in material_management.py).
+  // "Status" stays client-side only (computed label, no simple SQL match).
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-return-requests-v2") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -1188,6 +1231,8 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
       const args = { limit: 100 };
       if (statusFilter) args.status = statusFilter;
       if (!isAdmin && imName) args.im = imName;
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) args.column_filters = colFilters;
       const res = await pmApi.listReturnRequests(args);
       const list = Array.isArray(res) ? res : [];
       setRows(list);
@@ -1195,7 +1240,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
     } catch (e) {
       setError(e.message || "Failed to load");
     } finally { setLoading(false); }
-  }, [isAdmin, imName, statusFilter]);
+  }, [isAdmin, imName, statusFilter, columnFiltersDebounced]);
 
   useEffect(() => { load(); }, [load, refresh]);
 
@@ -1297,15 +1342,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!statusFilter}>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-        ) : rows.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">↩</div>
-            <h3>No return requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
-            <p>Field teams can request to return excess materials from their stock page.</p>
-          </div>
-        ) : (
+        {rows.length > 0 ? (
           <table className="data-table" data-table-key="im-return-requests-v2">
             <thead>
               <tr>
@@ -1348,6 +1385,14 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
               })}
             </tbody>
           </table>
+        ) : loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+        ) : (
+          <div className="empty-state">
+            <div className="empty-icon">↩</div>
+            <h3>No return requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
+            <p>Field teams can request to return excess materials from their stock page.</p>
+          </div>
         )}
       </DataTableWrapper>
       </div>

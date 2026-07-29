@@ -164,6 +164,33 @@ export default function RolloutPlanning() {
 
   useEffect(() => { loadMeta(); }, [loadMeta]);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // _po_dispatch_portal_sql_where), not blended into the top search box's
+  // wide multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== `admin-rollout-planning-${planScope}`) return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, [planScope]);
+  // Each plan scope (Unplanned / All POIDs / Open Dummy) is a genuinely
+  // different dataset rendered through the same JSX, now with its own
+  // data-table-key above - don't carry a typed column filter across a
+  // scope switch, or it silently narrows the newly-loaded scope too.
+  useEffect(() => {
+    setColumnFilters({});
+  }, [planScope]);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -172,6 +199,8 @@ export default function RolloutPlanning() {
       try {
         const portal = {};
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         if (projectFilter.length) portal.project_code = projectFilter;
         if (imFilter.length) portal.im = imFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
@@ -190,7 +219,7 @@ export default function RolloutPlanning() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, planScope, refreshKey]);
+  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, planScope, refreshKey, columnFiltersDebounced]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -473,30 +502,8 @@ export default function RolloutPlanning() {
         )}
 
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-              Loading dispatches…
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">{planScope === "open_dummy" ? "✅" : "📦"}</div>
-              <h3>
-                {searchDebounced.trim()
-                  ? "No results match your search"
-                  : planScope === "open_dummy"
-                    ? "No unmapped dummy POs"
-                    : "No dispatched lines ready for planning"}
-              </h3>
-              <p>
-                {searchDebounced.trim()
-                  ? "Try a different search term."
-                  : planScope === "open_dummy"
-                    ? "All dummy POs have been mapped to real PO intake lines."
-                    : "Dispatch PO Intake lines first before creating rollout plans."}
-              </p>
-            </div>
-          ) : (
-            <table className="data-table">
+          {rows.length > 0 ? (
+            <table key={`admin-rollout-planning-${planScope}`} className="data-table" data-table-key={`admin-rollout-planning-${planScope}`}>
               <thead>
                 <tr>
                   <th>
@@ -624,6 +631,28 @@ export default function RolloutPlanning() {
                 </tr>
               </tfoot>
             </table>
+          ) : loading ? (
+            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+              Loading dispatches…
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">{planScope === "open_dummy" ? "✅" : "📦"}</div>
+              <h3>
+                {searchDebounced.trim()
+                  ? "No results match your search"
+                  : planScope === "open_dummy"
+                    ? "No unmapped dummy POs"
+                    : "No dispatched lines ready for planning"}
+              </h3>
+              <p>
+                {searchDebounced.trim()
+                  ? "Try a different search term."
+                  : planScope === "open_dummy"
+                    ? "All dummy POs have been mapped to real PO intake lines."
+                    : "Dispatch PO Intake lines first before creating rollout plans."}
+              </p>
+            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

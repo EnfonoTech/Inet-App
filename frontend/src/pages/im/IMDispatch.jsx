@@ -253,6 +253,34 @@ export default function IMDispatch() {
 
   const load = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // _po_dispatch_portal_sql_where), not blended into the top search box's
+  // wide multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== `im-dispatch-${planScope}`) return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, [planScope]);
+  // Unplanned / All POIDs are genuinely different datasets rendered through
+  // the same JSX (now with their own data-table-key below) - don't carry a
+  // typed column filter across a scope switch, or it silently narrows the
+  // newly-loaded scope too (this is what made "Unplanned" look broken after
+  // testing filters on "All POIDs").
+  useEffect(() => {
+    setColumnFilters({});
+  }, [planScope]);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -266,10 +294,19 @@ export default function IMDispatch() {
     (async () => {
       try {
         const filters = [["im", "=", imName]];
+        // Unplanned scope must be enforced server-side, not by fetching a
+        // fixed-size batch of any status and hiding the "Planned" ones
+        // client-side afterward - that silently drops rows once the batch
+        // (row limit) contains more already-planned rows than fit.
+        const listFilters = planScope === "unplanned"
+          ? [...filters, ["dispatch_status", "=", "Dispatched"]]
+          : filters;
         // Only rows the IM has scheduled (target_month set) — un-scheduled
         // dispatches appear in the new PO Intake page instead.
         const portal = { has_target_month: "yes" };
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
         // Internal work rows are hidden from every PO list by default; this
         // planning view opts in (or shows only them via the filter).
@@ -286,7 +323,9 @@ export default function IMDispatch() {
         if (toDate) portal.to_date = toDate;
         const portalArg = Object.keys(portal).length ? portal : undefined;
         const [res, agg] = await Promise.all([
-          pmApi.listPODispatches(filters, rowLimit, portalArg),
+          pmApi.listPODispatches(listFilters, rowLimit, portalArg),
+          // Stats badges (Ready/Auto/Manual/Dummy) stay scope-independent -
+          // always computed from the unscoped `filters`, not `listFilters`.
           pmApi.getPODispatchStats(filters, portalArg).catch(() => null),
         ]);
         if (!cancelled) {
@@ -319,6 +358,8 @@ export default function IMDispatch() {
     fromDate,
     toDate,
     refreshKey,
+    columnFiltersDebounced,
+    planScope,
   ]);
 
   useEffect(() => {
@@ -1659,7 +1700,7 @@ export default function IMDispatch() {
               </p>
             </div>
           ) : (
-            <table className="data-table">
+            <table key={`im-dispatch-${planScope}`} className="data-table" data-table-key={`im-dispatch-${planScope}`}>
               <thead>
                 <tr>
                   <th style={{ width: 40 }}>

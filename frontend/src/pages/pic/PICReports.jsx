@@ -273,15 +273,7 @@ export default function PICReports() {
           </div>
 
           <DataTableWrapper loadedCount={loading ? null : (data?.rows?.length ?? 0)}>
-            {loading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-            ) : !data?.rows?.length ? (
-              <div className="empty-state">
-                <div className="empty-icon">📊</div>
-                <h3>No rows match the current filters</h3>
-                <p>Try adjusting the filters above.</p>
-              </div>
-            ) : (
+            {data?.rows?.length ? (
               <table className="data-table">
                 <thead>
                   <tr>
@@ -328,6 +320,14 @@ export default function PICReports() {
                   </tfoot>
                 )}
               </table>
+            ) : loading ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-icon">📊</div>
+                <h3>No rows match the current filters</h3>
+                <p>Try adjusting the filters above.</p>
+              </div>
             )}
           </DataTableWrapper>
         </div>

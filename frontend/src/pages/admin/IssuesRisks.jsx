@@ -102,6 +102,26 @@ export default function IssuesRisks() {
 
   function loadData() { setRefreshKey((k) => k + 1); }
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map_ir in
+  // list_issue_risk_rows), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "admin-issues-risks-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -112,6 +132,15 @@ export default function IssuesRisks() {
         if (imFilter.length) portal.im = imFilter;
         if (teamFilter.length) portal.team = teamFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
+        if (issueCatFilter.length) portal.issue_category = issueCatFilter;
+        if (execStatusFilter.length) portal.execution_status = execStatusFilter;
+        if (tlStatusFilter.length) portal.tl_status = tlStatusFilter;
+        if (qcFilter.length) portal.qc_status = qcFilter;
+        if (ciagFilter.length) portal.ciag_status = ciagFilter;
+        if (fromDate) portal.from_date = fromDate;
+        if (toDate) portal.to_date = toDate;
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         const portalArg = Object.keys(portal).length ? portal : undefined;
         const res = await pmApi.listIssueRiskRows("", rowLimit, searchDebounced.trim() || undefined, portalArg);
         if (!cancelled) setRows(Array.isArray(res) ? res : []);
@@ -122,7 +151,7 @@ export default function IssuesRisks() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, projectFilter, imFilter, teamFilter, duidFilter, refreshKey]);
+  }, [rowLimit, searchDebounced, projectFilter, imFilter, teamFilter, duidFilter, refreshKey, columnFiltersDebounced, issueCatFilter, execStatusFilter, tlStatusFilter, qcFilter, ciagFilter, fromDate, toDate]);
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
@@ -283,12 +312,8 @@ export default function IssuesRisks() {
       </div>
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading issues…</div>
-          ) : filteredRows.length === 0 ? (
-            <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No issue/risk rows"}</h3></div>
-          ) : (
-            <table className="data-table">
+          {filteredRows.length > 0 ? (
+            <table className="data-table" data-table-key="admin-issues-risks-v1">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -364,6 +389,10 @@ export default function IssuesRisks() {
                 ))}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading issues…</div>
+          ) : (
+            <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No issue/risk rows"}</h3></div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

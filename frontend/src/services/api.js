@@ -376,7 +376,7 @@ export const pmApi = {
     call("inet_app.api.command_center.create_field_remark_template", { remark_text, category: category || "" }),
   bumpFieldRemarkTemplateUsage: (remark_texts) =>
     call("inet_app.api.command_center.bump_field_remark_template_usage", { remark_texts: JSON.stringify(remark_texts || []) }),
-  exportPODump: (from_date, to_date, statuses, limit, search) => {
+  exportPODump: (from_date, to_date, statuses, limit, search, columnFilters) => {
     const args = {
       from_date: from_date || "",
       to_date: to_date || "",
@@ -384,6 +384,7 @@ export const pmApi = {
     };
     if (Number(limit) > 0) args.limit = Number(limit);
     if (search && search.trim()) args.search = search.trim();
+    if (columnFilters && Object.keys(columnFilters).length > 0) args.column_filters = columnFilters;
     return call("inet_app.api.command_center.export_po_dump", args);
   },
 
@@ -602,6 +603,30 @@ export const pmApi = {
       filters: filters || {},
       limit_page_length: Number(limit) > 0 ? Math.min(Number(limit), 10000) : 500,
     }),
+  // Same as genericList, but narrows the FULL dataset server-side before the
+  // row limit is applied — used by the Masters page so its search box and
+  // per-column dropdown filters don't just filter whatever small batch
+  // happened to load. `search` is OR'd (LIKE) across `searchFields`;
+  // `colFilters` is a { field: exactValue } map AND'd together (exact match,
+  // since those values come from a dropdown of known distinct values, not
+  // free text).
+  genericListSearch: (doctype, fields, limit, { search, searchFields, colFilters, orderBy = "modified desc" } = {}) => {
+    const args = {
+      doctype,
+      fields: fields && fields.length ? fields : ["name"],
+      limit_page_length: Number(limit) > 0 ? Math.min(Number(limit), 10000) : 200,
+      order_by: orderBy,
+    };
+    const term = (search || "").trim();
+    if (term && Array.isArray(searchFields) && searchFields.length) {
+      args.or_filters = searchFields.map((f) => [f, "like", `%${term}%`]);
+    }
+    const activeColFilters = Object.entries(colFilters || {}).filter(([, v]) => v);
+    if (activeColFilters.length) {
+      args.filters = activeColFilters.map(([f, v]) => [f, "=", v]);
+    }
+    return call("frappe.client.get_list", args);
+  },
   getItemCodesForProject: (project_code) =>
     call("inet_app.api.command_center.get_item_codes_for_project", { project_code }),
   genericCount: (doctype) => call("frappe.client.get_count", { doctype }),
@@ -764,8 +789,8 @@ export const pmApi = {
   }),
   getExpenseTaxInfo:       ()             => callCached("inet_app.api.expense.get_expense_tax_info", {}, 300_000),
   listMyExpenseClaims:     ()             => call("inet_app.api.expense.list_my_expense_claims"),
-  listPendingExpenseApprovals: ()         => call("inet_app.api.expense.list_pending_expense_approvals"),
-  listImAllClaims:             ()         => call("inet_app.api.expense.list_im_all_claims"),
+  listPendingExpenseApprovals: (columnFilters) => call("inet_app.api.expense.list_pending_expense_approvals", columnFilters && Object.keys(columnFilters).length ? { column_filters: columnFilters } : {}),
+  listImAllClaims:             (columnFilters) => call("inet_app.api.expense.list_im_all_claims", columnFilters && Object.keys(columnFilters).length ? { column_filters: columnFilters } : {}),
   listAllExpenseClaims:    (filters)      => call("inet_app.api.expense.list_all_expense_claims", { filters: JSON.stringify(filters || {}) }),
   getExpenseClaimDetail:   (claim_name)   => call("inet_app.api.expense.get_expense_claim_detail", { claim_name }),
   approveExpenseClaim:     (claim_name)   => call("inet_app.api.expense.approve_expense_claim", { claim_name }),

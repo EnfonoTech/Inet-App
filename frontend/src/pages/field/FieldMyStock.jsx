@@ -332,11 +332,7 @@ function ReturnDetailSheet({ row, onClose, onActioned }) {
             </div>
           )}
 
-          {loading ? (
-            <div style={{ textAlign: "center", padding: "24px 0", color: "#94a3b8", fontSize: "0.84rem" }}>Loading items…</div>
-          ) : !detail?.items?.length ? (
-            <div style={{ textAlign: "center", padding: "16px 0", color: "#94a3b8", fontSize: "0.84rem" }}>No item details available.</div>
-          ) : (
+          {detail?.items?.length ? (
             <div>
               <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>
                 Items · {detail.items.length}
@@ -355,6 +351,10 @@ function ReturnDetailSheet({ row, onClose, onActioned }) {
                 ))}
               </div>
             </div>
+          ) : loading ? (
+            <div style={{ textAlign: "center", padding: "24px 0", color: "#94a3b8", fontSize: "0.84rem" }}>Loading items…</div>
+          ) : (
+            <div style={{ textAlign: "center", padding: "16px 0", color: "#94a3b8", fontSize: "0.84rem" }}>No item details available.</div>
           )}
 
           {detail && (
@@ -542,23 +542,23 @@ function IncomingTransfers({ refresh, onCount, onDone }) {
     load();
   }
 
+  if (rows.length > 0) return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {rows.map(r => <IncomingTransferCard key={r.name} row={r} onDone={handleDone} />)}
+    </div>
+  );
+
   if (loading) return (
     <div className="history-card" style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: 18 }}>
       Loading incoming transfers…
     </div>
   );
 
-  if (rows.length === 0) return (
+  return (
     <div className="empty-state" style={{ padding: "24px 0" }}>
       <div className="empty-icon">📥</div>
       <h3>Nothing awaiting confirmation</h3>
       <p>Transfers the Warehouse Manager stages for your team will show up here for you to confirm before stock moves.</p>
-    </div>
-  );
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {rows.map(r => <IncomingTransferCard key={r.name} row={r} onDone={handleDone} />)}
     </div>
   );
 }
@@ -587,7 +587,7 @@ function ReturnHistory({ refresh, onDone }) {
     load();
   }
 
-  if (loading) return (
+  if (rows.length === 0 && loading) return (
     <div className="history-card" style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: 18 }}>
       Loading return requests…
     </div>
@@ -776,24 +776,7 @@ export default function FieldMyStock() {
 
         {/* Stock tab */}
         {tab === "stock" && (
-          loading ? (
-            <div className="exec-section">
-              {[1, 2, 3].map(i => (
-                <div key={i} className="history-card" style={{ marginBottom: 10 }}>
-                  <div className="skeleton-line" style={{ width: "60%", height: 14, marginBottom: 8 }} />
-                  <div className="skeleton-line" style={{ width: "25%", height: 22 }} />
-                </div>
-              ))}
-            </div>
-          ) : !teamData ? (
-            <div className="exec-section">
-              <div className="empty-state">
-                <div className="empty-icon">📦</div>
-                <h3>No team found</h3>
-                <p>Your account isn't linked to an active team warehouse. Contact your IM.</p>
-              </div>
-            </div>
-          ) : (
+          teamData ? (
             <>
               {items.length > 5 && (
                 <div style={{ padding: "0 16px 10px" }}>
@@ -832,6 +815,23 @@ export default function FieldMyStock() {
                 )}
               </div>
             </>
+          ) : loading ? (
+            <div className="exec-section">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="history-card" style={{ marginBottom: 10 }}>
+                  <div className="skeleton-line" style={{ width: "60%", height: 14, marginBottom: 8 }} />
+                  <div className="skeleton-line" style={{ width: "25%", height: 22 }} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="exec-section">
+              <div className="empty-state">
+                <div className="empty-icon">📦</div>
+                <h3>No team found</h3>
+                <p>Your account isn't linked to an active team warehouse. Contact your IM.</p>
+              </div>
+            </div>
           )
         )}
 

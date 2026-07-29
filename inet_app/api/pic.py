@@ -19,6 +19,7 @@ from inet_app.api.command_center import (
     _portal_filters_dict,
     _portal_row_limit,
     _sql_in_or_eq,
+    _sql_like_pattern,
     _sql_like_tokens,
     _sql_limit_suffix,
     _sql_search_clause,
@@ -253,18 +254,92 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     # correct join alias is used (sm vs sm_sub for the Rollout Plan branch).
     subcon_vals = _ensure_list(pf.get("subcontractor"))
 
+    # Same subcontractor/contract-model resolution `team_cols` uses below —
+    # computed here too so the per-column filter and general search can
+    # reference it (see list_invoice_tracker_rows for the pattern).
+    if with_team_type:
+        _subcon_expr_pic = "COALESCE(sm_pd.subcontractor_name, sm.subcontractor_name)"
+        _contract_model_expr_pic = "COALESCE(sm_pd.contract_model, sm.contract_model)"
+    else:
+        _subcon_expr_pic = "COALESCE(sm_pd.subcontractor_name, sm_sub.subcontractor_name)"
+        _contract_model_expr_pic = "COALESCE(sm_pd.contract_model, sm_sub.contract_model)"
+
+    sqc_expr = _po_dispatch_col_expr("sqc_status")
+    pat_expr = _po_dispatch_col_expr("pat_status")
+    im_rej_expr = _po_dispatch_col_expr("im_rejection_remark")
+    pic_rej_expr = _po_dispatch_col_expr("pic_rejection_remark")
+    _pic_rej_bare = pic_rej_expr.split(" AS ")[0]
+
+    # Per-column "Manage Table" filters — see list_im_rollout_plans (in
+    # command_center.py) for the rationale (each column matched independently
+    # and ANDed, not blended into the wide `search` clause below; same
+    # expressions widen that search too, so both paths cover the same fields).
+    col_filter_map = {
+        "subcontract": _subcon_expr_pic,
+        "contract_model": _contract_model_expr_pic,
+        "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
+        "po_no": "IFNULL(pd.po_no,'')",
+        "po_status": "IFNULL(pd.dispatch_status,'')",
+        "project_domain": "IFNULL(pd.project_domain,'')",
+        "project": "IFNULL(pd.project_code,'')",
+        "item": "IFNULL(pd.item_code,'')",
+        "description": "IFNULL(pd.item_description,'')",
+        "duid": "IFNULL(pd.site_code,'')",
+        "qty": "CAST(pd.qty AS CHAR)",
+        "unit_price": "CAST(pd.rate AS CHAR)",
+        "line_amount": "CAST(pd.line_amount AS CHAR)",
+        "tax_rate": "IFNULL(pd.tax_rate,'')",
+        "payment_terms": "IFNULL(pd.payment_terms,'')",
+        "im_status": "IFNULL(wd_sub.im_submission_status,'')",
+        "pic_status_ms1": f"({_PIC_INITIAL_RULE_SQL.strip()})",
+        "pic_rejection_reason": _pic_rej_bare,
+        "isdp_owner": "IFNULL(pd.isdp_owner,'')",
+        "ibuy_owner": "IFNULL(pd.ibuy_owner,'')",
+        "applied_date_ms1": "CAST(pd.ms1_applied_date AS CHAR)",
+        "ms1": "CAST(pd.ms1_pct AS CHAR)",
+        "ms1_amt": "CAST(pd.ms1_amount AS CHAR)",
+        "ms1_invoiced": "CAST(pd.ms1_invoiced AS CHAR)",
+        "ms1_unbilled": "CAST(pd.ms1_unbilled AS CHAR)",
+        "pic_status_ms2": "IFNULL(pd.pic_status_ms2,'')",
+        "applied_date_ms2": "CAST(pd.ms2_applied_date AS CHAR)",
+        "ms2": "CAST(pd.ms2_pct AS CHAR)",
+        "ms2_amt": "CAST(pd.ms2_amount AS CHAR)",
+        "ms2_invoiced": "CAST(pd.ms2_invoiced AS CHAR)",
+    }
+    # Not backend-filterable: "Edit" is an action column.
+    column_filters_pic = pf.get("column_filters")
+    if isinstance(column_filters_pic, str):
+        try:
+            column_filters_pic = frappe.parse_json(column_filters_pic)
+        except Exception:
+            column_filters_pic = None
+    if isinstance(column_filters_pic, dict):
+        for col_key, raw_val in column_filters_pic.items():
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            expr = col_filter_map.get(col_key)
+            if not expr:
+                continue
+            where.append(f"{expr} LIKE %s")
+            params.append(pat)
+
     search = pf.get("search") or pf.get("q") or ""
     if search:
+        concat_parts_pic = [
+            "IFNULL(pd.poid,''), IFNULL(pd.po_no,''), IFNULL(pd.item_code,''),",
+            "IFNULL(pd.item_description,''),",
+            "IFNULL(pd.project_code,''), IFNULL(proj.project_name,''),",
+            "IFNULL(pd.project_domain,''),",
+            "IFNULL(pd.site_code,''), IFNULL(pd.site_name,''),",
+            "IFNULL(pd.center_area,''), IFNULL(imm.full_name,''),",
+            "IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''),",
+            "IFNULL(pd.payment_terms,''),",
+            f"IFNULL({_subcon_expr_pic},''), IFNULL({_contract_model_expr_pic},''),",
+            f"IFNULL({_pic_rej_bare},'')",
+        ]
         clause, like_params = _sql_search_clause(
-            "CONCAT_WS(' ',"
-            " IFNULL(pd.poid,''), IFNULL(pd.po_no,''), IFNULL(pd.item_code,''),"
-            " IFNULL(pd.item_description,''),"
-            " IFNULL(pd.project_code,''), IFNULL(proj.project_name,''),"
-            " IFNULL(pd.project_domain,''),"
-            " IFNULL(pd.site_code,''), IFNULL(pd.site_name,''),"
-            " IFNULL(pd.center_area,''), IFNULL(imm.full_name,''),"
-            " IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''),"
-            " IFNULL(pd.payment_terms,''))",
+            "CONCAT_WS(' '," + " ".join(concat_parts_pic) + ")",
             search,
             exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
         )
@@ -296,11 +371,6 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         sc_col = "COALESCE(sm_pd.name, sm.name)" if with_team_type else "COALESCE(sm_pd.name, sm_sub.name)"
         where.append(f"IFNULL({sc_col},'') IN ({ph})")
         params.extend(subcon_vals)
-
-    sqc_expr = _po_dispatch_col_expr("sqc_status")
-    pat_expr = _po_dispatch_col_expr("pat_status")
-    im_rej_expr = _po_dispatch_col_expr("im_rejection_remark")
-    pic_rej_expr = _po_dispatch_col_expr("pic_rejection_remark")
 
     sql = f"""
     SELECT  /* {limit_page_length} = 0 → unlimited; with_team_type={int(with_team_type)} */
@@ -1369,13 +1439,58 @@ def list_invoice_tracker_rows(filters=None, limit=500):
         wheres.append(f"IFNULL(COALESCE(sm_pd_inv.name, sm_inv.name),'') IN ({ph})")
         params.extend(subcon_vals)
 
+    # Per-column "Manage Table" filters — see list_im_rollout_plans (in
+    # command_center.py) for the rationale (each column matched independently
+    # and ANDed, not blended into the wide `search` clause below; same
+    # expressions widen that search too, so both paths cover the same fields).
+    # sm_pd_inv / sm_inv are the Subcontract Master joins defined further down
+    # in this function's FROM clause — referencing their aliases here is safe
+    # since only the final assembled SQL text matters, not Python code order.
+    col_filter_map = {
+        "subcontract": "COALESCE(sm_pd_inv.subcontractor_name, sm_inv.subcontractor_name)",
+        "contract_model": "COALESCE(sm_pd_inv.contract_model, sm_inv.contract_model)",
+        "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
+        "customer": "IFNULL(pd.customer,'')",
+        "project": "IFNULL(pd.project_code,'')",
+        "item": "CONCAT_WS(' ', IFNULL(pd.item_code,''), IFNULL(pd.item_description,''))",
+        "duid": "IFNULL(pd.site_code,'')",
+        "ms1_amount": "CAST(pd.ms1_amount AS CHAR)",
+        "ms2_amount": "CAST(pd.ms2_amount AS CHAR)",
+        "remaining": "CAST(pd.remaining_milestone_pct AS CHAR)",
+        "pic_status_ms1": "IFNULL(pd.pic_status,'')",
+        "pic_status_ms2": "IFNULL(pd.pic_status_ms2,'')",
+    }
+    # Not backend-filterable: "linked_invoice" is a GROUP_CONCAT computed in
+    # the SELECT (WHERE runs before GROUP BY) — client-side only.
+    column_filters = filters.get("column_filters")
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            expr = col_filter_map.get(col_key)
+            if not expr:
+                continue
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            wheres.append(f"{expr} LIKE %s")
+            params.append(pat)
+
     if filters.get("search") or filters.get("q"):
-        concat_expr = (
-            "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''),"
-            " IFNULL(pd.item_code,''), IFNULL(pd.project_code,''),"
-            " IFNULL(pd.site_code,''), IFNULL(pd.customer,''),"
-            " IFNULL(pd.pic_status,''), IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''))"
-        )
+        concat_parts = [
+            "IFNULL(pd.poid,''), IFNULL(pd.po_no,''),",
+            "IFNULL(pd.item_code,''), IFNULL(pd.item_description,''),",
+            "IFNULL(pd.project_code,''),",
+            "IFNULL(pd.site_code,''), IFNULL(pd.customer,''),",
+            "IFNULL(pd.pic_status,''), IFNULL(pd.pic_status_ms2,''),",
+            "IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''),",
+            "COALESCE(sm_pd_inv.subcontractor_name, sm_inv.subcontractor_name, ''),",
+            "COALESCE(sm_pd_inv.contract_model, sm_inv.contract_model, '')",
+        ]
+        concat_expr = "CONCAT_WS(' ', " + " ".join(concat_parts) + ")"
         clause, cparams = _sql_search_clause(
             concat_expr,
             filters.get("search") or filters.get("q") or "",

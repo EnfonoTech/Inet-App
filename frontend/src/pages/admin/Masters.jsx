@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { pmApi } from "../../services/api";
+import { useDebounced } from "../../hooks/useDebounced";
 
 /** Catch render errors inside the records panel so one bad doctype/row can't
  * wipe out the whole Masters page. Default fallback shows a friendly message. */
@@ -162,9 +163,11 @@ async function fetchCount(doctype) {
   }
 }
 
-async function fetchRecords(doctype, fields, limit) {
+async function fetchRecords(doctype, fields, limit, searchOpts) {
   try {
-    const rows = await pmApi.genericList(doctype, fields, limit);
+    const rows = searchOpts
+      ? await pmApi.genericListSearch(doctype, fields, limit, searchOpts)
+      : await pmApi.genericList(doctype, fields, limit);
     return Array.isArray(rows) ? rows : [];
   } catch {
     return [];
@@ -263,28 +266,56 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
   // parent render and clobber an in-flight fetch with a stale empty result.
   const fieldsKey = useMemo(() => (Array.isArray(fields) ? fields.join("|") : ""), [fields]);
 
+  const cols = useMemo(
+    () => (displayCols && displayCols.length > 0 ? displayCols : (fields || []).filter((f) => f !== "name")),
+    [displayCols, fields]
+  );
+
+  // Debounce both the free-text search and the column filters (same
+  // useDebounced + JSON.stringify pattern used by RolloutPlanning.jsx /
+  // Teams.jsx) so typing doesn't fire a request per keystroke, but DOES
+  // eventually reach the server — this is what actually fixes the bug: the
+  // server now narrows the FULL doctype before rowLimit is applied, instead
+  // of only filtering whatever small batch had already loaded.
+  const searchDebounced = useDebounced(search, 300);
+  const activeColFilters = useMemo(
+    () => Object.fromEntries(Object.entries(colFilters).filter(([, v]) => v)),
+    [colFilters]
+  );
+  const colFiltersKey = useMemo(() => JSON.stringify(activeColFilters), [activeColFilters]);
+  const colFiltersDebounced = useDebounced(colFiltersKey, 300);
+  // Search across every displayed/known field plus `name` — mirrors the old
+  // client-side `hay` string the removed `filtered` useMemo used to build.
+  const searchFields = useMemo(() => Array.from(new Set(["name", ...cols])), [cols]);
+  const searchFieldsKey = useMemo(() => searchFields.join("|"), [searchFields]);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    setRecords(null);
-    setSearch("");
-    setColFilters({});
-    fetchRecords(doctype, fields, rowLimit).then((rows) => {
+    // NOTE: do NOT setRecords(null) here. A genuine doctype switch already
+    // remounts this component (parent renders <RecordsErrorBoundary key={doctype}>),
+    // so `records` naturally starts null via useState for a real context switch.
+    // This effect also re-fires for ordinary refetches (rowLimit change, typed
+    // search, changed column filter) on the SAME doctype — nulling records here
+    // would wipe the table and force a full Loading flash even though the old
+    // rows are still valid to show meanwhile.
+    fetchRecords(doctype, fields, rowLimit, {
+      search: searchDebounced,
+      searchFields,
+      colFilters: JSON.parse(colFiltersDebounced || "{}"),
+    }).then((rows) => {
       if (!alive) return;
       setRecords(rows);
       setLoading(false);
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doctype, rowLimit, fieldsKey]);
-
-  const cols = useMemo(
-    () => (displayCols && displayCols.length > 0 ? displayCols : (fields || []).filter((f) => f !== "name")),
-    [displayCols, fields]
-  );
+  }, [doctype, rowLimit, fieldsKey, searchDebounced, colFiltersDebounced, searchFieldsKey]);
 
   // Columns that should render as a categorical dropdown filter (low-cardinality
   // strings like "status", "team_type", "category"). Detect by name + by sample.
+  // NOTE: distinct values are sampled from the current (already server-filtered)
+  // `records` page, same as before — a known limitation, see report.
   const filterableCols = useMemo(() => {
     if (!records) return [];
     return cols.filter((c) => {
@@ -308,33 +339,17 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
     return out;
   }, [records, filterableCols]);
 
-  const filtered = useMemo(() => {
-    if (!records) return [];
-    const q = search.trim().toLowerCase();
-    return records.filter((r) => {
-      if (q) {
-        const hay = [r.name, ...cols.map((c) => cellText(r[c]))].join(" ").toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      for (const [c, val] of Object.entries(colFilters)) {
-        if (!val) continue;
-        if (cellText(r[c]) !== val) return false;
-      }
-      return true;
-    });
-  }, [records, search, colFilters, cols]);
-
   const hasFilters = !!search || Object.values(colFilters).some(Boolean);
 
-  if (loading) {
-    return (
-      <div style={{ padding: 24, textAlign: "center", color: "#94a3b8", fontSize: "0.85rem" }}>
-        Loading records...
-      </div>
-    );
-  }
+  if (!records || (records.length === 0 && !hasFilters)) {
+    if (loading) {
+      return (
+        <div style={{ padding: 24, textAlign: "center", color: "#94a3b8", fontSize: "0.85rem" }}>
+          Loading records...
+        </div>
+      );
+    }
 
-  if (!records || records.length === 0) {
     return (
       <div style={{ padding: 24, textAlign: "center", color: "#94a3b8", fontSize: "0.85rem" }}>
         No records found.
@@ -374,7 +389,8 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
         </button>
       )}
       <span style={{ marginLeft: "auto", color: "#94a3b8", fontSize: "0.76rem" }}>
-        {filtered.length}{hasFilters && ` of ${records.length}`} records
+        {records.length} record{records.length !== 1 ? "s" : ""}
+        {hasFilters && loading && " · updating…"}
       </span>
     </div>
     <DataTableWrapper style={{ marginTop: 0 }}>
@@ -392,14 +408,14 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
           </tr>
         </thead>
         <tbody>
-          {filtered.length === 0 && (
+          {records.length === 0 && (
             <tr>
               <td colSpan={cols.length + 3} style={{ padding: 18, textAlign: "center", color: "#94a3b8" }}>
                 No records match your filter.
               </td>
             </tr>
           )}
-          {filtered.map((row, idx) => (
+          {records.map((row, idx) => (
             <tr key={idx}>
               <td style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{idx + 1}</td>
               <td>
@@ -439,7 +455,7 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
         </tbody>
       </table>
     </DataTableWrapper>
-    <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} filteredCount={filtered.length} filterActive={hasFilters} />
+    <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />
     </>
   );
 }

@@ -68,6 +68,26 @@ export default function IMBackend() {
     return () => { cancelled = true; };
   }, []);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map_backend in
+  // list_backend_dispatches), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-backend-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -77,6 +97,8 @@ export default function IMBackend() {
       if (projectFilter.length) params.project_code = projectFilter;
       if (duidFilter.length) params.site_code = duidFilter;
       if (teamFilter.length) params.backend_team = teamFilter;
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) params.column_filters = colFilters;
       const res = await pmApi.listBackendDispatches(params);
       setRows(Array.isArray(res) ? res : []);
       setSelected(new Set());
@@ -85,7 +107,7 @@ export default function IMBackend() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, searchDebounced, projectFilter, duidFilter, teamFilter]);
+  }, [statusFilter, searchDebounced, projectFilter, duidFilter, teamFilter, columnFiltersDebounced]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -272,20 +294,8 @@ export default function IMBackend() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📤</div>
-              <h3>{hasFilters ? "No matching backend-assigned POIDs" : "No backend-assigned POIDs"}</h3>
-              <p>
-                {hasFilters
-                  ? "Try adjusting your search or filters."
-                  : "Assign POIDs to a backend team from the PO Control page. They'll show up here for tracking and Mark Work Done."}
-              </p>
-            </div>
-          ) : (
-            <table className="data-table">
+          {rows.length > 0 ? (
+            <table className="data-table" data-table-key="im-backend-v1">
               <thead>
                 <tr>
                   <th>
@@ -357,6 +367,18 @@ export default function IMBackend() {
                 })}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">📤</div>
+              <h3>{hasFilters ? "No matching backend-assigned POIDs" : "No backend-assigned POIDs"}</h3>
+              <p>
+                {hasFilters
+                  ? "Try adjusting your search or filters."
+                  : "Assign POIDs to a backend team from the PO Control page. They'll show up here for tracking and Mark Work Done."}
+              </p>
+            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

@@ -312,9 +312,7 @@ export default function PICInvoicingSummary() {
       )}
 
       <div className="page-content">
-        {loading ? (
-          <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-        ) : data ? (
+        {data ? (
           <>
             <TopSummaryCard top={data.top} />
             <StatusTable
@@ -334,6 +332,8 @@ export default function PICInvoicingSummary() {
               navigable={navigable}
             />
           </>
+        ) : loading ? (
+          <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
         ) : null}
       </div>
     </div>

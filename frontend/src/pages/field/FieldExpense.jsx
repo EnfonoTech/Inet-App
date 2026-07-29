@@ -705,29 +705,7 @@ export default function FieldExpense() {
       </div>
 
       <div style={{ padding: "0 16px" }}>
-      {loading ? (
-        <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>Loading...</div>
-      ) : visibleClaims.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>
-          <div style={{ fontSize: "2rem", marginBottom: 8 }}>📋</div>
-          <div>
-            {tab === "pending" ? "No pending claims." :
-             tab === "unpaid"  ? "No unpaid claims." :
-             tab === "paid"    ? "No paid claims yet." :
-             "No expense claims yet."}
-          </div>
-          {tab !== "all" && claims.length > 0 && (
-            <div style={{ fontSize: "0.8rem", marginTop: 4 }}>
-              <button type="button" onClick={() => setTab("all")} style={{ background: "none", border: "none", color: "#3b82f6", cursor: "pointer", fontSize: "0.8rem", textDecoration: "underline" }}>
-                View all claims
-              </button>
-            </div>
-          )}
-          {tab === "pending" && claims.length === 0 && (
-            <div style={{ fontSize: "0.8rem", marginTop: 4 }}>Tap + New Claim to file one.</div>
-          )}
-        </div>
-      ) : (
+      {visibleClaims.length > 0 ? (
         <>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {pagedClaims.map((c) => (
@@ -774,6 +752,28 @@ export default function FieldExpense() {
             filterActive={rowLimit > 0 && visibleClaims.length > pagedClaims.length}
           />
         </>
+      ) : loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>Loading...</div>
+      ) : (
+        <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>
+          <div style={{ fontSize: "2rem", marginBottom: 8 }}>📋</div>
+          <div>
+            {tab === "pending" ? "No pending claims." :
+             tab === "unpaid"  ? "No unpaid claims." :
+             tab === "paid"    ? "No paid claims yet." :
+             "No expense claims yet."}
+          </div>
+          {tab !== "all" && claims.length > 0 && (
+            <div style={{ fontSize: "0.8rem", marginTop: 4 }}>
+              <button type="button" onClick={() => setTab("all")} style={{ background: "none", border: "none", color: "#3b82f6", cursor: "pointer", fontSize: "0.8rem", textDecoration: "underline" }}>
+                View all claims
+              </button>
+            </div>
+          )}
+          {tab === "pending" && claims.length === 0 && (
+            <div style={{ fontSize: "0.8rem", marginTop: 4 }}>Tap + New Claim to file one.</div>
+          )}
+        </div>
       )}
 
       <CreateExpenseModal

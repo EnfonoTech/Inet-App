@@ -158,6 +158,58 @@ export default function IMPOIntake() {
   const [selected, setSelected] = useState(new Set());
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
+
+  // ── Manage Table column filters (Intake tab) ─────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // _po_dispatch_portal_sql_where), not blended into the top search box's
+  // wide multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-po-intake-v2") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
+  // ── Manage Table column filters (Dummy tab) ───────────────────────────
+  const [dummyColumnFilters, setDummyColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-po-dummy-v2") return;
+      setDummyColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeDummyColumnFilters = Object.fromEntries(
+    Object.entries(dummyColumnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const dummyColumnFiltersKey = JSON.stringify(activeDummyColumnFilters);
+  const dummyColumnFiltersDebounced = useDebounced(dummyColumnFiltersKey, 300);
+
+  // ── Manage Table column filters (Overview tab) ────────────────────────
+  const [ovColumnFilters, setOvColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-po-overview-v2") return;
+      setOvColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeOvColumnFilters = Object.fromEntries(
+    Object.entries(ovColumnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const ovColumnFiltersKey = JSON.stringify(activeOvColumnFilters);
+  const ovColumnFiltersDebounced = useDebounced(ovColumnFiltersKey, 300);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [modeFilter, setModeFilter] = useState("all");
@@ -294,6 +346,8 @@ export default function IMPOIntake() {
         const filters = [["im", "=", imName], ["dispatch_status", "not in", TERMINAL_STATUSES]];
         const portal = { has_target_month: "no" };
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
         if (projectFilter.length) portal.project_code = projectFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
@@ -310,7 +364,7 @@ export default function IMPOIntake() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, rowLimit, searchDebounced, modeFilter, projectFilter, duidFilter, refreshKey]);
+  }, [imName, rowLimit, searchDebounced, modeFilter, projectFilter, duidFilter, refreshKey, columnFiltersDebounced]);
 
   // ── Pending transfer requests (blocks re-selecting a POID already mid-request) ──
   useEffect(() => {
@@ -341,9 +395,12 @@ export default function IMPOIntake() {
         const portal = { dummy_preset: preset };
         if (dummySearchDebounced.trim()) portal.search = dummySearchDebounced.trim();
         if (dummyProjectFilter.length) portal.project_code = dummyProjectFilter;
+        if (dummyDomainFilter.length) portal.domain = dummyDomainFilter;
         if (dummyDuidFilter.length) portal.site_code = dummyDuidFilter;
         if (dummyFromDate) portal.from_date = dummyFromDate;
         if (dummyToDate) portal.to_date = dummyToDate;
+        const dummyColFilters = JSON.parse(dummyColumnFiltersDebounced);
+        if (Object.keys(dummyColFilters).length) portal.column_filters = dummyColFilters;
         const res = await pmApi.listPODispatches([["im", "=", imName]], rowLimit, portal);
         if (!cancelled) setDummyRows(Array.isArray(res) ? res : []);
       } catch (err) {
@@ -353,7 +410,7 @@ export default function IMPOIntake() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, tab, rowLimit, dummyStatusFilter, dummySearchDebounced, dummyProjectFilter, dummyDomainFilter, dummyDuidFilter, dummyFromDate, dummyToDate, dummyRefreshKey]);
+  }, [imName, tab, rowLimit, dummyStatusFilter, dummySearchDebounced, dummyProjectFilter, dummyDomainFilter, dummyDuidFilter, dummyFromDate, dummyToDate, dummyRefreshKey, dummyColumnFiltersDebounced]);
 
   // ── Overview load ────────────────────────────────────────────────────
   useEffect(() => {
@@ -367,9 +424,14 @@ export default function IMPOIntake() {
         const portal = { dummy_preset: "all" };
         if (ovSearchDebounced.trim()) portal.search = ovSearchDebounced.trim();
         if (ovProjectFilter.length) portal.project_code = ovProjectFilter;
+        if (ovDomainFilter.length) portal.domain = ovDomainFilter;
+        if (ovStatusFilter.length) portal.dispatch_status = ovStatusFilter;
         if (ovDuidFilter.length) portal.site_code = ovDuidFilter;
         if (ovFromDate) portal.from_date = ovFromDate;
         if (ovToDate) portal.to_date = ovToDate;
+        if (ovDirectCloseOnly) portal.direct_close_only = true;
+        const ovColFilters = JSON.parse(ovColumnFiltersDebounced);
+        if (Object.keys(ovColFilters).length) portal.column_filters = ovColFilters;
         const res = await pmApi.listPODispatches(filters, rowLimit, portal);
         if (!cancelled) setOvRows(Array.isArray(res) ? res : []);
       } catch (err) {
@@ -379,7 +441,7 @@ export default function IMPOIntake() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, tab, rowLimit, ovSearchDebounced, ovProjectFilter, ovDuidFilter, ovFromDate, ovToDate, ovRefreshKey]);
+  }, [imName, tab, rowLimit, ovSearchDebounced, ovProjectFilter, ovDomainFilter, ovStatusFilter, ovDuidFilter, ovFromDate, ovToDate, ovDirectCloseOnly, ovRefreshKey, ovColumnFiltersDebounced]);
 
   // ── Transfers load (outgoing + incoming, merged; split by sub-tab client-side) ──
   useEffect(() => {
@@ -1127,24 +1189,8 @@ export default function IMPOIntake() {
           filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : tab === "transfers" ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
         >
           {tab === "transfers" ? (
-            transferListLoading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-            ) : transferVisibleRows.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">🔁</div>
-                <h3>
-                  {transferSubTab === "outgoing" ? "No outgoing transfers awaiting approval"
-                    : transferSubTab === "incoming" ? "No incoming transfers awaiting approval"
-                    : "No transfer history yet"}
-                </h3>
-                <p>
-                  {transferSubTab === "outgoing" ? "Requests you send from the PO Intake tab land here until a PM decides."
-                    : transferSubTab === "incoming" ? "POIDs another IM is sending your way show up here before the PM decides."
-                    : "Approved, rejected, and cancelled transfers show up here for reference."}
-                </p>
-              </div>
-            ) : (
-              <table className="data-table" data-table-key="im-po-transfers">
+            transferVisibleRows.length > 0 ? (
+              <table key="im-po-transfers" className="data-table" data-table-key="im-po-transfers">
                 <thead>
                   <tr>
                     <th>Request</th>
@@ -1201,18 +1247,26 @@ export default function IMPOIntake() {
                   })}
                 </tbody>
               </table>
+            ) : transferListLoading ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-icon">🔁</div>
+                <h3>
+                  {transferSubTab === "outgoing" ? "No outgoing transfers awaiting approval"
+                    : transferSubTab === "incoming" ? "No incoming transfers awaiting approval"
+                    : "No transfer history yet"}
+                </h3>
+                <p>
+                  {transferSubTab === "outgoing" ? "Requests you send from the PO Intake tab land here until a PM decides."
+                    : transferSubTab === "incoming" ? "POIDs another IM is sending your way show up here before the PM decides."
+                    : "Approved, rejected, and cancelled transfers show up here for reference."}
+                </p>
+              </div>
             )
           ) : tab === "overview" ? (
-            ovLoading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-            ) : ovFilteredRows.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">📋</div>
-                <h3>{hasOvFilters ? "No POIDs match your filters" : "No POIDs found"}</h3>
-                <p>{ovShowClosed ? "No POIDs assigned to you." : "Try enabling 'All statuses' to include closed and cancelled POIDs."}</p>
-              </div>
-            ) : (
-              <table className="data-table" data-table-key="im-po-overview-v2" data-tablepro-no-dynamic="true">
+            ovFilteredRows.length > 0 ? (
+              <table key="im-po-overview-v2" className="data-table" data-table-key="im-po-overview-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
                     <th>POID</th>
@@ -1312,18 +1366,18 @@ export default function IMPOIntake() {
                   })}
                 </tbody>
               </table>
+            ) : ovLoading ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-icon">📋</div>
+                <h3>{hasOvFilters ? "No POIDs match your filters" : "No POIDs found"}</h3>
+                <p>{ovShowClosed ? "No POIDs assigned to you." : "Try enabling 'All statuses' to include closed and cancelled POIDs."}</p>
+              </div>
             )
           ) : tab === "intake" ? (
-            loading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-            ) : rows.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">📥</div>
-                <h3>{hasFilters ? "No matching intake lines" : "PO Intake is empty"}</h3>
-                <p>{hasFilters ? "Try adjusting your search or filters." : "When the PM dispatches new PO lines to you, they'll land here first."}</p>
-              </div>
-            ) : (
-              <table className="data-table" data-table-key="im-po-intake-v2">
+            <>
+              <table key="im-po-intake-v2" className="data-table" data-table-key="im-po-intake-v2">
                 <thead>
                   <tr>
                     <th><input type="checkbox" checked={selected.size === rows.length && rows.length > 0} onChange={toggleAll} /></th>
@@ -1402,18 +1456,19 @@ export default function IMPOIntake() {
                   ))}
                 </tbody>
               </table>
-            )
+              {loading && rows.length === 0 ? (
+                <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+              ) : !loading && rows.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-icon">📥</div>
+                  <h3>{hasFilters ? "No matching intake lines" : "PO Intake is empty"}</h3>
+                  <p>{hasFilters ? "Try adjusting your search or filters." : "When the PM dispatches new PO lines to you, they'll land here first."}</p>
+                </div>
+              ) : null}
+            </>
           ) : (
-            dummyLoading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-            ) : filteredDummyRows.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">🗂</div>
-                <h3>{hasDummyFilters ? "No dummy POs match your filters" : dummyStatusFilter === "mapped" ? "No mapped dummy POs" : dummyStatusFilter === "all" ? "No dummy POs found" : "No open dummy POs"}</h3>
-                <p>{dummyStatusFilter === "open" ? "Create a dummy PO using the + Dummy PO button above when a real PO is not yet available." : dummyStatusFilter === "mapped" ? "Once dummy POs are mapped to real PO intake lines they appear here." : "No dummy POs have been created yet."}</p>
-              </div>
-            ) : (
-              <table className="data-table" data-table-key="im-po-dummy-v2" data-tablepro-no-dynamic="true">
+            filteredDummyRows.length > 0 ? (
+              <table key="im-po-dummy-v2" className="data-table" data-table-key="im-po-dummy-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
                     <th>POID</th>
@@ -1493,6 +1548,14 @@ export default function IMPOIntake() {
                   })}
                 </tbody>
               </table>
+            ) : dummyLoading ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-icon">🗂</div>
+                <h3>{hasDummyFilters ? "No dummy POs match your filters" : dummyStatusFilter === "mapped" ? "No mapped dummy POs" : dummyStatusFilter === "all" ? "No dummy POs found" : "No open dummy POs"}</h3>
+                <p>{dummyStatusFilter === "open" ? "Create a dummy PO using the + Dummy PO button above when a real PO is not yet available." : dummyStatusFilter === "mapped" ? "Once dummy POs are mapped to real PO intake lines they appear here." : "No dummy POs have been created yet."}</p>
+              </div>
             )
           )}
         </DataTableWrapper>

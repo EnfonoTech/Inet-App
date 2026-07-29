@@ -137,6 +137,26 @@ export default function Teams() {
   const [subOptions, setSubOptions] = useState([]);
 
   // Load team list
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map_teams in
+  // list_admin_teams), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "admin-teams-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -149,6 +169,8 @@ export default function Teams() {
         if (imFilter.length === 1) filters.im = imFilter[0];
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         if (dateFilter) filters.for_date = dateFilter;
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         const res = await pmApi.listAdminTeams(filters);
         if (!cancelled) setRows(Array.isArray(res) ? res : []);
       } catch {
@@ -158,7 +180,7 @@ export default function Teams() {
       }
     })();
     return () => { cancelled = true; };
-  }, [searchDebounced, statusFilter, typeFilter, categoryFilter, imFilter, dateFilter, refreshKey]);
+  }, [searchDebounced, statusFilter, typeFilter, categoryFilter, imFilter, dateFilter, refreshKey, columnFiltersDebounced]);
 
   // Accumulate IM options
   useEffect(() => {
@@ -450,12 +472,8 @@ export default function Teams() {
       {/* Table */}
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading teams…</div>
-          ) : filteredRows.length === 0 ? (
-            <div className="empty-state"><h3>{hasFilters ? "No teams match your filters" : "No teams found"}</h3></div>
-          ) : (
-            <table className="data-table">
+          {filteredRows.length > 0 ? (
+            <table className="data-table" data-table-key="admin-teams-v1">
               <thead>
                 <tr>
                   <th>Team ID</th>
@@ -513,6 +531,10 @@ export default function Teams() {
                 ))}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading teams…</div>
+          ) : (
+            <div className="empty-state"><h3>{hasFilters ? "No teams match your filters" : "No teams found"}</h3></div>
           )}
         </DataTableWrapper>
       </div>

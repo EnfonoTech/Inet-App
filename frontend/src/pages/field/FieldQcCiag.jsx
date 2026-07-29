@@ -210,6 +210,25 @@ export default function FieldQcCiag() {
   const [selectedPlans, setSelectedPlans] = useState(new Set());
   const [editRow, setEditRow] = useState(null);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_execution_monitor_rows).
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "field-qc-ciag-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     if (!teamId) { setRows([]); setLoading(false); return; }
@@ -218,6 +237,8 @@ export default function FieldQcCiag() {
       try {
         const filters = { status: "Completed", team: teamId };
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
         // Hide rows where the IM has already confirmed (execution_status
         // = "Completed") — at that point QC/CIAG is the IM's call, no
@@ -234,7 +255,7 @@ export default function FieldQcCiag() {
       finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [teamId, rowLimit, searchDebounced]);
+  }, [teamId, rowLimit, searchDebounced, columnFiltersDebounced]);
 
   function toggleRow(name) {
     setSelectedPlans((prev) => {
@@ -296,23 +317,7 @@ export default function FieldQcCiag() {
 
       {/* ── Mobile card list ─────────────────────────────── */}
       <div className="field-mobile-only">
-        {loading ? (
-          <div className="field-card-list">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="qc-card">
-                <div className="skeleton-line" style={{ width: "55%", height: 13, marginBottom: 6 }} />
-                <div className="skeleton-line" style={{ width: "35%", height: 10, marginBottom: 10 }} />
-                <div className="skeleton-line" style={{ width: "80%", height: 10 }} />
-              </div>
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="empty-state" style={{ marginTop: 40 }}>
-            <div className="empty-icon">✅</div>
-            <h3>No completed plans</h3>
-            <p>Completed executions pending QC review will appear here.</p>
-          </div>
-        ) : (
+        {rows.length > 0 ? (
           <div className="field-card-list">
             {/* Select-all bar */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
@@ -336,18 +341,30 @@ export default function FieldQcCiag() {
               />
             ))}
           </div>
+        ) : loading ? (
+          <div className="field-card-list">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="qc-card">
+                <div className="skeleton-line" style={{ width: "55%", height: 13, marginBottom: 6 }} />
+                <div className="skeleton-line" style={{ width: "35%", height: 10, marginBottom: 10 }} />
+                <div className="skeleton-line" style={{ width: "80%", height: 10 }} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state" style={{ marginTop: 40 }}>
+            <div className="empty-icon">✅</div>
+            <h3>No completed plans</h3>
+            <p>Completed executions pending QC review will appear here.</p>
+          </div>
         )}
       </div>
 
       {/* ── Desktop table ────────────────────────────────── */}
       <div className="page-content field-desktop-only">
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>Loading completed plans...</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state"><h3>No completed plans found</h3></div>
-          ) : (
-            <table className="data-table">
+          {rows.length > 0 ? (
+            <table className="data-table" data-table-key="field-qc-ciag-v1">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -416,6 +433,10 @@ export default function FieldQcCiag() {
                 ))}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>Loading completed plans...</div>
+          ) : (
+            <div className="empty-state"><h3>No completed plans found</h3></div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter placement="tableCard" loadedCount={rows.length} filteredCount={rows.length} filterActive={!!search} />
@@ -431,6 +452,8 @@ export default function FieldQcCiag() {
             // refresh rows; same IM-confirmed filter as the initial load.
             const filters = { status: "Completed", team: teamId };
             if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+            const colFilters = JSON.parse(columnFiltersDebounced);
+            if (Object.keys(colFilters).length) filters.column_filters = colFilters;
             pmApi.listExecutionMonitorRows(filters, rowLimit)
               .then((list) => setRows(
                 (Array.isArray(list) ? list : []).filter(

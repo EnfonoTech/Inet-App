@@ -336,17 +336,7 @@ export default function Reports() {
         )}
 
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-              Loading report…
-            </div>
-          ) : columns.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📈</div>
-              <h3>No data available</h3>
-              <p>No report data was returned from the server.</p>
-            </div>
-          ) : (
+          {columns.length > 0 ? (
             <table className="data-table">
               <thead>
                 <tr>
@@ -382,6 +372,16 @@ export default function Reports() {
                 ))}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+              Loading report…
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">📈</div>
+              <h3>No data available</h3>
+              <p>No report data was returned from the server.</p>
+            </div>
           )}
         </DataTableWrapper>
       </div>

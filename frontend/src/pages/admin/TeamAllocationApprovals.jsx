@@ -164,17 +164,7 @@ export default function TeamAllocationApprovals() {
 
       <div className="page-content">
         <DataTableWrapper loadedCount={loading ? null : visible.length}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : visible.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📨</div>
-              <h3>{tab === "pending" ? "No requests awaiting your approval" : "No history yet"}</h3>
-              <p>{tab === "pending"
-                ? "When a request needs PM sign-off, it lands here."
-                : "Approved and rejected requests show up here for audit."}</p>
-            </div>
-          ) : (
+          {visible.length > 0 ? (
             <table className="data-table">
               <thead>
                 <tr>
@@ -274,6 +264,16 @@ export default function TeamAllocationApprovals() {
                 })}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">📨</div>
+              <h3>{tab === "pending" ? "No requests awaiting your approval" : "No history yet"}</h3>
+              <p>{tab === "pending"
+                ? "When a request needs PM sign-off, it lands here."
+                : "Approved and rejected requests show up here for audit."}</p>
+            </div>
           )}
         </DataTableWrapper>
       </div>

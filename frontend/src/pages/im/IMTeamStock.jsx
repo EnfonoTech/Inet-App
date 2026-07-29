@@ -47,11 +47,7 @@ export default function IMTeamStock() {
         </div>
       )}
 
-      {loading ? (
-        <div style={{ color: "#64748b", padding: 24, textAlign: "center" }}>Loading…</div>
-      ) : teams.length === 0 ? (
-        <div style={{ color: "#64748b", padding: 24, textAlign: "center" }}>No teams found.</div>
-      ) : (
+      {teams.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {teams.map(team => {
             const open = !!expanded[team.team_id];
@@ -133,6 +129,10 @@ export default function IMTeamStock() {
             );
           })}
         </div>
+      ) : loading ? (
+        <div style={{ color: "#64748b", padding: 24, textAlign: "center" }}>Loading…</div>
+      ) : (
+        <div style={{ color: "#64748b", padding: 24, textAlign: "center" }}>No teams found.</div>
       )}
     </div>
   );

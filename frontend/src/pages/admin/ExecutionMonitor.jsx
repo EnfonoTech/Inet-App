@@ -165,6 +165,35 @@ export default function ExecutionMonitor() {
   const [internalFromDate, setInternalFromDate] = useState("");
   const [internalToDate, setInternalToDate] = useState("");
   const internalSearchDebounced = useDebounced(internalSearch, 300);
+
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Both the main and internal-done tables load from the SAME backend call
+  // (split client-side afterward), so their column filters are merged into
+  // one `column_filters` payload sent together. Each column's typed value is
+  // matched only against that column's own value on the backend (see
+  // column_filters / col_filter_map in list_execution_monitor_rows), not
+  // blended into the top search box's wide multi-column search.
+  const [columnFiltersByTable, setColumnFiltersByTable] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      const k = e.detail?.tableKey;
+      if (k !== "execution-monitor-main" && k !== "execution-monitor-internal-done") return;
+      setColumnFiltersByTable((prev) => ({ ...prev, [k]: e.detail.filters || {} }));
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  // Now that the backend query itself is scoped to the active tab (see
+  // `filters.tab` below), only that tab's own column filters should be
+  // sent - merging in the other (inactive) tab's filters would narrow this
+  // tab's results using a value the user typed somewhere else entirely.
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(
+      columnFiltersByTable[tab === "internal_done" ? "execution-monitor-internal-done" : "execution-monitor-main"] || {}
+    ).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
   const [detailRow, setDetailRow] = useState(null);
   const [tlStatusFor, setTlStatusFor] = useState(null);
   const [tlStatusPick, setTlStatusPick] = useState("In Progress");
@@ -218,6 +247,10 @@ export default function ExecutionMonitor() {
     (async () => {
       try {
         const filters = {};
+        // Main and Internal Work Done are two tabs sharing one fetch -
+        // without this, one row-limited batch had to cover both, so
+        // whichever tab wasn't the majority of that batch lost rows.
+        filters.tab = tab === "internal_done" ? "internal_done" : "main";
         if (planStatusFilter.length) filters.status = planStatusFilter;
         if (executionStatusFilter.length) filters.execution_status = executionStatusFilter;
         if (visitFilter.length) filters.visit_type = visitFilter;
@@ -228,6 +261,14 @@ export default function ExecutionMonitor() {
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        if (internalImFilter.length) filters.internal_im = internalImFilter;
+        if (internalTeamFilter.length) filters.internal_team = internalTeamFilter;
+        if (internalDomainFilter.length) filters.internal_domain = internalDomainFilter;
+        if (internalTypeFilter.length) filters.internal_work_type = internalTypeFilter;
+        if (internalFromDate) filters.internal_from_date = internalFromDate;
+        if (internalToDate) filters.internal_to_date = internalToDate;
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
         if (cancelled) return;
         setRows(Array.isArray(list) ? list : []);
@@ -248,7 +289,7 @@ export default function ExecutionMonitor() {
         intervalRef.current = null;
       }
     };
-  }, [rowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [rowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, internalImFilter, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate, tab]);
 
   function formatTime(d) {
     if (!d) return "";
@@ -462,22 +503,8 @@ export default function ExecutionMonitor() {
 
         <DataTableWrapper>
           {tab === "internal_done" ? (
-            loading ? (
-              <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-                Loading execution data…
-              </div>
-            ) : filteredInternalDone.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">✅</div>
-                <h3>{hasInternalFilters ? "No results match your filters" : "No internal work done yet"}</h3>
-                <p>
-                  {hasInternalFilters
-                    ? "Try adjusting your search or filter criteria."
-                    : "Internal work moves here once its Execution Status is set to Completed."}
-                </p>
-              </div>
-            ) : (
-              <table className="data-table" data-table-key="execution-monitor-internal-done">
+            filteredInternalDone.length > 0 ? (
+              <table key="execution-monitor-internal-done" className="data-table" data-table-key="execution-monitor-internal-done">
                 <thead>
                   <tr>
                     <th>Plan</th>
@@ -489,6 +516,8 @@ export default function ExecutionMonitor() {
                     <th>Team</th>
                     <th>IM</th>
                     <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
+                    <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
+                    <th style={{ whiteSpace: "nowrap" }}>Access</th>
                     <th>TL Status</th>
                     <th style={{ textAlign: "right" }}>Qty</th>
                     <th title="Remark set by IM">Manager</th>
@@ -508,6 +537,20 @@ export default function ExecutionMonitor() {
                       <td style={{ fontSize: "0.82rem" }}>{row.team_name || row.team || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.im_full_name || row.im || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.execution_date || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+                        {row.access_time ? `${row.access_time.slice(0, 5)}${row.access_period ? ` · ${row.access_period}` : ""}` : "—"}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {(() => {
+                          const badge = accessTimeBadge(row.access_time, row.access_period, row.timer_start_ms, row.tl_status, row.plan_date);
+                          if (!badge) return <span style={{ color: "#94a3b8" }}>—</span>;
+                          return (
+                            <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 700, background: badge.bg, color: badge.color }}>
+                              {badge.label}
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td><StatusPill value={row.tl_status || "—"} /></td>
                       <td style={{ textAlign: "right" }}>{row.execution_achieved_qty ?? "—"}</td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.manager_remark || ""}>{row.manager_remark || "—"}</td>
@@ -527,7 +570,7 @@ export default function ExecutionMonitor() {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                    <td colSpan={16} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                       {filteredInternalDone.length} row{filteredInternalDone.length !== 1 ? "s" : ""} done
                       {filteredInternalDone.length !== internalDoneRows.length && (
                         <span style={{ color: "#64748b", marginLeft: 10, fontWeight: 500 }}>of {internalDoneRows.length} total</span>
@@ -536,23 +579,23 @@ export default function ExecutionMonitor() {
                   </tr>
                 </tfoot>
               </table>
+            ) : loading ? (
+              <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+                Loading execution data…
+              </div>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-icon">✅</div>
+                <h3>{hasInternalFilters ? "No results match your filters" : "No internal work done yet"}</h3>
+                <p>
+                  {hasInternalFilters
+                    ? "Try adjusting your search or filter criteria."
+                    : "Internal work moves here once its Execution Status is set to Completed."}
+                </p>
+              </div>
             )
-          ) : loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-              Loading execution data…
-            </div>
-          ) : mainRows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📊</div>
-              <h3>{hasFilters ? "No results match your filters" : "No active executions"}</h3>
-              <p>
-                {hasFilters
-                  ? "Try adjusting your search or filter criteria."
-                  : "No plans are currently Planned or In Execution."}
-              </p>
-            </div>
-          ) : (
-            <table className="data-table">
+          ) : mainRows.length > 0 ? (
+            <table key="execution-monitor-main" className="data-table" data-table-key="execution-monitor-main">
               <thead>
                 <tr>
                   <th>Plan</th>
@@ -570,9 +613,10 @@ export default function ExecutionMonitor() {
                   <th>Team</th>
                   <th>IM</th>
                   <th>Plan Date</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
                   <th style={{ whiteSpace: "nowrap" }}>Access</th>
                   <th>Visit Type</th>
-                  <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit #</th>
+                  <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit No</th>
                   <th style={{ textAlign: "right" }}>Target</th>
                   <th>Plan Status</th>
                   <th>TL Status</th>
@@ -610,6 +654,9 @@ export default function ExecutionMonitor() {
                       <td>{row.team_name || row.team || "—"}</td>
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.plan_date}</td>
+                      <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+                        {row.access_time ? `${row.access_time.slice(0, 5)}${row.access_period ? ` · ${row.access_period}` : ""}` : "—"}
+                      </td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         {(() => {
                           const badge = accessTimeBadge(row.access_time, row.access_period, row.timer_start_ms, row.tl_status, row.plan_date);
@@ -689,7 +736,7 @@ export default function ExecutionMonitor() {
                   <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                     {mainRows.length} rows
                   </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                   <td style={{ textAlign: "right", padding: "8px 16px" }} />
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
                     {fmt.format(totals.target)}
@@ -701,6 +748,20 @@ export default function ExecutionMonitor() {
                 </tr>
               </tfoot>
             </table>
+          ) : loading ? (
+            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+              Loading execution data…
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">📊</div>
+              <h3>{hasFilters ? "No results match your filters" : "No active executions"}</h3>
+              <p>
+                {hasFilters
+                  ? "Try adjusting your search or filter criteria."
+                  : "No plans are currently Planned or In Execution."}
+              </p>
+            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

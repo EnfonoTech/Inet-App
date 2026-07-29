@@ -501,6 +501,26 @@ export default function WorkDone() {
     if (updated > 0) { loadData(); }
   }
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_work_done_rows), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "admin-workdone") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   // Single useEffect with cancellation guard. Replaces the older
   // useResetOnRowLimitChange + separate-load pattern that left the table
   // blank when going from a higher to a lower row limit.
@@ -519,6 +539,17 @@ export default function WorkDone() {
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        if (workTypeFilter.length) {
+          // "Field Work" (Rollout Execution) also covers legacy rows with no
+          // source stamped at all — mirrors the display default used below
+          // (`row.source || "Rollout Execution"`).
+          filters.source = workTypeFilter.includes("Rollout Execution")
+            ? [...workTypeFilter, ""]
+            : workTypeFilter;
+        }
+        if (issueFlagFilter.length) filters.issue_flag = issueFlagFilter;
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         const list = await pmApi.listWorkDoneRows(filters, rowLimit);
         if (cancelled) return;
         setRows(Array.isArray(list) ? list : []);
@@ -529,7 +560,7 @@ export default function WorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey]);
+  }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, workTypeFilter, issueFlagFilter]);
 
   const filteredRows = useMemo(() => {
     let r = rows;
@@ -963,22 +994,8 @@ export default function WorkDone() {
             })()}
           </div>
         ) : (
-          loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-              Loading work done records…
-            </div>
-          ) : filteredRows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">✅</div>
-              <h3>{hasFilters ? "No results match your filters" : "No completed work records"}</h3>
-              <p>
-                {hasFilters
-                  ? "Try adjusting your search or filter criteria."
-                  : "Completed execution records will appear here."}
-              </p>
-            </div>
-          ) : (
-            <table className="data-table">
+          <>
+            <table className="data-table" data-table-key="admin-workdone">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -1118,21 +1135,38 @@ export default function WorkDone() {
                   );
                 })}
               </tbody>
-              <tfoot>
-                <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
-                  <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
-                    {filteredRows.length} rows
-                  </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
-                  <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
-                    {fmt.format(totals.revenue)}
-                  </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td />
-                </tr>
-              </tfoot>
+              {filteredRows.length > 0 && (
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
+                    <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
+                      {filteredRows.length} rows
+                    </td>
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
+                      {fmt.format(totals.revenue)}
+                    </td>
+                    <td /><td /><td /><td /><td /><td /><td /><td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
-          )
+            {loading && filteredRows.length === 0 ? (
+              <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+                Loading work done records…
+              </div>
+            ) : !loading && filteredRows.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">✅</div>
+                <h3>{hasFilters ? "No results match your filters" : "No completed work records"}</h3>
+                <p>
+                  {hasFilters
+                    ? "Try adjusting your search or filter criteria."
+                    : "Completed execution records will appear here."}
+                </p>
+              </div>
+            ) : null}
+          </>
         )}
         </DataTableWrapper>
         {tab === "list" && (

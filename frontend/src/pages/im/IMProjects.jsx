@@ -94,12 +94,33 @@ export default function IMProjects() {
     return () => { cancelled = true; };
   }, [imName]);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_projects), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-projects-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     if (!imName) { setLoading(false); return; }
     setLoading(true);
     (async () => {
       try {
+        const colFilters = JSON.parse(columnFiltersDebounced);
         const list = await pmApi.listProjects({
           limit: rowLimit,
           implementation_manager: imName,
@@ -107,6 +128,7 @@ export default function IMProjects() {
           status: statusFilter || undefined,
           domain: domainFilter || undefined,
           huawei_im: huaweiImFilter || undefined,
+          column_filters: Object.keys(colFilters).length ? colFilters : undefined,
         });
         if (!cancelled) setProjects(Array.isArray(list) ? list : []);
       } catch {
@@ -116,7 +138,7 @@ export default function IMProjects() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, rowLimit, searchDebounced, statusFilter, domainFilter, huaweiImFilter]);
+  }, [imName, rowLimit, searchDebounced, statusFilter, domainFilter, huaweiImFilter, columnFiltersDebounced]);
 
   const statuses = [...new Set(metaProjects.map((p) => p.project_status).filter(Boolean))].sort();
   const hasFilters = search || statusFilter || domainFilter || huaweiImFilter;
@@ -194,26 +216,8 @@ export default function IMProjects() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : !imName ? (
-            <div className="empty-state">
-              <div className="empty-icon">👤</div>
-              <h3>IM account not set up</h3>
-              <p>Your user is not linked to an IM Master record. Link IM Master → User Account to your login, and set Implementation Manager on INET Teams and projects.</p>
-            </div>
-          ) : projects.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📋</div>
-              <h3>{search ? "No results" : "No projects assigned"}</h3>
-              <p>
-                {search
-                  ? "Try a different search."
-                  : <>Open each project in <a href="/app/project-control-center" target="_blank" rel="noreferrer">Project Control Center</a> and set <strong>Implementation Manager</strong> = <code>{imName}</code></>}
-              </p>
-            </div>
-          ) : (
-            <table className="data-table">
+          {projects.length > 0 ? (
+            <table className="data-table" data-table-key="im-projects-v1">
               <thead>
                 <tr>
                   <th>Project Code</th>
@@ -275,6 +279,24 @@ export default function IMProjects() {
                 ))}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
+          ) : !imName ? (
+            <div className="empty-state">
+              <div className="empty-icon">👤</div>
+              <h3>IM account not set up</h3>
+              <p>Your user is not linked to an IM Master record. Link IM Master → User Account to your login, and set Implementation Manager on INET Teams and projects.</p>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">📋</div>
+              <h3>{search ? "No results" : "No projects assigned"}</h3>
+              <p>
+                {search
+                  ? "Try a different search."
+                  : <>Open each project in <a href="/app/project-control-center" target="_blank" rel="noreferrer">Project Control Center</a> and set <strong>Implementation Manager</strong> = <code>{imName}</code></>}
+              </p>
+            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

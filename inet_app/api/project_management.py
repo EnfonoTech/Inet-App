@@ -27,20 +27,21 @@ def list_projects(
     area=None,
     implementation_manager=None,
     huawei_im=None,
+    column_filters=None,
 ):
     """List projects; ``limit=0`` loads all rows (no cap). Other limits are clamped to 1..10000."""
-    filters = {}
+    filters = []
     if status:
-        filters["project_status"] = status
+        filters.append(["project_status", "=", status])
     if domain:
-        filters["project_domain"] = domain
+        filters.append(["project_domain", "=", domain])
     if area:
-        filters["center_area"] = area
+        filters.append(["center_area", "=", area])
     if huawei_im:
-        filters["huawei_im"] = huawei_im
+        filters.append(["huawei_im", "=", huawei_im])
     im = (implementation_manager or "").strip()
     if im:
-        filters["implementation_manager"] = im
+        filters.append(["implementation_manager", "=", im])
 
     or_filters = []
     if search:
@@ -51,10 +52,50 @@ def list_projects(
             ["customer", "like", like],
         ]
 
+    # Per-column "Manage Table" filters — see list_im_rollout_plans (in
+    # command_center.py) for the rationale (each column matched independently
+    # and ANDed, not blended into the wide `search` box's OR-across-fields
+    # match above). Frappe's list `filters` param already ANDs its entries,
+    # so a plain ["field", "like", pattern] per active column is enough here
+    # — no raw SQL needed for this single-table, join-free query.
+    col_filter_map = {
+        "code": "project_code",
+        "project_code": "project_code",
+        "project_name": "project_name",
+        "customer": "customer",
+        "domain": "project_domain",
+        "huawei_im": "huawei_im",
+        "status": "project_status",
+        "im": "implementation_manager",
+        "area": "center_area",
+        "budget": "budget_amount",
+        "actual_cost": "actual_cost",
+        "completion": "completion_percentage",
+        "progress": "completion_percentage",
+    }
+    if frappe.db.has_column("Project Control Center", "region_type"):
+        col_filter_map["region"] = "region_type"
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            val = str(raw_val or "").strip()
+            if not val:
+                continue
+            field = col_filter_map.get(col_key)
+            if not field:
+                continue
+            esc = val.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            filters.append([field, "like", f"%{esc}%"])
+
     proj_fields = [
         "name",
         "project_code",
         "project_name",
+        "customer",
         "project_domain",
         "project_status",
         "implementation_manager",

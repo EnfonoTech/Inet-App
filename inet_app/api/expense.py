@@ -1,6 +1,50 @@
 """Project Expense Claim API — team-lead-filed, IM-approved expense claims mapped to DUIDs (sites)."""
 import frappe
 from frappe.utils import flt, nowdate
+from inet_app.api.command_center import _sql_like_pattern
+
+
+# Per-column "Manage Table" filters — see list_im_rollout_plans (in
+# command_center.py) for the rationale (each column matched independently
+# and ANDed). Shared by list_pending_expense_approvals / list_im_all_claims /
+# list_all_expense_claims, which all query `tabExpense Claim` with the same
+# alias (`ec`, plus `emp`/`it`, and `im` only on the admin variant).
+_EXPENSE_COL_FILTER_MAP = {
+    "claim": "IFNULL(ec.name,'')",
+    "date": "CAST(ec.posting_date AS CHAR)",
+    "team_lead": "IFNULL(emp.employee_name,'')",
+    "team": "COALESCE(NULLIF(it.team_name,''), ec.inet_team, '')",
+    "amount_sar": "CAST(ec.total_claimed_amount AS CHAR)",
+    "status": "IFNULL(ec.approval_status,'')",
+    # IMExpense.jsx's own "Payment" column shows a computed Paid/Unpaid label
+    # (paymentStatus() — derived from this raw field plus approval_status);
+    # matching the raw column is a reasonable approximation without
+    # duplicating that derivation in SQL.
+    "payment": "IFNULL(ec.status,'')",
+}
+
+
+def _apply_expense_column_filters(column_filters, conditions, params, has_im_join=False):
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if not isinstance(column_filters, dict):
+        return
+    for col_key, raw_val in column_filters.items():
+        pat = _sql_like_pattern(raw_val)
+        if not pat:
+            continue
+        if col_key == "im" and has_im_join:
+            conditions.append("IFNULL(im.full_name,'') LIKE %s")
+            params.append(pat)
+            continue
+        expr = _EXPENSE_COL_FILTER_MAP.get(col_key)
+        if not expr:
+            continue
+        conditions.append(f"{expr} LIKE %s")
+        params.append(pat)
 
 
 def _get_team_for_user(user=None):
@@ -576,12 +620,21 @@ def list_my_expense_claims():
 
 
 @frappe.whitelist()
-def list_pending_expense_approvals():
+def list_pending_expense_approvals(column_filters=None):
     """Return project expense claims pending approval by the logged-in IM."""
     im_user = frappe.session.user
 
+    conditions = [
+        "ec.expense_approver = %s",
+        "ec.is_project_claim = 1",
+        "ec.approval_status = 'Draft'",
+        "ec.docstatus = 0",
+    ]
+    params = [im_user]
+    _apply_expense_column_filters(column_filters, conditions, params)
+
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT
             ec.name,
             ec.posting_date,
@@ -599,14 +652,11 @@ def list_pending_expense_approvals():
         FROM `tabExpense Claim` ec
         LEFT JOIN `tabEmployee` emp ON emp.name = ec.employee
         LEFT JOIN `tabINET Team` it ON it.name = ec.inet_team
-        WHERE ec.expense_approver = %s
-          AND ec.is_project_claim = 1
-          AND ec.approval_status = 'Draft'
-          AND ec.docstatus = 0
+        WHERE {' AND '.join(conditions)}
         ORDER BY ec.posting_date DESC, ec.creation DESC
         LIMIT 200
         """,
-        (im_user,),
+        tuple(params),
         as_dict=True,
     )
 
@@ -614,12 +664,16 @@ def list_pending_expense_approvals():
 
 
 @frappe.whitelist()
-def list_im_all_claims():
+def list_im_all_claims(column_filters=None):
     """Return all project expense claims where the session user is the expense_approver (IM view)."""
     im_user = frappe.session.user
 
+    conditions = ["ec.expense_approver = %s", "ec.is_project_claim = 1"]
+    params = [im_user]
+    _apply_expense_column_filters(column_filters, conditions, params)
+
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT
             ec.name,
             ec.posting_date,
@@ -637,12 +691,11 @@ def list_im_all_claims():
         FROM `tabExpense Claim` ec
         LEFT JOIN `tabEmployee` emp ON emp.name = ec.employee
         LEFT JOIN `tabINET Team` it ON it.name = ec.inet_team
-        WHERE ec.expense_approver = %s
-          AND ec.is_project_claim = 1
+        WHERE {' AND '.join(conditions)}
         ORDER BY ec.posting_date DESC, ec.creation DESC
         LIMIT 500
         """,
-        (im_user,),
+        tuple(params),
         as_dict=True,
     )
 
@@ -676,6 +729,8 @@ def list_all_expense_claims(filters=None):
     if filters.get("to_date"):
         conditions.append("ec.posting_date <= %s")
         params.append(filters["to_date"])
+
+    _apply_expense_column_filters(filters.get("column_filters"), conditions, params, has_im_join=True)
 
     where = " AND ".join(conditions)
 

@@ -161,6 +161,27 @@ export default function PICTracker() {
 
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
+
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_pic_rows), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "pic-tracker-v2") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   const [picFilter, setPicFilter] = useState(() => {
     const v = new URLSearchParams(window.location.search).get("pic_status");
     return v ? [v] : [];
@@ -214,6 +235,8 @@ export default function PICTracker() {
         if (subconFilter.length) portal.subcontractor = subconFilter;
         if (isdpOwnerFilter.length) portal.isdp_owner = isdpOwnerFilter;
         if (ibuyOwnerFilter.length) portal.ibuy_owner = ibuyOwnerFilter;
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         const list = await pmApi.listPicRows(portal, rowLimit);
         if (cancelled) return;
         setRows(Array.isArray(list) ? list : []);
@@ -227,7 +250,7 @@ export default function PICTracker() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit, refreshKey, columnFiltersDebounced]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "isdp_owner", "ibuy_owner", "contract"]);
   const projectOptions = dispOpts.project_code || [];
@@ -460,15 +483,7 @@ export default function PICTracker() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📑</div>
-              <h3>{hasFilters ? "No matching POIDs" : "No POIDs in the pipeline yet"}</h3>
-              <p>{hasFilters ? "Adjust your filters." : "POIDs appear here when their PO Dispatch is created."}</p>
-            </div>
-          ) : (
+          {rows.length > 0 ? (
             <table className="data-table" data-table-key="pic-tracker-v2">
               <thead>
                 <tr>
@@ -608,6 +623,14 @@ export default function PICTracker() {
                 </tr>
               </tfoot>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">📑</div>
+              <h3>{hasFilters ? "No matching POIDs" : "No POIDs in the pipeline yet"}</h3>
+              <p>{hasFilters ? "Adjust your filters." : "POIDs appear here when their PO Dispatch is created."}</p>
+            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

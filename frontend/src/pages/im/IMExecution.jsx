@@ -233,6 +233,31 @@ export default function IMExecution() {
 
   const loadExecutions = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  // ── Manage Table column filters (per-column boxes under the header) ────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_im_daily_executions), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFiltersByTable, setColumnFiltersByTable] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      const k = e.detail?.tableKey;
+      if (k !== "im-execution-poid-work" && k !== "im-execution-internal-done") return;
+      setColumnFiltersByTable((prev) => ({ ...prev, [k]: e.detail.filters || {} }));
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  // The backend query is scoped to the active tab (see `portal.tab` below),
+  // so only that tab's own column filters should be sent.
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(
+      columnFiltersByTable[tab === "internal_done" ? "im-execution-internal-done" : "im-execution-poid-work"] || {}
+    ).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     if (!imName) {
@@ -244,7 +269,13 @@ export default function IMExecution() {
     (async () => {
       try {
         const portal = {};
+        // POID Work and Internal Work Done are two tabs sharing one fetch -
+        // without this, one row-limited batch had to cover both, so
+        // whichever tab wasn't the majority of that batch lost rows.
+        portal.tab = tab === "internal_done" ? "internal_done" : "main";
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         if (qcFilter.length) portal.qc_status = qcFilter;
         if (ciagFilter.length) portal.ciag_status = ciagFilter;
         if (projectFilter.length) portal.project_code = projectFilter;
@@ -252,6 +283,12 @@ export default function IMExecution() {
         if (duidFilter.length) portal.site_code = duidFilter;
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
+        if (dummyFilter) portal.dummy_preset = "dummy";
+        if (internalTeamFilter.length) portal.internal_team = internalTeamFilter;
+        if (internalDomainFilter.length) portal.internal_domain = internalDomainFilter;
+        if (internalTypeFilter.length) portal.internal_work_type = internalTypeFilter;
+        if (internalFromDate) portal.internal_from_date = internalFromDate;
+        if (internalToDate) portal.internal_to_date = internalToDate;
         const portalArg = Object.keys(portal).length ? portal : undefined;
         const res = await pmApi.listIMDailyExecutions(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
         if (!cancelled) setExecutions(Array.isArray(res) ? res : []);
@@ -275,6 +312,14 @@ export default function IMExecution() {
     fromDate,
     toDate,
     refreshKey,
+    columnFiltersDebounced,
+    dummyFilter,
+    internalTeamFilter,
+    internalDomainFilter,
+    internalTypeFilter,
+    internalFromDate,
+    internalToDate,
+    tab,
   ]);
 
   const qcOptions = [...new Set(executions.map((e) => e.qc_status).filter(Boolean))].sort();
@@ -1199,7 +1244,7 @@ export default function IMExecution() {
                 </p>
               </div>
             ) : (
-              <table className="data-table" data-table-key="im-execution-internal-done">
+              <table key="im-execution-internal-done" className="data-table" data-table-key="im-execution-internal-done">
                 <thead>
                   <tr>
                     <th>Execution</th>
@@ -1211,6 +1256,8 @@ export default function IMExecution() {
                     <th>Team</th>
                     <th>IM</th>
                     <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
+                    <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
+                    <th style={{ whiteSpace: "nowrap" }}>Access</th>
                     <th>TL Status</th>
                     <th style={{ textAlign: "right" }}>Qty</th>
                     <th>IM Note</th>
@@ -1230,6 +1277,20 @@ export default function IMExecution() {
                       <td style={{ fontSize: "0.82rem" }}>{e.team_name || e.team || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{e.im_full_name || e.dispatch_im || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{e.execution_date || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+                        {e.access_time ? `${e.access_time.slice(0, 5)}${e.access_period ? ` · ${e.access_period}` : ""}` : "—"}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {(() => {
+                          const badge = accessTimeBadge(e.access_time, e.access_period, e.timer_start_ms, e.tl_status, e.plan_date);
+                          if (!badge) return <span style={{ color: "#94a3b8" }}>—</span>;
+                          return (
+                            <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 700, background: badge.bg, color: badge.color }}>
+                              {badge.label}
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td><StatusPill value={e.tl_status || "—"} /></td>
                       <td style={{ textAlign: "right" }}>{e.achieved_qty ?? "—"}</td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.manager_remark || ""}>{e.manager_remark || "—"}</td>
@@ -1254,7 +1315,7 @@ export default function IMExecution() {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={14} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                    <td colSpan={16} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                       <strong>{filteredInternalDone.length} row{filteredInternalDone.length !== 1 ? "s" : ""} done</strong>
                       {filteredInternalDone.length !== internalDoneExecutions.length && (
                         <span style={{ color: "#64748b", marginLeft: 10 }}>of {internalDoneExecutions.length} total</span>
@@ -1264,20 +1325,9 @@ export default function IMExecution() {
                 </tfoot>
               </table>
             )
-          ) : loading && executions.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : filteredExecutions.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📊</div>
-              <h3>{hasFilters ? "No results match your filters" : "No execution records"}</h3>
-              <p>
-                {hasFilters
-                  ? "Try adjusting your search or filter criteria."
-                  : "Executions appear after teams log work against planned rollouts."}
-              </p>
-            </div>
           ) : (
-            <table className="data-table">
+            <>
+            <table key="im-execution-poid-work" className="data-table" data-table-key="im-execution-poid-work">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -1312,6 +1362,7 @@ export default function IMExecution() {
                   <th>Team</th>
                   <th>IM</th>
                   <th style={{ whiteSpace: "nowrap" }}>Plan Period</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
                   <th style={{ whiteSpace: "nowrap" }}>Access</th>
                   <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
                   <th>TL Status</th>
@@ -1373,6 +1424,9 @@ export default function IMExecution() {
                       {e.plan_end_date && e.plan_end_date !== e.plan_date
                         ? `${e.plan_date} → ${e.plan_end_date}`
                         : e.plan_date || "—"}
+                    </td>
+                    <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+                      {e.access_time ? `${e.access_time.slice(0, 5)}${e.access_period ? ` · ${e.access_period}` : ""}` : "—"}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {(() => {
@@ -1516,22 +1570,38 @@ export default function IMExecution() {
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={21} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                    {filteredExecutions.length} row{filteredExecutions.length !== 1 ? "s" : ""}
-                  </td>
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    {fmt.format(totalAchieved)}
-                  </td>
-                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
-                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
-                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
-                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
-                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
-                </tr>
-              </tfoot>
+              {filteredExecutions.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={22} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                      {filteredExecutions.length} row{filteredExecutions.length !== 1 ? "s" : ""}
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                      {fmt.format(totalAchieved)}
+                    </td>
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
+            {loading && executions.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
+            ) : !loading && filteredExecutions.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">📊</div>
+                <h3>{hasFilters ? "No results match your filters" : "No execution records"}</h3>
+                <p>
+                  {hasFilters
+                    ? "Try adjusting your search or filter criteria."
+                    : "Executions appear after teams log work against planned rollouts."}
+                </p>
+              </div>
+            ) : null}
+            </>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

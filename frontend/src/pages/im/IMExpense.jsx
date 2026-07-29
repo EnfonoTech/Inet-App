@@ -4,6 +4,7 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import DateRangePicker from "../../components/DateRangePicker";
 import AttachmentsSection from "../../components/AttachmentsSection";
 import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useDebounced } from "../../hooks/useDebounced";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -310,11 +311,43 @@ export default function IMExpense({ isAdmin = false }) {
       .catch(() => {});
   }, [isAdmin]);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / _EXPENSE_COL_FILTER_MAP in
+  // expense.py). This page's own search/date/status/im/team filters remain
+  // client-side (unchanged) — only the Manage Table filters are wired here.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-expense-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const colFilters = JSON.parse(columnFiltersDebounced);
       if (isAdmin) {
-        const all = await pmApi.listAllExpenseClaims({});
+        const adminFilters = { column_filters: Object.keys(colFilters).length ? colFilters : undefined };
+        if (imFilter) adminFilters.im_user = imFilter;
+        if (teamFilter) adminFilters.inet_team = teamFilter;
+        if (dateFrom) adminFilters.from_date = dateFrom;
+        if (dateTo) adminFilters.to_date = dateTo;
+        // Only meaningful on the "all" tab — applying it while viewing
+        // "pending" would incorrectly narrow that tab too, since both are
+        // derived client-side from this same fetch.
+        if (tab === "all" && statusFilter) {
+          adminFilters.approval_status = statusFilter === "Pending" ? "Draft" : statusFilter;
+        }
+        const all = await pmApi.listAllExpenseClaims(adminFilters);
         const rows = all || [];
         setAllClaims(rows);
         setPending(rows.filter((c) => {
@@ -323,8 +356,8 @@ export default function IMExpense({ isAdmin = false }) {
         }));
       } else {
         const [pend, all] = await Promise.all([
-          pmApi.listPendingExpenseApprovals(),
-          pmApi.listImAllClaims(),
+          pmApi.listPendingExpenseApprovals(colFilters),
+          pmApi.listImAllClaims(colFilters),
         ]);
         setPending(pend || []);
         setAllClaims(all || []);
@@ -335,7 +368,7 @@ export default function IMExpense({ isAdmin = false }) {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }, [isAdmin, columnFiltersDebounced, tab, statusFilter, imFilter, teamFilter, dateFrom, dateTo]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -460,16 +493,9 @@ export default function IMExpense({ isAdmin = false }) {
           filteredCount={visibleRows.length}
           filterActive={hasFilters}
         >
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">📋</div>
-              <h3>{hasFilters ? "No results for these filters" : tab === "pending" ? "No pending expense claims" : "No expense claims found"}</h3>
-            </div>
-          ) : (
+          {rows.length > 0 ? (
             <>
-              <table className="data-table">
+              <table className="data-table" data-table-key="im-expense-v1">
                 <thead>
                   <tr>
                     <th>Claim #</th>
@@ -510,6 +536,13 @@ export default function IMExpense({ isAdmin = false }) {
                 </tbody>
               </table>
             </>
+          ) : loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+          ) : (
+            <div className="empty-state" style={{ marginTop: 20 }}>
+              <div className="empty-icon">📋</div>
+              <h3>{hasFilters ? "No results for these filters" : tab === "pending" ? "No pending expense claims" : "No expense claims found"}</h3>
+            </div>
           )}
         </DataTableWrapper>
       </div>

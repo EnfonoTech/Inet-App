@@ -72,6 +72,26 @@ export default function IMTimesheets() {
     }).catch(() => {});
   }, []);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map_etl in
+  // list_execution_time_logs), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-timesheets-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     if (!imName) {
@@ -88,6 +108,8 @@ export default function IMTimesheets() {
         if (dateTo) filters.to_date = dateTo;
         if (teamFilter.length) filters.team_id = teamFilter;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
         if (!cancelled) {
           setLogs(res?.logs || []);
@@ -100,7 +122,7 @@ export default function IMTimesheets() {
       }
     })();
     return () => { cancelled = true; };
-  }, [dateFrom, dateTo, imName, rowLimit, searchDebounced, teamFilter]);
+  }, [dateFrom, dateTo, imName, rowLimit, searchDebounced, teamFilter, columnFiltersDebounced]);
 
   const totalHours = logs.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
   const hasFilters = dateFrom || dateTo || search || teamFilter.length;
@@ -161,15 +183,8 @@ export default function IMTimesheets() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-          ) : logs.length === 0 ? (
-            <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">&#x1F553;</div>
-              <h3>{hasFilters ? "No results" : "No time logs for your teams"}</h3>
-            </div>
-          ) : (
-            <table className="data-table">
+          {logs.length > 0 ? (
+            <table className="data-table" data-table-key="im-timesheets-v1">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -222,6 +237,13 @@ export default function IMTimesheets() {
                 ))}
               </tbody>
             </table>
+          ) : loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+          ) : (
+            <div className="empty-state" style={{ marginTop: 20 }}>
+              <div className="empty-icon">&#x1F553;</div>
+              <h3>{hasFilters ? "No results" : "No time logs for your teams"}</h3>
+            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

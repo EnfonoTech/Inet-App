@@ -146,6 +146,26 @@ export default function PODispatch() {
     setRefreshKey((k) => k + 1);
   }
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map_intake in
+  // list_po_intake_lines), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "admin-po-dispatch-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -162,6 +182,8 @@ export default function PODispatch() {
         if (itemCodeFilter.length) portal.item_code = itemCodeFilter;
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         const [poLines, ims] = await Promise.all([
           pmApi.listPOIntakeLines(status, rowLimit, portal),
           pmApi.listIMMasters({ status: "Active" }),
@@ -175,7 +197,7 @@ export default function PODispatch() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeTab, rowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, itemCodeFilter, fromDate, toDate, refreshKey]);
+  }, [activeTab, rowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, itemCodeFilter, fromDate, toDate, refreshKey, columnFiltersDebounced]);
 
   useEffect(() => {
     if (!convertProject) { setConvertProjectItemCodes([]); return; }
@@ -571,15 +593,7 @@ export default function PODispatch() {
         {error && <div className="notice error" style={{ marginBottom: 16 }}><span>!</span> {error}</div>}
 
         <DataTableWrapper>
-          {loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading PO lines...</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📋</div>
-              <h3>{tableSearch ? "No results match filter" : activeTab === "New" ? "No lines pending dispatch" : "No records"}</h3>
-              <p>{tableSearch ? "Try a different search term." : activeTab === "New" ? "All PO lines have been dispatched." : "No records in this view."}</p>
-            </div>
-          ) : (
+          {rows.length > 0 ? (
             <table className="data-table" data-table-key="admin-po-dispatch-v1">
               <thead>
                 <tr>
@@ -687,6 +701,14 @@ export default function PODispatch() {
                 </tr>
               </tfoot>
             </table>
+          ) : loading ? (
+            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading PO lines...</div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">📋</div>
+              <h3>{tableSearch ? "No results match filter" : activeTab === "New" ? "No lines pending dispatch" : "No records"}</h3>
+              <p>{tableSearch ? "Try a different search term." : activeTab === "New" ? "All PO lines have been dispatched." : "No records in this view."}</p>
+            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

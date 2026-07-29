@@ -65,6 +65,26 @@ export default function PODump() {
     return out;
   }, [showOpen, showClosed, showCancelled]);
 
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map_dump in
+  // export_po_dump), not blended into the top search box's wide
+  // multi-column search.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "admin-po-dump-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
   // Auto-fetch on any param change. A short debounce keeps rapid checkbox /
   // date-picker toggles from firing multiple requests in flight.
   useEffect(() => {
@@ -74,7 +94,8 @@ export default function PODump() {
       setLoading(true);
       setError(null);
       try {
-        const res = await pmApi.exportPODump(fromDate, toDate, activeStatuses, rowLimit, searchDebounced);
+        const colFilters = JSON.parse(columnFiltersDebounced);
+        const res = await pmApi.exportPODump(fromDate, toDate, activeStatuses, rowLimit, searchDebounced, colFilters);
         if (!cancelled) {
           const nextRows = Array.isArray(res?.rows) ? res.rows : [];
           setMeta(res);
@@ -93,7 +114,7 @@ export default function PODump() {
       }
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [fromDate, toDate, rowLimit, showOpen, showClosed, showCancelled, searchDebounced]);
+  }, [fromDate, toDate, rowLimit, showOpen, showClosed, showCancelled, searchDebounced, columnFiltersDebounced]);
 
   function downloadCsv() {
     const exportRows = rows;
@@ -258,7 +279,7 @@ export default function PODump() {
               <p>No rows match "{search}". Try a different search term.</p>
             </div>
           ) : (
-            <table className="data-table">
+            <table className="data-table" data-table-key="admin-po-dump-v1">
               <thead>
                 <tr>
                   <th>POID</th>

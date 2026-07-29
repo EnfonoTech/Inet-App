@@ -260,6 +260,28 @@ export default function DataTablePro() {
         // re-triggers the "fresh data arrived" observer, which would recapture
         // the just-sorted order as if it were the natural default.
         let tbodyMo = null;
+
+        // Manage Table's per-column Filters only ever hide/show rows already in
+        // the DOM (see applyFilters below) — with a row-limited table, that
+        // silently misses everything outside the currently loaded subset. This
+        // event lets the owning page know filter values changed so it can fold
+        // them into its own backend search and reload the full dataset. Only
+        // fires for tables with an explicit data-table-key (pages opt in by
+        // listening for their own key); debounced so typing doesn't fire one
+        // request per keystroke.
+        let filterEventTimer = null;
+        const dispatchFiltersChanged = (immediate = false) => {
+          if (!customKey) return;
+          if (filterEventTimer) clearTimeout(filterEventTimer);
+          const fire = () => {
+            filterEventTimer = null;
+            document.dispatchEvent(new CustomEvent("tablepro:filters-changed", {
+              detail: { tableKey: customKey, filters: { ...state.filters } },
+            }));
+          };
+          if (immediate) fire();
+          else filterEventTimer = setTimeout(fire, 400);
+        };
         const captureNaturalOrder = () => {
           const tbody = table.querySelector("tbody");
           if (!tbody) return;
@@ -418,6 +440,14 @@ export default function DataTablePro() {
               const bi = orderIndex[b.dataset.colKey ?? ""] ?? 9999;
               return ai - bi;
             });
+            // appendChild always detaches+reattaches a node, even when its
+            // position isn't actually changing — which silently steals focus
+            // from a filter <input> the user is actively typing into every
+            // single time this runs (every reload calls applyAll -> applyOrder,
+            // and this ran on every reload regardless of whether the column
+            // order had changed). Skip entirely when already in the right order.
+            const alreadyInOrder = cells.every((c, i) => c === sorted[i]);
+            if (alreadyInOrder) return;
             sorted.forEach((cell) => row.appendChild(cell));
           };
           [...rows.head, ...rows.body, ...rows.foot].forEach(reorderRow);
@@ -739,6 +769,7 @@ export default function DataTablePro() {
             updateClearFiltersBtn();
             applyFilters();
             persist();
+            dispatchFiltersChanged();
           });
           th.appendChild(input);
           return th;
@@ -1148,6 +1179,7 @@ export default function DataTablePro() {
           updateClearFiltersBtn();
           applyFilters();
           persist();
+          dispatchFiltersChanged(true);
         });
         toolbar.querySelector(".tablepro-btn-reset")?.addEventListener("click", async () => {
           columns = columns.filter((c) => baseColumnKeys.includes(c.key));
@@ -1170,6 +1202,7 @@ export default function DataTablePro() {
           updateClearSortBtn();
           await applyAll();
           persist();
+          dispatchFiltersChanged(true);
         });
 
         const onDocClick = (ev) => {
