@@ -211,6 +211,19 @@ export default function PODump() {
           onChange={({ from, to }) => { setFromDate(from); setToDate(to); }}
         />
         <div style={{ display: "inline-flex", alignItems: "stretch", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden", background: "#f8fafc" }}>
+          <div
+            style={{
+              padding: "6px 14px",
+              fontSize: "0.82rem",
+              fontWeight: 700,
+              color: "#0f172a",
+              background: "#e2e8f0",
+              whiteSpace: "nowrap",
+            }}
+            title="Total lines across Open + Closed + Cancelled for the selected date range"
+          >
+            Total{meta?.totals ? <span style={{ marginLeft: 6, opacity: 0.85, fontWeight: 600 }}>· {(meta.totals.open || 0) + (meta.totals.closed || 0) + (meta.totals.cancelled || 0)}</span> : null}
+          </div>
           {[
             { id: "open", label: "Open", state: showOpen, set: setShowOpen, total: meta?.totals?.open, activeBg: "#10b981", activeFg: "#fff" },
             { id: "closed", label: "Closed", state: showClosed, set: setShowClosed, total: meta?.totals?.closed, activeBg: "#64748b", activeFg: "#fff" },
@@ -225,7 +238,7 @@ export default function PODump() {
                 fontSize: "0.82rem",
                 fontWeight: t.state ? 700 : 500,
                 border: "none",
-                borderLeft: i === 0 ? "none" : "1px solid #e2e8f0",
+                borderLeft: "1px solid #e2e8f0",
                 background: t.state ? t.activeBg : "transparent",
                 color: t.state ? t.activeFg : "#475569",
                 cursor: "pointer",
