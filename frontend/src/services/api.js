@@ -349,6 +349,8 @@ export const pmApi = {
   },
   dispatchPOLines:      (payload)   => call("inet_app.api.command_center.dispatch_po_lines", { payload: JSON.stringify(payload) }),
   convertDispatchMode:  (payload)   => call("inet_app.api.command_center.convert_dispatch_mode", { payload: JSON.stringify(payload) }),
+  bulkAssignPODispatchIm: (payload) => call("inet_app.api.command_center.bulk_assign_po_dispatch_im", { payload: JSON.stringify(payload) }),
+  checkWorkDoneForDispatches: (dispatch_names) => call("inet_app.api.command_center.check_work_done_for_dispatches", { dispatch_names: JSON.stringify(dispatch_names) }),
   createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
   updateExecution:      (payload)   => call("inet_app.api.command_center.update_execution", { payload: JSON.stringify(payload) }),
   bulkUpdateExecutionField: (names, field, value) => call("inet_app.api.command_center.bulk_update_execution_field", { names: JSON.stringify(names), field, value }),

@@ -318,13 +318,14 @@ export default function IMExpense({ isAdmin = false }) {
   // client-side (unchanged) — only the Manage Table filters are wired here.
   const [columnFilters, setColumnFilters] = useState({});
   useEffect(() => {
+    const key = `im-expense-v1-${isAdmin ? "admin" : "im"}`;
     const onFiltersChanged = (e) => {
-      if (e.detail?.tableKey !== "im-expense-v1") return;
+      if (e.detail?.tableKey !== key) return;
       setColumnFilters(e.detail.filters || {});
     };
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
-  }, []);
+  }, [isAdmin]);
   const activeColumnFilters = Object.fromEntries(
     Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
   );
@@ -495,7 +496,7 @@ export default function IMExpense({ isAdmin = false }) {
         >
           {rows.length > 0 ? (
             <>
-              <table className="data-table" data-table-key="im-expense-v1">
+              <table className="data-table" data-table-key={`im-expense-v1-${isAdmin ? "admin" : "im"}`}>
                 <thead>
                   <tr>
                     <th>Claim #</th>

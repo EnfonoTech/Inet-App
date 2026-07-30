@@ -174,6 +174,18 @@ def _ensure_list(raw):
     return out
 
 
+def _chunked(items, size=1000):
+    """Split a list into fixed-size chunks. Use this for any `filters={"x":
+    ["in", names]}` built from a potentially-large, unbounded name list (e.g.
+    row-limit "All" on a heavy-line page) - frappe.get_all's own query
+    validator runs the fully-rendered SQL through sqlparse, which hard-fails
+    (SQLParseError: Maximum number of tokens exceeded) once a single IN
+    clause gets into the thousands of values."""
+    items = list(items)
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
 def _sql_in_or_eq(expr, raw):
     """Build ``expr = %s`` or ``expr IN (%s, %s, …)`` with params for a single
     or multi-value filter. Returns (clause_or_None, params)."""
@@ -2049,7 +2061,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
     def _portal_active():
         if not pf:
             return False
-        for k in ("search", "q", "project_code", "site_code", "item_code", "dispatched_im", "im", "from_date", "to_date"):
+        for k in ("search", "q", "project_code", "site_code", "item_code", "dispatched_im", "im", "from_date", "to_date", "line_status"):
             if (pf.get(k) or "").strip() if isinstance(pf.get(k), str) else pf.get(k):
                 return True
         cf = pf.get("column_filters")
@@ -2082,6 +2094,16 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         if filters.get("po_line_status"):
             wheres.append("pil.po_line_status = %s")
             params.append(filters["po_line_status"])
+        # Toolbar "Status" dropdown - only meaningful on the "All Lines" tab
+        # (status="all"), since the other tabs already exact-match via the
+        # `status` positional arg above; distinct from the Manage Table
+        # column filter's "status" key (col_filter_map_intake, LIKE-based).
+        line_status_vals = _ensure_list(pf.get("line_status"))
+        if line_status_vals:
+            c, p = _sql_in_or_eq("IFNULL(pil.po_line_status,'')", line_status_vals)
+            if c:
+                wheres.append(c)
+                params.extend(p)
         for col, key in (("IFNULL(pil.project_code,'')", "project_code"),
                          ("IFNULL(pil.site_code,'')", "site_code"),
                          ("IFNULL(pil.item_code,'')", "item_code")):
@@ -2127,6 +2149,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
             "huawei_im": "IFNULL(pcc_pil.huawei_im,'')",
             "mode": "COALESCE(NULLIF(pil.dispatch_mode,''), pd.dispatch_mode, '')",
             "target_month": "CAST(pd.target_month AS CHAR)",
+            "status": "IFNULL(pil.po_line_status,'')",
         }
         if frappe.db.has_column("PO Intake Line", "center_area"):
             col_filter_map_intake["center_area"] = "IFNULL(pil.center_area,'')"
@@ -2135,6 +2158,11 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         col_filter_map_intake["activity_type"] = (
             "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pil.item_code), '')"
         )
+        # Not backend-filterable: "current_stage" is a Python-side derived
+        # value (Work Done / latest Rollout Plan / pic_status, computed
+        # after this query) - use the dedicated "Status" dropdown
+        # (po_line_status, via portal_filters.line_status) instead, which
+        # IS fully backend-filterable.
         column_filters_intake = pf.get("column_filters")
         if isinstance(column_filters_intake, str):
             try:
@@ -2232,13 +2260,14 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
     parent_names = list({line.get("parent") for line in lines if line.get("parent")})
     parent_map = {}
     if parent_names:
-        for p in frappe.get_all(
-            "PO Intake",
-            filters={"name": ["in", parent_names]},
-            fields=["name", "po_no", "customer", "center_area"],
-            limit_page_length=len(parent_names) + 1,
-        ):
-            parent_map[p.name] = p
+        for chunk in _chunked(parent_names):
+            for p in frappe.get_all(
+                "PO Intake",
+                filters={"name": ["in", chunk]},
+                fields=["name", "po_no", "customer", "center_area"],
+                limit_page_length=len(chunk) + 1,
+            ):
+                parent_map[p.name] = p
 
     dispatch_map = {}
     if parent_names:
@@ -2251,24 +2280,33 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
             "name", "po_intake", "po_line_no", "system_id", "im",
             "dispatch_mode", "target_month", "center_area",
         ]
-        try:
-            all_disp = frappe.get_all(
+        all_disp = []
+        use_base_fields = False
+        for chunk in _chunked(parent_names):
+            if not use_base_fields:
+                try:
+                    all_disp.extend(frappe.get_all(
+                        "PO Dispatch",
+                        filters={"po_intake": ["in", chunk]},
+                        fields=disp_fields_full,
+                        limit_page_length=len(chunk) * 100 + 1,
+                    ))
+                    continue
+                except frappe.db.OperationalError as e:
+                    if not frappe.db.is_missing_column(e):
+                        raise
+                    use_base_fields = True
+                    # Fall through to fetch this chunk (and every subsequent
+                    # one) with the reduced field set below.
+            chunk_disp = frappe.get_all(
                 "PO Dispatch",
-                filters={"po_intake": ["in", parent_names]},
-                fields=disp_fields_full,
-                limit_page_length=len(parent_names) * 100 + 1,
-            )
-        except frappe.db.OperationalError as e:
-            if not frappe.db.is_missing_column(e):
-                raise
-            all_disp = frappe.get_all(
-                "PO Dispatch",
-                filters={"po_intake": ["in", parent_names]},
+                filters={"po_intake": ["in", chunk]},
                 fields=disp_fields_base,
-                limit_page_length=len(parent_names) * 100 + 1,
+                limit_page_length=len(chunk) * 100 + 1,
             )
-            for d in all_disp:
+            for d in chunk_disp:
                 d["region_type"] = region_type_from_center_area(d.get("center_area"))
+            all_disp.extend(chunk_disp)
         for d in all_disp:
             dispatch_map[(d.po_intake, cint(d.po_line_no))] = d
 
@@ -2284,7 +2322,12 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         if dispatch_data:
             line["dispatch_name"] = dispatch_data.get("name")
             line["system_id"] = dispatch_data.get("system_id")
-        if line.get("po_line_status") == "Dispatched" and dispatch_data:
+        if dispatch_data:
+            # Was gated to po_line_status == "Dispatched" only, so the "All
+            # Lines" tab silently showed a blank IM/target month/MS amounts
+            # for Closed/Cancelled/Completed lines even though their linked
+            # PO Dispatch record has real values - any status with a linked
+            # dispatch should show them.
             line["dispatched_im"] = dispatch_data.get("im")
             line["dispatch_target_month"] = dispatch_data.get("target_month")
             if not line.get("dispatch_mode"):
@@ -2307,7 +2350,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         {
             line.get("dispatched_im")
             for line in lines
-            if line.get("dispatched_im") and line.get("po_line_status") == "Dispatched"
+            if line.get("dispatched_im")
         }
     )
     im_fn_map = _batch_im_master_full_names(im_dispatched_ids)
@@ -2323,6 +2366,55 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
     act_map_pil = _batch_item_activity_types(lines)
     for line in lines:
         line["activity_type"] = act_map_pil.get(line.get("item_code") or "")
+
+    # "Current Stage" (admin/PODispatch.jsx "All Lines" tab) - where a
+    # Dispatched/Completed line actually is right now across the wider
+    # pipeline (Planning/In Execution/... -> Work Done -> PIC), not just the
+    # flat po_line_status. New/Closed/Cancelled show that status verbatim -
+    # no need to dig further for those. Batched + chunked (see _chunked) so
+    # this stays safe at the same "All Lines, row limit All" scale that
+    # caused the earlier SQLParseError.
+    stage_dispatch_names = list({
+        line.get("dispatch_name")
+        for line in lines
+        if line.get("dispatch_name") and line.get("po_line_status") in ("Dispatched", "Completed")
+    })
+    work_done_dispatches = set()
+    latest_plan_status = {}
+    if stage_dispatch_names:
+        for chunk in _chunked(stage_dispatch_names):
+            for r in frappe.get_all(
+                "Work Done", filters={"system_id": ["in", chunk]}, fields=["system_id"],
+            ):
+                work_done_dispatches.add(r.system_id)
+        plan_rows_for_stage = []
+        for chunk in _chunked(stage_dispatch_names):
+            plan_rows_for_stage.extend(frappe.get_all(
+                "Rollout Plan",
+                filters={"po_dispatch": ["in", chunk]},
+                fields=["po_dispatch", "plan_status", "visit_number", "modified"],
+                order_by="visit_number desc, modified desc",
+            ))
+        for r in plan_rows_for_stage:
+            if r.po_dispatch not in latest_plan_status:
+                latest_plan_status[r.po_dispatch] = r.plan_status
+
+    for line in lines:
+        status = line.get("po_line_status")
+        dispatch_name = line.get("dispatch_name")
+        if status in ("New", "Closed", "Cancelled") or not dispatch_name:
+            line["current_stage"] = status or "New"
+            continue
+        pic = (line.get("pic_status") or "").strip() or (line.get("pic_status_ms2") or "").strip()
+        if pic:
+            line["current_stage"] = f"PIC: {pic}"
+        elif dispatch_name in work_done_dispatches:
+            line["current_stage"] = "Work Done"
+        elif dispatch_name in latest_plan_status:
+            line["current_stage"] = latest_plan_status[dispatch_name]
+        else:
+            line["current_stage"] = "Dispatched"
+
     return lines
 
 
@@ -3788,6 +3880,120 @@ def convert_dispatch_mode(payload):
         frappe.db.commit()
 
     return {"converted": count}
+
+
+@frappe.whitelist()
+def check_work_done_for_dispatches(dispatch_names=None):
+    """Return the subset of *dispatch_names* that already have a Work Done
+    record (system_id link) - used by the Assign IM modal to preview which
+    of the selected lines will be skipped before the user confirms."""
+    names = _ensure_list(dispatch_names)
+    if not names:
+        return []
+    ph = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"SELECT DISTINCT system_id FROM `tabWork Done` WHERE system_id IN ({ph})",
+        tuple(names),
+    )
+    return [r[0] for r in rows]
+
+
+@frappe.whitelist()
+def bulk_assign_po_dispatch_im(payload=None):
+    """
+    Assign/fix the IM on a mixed-status multi-select from admin PO Dispatch's
+    "All Lines" tab in one action, routing each line by its own status:
+
+      - New (not yet dispatched)     -> dispatch it (same as the Dispatch modal)
+      - Dispatched                   -> reassign im only, dispatch_mode untouched
+      - Closed / Cancelled / Completed -> set im via a normal validated doc.save()
+        (goes through PODispatch.on_update()'s existing im-change cascade)
+
+    Any line that already has a Work Done record is left untouched entirely.
+
+    payload: {
+        "lines": [<row dicts as returned by list_po_intake_lines>],
+        "im": "<IM Master name>",
+    }
+    """
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload) if payload else {}
+    payload = payload or {}
+
+    lines = payload.get("lines") or []
+    im = (payload.get("im") or "").strip()
+    if not im:
+        frappe.throw("im is required")
+    if not lines:
+        frappe.throw("No lines specified")
+
+    pending_bucket = []
+    dispatched_bucket = []
+    closed_bucket = []
+    for line in lines:
+        status = (line.get("po_line_status") or "").strip()
+        dispatch_name = line.get("dispatch_name")
+        if status == "New" or not dispatch_name:
+            pending_bucket.append(line)
+        elif status == "Dispatched":
+            dispatched_bucket.append(line)
+        else:
+            # Completed / Closed / Cancelled (and any other terminal status)
+            closed_bucket.append(line)
+
+    dispatched_count = 0
+    reassigned_count = 0
+    updated_closed_count = 0
+    skipped_work_done = 0
+    errors = []
+
+    if pending_bucket:
+        try:
+            res = dispatch_po_lines({"lines": pending_bucket, "im": im})
+            dispatched_count = cint(res.get("created") or 0)
+        except Exception as e:
+            errors.append({"name": "pending lines", "error": str(e)})
+
+    for line in dispatched_bucket:
+        dispatch_name = line.get("dispatch_name")
+        try:
+            if frappe.db.exists("Work Done", {"system_id": dispatch_name}):
+                skipped_work_done += 1
+                continue
+            frappe.db.set_value(
+                "PO Dispatch", dispatch_name, "im", im, update_modified=True,
+            )
+            _cascade_im_on_dispatch(dispatch_name, im)
+            frappe.db.commit()
+            reassigned_count += 1
+        except Exception as e:
+            errors.append({"name": dispatch_name or line.get("name"), "error": str(e)})
+
+    for line in closed_bucket:
+        dispatch_name = line.get("dispatch_name")
+        if not dispatch_name:
+            continue
+        try:
+            if frappe.db.exists("Work Done", {"system_id": dispatch_name}):
+                skipped_work_done += 1
+                continue
+            doc = frappe.get_doc("PO Dispatch", dispatch_name)
+            doc.im = im
+            doc.save(ignore_permissions=True)
+            frappe.db.commit()
+            updated_closed_count += 1
+        except Exception as e:
+            errors.append({"name": dispatch_name or line.get("name"), "error": str(e)})
+
+    return {
+        "dispatched": dispatched_count,
+        "reassigned": reassigned_count,
+        "updated_closed": updated_closed_count,
+        "skipped_work_done": skipped_work_done,
+        "errors": errors,
+    }
 
 
 def _sync_plan_teams(rollout_plan, teams_payload, primary_team, total_qty, target_amount):

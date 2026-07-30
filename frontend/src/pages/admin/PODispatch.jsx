@@ -42,6 +42,34 @@ function statusTone(value) {
   return { bg: "#fffbeb", fg: "#b45309" };
 }
 
+// Dedicated per-status colors for the "Status" column (po_line_status) — one
+// distinct color per value, unlike statusTone() above which deliberately
+// groups several unrelated statuses/modes into the same "success" bucket.
+function poLineStatusTone(value) {
+  const s = String(value || "").toLowerCase();
+  if (s === "new") return { bg: "#fffbeb", fg: "#b45309" };
+  if (s === "dispatched") return { bg: "#eff6ff", fg: "#1d4ed8" };
+  if (s === "completed") return { bg: "#ecfdf5", fg: "#047857" };
+  if (s === "closed") return { bg: "#f1f5f9", fg: "#475569" };
+  if (s === "cancelled") return { bg: "#fef2f2", fg: "#b91c1c" };
+  return { bg: "#f1f5f9", fg: "#475569" };
+}
+
+// Colors for the richer "Current Stage" column (current_stage) - covers PIC
+// sub-statuses and Rollout Plan statuses in addition to the plain
+// po_line_status values already handled by poLineStatusTone above.
+function currentStageTone(value) {
+  const s = String(value || "");
+  if (s.startsWith("PIC:")) return { bg: "#f5f3ff", fg: "#6d28d9" };
+  if (s === "Work Done") return { bg: "#ecfeff", fg: "#0e7490" };
+  const sl = s.toLowerCase();
+  if (sl === "in execution") return { bg: "#eff6ff", fg: "#1d4ed8" };
+  if (sl === "planned") return { bg: "#eff6ff", fg: "#1d4ed8" };
+  if (sl === "planning with issue" || sl === "overdue" || sl === "not attended") return { bg: "#fffbeb", fg: "#b45309" };
+  if (sl === "completed") return { bg: "#ecfdf5", fg: "#047857" };
+  return poLineStatusTone(value);
+}
+
 function DetailItem({ label, value }) {
   const isStatus = /status|mode/i.test(label);
   const tone = statusTone(value);
@@ -98,6 +126,7 @@ const labelStyle = { display: "block", fontSize: "0.78rem", fontWeight: 600, mar
 export default function PODispatch() {
   const { rowLimit } = useTableRowLimit();
   const [activeTab, setActiveTab] = useState("New");
+  const showDispatched = activeTab === "Dispatched" || activeTab === "all";
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -109,6 +138,7 @@ export default function PODispatch() {
   const [imFilter, setImFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [itemCodeFilter, setItemCodeFilter] = useState([]);
+  const [statusFilter, setStatusFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
@@ -129,6 +159,15 @@ export default function PODispatch() {
   const [convertItemCode, setConvertItemCode] = useState("");
   const [convertProjectItemCodes, setConvertProjectItemCodes] = useState([]);
   const [detailRow, setDetailRow] = useState(null);
+
+  // Assign IM modal state (works on a mixed-status selection — routes each
+  // line by its own status: pending -> dispatch, dispatched -> reassign,
+  // closed/cancelled -> direct validated set. See bulk_assign_po_dispatch_im.
+  const [showAssignImModal, setShowAssignImModal] = useState(false);
+  const [bulkAssignIm, setBulkAssignIm] = useState("");
+  const [assigningBulkIm, setAssigningBulkIm] = useState(false);
+  const [skipPreview, setSkipPreview] = useState([]);
+  const [loadingSkipPreview, setLoadingSkipPreview] = useState(false);
 
   const [successMsg, setSuccessMsg] = useState(null);
   const [errMsg, setErrMsg] = useState(null);
@@ -153,13 +192,20 @@ export default function PODispatch() {
   // multi-column search.
   const [columnFilters, setColumnFilters] = useState({});
   useEffect(() => {
+    const key = `admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`;
     const onFiltersChanged = (e) => {
-      if (e.detail?.tableKey !== "admin-po-dispatch-v1") return;
+      if (e.detail?.tableKey !== key) return;
       setColumnFilters(e.detail.filters || {});
     };
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
-  }, []);
+  }, [showDispatched]);
+  // "New" (basic columns) and "Dispatched"/"all" (full columns) are now
+  // distinct table identities (see data-table-key above) - don't carry a
+  // typed column filter across that boundary.
+  useEffect(() => {
+    setColumnFilters({});
+  }, [showDispatched]);
   const activeColumnFilters = Object.fromEntries(
     Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
   );
@@ -180,6 +226,7 @@ export default function PODispatch() {
         if (imFilter.length) portal.dispatched_im = imFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
         if (itemCodeFilter.length) portal.item_code = itemCodeFilter;
+        if (statusFilter.length) portal.line_status = statusFilter;
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
         const colFilters = JSON.parse(columnFiltersDebounced);
@@ -197,7 +244,7 @@ export default function PODispatch() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeTab, rowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, itemCodeFilter, fromDate, toDate, refreshKey, columnFiltersDebounced]);
+  }, [activeTab, rowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, itemCodeFilter, statusFilter, fromDate, toDate, refreshKey, columnFiltersDebounced]);
 
   useEffect(() => {
     if (!convertProject) { setConvertProjectItemCodes([]); return; }
@@ -235,7 +282,8 @@ export default function PODispatch() {
     ),
     [imList],
   );
-  const hasFilters = !!(tableSearch || projectFilter.length || imFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(tableSearch || projectFilter.length || imFilter.length || duidFilter.length || statusFilter.length || fromDate || toDate);
+  const STATUS_OPTIONS = ["New", "Dispatched", "Completed", "Closed", "Cancelled"].map((s) => ({ id: s, label: s }));
 
   function toggleAll() {
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
@@ -305,7 +353,6 @@ export default function PODispatch() {
   // All projects that have any Auto-mode PO Dispatch, not just ones in the loaded slice.
   const { options: dispatchFilterOpts } = useFilterOptions("PO Dispatch", ["project_code"]);
   const uniqueProjects = dispatchFilterOpts.project_code || [];
-  const showDispatched = activeTab === "Dispatched" || activeTab === "all";
 
   async function handleConvertByProject() {
     if (!convertProject) return;
@@ -329,6 +376,54 @@ export default function PODispatch() {
       showNotice("err", err.message || "Convert failed");
     } finally {
       setConverting(false);
+    }
+  }
+
+  // ── Assign IM (mixed-status selection) ────────────────────────────────
+  async function openAssignImModal() {
+    setBulkAssignIm("");
+    setSkipPreview([]);
+    setShowAssignImModal(true);
+    const selectedLines = rows.filter((r) => selected.has(r.name));
+    const dispatchNames = selectedLines.map((r) => r.dispatch_name).filter(Boolean);
+    if (!dispatchNames.length) return;
+    setLoadingSkipPreview(true);
+    try {
+      const skippedNames = await pmApi.checkWorkDoneForDispatches(dispatchNames);
+      const skippedSet = new Set(skippedNames || []);
+      setSkipPreview(selectedLines.filter((r) => skippedSet.has(r.dispatch_name)));
+    } catch {
+      setSkipPreview([]);
+    } finally {
+      setLoadingSkipPreview(false);
+    }
+  }
+
+  async function handleBulkAssignIm() {
+    if (!bulkAssignIm || selected.size === 0) return;
+    setAssigningBulkIm(true);
+    try {
+      const selectedLines = rows.filter((r) => selected.has(r.name));
+      const res = await pmApi.bulkAssignPODispatchIm({ lines: selectedLines, im: bulkAssignIm });
+      const parts = [];
+      if (res?.dispatched) parts.push(`${res.dispatched} dispatched`);
+      if (res?.reassigned) parts.push(`${res.reassigned} reassigned`);
+      if (res?.updated_closed) parts.push(`${res.updated_closed} closed/cancelled updated`);
+      if (res?.skipped_work_done) parts.push(`${res.skipped_work_done} skipped (already has Work Done)`);
+      const errCount = res?.errors?.length || 0;
+      const summary = parts.length ? parts.join(", ") : "No lines updated";
+      showNotice(
+        errCount ? "err" : "ok",
+        `${summary}.${errCount ? ` ${errCount} error${errCount !== 1 ? "s" : ""} — check line data.` : ""}`,
+      );
+      setSelected(new Set());
+      setShowAssignImModal(false);
+      setBulkAssignIm("");
+      loadData(activeTab);
+    } catch (err) {
+      showNotice("err", err.message || "Assign IM failed");
+    } finally {
+      setAssigningBulkIm(false);
     }
   }
 
@@ -434,6 +529,41 @@ export default function PODispatch() {
           <button className="btn-secondary" onClick={() => setShowProjectConvertModal(false)}>Cancel</button>
           <button className="btn-primary" onClick={handleConvertByProject} disabled={!convertProject || converting}>
             {converting ? "Converting..." : `Convert${convertItemCode ? ` · ${convertItemCode}` : " All"}`}
+          </button>
+        </div>
+      </Modal>
+
+      {/* ── Assign IM Modal (mixed-status selection) ──────────────────── */}
+      <Modal open={showAssignImModal} onClose={() => setShowAssignImModal(false)} title={`Assign IM — ${selected.size} Line${selected.size !== 1 ? "s" : ""}`}>
+        {loadingSkipPreview ? (
+          <p style={{ margin: "0 0 16px", color: "#94a3b8", fontSize: "0.82rem" }}>Checking for existing Work Done records...</p>
+        ) : skipPreview.length > 0 ? (
+          <div style={{ margin: "0 0 16px", padding: "10px 14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8 }}>
+            <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#92400e", marginBottom: 6 }}>
+              {skipPreview.length} line{skipPreview.length !== 1 ? "s" : ""} already have Work Done and will be skipped:
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {skipPreview.map((r) => (
+                <span key={r.name} style={{ fontFamily: "monospace", fontSize: "0.74rem", padding: "2px 8px", borderRadius: 6, background: "#fff", border: "1px solid #fde68a", color: "#92400e" }}>
+                  {r.poid || r.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <div style={{ marginBottom: 20 }}>
+          <label style={labelStyle}>Assign IM *</label>
+          <select style={inputStyle} value={bulkAssignIm} onChange={(e) => setBulkAssignIm(e.target.value)}>
+            <option value="">Select Implementation Manager...</option>
+            {imList.map((im) => (
+              <option key={im.name} value={im.name}>{im.full_name || im.im_id || im.name}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button className="btn-secondary" onClick={() => setShowAssignImModal(false)}>Cancel</button>
+          <button className="btn-primary" onClick={handleBulkAssignIm} disabled={assigningBulkIm || !bulkAssignIm}>
+            {assigningBulkIm ? "Assigning..." : "Assign IM"}
           </button>
         </div>
       </Modal>
@@ -545,15 +675,30 @@ export default function PODispatch() {
           <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))} placeholder="All IMs" minWidth={170} />
           <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={160} />
           <SearchableSelect multi value={itemCodeFilter} onChange={setItemCodeFilter} options={itemCodeOptions} placeholder="All Item Codes" minWidth={160} />
+          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} placeholder="All Status" minWidth={150} />
           <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {hasFilters && (
-            <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setItemCodeFilter([]); setFromDate(""); setToDate(""); }}>
+            <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setItemCodeFilter([]); setStatusFilter([]); setFromDate(""); setToDate(""); }}>
               Clear
             </button>
           )}
         </div>
 
         <div className="toolbar-actions">
+          {/* Works across all 3 tabs on whatever's selected - routes each line
+              by its own status (pending/dispatched/closed/cancelled). The
+              main place this matters is "All Lines", where a selection can
+              mix all of those at once. */}
+          {selected.size > 0 && (
+            <button
+              className="btn-primary"
+              style={{ fontSize: "0.8rem" }}
+              onClick={openAssignImModal}
+            >
+              Assign IM ({selected.size})
+            </button>
+          )}
+
           {/* Dispatched tab: auto-convert buttons */}
           {activeTab === "Dispatched" && (
             <>
@@ -594,7 +739,7 @@ export default function PODispatch() {
 
         <DataTableWrapper>
           {rows.length > 0 ? (
-            <table className="data-table" data-table-key="admin-po-dispatch-v1">
+            <table className="data-table" data-table-key={`admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`}>
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -604,6 +749,8 @@ export default function PODispatch() {
                     />
                   </th>
                   <th>POID</th>
+                  <th>Status</th>
+                  <th>Current Stage</th>
                   <th>System ID</th>
                   <th>PO No</th>
                   <th>Shipment No</th>
@@ -646,6 +793,26 @@ export default function PODispatch() {
                         <input type="checkbox" checked={selected.has(row.name)} onChange={() => toggleRow(row.name)} />
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.8rem", whiteSpace: "nowrap" }}>{row.poid}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {row.po_line_status ? (() => {
+                          const t = poLineStatusTone(row.po_line_status);
+                          return (
+                            <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: t.bg, color: t.fg }}>
+                              {row.po_line_status}
+                            </span>
+                          );
+                        })() : "—"}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {row.current_stage ? (() => {
+                          const t = currentStageTone(row.current_stage);
+                          return (
+                            <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: t.bg, color: t.fg }}>
+                              {row.current_stage}
+                            </span>
+                          );
+                        })() : "—"}
+                      </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.76rem", whiteSpace: "nowrap" }}>{row.system_id || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.po_no}</td>
                       <td>{row.shipment_number}</td>
@@ -689,7 +856,7 @@ export default function PODispatch() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={showDispatched ? 18 : 15}
+                  <td colSpan={showDispatched ? 20 : 17}
                     style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                     <strong>{rows.length}</strong> row{rows.length !== 1 ? "s" : ""}
                     {activeTab === "Dispatched" && autoRows.length > 0 && (
@@ -715,7 +882,7 @@ export default function PODispatch() {
           placement="tableCard"
           loadedCount={rows.length}
           filteredCount={rows.length}
-          filterActive={!!tableSearch || !!projectFilter.length || !!imFilter.length || !!duidFilter.length || !!itemCodeFilter.length || !!fromDate || !!toDate}
+          filterActive={!!tableSearch || !!projectFilter.length || !!imFilter.length || !!duidFilter.length || !!itemCodeFilter.length || !!statusFilter.length || !!fromDate || !!toDate}
         />
       </div>
     </div>
