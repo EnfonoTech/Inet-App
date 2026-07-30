@@ -483,8 +483,7 @@ export default function PICTracker() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {rows.length > 0 ? (
-            <table className="data-table" data-table-key="pic-tracker-v2">
+          <table className="data-table" data-table-key="pic-tracker-v2">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -524,7 +523,21 @@ export default function PICTracker() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={32} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">📑</div>
+                          <h3>{hasFilters ? "No matching POIDs" : "No POIDs in the pipeline yet"}</h3>
+                          <p>{hasFilters ? "Adjust your filters." : "POIDs appear here when their PO Dispatch is created."}</p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : rows.map((r) => (
                   <tr key={r.po_dispatch}
                       data-doc-name={r.po_dispatch}
                       className={selected.has(r.po_dispatch) ? "row-selected" : ""}
@@ -579,6 +592,7 @@ export default function PICTracker() {
                   </tr>
                 ))}
               </tbody>
+              {rows.length > 0 && (
               <tfoot>
                 {/* 32 columns: checkbox · Subcontract · Contract Model · POID · PO No ·
                     PO Status · Project Domain · Project · Item · Description · DUID ·
@@ -622,16 +636,8 @@ export default function PICTracker() {
                   <td></td>{/* Edit */}
                 </tr>
               </tfoot>
+              )}
             </table>
-          ) : loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-icon">📑</div>
-              <h3>{hasFilters ? "No matching POIDs" : "No POIDs in the pipeline yet"}</h3>
-              <p>{hasFilters ? "Adjust your filters." : "POIDs appear here when their PO Dispatch is created."}</p>
-            </div>
-          )}
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

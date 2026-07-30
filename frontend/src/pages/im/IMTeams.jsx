@@ -437,7 +437,6 @@ export default function IMTeams() {
       <div className="page-content">
         <DataTableWrapper loadedCount={loading ? null : sourceList.length} filteredCount={filtered.length} filterActive={hasFilters}>
           {(tab === "my" || tab === "all") ? (
-            filtered.length > 0 ? (
               <table className="data-table">
                 <thead>
                   <tr>
@@ -456,7 +455,21 @@ export default function IMTeams() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((t) => {
+                  {filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={tab === "all" ? 8 : 11} style={{ padding: 0 }}>
+                        {loading ? (
+                          <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
+                        ) : (
+                          <div className="empty-state">
+                            <div className="empty-icon">👥</div>
+                            <h3>{hasFilters ? "No results match your filters" : tab === "all" ? "No teams" : "No teams assigned"}</h3>
+                            {hasFilters && <p>Try adjusting your search or filter criteria.</p>}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : filtered.map((t) => {
                     const mine = isMine(t);
                     const openReq = openRequestByTeam[t.name];
                     return (
@@ -511,29 +524,21 @@ export default function IMTeams() {
                     );
                   })}
                 </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={tab === "all" ? 8 : 11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                      {filtered.length}{hasFilters && ` of ${sourceList.length}`} teams
-                    </td>
-                  </tr>
-                </tfoot>
+                {filtered.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td colSpan={tab === "all" ? 8 : 11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                        {filtered.length}{hasFilters && ` of ${sourceList.length}`} teams
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
-            ) : loading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-            ) : (
-              <div className="empty-state">
-                <div className="empty-icon">👥</div>
-                <h3>{hasFilters ? "No results match your filters" : tab === "all" ? "No teams" : "No teams assigned"}</h3>
-                {hasFilters && <p>Try adjusting your search or filter criteria.</p>}
-              </div>
-            )
           ) : (
             (() => {
               const list = tab === "outgoing" ? outgoing : incoming;
-              if (list.length > 0) {
-                return (
-                  <table className="data-table">
+              return (
+                <table className="data-table">
                   <thead>
                     <tr>
                       <th>Team</th>
@@ -545,7 +550,23 @@ export default function IMTeams() {
                     </tr>
                   </thead>
                   <tbody>
-                    {list.map((r) => {
+                    {list.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} style={{ padding: 0 }}>
+                          {loading ? (
+                            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
+                          ) : (
+                            <div className="empty-state">
+                              <div className="empty-icon">📨</div>
+                              <h3>{tab === "outgoing" ? "No requests raised" : "No incoming requests"}</h3>
+                              <p>{tab === "outgoing"
+                                ? "Switch to All Teams and click Request on a team owned by another IM."
+                                : "When another IM requests one of your teams, it'll show up here for you to accept or reject."}</p>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ) : list.map((r) => {
                       const tone = reqTone(r.request_status);
                       const otherIm = tab === "outgoing" ? r.from_im : r.to_im;
                       return (
@@ -579,21 +600,6 @@ export default function IMTeams() {
                     })}
                   </tbody>
                 </table>
-                );
-              }
-              if (loading) {
-                return (
-                  <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-                );
-              }
-              return (
-                <div className="empty-state">
-                  <div className="empty-icon">📨</div>
-                  <h3>{tab === "outgoing" ? "No requests raised" : "No incoming requests"}</h3>
-                  <p>{tab === "outgoing"
-                    ? "Switch to All Teams and click Request on a team owned by another IM."
-                    : "When another IM requests one of your teams, it'll show up here for you to accept or reject."}</p>
-                </div>
               );
             })()
           )}

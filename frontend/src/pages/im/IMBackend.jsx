@@ -294,8 +294,7 @@ export default function IMBackend() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {rows.length > 0 ? (
-            <table className="data-table" data-table-key="im-backend-v1">
+          <table className="data-table" data-table-key="im-backend-v1">
               <thead>
                 <tr>
                   <th>
@@ -324,7 +323,25 @@ export default function IMBackend() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => {
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={16} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">📤</div>
+                          <h3>{hasFilters ? "No matching backend-assigned POIDs" : "No backend-assigned POIDs"}</h3>
+                          <p>
+                            {hasFilters
+                              ? "Try adjusting your search or filters."
+                              : "Assign POIDs to a backend team from the PO Control page. They'll show up here for tracking and Mark Work Done."}
+                          </p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : rows.map((r) => {
                   const isPending = r.subcon_status === "Pending";
                   return (
                     <tr key={r.po_dispatch}
@@ -367,19 +384,6 @@ export default function IMBackend() {
                 })}
               </tbody>
             </table>
-          ) : loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-icon">📤</div>
-              <h3>{hasFilters ? "No matching backend-assigned POIDs" : "No backend-assigned POIDs"}</h3>
-              <p>
-                {hasFilters
-                  ? "Try adjusting your search or filters."
-                  : "Assign POIDs to a backend team from the PO Control page. They'll show up here for tracking and Mark Work Done."}
-              </p>
-            </div>
-          )}
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

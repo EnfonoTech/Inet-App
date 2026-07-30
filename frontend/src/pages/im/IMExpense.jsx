@@ -494,9 +494,7 @@ export default function IMExpense({ isAdmin = false }) {
           filteredCount={visibleRows.length}
           filterActive={hasFilters}
         >
-          {rows.length > 0 ? (
-            <>
-              <table className="data-table" data-table-key={`im-expense-v1-${isAdmin ? "admin" : "im"}`}>
+          <table className="data-table" data-table-key={`im-expense-v1-${isAdmin ? "admin" : "im"}`}>
                 <thead>
                   <tr>
                     <th>Claim #</th>
@@ -511,7 +509,20 @@ export default function IMExpense({ isAdmin = false }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleRows.map((c) => (
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={isAdmin ? 9 : 8} style={{ padding: 0 }}>
+                        {loading ? (
+                          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                        ) : (
+                          <div className="empty-state" style={{ marginTop: 20 }}>
+                            <div className="empty-icon">📋</div>
+                            <h3>{hasFilters ? "No results for these filters" : tab === "pending" ? "No pending expense claims" : "No expense claims found"}</h3>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : visibleRows.map((c) => (
                     <tr key={c.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
                       <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: "0.8rem", color: "#1e40af" }}>{c.name}</td>
                       <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.posting_date}</td>
@@ -536,15 +547,6 @@ export default function IMExpense({ isAdmin = false }) {
                   ))}
                 </tbody>
               </table>
-            </>
-          ) : loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-          ) : (
-            <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">📋</div>
-              <h3>{hasFilters ? "No results for these filters" : tab === "pending" ? "No pending expense claims" : "No expense claims found"}</h3>
-            </div>
-          )}
         </DataTableWrapper>
       </div>
 

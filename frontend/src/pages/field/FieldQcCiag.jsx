@@ -363,81 +363,85 @@ export default function FieldQcCiag() {
       {/* ── Desktop table ────────────────────────────────── */}
       <div className="page-content field-desktop-only">
         <DataTableWrapper>
-          {rows.length > 0 ? (
-            <table className="data-table" data-table-key="field-qc-ciag-v1">
-              <thead>
+          <table className="data-table" data-table-key="field-qc-ciag-v1">
+            <thead>
+              <tr>
+                <th style={{ width: 36 }}>
+                  <input
+                    type="checkbox"
+                    checked={rows.length > 0 && rows.every((r) => selectedPlans.has(r.name))}
+                    onChange={toggleAll}
+                  />
+                </th>
+                <th>Plan</th>
+                <th>POID</th>
+                <th>Dummy POID</th>
+                <th>Project</th>
+                <th>DUID</th>
+                <th>Plan Date</th>
+                <th>Visit Type</th>
+                <th>Center Area</th>
+                <th>Region</th>
+                <th>QC</th>
+                <th>CIAG</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
                 <tr>
-                  <th style={{ width: 36 }}>
+                  <td colSpan={12} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading completed plans...</div>
+                    ) : (
+                      <div className="empty-state"><h3>No completed plans found</h3></div>
+                    )}
+                  </td>
+                </tr>
+              ) : rows.map((r) => (
+                <tr key={r.name} data-doc-name={r.name} className="row-link" onClick={() => setEditRow(r)}>
+                  <td onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
-                      checked={rows.length > 0 && rows.every((r) => selectedPlans.has(r.name))}
-                      onChange={toggleAll}
+                      checked={selectedPlans.has(r.name)}
+                      onChange={() => toggleRow(r.name)}
                     />
-                  </th>
-                  <th>Plan</th>
-                  <th>POID</th>
-                  <th>Dummy POID</th>
-                  <th>Project</th>
-                  <th>DUID</th>
-                  <th>Plan Date</th>
-                  <th>Visit Type</th>
-                  <th>Center Area</th>
-                  <th>Region</th>
-                  <th>QC</th>
-                  <th>CIAG</th>
+                  </td>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.name}</td>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }} title={r.po_dispatch ? `System ID: ${r.po_dispatch}` : ""}>
+                    {r.poid || r.po_dispatch || "—"}
+                  </td>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }}>
+                    {(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.poid || r.po_dispatch || "")
+                      ? (r.original_dummy_poid || "").trim() : "—"}
+                  </td>
+                  <td>{r.project_code || "—"}</td>
+                  <td>{r.site_code || "—"}</td>
+                  <td>{r.plan_date || "—"}</td>
+                  <td>{r.visit_type || "—"}</td>
+                  <td style={{ fontSize: "0.82rem", maxWidth: 120 }}>{r.center_area || "—"}</td>
+                  <td>{r.region_type || "—"}</td>
+                  <td>
+                    {r.qc_required === 0 ? (
+                      <span className="status-badge" style={{ background: "#f1f5f9", color: "#64748b" }}>—</span>
+                    ) : (
+                      <span className={`status-badge ${statusBadgeClass(r.qc_status || "Pending")}`}>
+                        <span className="status-dot" />{r.qc_status || "Pending"}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {r.ciag_required === 0 ? (
+                      <span className="status-badge" style={{ background: "#f1f5f9", color: "#64748b" }}>—</span>
+                    ) : (
+                      <span className={`status-badge ${statusBadgeClass(r.ciag_status || "Open")}`}>
+                        <span className="status-dot" />{r.ciag_status || "Open"}
+                      </span>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.name} data-doc-name={r.name} className="row-link" onClick={() => setEditRow(r)}>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedPlans.has(r.name)}
-                        onChange={() => toggleRow(r.name)}
-                      />
-                    </td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.name}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }} title={r.po_dispatch ? `System ID: ${r.po_dispatch}` : ""}>
-                      {r.poid || r.po_dispatch || "—"}
-                    </td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }}>
-                      {(r.original_dummy_poid || "").trim() && String(r.original_dummy_poid) !== String(r.poid || r.po_dispatch || "")
-                        ? (r.original_dummy_poid || "").trim() : "—"}
-                    </td>
-                    <td>{r.project_code || "—"}</td>
-                    <td>{r.site_code || "—"}</td>
-                    <td>{r.plan_date || "—"}</td>
-                    <td>{r.visit_type || "—"}</td>
-                    <td style={{ fontSize: "0.82rem", maxWidth: 120 }}>{r.center_area || "—"}</td>
-                    <td>{r.region_type || "—"}</td>
-                    <td>
-                      {r.qc_required === 0 ? (
-                        <span className="status-badge" style={{ background: "#f1f5f9", color: "#64748b" }}>—</span>
-                      ) : (
-                        <span className={`status-badge ${statusBadgeClass(r.qc_status || "Pending")}`}>
-                          <span className="status-dot" />{r.qc_status || "Pending"}
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      {r.ciag_required === 0 ? (
-                        <span className="status-badge" style={{ background: "#f1f5f9", color: "#64748b" }}>—</span>
-                      ) : (
-                        <span className={`status-badge ${statusBadgeClass(r.ciag_status || "Open")}`}>
-                          <span className="status-dot" />{r.ciag_status || "Open"}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : loading ? (
-            <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>Loading completed plans...</div>
-          ) : (
-            <div className="empty-state"><h3>No completed plans found</h3></div>
-          )}
+              ))}
+            </tbody>
+          </table>
         </DataTableWrapper>
         <TableRowsLimitFooter placement="tableCard" loadedCount={rows.length} filteredCount={rows.length} filterActive={!!search} />
       </div>

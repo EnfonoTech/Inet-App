@@ -390,55 +390,59 @@ export default function Timesheet() {
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontSize: "0.82rem", color: "var(--text-muted)" }}>
             {loading ? "Loading…" : `${logs.length} of ${total} log(s) · ${fmt.format(totalHours)} h total`}
           </div>
-          {logs.length > 0 ? (
-            <DataTableWrapper className="data-table-wrapper--nested">
-              <table className="data-table" data-table-key="field-timesheet-v1">
-                <thead>
+          <DataTableWrapper className="data-table-wrapper--nested">
+            <table className="data-table" data-table-key="field-timesheet-v1">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Rollout</th>
+                  <th>Work</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th style={{ textAlign: "right" }}>Hours</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.length === 0 ? (
                   <tr>
-                    <th>ID</th>
-                    <th>Rollout</th>
-                    <th>Work</th>
-                    <th>Start</th>
-                    <th>End</th>
-                    <th style={{ textAlign: "right" }}>Hours</th>
-                    <th>Status</th>
+                    <td colSpan={7} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading time logs…</div>
+                      ) : (
+                        <div className="empty-state" style={{ marginTop: 20 }}>
+                          <div className="empty-icon">⏱</div>
+                          <h3>No time logs yet</h3>
+                          <p>Use Start timer on an execution, or add a manual entry.</p>
+                        </div>
+                      )}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {logs.map((row) => (
-                    <tr key={row.name}>
-                      <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.name}</td>
-                      <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
-                      <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || row.project_code || "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{shortDt(row.start_time)}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{row.is_running ? "…" : shortDt(row.end_time)}</td>
-                      <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                        {row.is_running ? "—" : fmt.format(row.duration_hours || 0)}
-                      </td>
-                      <td>
-                        <span style={{
-                          display: "inline-block", padding: "3px 10px", borderRadius: 12,
-                          fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-                          background: row.is_running ? "var(--amber-bg)" : "var(--green-bg)",
-                          color: row.is_running ? "var(--amber)" : "var(--green)",
-                        }}>
-                          {row.is_running ? "Running" : "Done"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </DataTableWrapper>
-          ) : loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading time logs…</div>
-          ) : (
-            <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">⏱</div>
-              <h3>No time logs yet</h3>
-              <p>Use Start timer on an execution, or add a manual entry.</p>
-            </div>
-          )}
+                ) : logs.map((row) => (
+                  <tr key={row.name}>
+                    <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.name}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
+                    <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || row.project_code || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{shortDt(row.start_time)}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{row.is_running ? "…" : shortDt(row.end_time)}</td>
+                    <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                      {row.is_running ? "—" : fmt.format(row.duration_hours || 0)}
+                    </td>
+                    <td>
+                      <span style={{
+                        display: "inline-block", padding: "3px 10px", borderRadius: 12,
+                        fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+                        background: row.is_running ? "var(--amber-bg)" : "var(--green-bg)",
+                        color: row.is_running ? "var(--amber)" : "var(--green)",
+                      }}>
+                        {row.is_running ? "Running" : "Done"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </DataTableWrapper>
           <TableRowsLimitFooter placement="tableCard" loadedCount={logs.length} />
         </div>
       </div>

@@ -502,8 +502,7 @@ export default function RolloutPlanning() {
         )}
 
         <DataTableWrapper>
-          {rows.length > 0 ? (
-            <table key={`admin-rollout-planning-${planScope}`} className="data-table" data-table-key={`admin-rollout-planning-${planScope}`}>
+          <table key={`admin-rollout-planning-${planScope}`} className="data-table" data-table-key={`admin-rollout-planning-${planScope}`}>
               <thead>
                 <tr>
                   <th>
@@ -530,7 +529,35 @@ export default function RolloutPlanning() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={15} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+                          Loading dispatches…
+                        </div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">{planScope === "open_dummy" ? "✅" : "📦"}</div>
+                          <h3>
+                            {searchDebounced.trim()
+                              ? "No results match your search"
+                              : planScope === "open_dummy"
+                                ? "No unmapped dummy POs"
+                                : "No dispatched lines ready for planning"}
+                          </h3>
+                          <p>
+                            {searchDebounced.trim()
+                              ? "Try a different search term."
+                              : planScope === "open_dummy"
+                                ? "All dummy POs have been mapped to real PO intake lines."
+                                : "Dispatch PO Intake lines first before creating rollout plans."}
+                          </p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : rows.map((row) => (
                   <tr
                     key={row.name}
                     data-doc-name={row.name}
@@ -613,6 +640,7 @@ export default function RolloutPlanning() {
                   </tr>
                 ))}
               </tbody>
+              {rows.length > 0 && (
               <tfoot>
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                   <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
@@ -630,30 +658,8 @@ export default function RolloutPlanning() {
                   <td />
                 </tr>
               </tfoot>
+              )}
             </table>
-          ) : loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-              Loading dispatches…
-            </div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-icon">{planScope === "open_dummy" ? "✅" : "📦"}</div>
-              <h3>
-                {searchDebounced.trim()
-                  ? "No results match your search"
-                  : planScope === "open_dummy"
-                    ? "No unmapped dummy POs"
-                    : "No dispatched lines ready for planning"}
-              </h3>
-              <p>
-                {searchDebounced.trim()
-                  ? "Try a different search term."
-                  : planScope === "open_dummy"
-                    ? "All dummy POs have been mapped to real PO intake lines."
-                    : "Dispatch PO Intake lines first before creating rollout plans."}
-              </p>
-            </div>
-          )}
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

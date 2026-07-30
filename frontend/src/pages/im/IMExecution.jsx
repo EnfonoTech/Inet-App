@@ -1231,19 +1231,6 @@ export default function IMExecution() {
       <div className="page-content">
         <DataTableWrapper>
           {tab === "internal_done" ? (
-            loading && executions.length === 0 ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-            ) : filteredInternalDone.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">✅</div>
-                <h3>{hasInternalFilters ? "No results match your filters" : "No internal work done yet"}</h3>
-                <p>
-                  {hasInternalFilters
-                    ? "Try adjusting your search or filter criteria."
-                    : "Internal work moves here once its Execution Status is set to Completed."}
-                </p>
-              </div>
-            ) : (
               <table key="im-execution-internal-done" className="data-table" data-table-key="im-execution-internal-done">
                 <thead>
                   <tr>
@@ -1266,7 +1253,25 @@ export default function IMExecution() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredInternalDone.map((e) => (
+                  {filteredInternalDone.length === 0 ? (
+                    <tr>
+                      <td colSpan={16} style={{ padding: 0 }}>
+                        {loading && executions.length === 0 ? (
+                          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
+                        ) : (
+                          <div className="empty-state">
+                            <div className="empty-icon">✅</div>
+                            <h3>{hasInternalFilters ? "No results match your filters" : "No internal work done yet"}</h3>
+                            <p>
+                              {hasInternalFilters
+                                ? "Try adjusting your search or filter criteria."
+                                : "Internal work moves here once its Execution Status is set to Completed."}
+                            </p>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : filteredInternalDone.map((e) => (
                     <tr key={e.name} data-doc-name={e.name} data-modified={e.modified} style={{ background: "#f0fdfa" }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan || "—"}</td>
@@ -1313,18 +1318,19 @@ export default function IMExecution() {
                     </tr>
                   ))}
                 </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={16} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                      <strong>{filteredInternalDone.length} row{filteredInternalDone.length !== 1 ? "s" : ""} done</strong>
-                      {filteredInternalDone.length !== internalDoneExecutions.length && (
-                        <span style={{ color: "#64748b", marginLeft: 10 }}>of {internalDoneExecutions.length} total</span>
-                      )}
-                    </td>
-                  </tr>
-                </tfoot>
+                {filteredInternalDone.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td colSpan={16} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                        <strong>{filteredInternalDone.length} row{filteredInternalDone.length !== 1 ? "s" : ""} done</strong>
+                        {filteredInternalDone.length !== internalDoneExecutions.length && (
+                          <span style={{ color: "#64748b", marginLeft: 10 }}>of {internalDoneExecutions.length} total</span>
+                        )}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
-            )
           ) : (
             <>
             <table key="im-execution-poid-work" className="data-table" data-table-key="im-execution-poid-work">

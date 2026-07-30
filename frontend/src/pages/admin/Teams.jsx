@@ -474,7 +474,6 @@ export default function Teams() {
       {/* Table */}
       <div className="page-content">
         <DataTableWrapper>
-          {filteredRows.length > 0 ? (
             <table className="data-table" data-table-key="admin-teams-v1">
               <thead>
                 <tr>
@@ -492,7 +491,17 @@ export default function Teams() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r) => (
+                {filteredRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading teams…</div>
+                      ) : (
+                        <div className="empty-state"><h3>{hasFilters ? "No teams match your filters" : "No teams found"}</h3></div>
+                      )}
+                    </td>
+                  </tr>
+                ) : filteredRows.map((r) => (
                   <tr
                     key={r.name}
                     style={{ cursor: "pointer" }}
@@ -533,11 +542,6 @@ export default function Teams() {
                 ))}
               </tbody>
             </table>
-          ) : loading ? (
-            <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading teams…</div>
-          ) : (
-            <div className="empty-state"><h3>{hasFilters ? "No teams match your filters" : "No teams found"}</h3></div>
-          )}
         </DataTableWrapper>
       </div>
 

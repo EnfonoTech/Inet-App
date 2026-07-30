@@ -266,19 +266,6 @@ export default function PODump() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {!rows.length && !loading ? (
-            <div className="empty-state">
-              <div className="empty-icon">📄</div>
-              <h3>No rows</h3>
-              <p>Pick a date range and at least one status above.</p>
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">🔍</div>
-              <h3>No matches</h3>
-              <p>No rows match "{search}". Try a different search term.</p>
-            </div>
-          ) : (
             <table className="data-table" data-table-key="admin-po-dump-v1">
               <thead>
                 <tr>
@@ -299,7 +286,27 @@ export default function PODump() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
+                {!rows.length && !loading ? (
+                  <tr>
+                    <td colSpan={14} style={{ padding: 0 }}>
+                      <div className="empty-state">
+                        <div className="empty-icon">📄</div>
+                        <h3>No rows</h3>
+                        <p>Pick a date range and at least one status above.</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={14} style={{ padding: 0 }}>
+                      <div className="empty-state">
+                        <div className="empty-icon">🔍</div>
+                        <h3>No matches</h3>
+                        <p>No rows match "{search}". Try a different search term.</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : rows.map((r, i) => (
                   <tr key={`${r.id || r.poid || r.po_no || "line"}-${i}`}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.id || "—"}</td>
                     <td>{r.po_line_status || r.po_status || "—"}</td>
@@ -323,7 +330,6 @@ export default function PODump() {
                 ))}
               </tbody>
             </table>
-          )}
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

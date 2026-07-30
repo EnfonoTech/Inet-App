@@ -357,33 +357,39 @@ export default function AdminExpense() {
           </div>
         )}
 
-        {claims.length > 0 ? (
-          <DataTableWrapper ref={tableRef}>
-            <table className="data-table" data-table-key="admin-expense-v1">
-              <thead>
+        <DataTableWrapper ref={tableRef}>
+          <table className="data-table" data-table-key="admin-expense-v1">
+            <thead>
+              <tr>
+                <th>Claim #</th>
+                <th>Date</th>
+                <th>Team Lead</th>
+                <th>Team</th>
+                <th>IM</th>
+                <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {claims.length === 0 ? (
                 <tr>
-                  <th>Claim #</th>
-                  <th>Date</th>
-                  <th>Team Lead</th>
-                  <th>Team</th>
-                  <th>IM</th>
-                  <th style={{ textAlign: "right" }}>Amount (SAR)</th>
-                  <th>Status</th>
-                  <th>Actions</th>
+                  <td colSpan={8} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>Loading...</div>
+                    ) : (
+                      <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>No expense claims found.</div>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {claims.map((c) => (
+              ) : (
+                claims.map((c) => (
                   <ClaimRow key={c.name} claim={c} onView={(cl) => setViewClaim(cl)} />
-                ))}
-              </tbody>
-            </table>
-          </DataTableWrapper>
-        ) : loading ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>Loading...</div>
-        ) : (
-          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>No expense claims found.</div>
-        )}
+                ))
+              )}
+            </tbody>
+          </table>
+        </DataTableWrapper>
       </div>
 
       <ClaimDetailModal

@@ -226,7 +226,13 @@ export default function PODispatch() {
         if (imFilter.length) portal.dispatched_im = imFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
         if (itemCodeFilter.length) portal.item_code = itemCodeFilter;
-        if (statusFilter.length) portal.line_status = statusFilter;
+        // Only meaningful on "All Lines" - the other 2 tabs already imply a
+        // status via the tab itself, and combining that with a leftover
+        // dropdown selection from testing "All Lines" would silently AND
+        // together into a contradiction (e.g. tab=New + dropdown=Dispatched
+        // = 0 rows, looking like "no lines pending dispatch" for no
+        // apparent reason).
+        if (activeTab === "all" && statusFilter.length) portal.line_status = statusFilter;
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
         const colFilters = JSON.parse(columnFiltersDebounced);
@@ -738,7 +744,9 @@ export default function PODispatch() {
         {error && <div className="notice error" style={{ marginBottom: 16 }}><span>!</span> {error}</div>}
 
         <DataTableWrapper>
-          {rows.length > 0 ? (
+          {(() => {
+            const colCount = showDispatched ? 20 : 17;
+            return (
             <table className="data-table" data-table-key={`admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`}>
               <thead>
                 <tr>
@@ -777,7 +785,21 @@ export default function PODispatch() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(row => {
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={colCount} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading PO lines...</div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">📋</div>
+                          <h3>{tableSearch || Object.keys(activeColumnFilters).length ? "No results match filter" : activeTab === "New" ? "No lines pending dispatch" : "No records"}</h3>
+                          <p>{tableSearch || Object.keys(activeColumnFilters).length ? "Try a different search term." : activeTab === "New" ? "All PO lines have been dispatched." : "No records in this view."}</p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : rows.map(row => {
                   const isAuto = row.dispatch_mode === "Auto";
                   return (
                     <tr key={row.name}
@@ -854,29 +876,24 @@ export default function PODispatch() {
                   );
                 })}
               </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={showDispatched ? 20 : 17}
-                    style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
-                    <strong>{rows.length}</strong> row{rows.length !== 1 ? "s" : ""}
-                    {activeTab === "Dispatched" && autoRows.length > 0 && (
-                      <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600 }}>
-                        Auto: {autoRows.length} · Manual: {rows.length - autoRows.length}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              </tfoot>
+              {rows.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={colCount}
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
+                      <strong>{rows.length}</strong> row{rows.length !== 1 ? "s" : ""}
+                      {activeTab === "Dispatched" && autoRows.length > 0 && (
+                        <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600 }}>
+                          Auto: {autoRows.length} · Manual: {rows.length - autoRows.length}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
-          ) : loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading PO lines...</div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-icon">📋</div>
-              <h3>{tableSearch ? "No results match filter" : activeTab === "New" ? "No lines pending dispatch" : "No records"}</h3>
-              <p>{tableSearch ? "Try a different search term." : activeTab === "New" ? "All PO lines have been dispatched." : "No records in this view."}</p>
-            </div>
-          )}
+            );
+          })()}
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

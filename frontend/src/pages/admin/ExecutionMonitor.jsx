@@ -503,30 +503,50 @@ export default function ExecutionMonitor() {
 
         <DataTableWrapper>
           {tab === "internal_done" ? (
-            filteredInternalDone.length > 0 ? (
-              <table key="execution-monitor-internal-done" className="data-table" data-table-key="execution-monitor-internal-done">
-                <thead>
+            <table key="execution-monitor-internal-done" className="data-table" data-table-key="execution-monitor-internal-done">
+              <thead>
+                <tr>
+                  <th>Plan</th>
+                  <th>Execution</th>
+                  <th>Item</th>
+                  <th>Description</th>
+                  <th>Type</th>
+                  <th>Domain</th>
+                  <th>Team</th>
+                  <th>IM</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
+                  <th style={{ whiteSpace: "nowrap" }}>Access</th>
+                  <th>TL Status</th>
+                  <th style={{ textAlign: "right" }}>Qty</th>
+                  <th title="Remark set by IM">Manager</th>
+                  <th title="Remark set by Field Team Lead">Team Lead</th>
+                  <th>Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredInternalDone.length === 0 ? (
                   <tr>
-                    <th>Plan</th>
-                    <th>Execution</th>
-                    <th>Item</th>
-                    <th>Description</th>
-                    <th>Type</th>
-                    <th>Domain</th>
-                    <th>Team</th>
-                    <th>IM</th>
-                    <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
-                    <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
-                    <th style={{ whiteSpace: "nowrap" }}>Access</th>
-                    <th>TL Status</th>
-                    <th style={{ textAlign: "right" }}>Qty</th>
-                    <th title="Remark set by IM">Manager</th>
-                    <th title="Remark set by Field Team Lead">Team Lead</th>
-                    <th>Open</th>
+                    <td colSpan={16} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+                          Loading execution data…
+                        </div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">✅</div>
+                          <h3>{hasInternalFilters ? "No results match your filters" : "No internal work done yet"}</h3>
+                          <p>
+                            {hasInternalFilters
+                              ? "Try adjusting your search or filter criteria."
+                              : "Internal work moves here once its Execution Status is set to Completed."}
+                          </p>
+                        </div>
+                      )}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredInternalDone.map((row) => (
+                ) : (
+                  filteredInternalDone.map((row) => (
                     <tr key={row.name} style={{ background: "#f0fdfa" }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.execution_name || "—"}</td>
@@ -566,8 +586,10 @@ export default function ExecutionMonitor() {
                         </button>
                       </td>
                     </tr>
-                  ))}
-                </tbody>
+                  ))
+                )}
+              </tbody>
+              {filteredInternalDone.length > 0 && (
                 <tfoot>
                   <tr>
                     <td colSpan={16} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
@@ -578,23 +600,9 @@ export default function ExecutionMonitor() {
                     </td>
                   </tr>
                 </tfoot>
-              </table>
-            ) : loading ? (
-              <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-                Loading execution data…
-              </div>
-            ) : (
-              <div className="empty-state">
-                <div className="empty-icon">✅</div>
-                <h3>{hasInternalFilters ? "No results match your filters" : "No internal work done yet"}</h3>
-                <p>
-                  {hasInternalFilters
-                    ? "Try adjusting your search or filter criteria."
-                    : "Internal work moves here once its Execution Status is set to Completed."}
-                </p>
-              </div>
-            )
-          ) : mainRows.length > 0 ? (
+              )}
+            </table>
+          ) : (
             <table key="execution-monitor-main" className="data-table" data-table-key="execution-monitor-main">
               <thead>
                 <tr>
@@ -631,7 +639,27 @@ export default function ExecutionMonitor() {
                 </tr>
               </thead>
               <tbody>
-                {mainRows.map((row) => {
+                {mainRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={30} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+                          Loading execution data…
+                        </div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">📊</div>
+                          <h3>{hasFilters ? "No results match your filters" : "No active executions"}</h3>
+                          <p>
+                            {hasFilters
+                              ? "Try adjusting your search or filter criteria."
+                              : "No plans are currently Planned or In Execution."}
+                          </p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : mainRows.map((row) => {
                   const target = row.target_amount || 0;
                   return (
                     <tr key={row.name} style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}>
@@ -731,37 +759,25 @@ export default function ExecutionMonitor() {
                   );
                 })}
               </tbody>
-              <tfoot>
-                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                  <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                    {mainRows.length} rows
-                  </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
-                  <td style={{ textAlign: "right", padding: "8px 16px" }} />
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
-                    {fmt.format(totals.target)}
-                  </td>
-                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#047857" }}>
-                    {fmt.format(totals.achieved)}
-                  </td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
-                </tr>
-              </tfoot>
+              {mainRows.length > 0 && (
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                    <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      {mainRows.length} rows
+                    </td>
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td style={{ textAlign: "right", padding: "8px 16px" }} />
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
+                      {fmt.format(totals.target)}
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#047857" }}>
+                      {fmt.format(totals.achieved)}
+                    </td>
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
-          ) : loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-              Loading execution data…
-            </div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-icon">📊</div>
-              <h3>{hasFilters ? "No results match your filters" : "No active executions"}</h3>
-              <p>
-                {hasFilters
-                  ? "Try adjusting your search or filter criteria."
-                  : "No plans are currently Planned or In Execution."}
-              </p>
-            </div>
           )}
         </DataTableWrapper>
         <TableRowsLimitFooter

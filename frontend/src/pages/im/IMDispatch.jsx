@@ -1683,24 +1683,7 @@ export default function IMDispatch() {
         )}
 
         <DataTableWrapper>
-          {loading && rows.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
-              Loading dispatches...
-            </div>
-          ) : visibleRows.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📋</div>
-              <h3>{!imName ? "IM account not linked" : "No dispatch records found"}</h3>
-              <p>
-                {!imName
-                  ? "Link your user to IM Master so dispatches can load."
-                  : hasFilters
-                    ? "No rows match your search or filters (they apply across all dispatches, not only loaded rows)."
-                    : "No PO lines have been dispatched to you yet."}
-              </p>
-            </div>
-          ) : (
-            <table key={`im-dispatch-${planScope}`} className="data-table" data-table-key={`im-dispatch-${planScope}`}>
+          <table key={`im-dispatch-${planScope}`} className="data-table" data-table-key={`im-dispatch-${planScope}`}>
               <thead>
                 <tr>
                   <th style={{ width: 40 }}>
@@ -1732,7 +1715,29 @@ export default function IMDispatch() {
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((row) => {
+                {visibleRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={19} style={{ padding: 0 }}>
+                      {loading && rows.length === 0 ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
+                          Loading dispatches...
+                        </div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">📋</div>
+                          <h3>{!imName ? "IM account not linked" : "No dispatch records found"}</h3>
+                          <p>
+                            {!imName
+                              ? "Link your user to IM Master so dispatches can load."
+                              : hasFilters
+                                ? "No rows match your search or filters (they apply across all dispatches, not only loaded rows)."
+                                : "No PO lines have been dispatched to you yet."}
+                          </p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : visibleRows.map((row) => {
                   const canPlan = planable(row);
                   const wasDf = row.was_dummy_po == 1 || row.was_dummy_po === true || String(row.was_dummy_po || "") === "1";
                   const origCell = (row.original_dummy_poid || "").trim();
@@ -1873,25 +1878,26 @@ export default function IMDispatch() {
                   );
                 })}
               </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    <strong>{visibleRows.length} row{visibleRows.length !== 1 ? "s" : ""}</strong>
-                    {planScope !== "all" && visibleRows.length !== rows.length && (
-                      <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#94a3b8" }}>
-                        ({rows.length - visibleRows.length} planned hidden)
+              {visibleRows.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                      <strong>{visibleRows.length} row{visibleRows.length !== 1 ? "s" : ""}</strong>
+                      {planScope !== "all" && visibleRows.length !== rows.length && (
+                        <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#94a3b8" }}>
+                          ({rows.length - visibleRows.length} planned hidden)
+                        </span>
+                      )}
+                      <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
+                        {planScope === "all"
+                          ? <>Re-plan mode: select any row (PLANNED rows create the next visit).</>
+                          : <>Select rows with status <strong>Dispatched</strong> to create rollout plans.</>}
                       </span>
-                    )}
-                    <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
-                      {planScope === "all"
-                        ? <>Re-plan mode: select any row (PLANNED rows create the next visit).</>
-                        : <>Select rows with status <strong>Dispatched</strong> to create rollout plans.</>}
-                    </span>
-                  </td>
-                </tr>
-              </tfoot>
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
-          )}
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

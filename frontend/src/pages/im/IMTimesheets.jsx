@@ -183,24 +183,36 @@ export default function IMTimesheets() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {logs.length > 0 ? (
-            <table className="data-table" data-table-key="im-timesheets-v1">
-              <thead>
+          <table className="data-table" data-table-key="im-timesheets-v1">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Team</th>
+                <th>Rollout</th>
+                <th>Work</th>
+                <th>Start</th>
+                <th>End</th>
+                <th style={{ textAlign: "right" }}>Hours</th>
+                <th>State</th>
+                <th>View</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.length === 0 ? (
                 <tr>
-                  <th>ID</th>
-                  <th>User</th>
-                  <th>Team</th>
-                  <th>Rollout</th>
-                  <th>Work</th>
-                  <th>Start</th>
-                  <th>End</th>
-                  <th style={{ textAlign: "right" }}>Hours</th>
-                  <th>State</th>
-                  <th>View</th>
+                  <td colSpan={10} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                    ) : (
+                      <div className="empty-state" style={{ marginTop: 20 }}>
+                        <div className="empty-icon">&#x1F553;</div>
+                        <h3>{hasFilters ? "No results" : "No time logs for your teams"}</h3>
+                      </div>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {logs.map((row) => (
+              ) : logs.map((row) => (
                   <tr key={row.name}>
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
                     <td>{row.user_full_name || row.user}</td>
@@ -234,17 +246,9 @@ export default function IMTimesheets() {
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-          ) : (
-            <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">&#x1F553;</div>
-              <h3>{hasFilters ? "No results" : "No time logs for your teams"}</h3>
-            </div>
-          )}
+              ))}
+            </tbody>
+          </table>
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

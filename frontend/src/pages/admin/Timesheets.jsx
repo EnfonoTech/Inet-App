@@ -158,7 +158,6 @@ export default function Timesheets() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {logs.length > 0 ? (
             <table className="data-table" data-table-key="admin-timesheets-v1">
               <thead>
                 <tr>
@@ -174,7 +173,21 @@ export default function Timesheets() {
                 </tr>
               </thead>
               <tbody>
-                {logs.map((row) => (
+                {logs.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                      ) : (
+                        <div className="empty-state" style={{ marginTop: 20 }}>
+                          <div className="empty-icon">&#x1F553;</div>
+                          <h3>{hasFilters ? "No results" : "No execution time logs"}</h3>
+                          <p>Logs appear when field users start/stop timers or add manual entries on rollouts.</p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : logs.map((row) => (
                   <tr key={row.name}>
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
                     <td>{row.user_full_name || row.user}</td>
@@ -207,45 +220,38 @@ export default function Timesheets() {
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr>
-                  <td
-                    colSpan={7}
-                    style={{
-                      padding: "10px 16px",
-                      background: "#f8fafc",
-                      borderTop: "1px solid #e2e8f0",
-                      fontWeight: 700,
-                      fontSize: "0.78rem",
-                    }}
-                  >
-                    TOTALS ({logs.length}
-                    {hasFilters && ` of ${logs.length}`} / {total} in range)
-                  </td>
-                  <td
-                    style={{
-                      textAlign: "right",
-                      fontWeight: 700,
-                      padding: "10px 16px",
-                      background: "#f8fafc",
-                      borderTop: "1px solid #e2e8f0",
-                    }}
-                  >
-                    {fmt.format(totalHours)}
-                  </td>
-                  <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
-                </tr>
-              </tfoot>
+              {logs.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td
+                      colSpan={7}
+                      style={{
+                        padding: "10px 16px",
+                        background: "#f8fafc",
+                        borderTop: "1px solid #e2e8f0",
+                        fontWeight: 700,
+                        fontSize: "0.78rem",
+                      }}
+                    >
+                      TOTALS ({logs.length}
+                      {hasFilters && ` of ${logs.length}`} / {total} in range)
+                    </td>
+                    <td
+                      style={{
+                        textAlign: "right",
+                        fontWeight: 700,
+                        padding: "10px 16px",
+                        background: "#f8fafc",
+                        borderTop: "1px solid #e2e8f0",
+                      }}
+                    >
+                      {fmt.format(totalHours)}
+                    </td>
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
-          ) : loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-          ) : (
-            <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">&#x1F553;</div>
-              <h3>{hasFilters ? "No results" : "No execution time logs"}</h3>
-              <p>Logs appear when field users start/stop timers or add manual entries on rollouts.</p>
-            </div>
-          )}
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

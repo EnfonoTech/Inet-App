@@ -1189,7 +1189,6 @@ export default function IMPOIntake() {
           filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : tab === "transfers" ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
         >
           {tab === "transfers" ? (
-            transferVisibleRows.length > 0 ? (
               <table key="im-po-transfers" className="data-table" data-table-key="im-po-transfers">
                 <thead>
                   <tr>
@@ -1207,7 +1206,29 @@ export default function IMPOIntake() {
                   </tr>
                 </thead>
                 <tbody>
-                  {transferVisibleRows.map((r) => {
+                  {transferVisibleRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} style={{ padding: 0 }}>
+                        {transferListLoading ? (
+                          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+                        ) : (
+                          <div className="empty-state">
+                            <div className="empty-icon">🔁</div>
+                            <h3>
+                              {transferSubTab === "outgoing" ? "No outgoing transfers awaiting approval"
+                                : transferSubTab === "incoming" ? "No incoming transfers awaiting approval"
+                                : "No transfer history yet"}
+                            </h3>
+                            <p>
+                              {transferSubTab === "outgoing" ? "Requests you send from the PO Intake tab land here until a PM decides."
+                                : transferSubTab === "incoming" ? "POIDs another IM is sending your way show up here before the PM decides."
+                                : "Approved, rejected, and cancelled transfers show up here for reference."}
+                            </p>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : transferVisibleRows.map((r) => {
                     const sc = statusToneForTransfer(r.request_status);
                     const canCancel = r._direction === "outgoing" && r.request_status === "Pending PM Approval";
                     return (
@@ -1247,25 +1268,7 @@ export default function IMPOIntake() {
                   })}
                 </tbody>
               </table>
-            ) : transferListLoading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-            ) : (
-              <div className="empty-state">
-                <div className="empty-icon">🔁</div>
-                <h3>
-                  {transferSubTab === "outgoing" ? "No outgoing transfers awaiting approval"
-                    : transferSubTab === "incoming" ? "No incoming transfers awaiting approval"
-                    : "No transfer history yet"}
-                </h3>
-                <p>
-                  {transferSubTab === "outgoing" ? "Requests you send from the PO Intake tab land here until a PM decides."
-                    : transferSubTab === "incoming" ? "POIDs another IM is sending your way show up here before the PM decides."
-                    : "Approved, rejected, and cancelled transfers show up here for reference."}
-                </p>
-              </div>
-            )
           ) : tab === "overview" ? (
-            ovFilteredRows.length > 0 ? (
               <table key="im-po-overview-v2" className="data-table" data-table-key="im-po-overview-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
@@ -1298,7 +1301,21 @@ export default function IMPOIntake() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ovFilteredRows.map((row) => {
+                  {ovFilteredRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={26} style={{ padding: 0 }}>
+                        {ovLoading ? (
+                          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+                        ) : (
+                          <div className="empty-state">
+                            <div className="empty-icon">📋</div>
+                            <h3>{hasOvFilters ? "No POIDs match your filters" : "No POIDs found"}</h3>
+                            <p>{ovShowClosed ? "No POIDs assigned to you." : "Try enabling 'All statuses' to include closed and cancelled POIDs."}</p>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : ovFilteredRows.map((row) => {
                     const ps = ovPlanSummaries[row.name];
                     const sc = dispatchStatusColor(row.dispatch_status);
                     const isDummy = !!Number(row.is_dummy_po);
@@ -1366,15 +1383,6 @@ export default function IMPOIntake() {
                   })}
                 </tbody>
               </table>
-            ) : ovLoading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-            ) : (
-              <div className="empty-state">
-                <div className="empty-icon">📋</div>
-                <h3>{hasOvFilters ? "No POIDs match your filters" : "No POIDs found"}</h3>
-                <p>{ovShowClosed ? "No POIDs assigned to you." : "Try enabling 'All statuses' to include closed and cancelled POIDs."}</p>
-              </div>
-            )
           ) : tab === "intake" ? (
             <>
               <table key="im-po-intake-v2" className="data-table" data-table-key="im-po-intake-v2">
@@ -1467,7 +1475,6 @@ export default function IMPOIntake() {
               ) : null}
             </>
           ) : (
-            filteredDummyRows.length > 0 ? (
               <table key="im-po-dummy-v2" className="data-table" data-table-key="im-po-dummy-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
@@ -1495,7 +1502,21 @@ export default function IMPOIntake() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredDummyRows.map((row) => {
+                  {filteredDummyRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={21} style={{ padding: 0 }}>
+                        {dummyLoading ? (
+                          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+                        ) : (
+                          <div className="empty-state">
+                            <div className="empty-icon">🗂</div>
+                            <h3>{hasDummyFilters ? "No dummy POs match your filters" : dummyStatusFilter === "mapped" ? "No mapped dummy POs" : dummyStatusFilter === "all" ? "No dummy POs found" : "No open dummy POs"}</h3>
+                            <p>{dummyStatusFilter === "open" ? "Create a dummy PO using the + Dummy PO button above when a real PO is not yet available." : dummyStatusFilter === "mapped" ? "Once dummy POs are mapped to real PO intake lines they appear here." : "No dummy POs have been created yet."}</p>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : filteredDummyRows.map((row) => {
                     const isOpen = !!Number(row.is_dummy_po);
                     const ps = planSummaries[row.name];
                     return (
@@ -1548,15 +1569,6 @@ export default function IMPOIntake() {
                   })}
                 </tbody>
               </table>
-            ) : dummyLoading ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
-            ) : (
-              <div className="empty-state">
-                <div className="empty-icon">🗂</div>
-                <h3>{hasDummyFilters ? "No dummy POs match your filters" : dummyStatusFilter === "mapped" ? "No mapped dummy POs" : dummyStatusFilter === "all" ? "No dummy POs found" : "No open dummy POs"}</h3>
-                <p>{dummyStatusFilter === "open" ? "Create a dummy PO using the + Dummy PO button above when a real PO is not yet available." : dummyStatusFilter === "mapped" ? "Once dummy POs are mapped to real PO intake lines they appear here." : "No dummy POs have been created yet."}</p>
-              </div>
-            )
           )}
         </DataTableWrapper>
       </div>

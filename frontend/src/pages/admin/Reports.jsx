@@ -336,53 +336,55 @@ export default function Reports() {
         )}
 
         <DataTableWrapper>
-          {columns.length > 0 ? (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {columns.map((col) => (
-                    <th key={col.fieldname || col.label}>{col.label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.length === 0 ? (
-                  <tr>
-                    <td colSpan={columns.length} style={{ textAlign: "center", color: "var(--text-muted)", padding: "32px" }}>
-                      No records found for the selected period.
-                    </td>
-                  </tr>
-                ) : data.map((row, idx) => (
-                  <tr key={idx}>
-                    {columns.map((col) => {
-                      const key = col.fieldname || col.name;
-                      const raw = row?.[key];
-                      const pct = isPctCol(col);
-                      const style = pct && raw != null ? { ...pctCellStyle(raw), textAlign: "center", borderRadius: 4 } : {};
-                      const display = pct
-                        ? (raw != null ? `${raw}%` : "—")
-                        : (raw === null || raw === undefined || raw === "" ? "—" : raw);
-                      return (
-                        <td key={col.fieldname || col.label} style={style}>
-                          {display}
-                        </td>
-                      );
-                    })}
-                  </tr>
+          <table className="data-table">
+            <thead>
+              <tr>
+                {columns.map((col) => (
+                  <th key={col.fieldname || col.label}>{col.label}</th>
                 ))}
-              </tbody>
-            </table>
-          ) : loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-              Loading report…
-            </div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-icon">📈</div>
-              <h3>No data available</h3>
-              <p>No report data was returned from the server.</p>
-            </div>
-          )}
+              </tr>
+            </thead>
+            <tbody>
+              {columns.length === 0 || data.length === 0 ? (
+                <tr>
+                  <td colSpan={Math.max(columns.length, 1)} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+                        Loading report…
+                      </div>
+                    ) : columns.length === 0 ? (
+                      <div className="empty-state">
+                        <div className="empty-icon">📈</div>
+                        <h3>No data available</h3>
+                        <p>No report data was returned from the server.</p>
+                      </div>
+                    ) : (
+                      <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "32px" }}>
+                        No records found for the selected period.
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ) : data.map((row, idx) => (
+                <tr key={idx}>
+                  {columns.map((col) => {
+                    const key = col.fieldname || col.name;
+                    const raw = row?.[key];
+                    const pct = isPctCol(col);
+                    const style = pct && raw != null ? { ...pctCellStyle(raw), textAlign: "center", borderRadius: 4 } : {};
+                    const display = pct
+                      ? (raw != null ? `${raw}%` : "—")
+                      : (raw === null || raw === undefined || raw === "" ? "—" : raw);
+                    return (
+                      <td key={col.fieldname || col.label} style={style}>
+                        {display}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </DataTableWrapper>
       </div>
     </div>

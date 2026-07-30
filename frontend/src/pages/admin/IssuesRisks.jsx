@@ -312,8 +312,7 @@ export default function IssuesRisks() {
       </div>
       <div className="page-content">
         <DataTableWrapper>
-          {filteredRows.length > 0 ? (
-            <table className="data-table" data-table-key="admin-issues-risks-v1">
+          <table className="data-table" data-table-key="admin-issues-risks-v1">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -351,7 +350,17 @@ export default function IssuesRisks() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r) => (
+                {filteredRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={27} style={{ padding: 0 }}>
+                      {loading ? (
+                        <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading issues…</div>
+                      ) : (
+                        <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No issue/risk rows"}</h3></div>
+                      )}
+                    </td>
+                  </tr>
+                ) : filteredRows.map((r) => (
                   <tr key={`${r.rollout_plan}-${r.execution_name || ""}`} data-doc-name={r.rollout_plan} style={{ ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
                     <td>
                       <input
@@ -388,12 +397,7 @@ export default function IssuesRisks() {
                   </tr>
                 ))}
               </tbody>
-            </table>
-          ) : loading ? (
-            <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading issues…</div>
-          ) : (
-            <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No issue/risk rows"}</h3></div>
-          )}
+          </table>
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

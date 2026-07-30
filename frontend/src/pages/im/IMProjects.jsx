@@ -216,23 +216,46 @@ export default function IMProjects() {
 
       <div className="page-content">
         <DataTableWrapper>
-          {projects.length > 0 ? (
-            <table className="data-table" data-table-key="im-projects-v1">
-              <thead>
+          <table className="data-table" data-table-key="im-projects-v1">
+            <thead>
+              <tr>
+                <th>Project Code</th>
+                <th>Project Name</th>
+                <th>Customer</th>
+                <th>Domain</th>
+                <th>Huawei IM</th>
+                <th>Status</th>
+                <th style={{ textAlign: "right" }}>Completion</th>
+                <th style={{ textAlign: "right" }}>Budget</th>
+                <th>View</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.length === 0 ? (
                 <tr>
-                  <th>Project Code</th>
-                  <th>Project Name</th>
-                  <th>Customer</th>
-                  <th>Domain</th>
-                  <th>Huawei IM</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: "right" }}>Completion</th>
-                  <th style={{ textAlign: "right" }}>Budget</th>
-                  <th>View</th>
+                  <td colSpan={9} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
+                    ) : !imName ? (
+                      <div className="empty-state">
+                        <div className="empty-icon">👤</div>
+                        <h3>IM account not set up</h3>
+                        <p>Your user is not linked to an IM Master record. Link IM Master → User Account to your login, and set Implementation Manager on INET Teams and projects.</p>
+                      </div>
+                    ) : (
+                      <div className="empty-state">
+                        <div className="empty-icon">📋</div>
+                        <h3>{search ? "No results" : "No projects assigned"}</h3>
+                        <p>
+                          {search
+                            ? "Try a different search."
+                            : <>Open each project in <a href="/app/project-control-center" target="_blank" rel="noreferrer">Project Control Center</a> and set <strong>Implementation Manager</strong> = <code>{imName}</code></>}
+                        </p>
+                      </div>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {projects.map((p) => (
+              ) : projects.map((p) => (
                   <tr key={p.name}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{p.project_code}</td>
                     <td style={{ fontWeight: 600 }}>{p.project_name}</td>
@@ -276,28 +299,9 @@ export default function IMProjects() {
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-          ) : !imName ? (
-            <div className="empty-state">
-              <div className="empty-icon">👤</div>
-              <h3>IM account not set up</h3>
-              <p>Your user is not linked to an IM Master record. Link IM Master → User Account to your login, and set Implementation Manager on INET Teams and projects.</p>
-            </div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-icon">📋</div>
-              <h3>{search ? "No results" : "No projects assigned"}</h3>
-              <p>
-                {search
-                  ? "Try a different search."
-                  : <>Open each project in <a href="/app/project-control-center" target="_blank" rel="noreferrer">Project Control Center</a> and set <strong>Implementation Manager</strong> = <code>{imName}</code></>}
-              </p>
-            </div>
-          )}
+              ))}
+            </tbody>
+          </table>
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"

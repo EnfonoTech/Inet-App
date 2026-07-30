@@ -204,78 +204,82 @@ export default function FieldHistory() {
       {/* ── Desktop table ─────────────────────────────────── */}
       <div className="page-content field-desktop-only">
         <DataTableWrapper>
-          {records.length > 0 ? (
-            <table className="data-table" data-table-key="field-history-v1">
-              <thead>
+          <table className="data-table" data-table-key="field-history-v1">
+            <thead>
+              <tr>
+                <th>Execution ID</th>
+                <th>POID</th>
+                <th>Project</th>
+                <th>DUID</th>
+                <th>Item</th>
+                <th>Description</th>
+                <th>Visit</th>
+                <th>Date</th>
+                <th title="The status you (Team Lead) submitted">My Status</th>
+                <th title="The IM's confirmation of your work">IM Status</th>
+                <th>QC</th>
+                <th>CIAG</th>
+                <th style={{ textAlign: "right" }}>Achieved Qty</th>
+                <th>GPS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.length === 0 ? (
                 <tr>
-                  <th>Execution ID</th>
-                  <th>POID</th>
-                  <th>Project</th>
-                  <th>DUID</th>
-                  <th>Item</th>
-                  <th>Description</th>
-                  <th>Visit</th>
-                  <th>Date</th>
-                  <th title="The status you (Team Lead) submitted">My Status</th>
-                  <th title="The IM's confirmation of your work">IM Status</th>
-                  <th>QC</th>
-                  <th>CIAG</th>
-                  <th style={{ textAlign: "right" }}>Achieved Qty</th>
-                  <th>GPS</th>
+                  <td colSpan={14} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
+                    ) : (
+                      <div className="empty-state">
+                        <div className="empty-icon">📜</div>
+                        <h3>No execution history</h3>
+                        <p>Complete today's tasks to see history here.</p>
+                      </div>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {records.map((r) => (
-                  <tr key={r.name}>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.74rem" }} title={r.execution_name ? "" : "No execution recorded yet"}>
-                      {r.execution_name || "—"}
-                    </td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>{r.poid || r.name}</td>
-                    <td>{r.project_code || "—"}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.site_code || "—"}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
-                    <td style={{ fontSize: "0.8rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }} title={r.item_description || ""}>
-                      {r.item_description || "—"}
-                    </td>
-                    <td style={{ fontSize: "0.8rem" }}>{r.visit_type || "—"}</td>
-                    <td>{r.execution_date || r.plan_date || "—"}</td>
-                    <td>
-                      <span className={`status-badge ${statusBadgeClass(r.tl_status)}`}>
-                        <span className="status-dot" />{r.tl_status || "—"}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`status-badge ${statusBadgeClass(r.execution_status)}`}>
-                        <span className="status-dot" />{r.execution_status || "—"}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`status-badge ${statusBadgeClass(isNotRequired(r.qc_required) ? "Not Applicable" : r.qc_status)}`}>
-                        <span className="status-dot" />{isNotRequired(r.qc_required) ? "Not Applicable" : (r.qc_status || "—")}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`status-badge ${statusBadgeClass(isNotRequired(r.ciag_required) ? "Not Applicable" : r.ciag_status)}`}>
-                        <span className="status-dot" />{isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "—")}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(r.execution_achieved_qty || 0)}</td>
-                    <td style={{ fontSize: "0.72rem", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {r.gps_location || "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-icon">📜</div>
-              <h3>No execution history</h3>
-              <p>Complete today's tasks to see history here.</p>
-            </div>
-          )}
+              ) : records.map((r) => (
+                <tr key={r.name}>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.74rem" }} title={r.execution_name ? "" : "No execution recorded yet"}>
+                    {r.execution_name || "—"}
+                  </td>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>{r.poid || r.name}</td>
+                  <td>{r.project_code || "—"}</td>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.site_code || "—"}</td>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
+                  <td style={{ fontSize: "0.8rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }} title={r.item_description || ""}>
+                    {r.item_description || "—"}
+                  </td>
+                  <td style={{ fontSize: "0.8rem" }}>{r.visit_type || "—"}</td>
+                  <td>{r.execution_date || r.plan_date || "—"}</td>
+                  <td>
+                    <span className={`status-badge ${statusBadgeClass(r.tl_status)}`}>
+                      <span className="status-dot" />{r.tl_status || "—"}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`status-badge ${statusBadgeClass(r.execution_status)}`}>
+                      <span className="status-dot" />{r.execution_status || "—"}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`status-badge ${statusBadgeClass(isNotRequired(r.qc_required) ? "Not Applicable" : r.qc_status)}`}>
+                      <span className="status-dot" />{isNotRequired(r.qc_required) ? "Not Applicable" : (r.qc_status || "—")}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`status-badge ${statusBadgeClass(isNotRequired(r.ciag_required) ? "Not Applicable" : r.ciag_status)}`}>
+                      <span className="status-dot" />{isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "—")}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>{fmt.format(r.execution_achieved_qty || 0)}</td>
+                  <td style={{ fontSize: "0.72rem", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {r.gps_location || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </DataTableWrapper>
         <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />
       </div>

@@ -380,7 +380,6 @@ export default function Projects() {
       {/* Table — scrollable on narrow viewports (data-table-wrapper) */}
       <div className="page-content">
         <DataTableWrapper>
-        {projects.length > 0 ? (
           <table className="data-table" data-table-key="admin-projects-v1">
             <thead>
               <tr>
@@ -398,7 +397,17 @@ export default function Projects() {
               </tr>
             </thead>
             <tbody>
-              {projects.map(p => (
+              {projects.length === 0 ? (
+                <tr>
+                  <td colSpan={11} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading projects...</div>
+                    ) : (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>No projects found.</div>
+                    )}
+                  </td>
+                </tr>
+              ) : projects.map(p => (
                 <tr key={p.name} onClick={() => navigate("/projects/" + p.project_code)} style={{ cursor: "pointer" }}>
                   <td style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: 12 }}>{p.project_code}</td>
                   <td style={{ fontWeight: 600, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.project_name}</td>
@@ -428,11 +437,6 @@ export default function Projects() {
               ))}
             </tbody>
           </table>
-        ) : loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading projects...</div>
-        ) : (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>No projects found.</div>
-        )}
         </DataTableWrapper>
         <TableRowsLimitFooter placement="tableCard" loadedCount={projects.length} />
       </div>

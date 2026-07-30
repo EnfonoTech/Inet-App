@@ -718,7 +718,6 @@ function DuidStockTab({ onRequest }) {
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
-        {visible.length > 0 ? (
           <table className="data-table" data-table-key="im-duid-stock-v2">
             <thead>
               <tr>
@@ -732,7 +731,21 @@ function DuidStockTab({ onRequest }) {
               </tr>
             </thead>
             <tbody>
-              {visible.map((row) => (
+              {visible.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                    ) : (
+                      <div className="empty-state">
+                        <div className="empty-icon">📦</div>
+                        <h3>No INET materials found</h3>
+                        <p>Huawei Outbound Plans for INET subcon will appear here.</p>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ) : visible.map((row) => (
                 <tr key={row.duid}>
                   <td style={{ fontFamily: "monospace", fontSize: "0.8rem", fontWeight: 600 }}>{row.duid}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.project_name}>{row.project_name || "—"}</td>
@@ -768,15 +781,6 @@ function DuidStockTab({ onRequest }) {
               ))}
             </tbody>
           </table>
-        ) : loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-icon">📦</div>
-            <h3>No INET materials found</h3>
-            <p>Huawei Outbound Plans for INET subcon will appear here.</p>
-          </div>
-        )}
       </DataTableWrapper>
       </div>
     </>
@@ -871,7 +875,6 @@ function StockBalanceTab() {
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
-        {visible.length > 0 ? (
           <table className="data-table" data-table-key="im-stock-balance-v1">
             <thead>
               <tr>
@@ -885,7 +888,21 @@ function StockBalanceTab() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((row, i) => {
+              {visible.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                    ) : (
+                      <div className="empty-state">
+                        <div className="empty-icon">📊</div>
+                        <h3>No stock found</h3>
+                        <p>Stock currently held in the main warehouse or a team warehouse, by DUID, will appear here.</p>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ) : visible.map((row, i) => {
                 const newGroup = row.duid !== prevDuid;
                 prevDuid = row.duid;
                 return (
@@ -916,15 +933,6 @@ function StockBalanceTab() {
               })}
             </tbody>
           </table>
-        ) : loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-icon">📊</div>
-            <h3>No stock found</h3>
-            <p>Stock currently held in the main warehouse or a team warehouse, by DUID, will appear here.</p>
-          </div>
-        )}
       </DataTableWrapper>
       </div>
     </>
@@ -1013,7 +1021,6 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!statusFilter}>
-        {rows.length > 0 ? (
           <table className="data-table" data-table-key="im-material-requests-v2">
             <thead>
               <tr>
@@ -1028,7 +1035,21 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                    ) : (
+                      <div className="empty-state">
+                        <div className="empty-icon">📋</div>
+                        <h3>No requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
+                        <p>Click "+ New Request" to submit your first request.</p>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ) : rows.map((row) => {
                 const actionable = isAdmin && (row.request_status === "Pending Approval" || row.request_status === "Pending Team Confirmation");
                 return (
                 <tr key={row.name}>
@@ -1050,15 +1071,6 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
               })}
             </tbody>
           </table>
-        ) : loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-icon">📋</div>
-            <h3>No requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
-            <p>Click "+ New Request" to submit your first request.</p>
-          </div>
-        )}
       </DataTableWrapper>
       </div>
 
@@ -1342,7 +1354,6 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!statusFilter}>
-        {rows.length > 0 ? (
           <table className="data-table" data-table-key="im-return-requests-v2">
             <thead>
               <tr>
@@ -1356,7 +1367,21 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
               </tr>
             </thead>
             <tbody>
-              {rows.map(row => {
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                    ) : (
+                      <div className="empty-state">
+                        <div className="empty-icon">↩</div>
+                        <h3>No return requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
+                        <p>Field teams can request to return excess materials from their stock page.</p>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ) : rows.map(row => {
                 const actionable = row.request_status === "Pending Approval"
                   || (isAdmin && row.request_status === "Pending Warehouse Confirmation");
                 return (
@@ -1385,15 +1410,6 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
               })}
             </tbody>
           </table>
-        ) : loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-icon">↩</div>
-            <h3>No return requests{statusFilter ? ` with status "${statusFilter}"` : ""}</h3>
-            <p>Field teams can request to return excess materials from their stock page.</p>
-          </div>
-        )}
       </DataTableWrapper>
       </div>
 
