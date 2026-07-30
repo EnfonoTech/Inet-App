@@ -466,21 +466,30 @@ export default function IMWorkDone() {
       const actTypes = [...new Set(bulkSelectedList.map((r) => r.activity_type).filter(Boolean))];
       const bulkDocReq = actTypes.length === 1 ? (DOC_REQUIREMENTS[actTypes[0]] || null) : null;
 
+      const uploadAll = async (files) => {
+        const urls = [];
+        for (const file of files) {
+          const url = await pmApi.uploadFileGeneric(file);
+          if (url) urls.push(url);
+        }
+        return urls;
+      };
+
       if (bulkDoc1Files.length > 0) {
-        const url = await pmApi.uploadFileGeneric(bulkDoc1Files[0]);
-        if (url) fileUrls.im_doc1 = url;
+        const urls = await uploadAll(bulkDoc1Files);
+        if (urls.length) fileUrls.im_doc1 = urls;
       }
       if (bulkDocReq?.doc2?.parts) {
         for (let i = 0; i < bulkDocReq.doc2.parts.length; i++) {
           const files = bulkDoc2PartFiles[i] || [];
           if (files.length > 0) {
-            const url = await pmApi.uploadFileGeneric(files[0]);
-            if (url) fileUrls[bulkDocReq.doc2.parts[i].slot] = url;
+            const urls = await uploadAll(files);
+            if (urls.length) fileUrls[bulkDocReq.doc2.parts[i].slot] = urls;
           }
         }
       } else if (bulkDoc2Files.length > 0) {
-        const url = await pmApi.uploadFileGeneric(bulkDoc2Files[0]);
-        if (url) fileUrls.im_doc2 = url;
+        const urls = await uploadAll(bulkDoc2Files);
+        if (urls.length) fileUrls.im_doc2 = urls;
       }
       const res = await pmApi.bulkSubmitWorkDone({
         work_done_names: [...selectedRows],

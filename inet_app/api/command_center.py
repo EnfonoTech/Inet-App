@@ -7228,13 +7228,15 @@ def _revert_pic_status_if_safe(po_dispatch_name):
 def bulk_submit_work_done(payload=None):
     """
     Bulk-update submission_status for multiple Work Done rows.
-    Optionally attaches a single shared file URL to each linked PO Dispatch.
+    Optionally attaches one or more shared files to each linked PO Dispatch.
 
     payload: {
         work_done_names: list[str],
         submission_status: str,
         note: str (optional),
-        file_urls: { slot: url } (optional, e.g. {"im_doc1": "/files/..."})
+        file_urls: { slot: url | [url, ...] } (optional, e.g.
+            {"im_doc1": ["/files/a.pdf", "/files/b.pdf"]} - each URL becomes
+            its own File record under that slot, for every selected row)
     }
     """
     if isinstance(payload, str):
@@ -7271,8 +7273,13 @@ def bulk_submit_work_done(payload=None):
         try:
             po_dispatch = _resolve_po_dispatch(wd_name)
             if po_dispatch and file_urls:
-                for slot, url in file_urls.items():
-                    if url and slot in ALLOWED_SLOTS:
+                for slot, urls in file_urls.items():
+                    if slot not in ALLOWED_SLOTS:
+                        continue
+                    url_list = urls if isinstance(urls, (list, tuple)) else [urls]
+                    for url in url_list:
+                        if not url:
+                            continue
                         frappe.get_doc({
                             "doctype": "File",
                             "file_url": url,
