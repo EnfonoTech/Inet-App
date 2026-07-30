@@ -521,7 +521,7 @@ export default function IMPlanning() {
                     <td style={{ fontSize: "0.82rem" }}>{p.im_full_name || p.dispatch_im || "—"}</td>
                     <td>{p.plan_date}</td>
                     <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
-                      {p.access_time ? `${p.access_time.slice(0, 5)}${p.access_period ? ` · ${p.access_period}` : ""}` : "—"}
+                      {p.access_time || p.access_period ? `${p.access_time ? p.access_time.slice(0, 5) : "—"}${p.access_period ? ` · ${p.access_period}` : ""}` : "—"}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {(() => {

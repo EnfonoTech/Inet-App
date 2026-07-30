@@ -39,7 +39,12 @@ export function elapsedSecondsFromServerEpoch(startTimeMs, skewMs) {
  * timezone (KSA/UTC+3) regardless of where the browser is (e.g. IST/UTC+5:30).
  */
 export function accessTimeBadge(access_time, access_period, timer_start_ms, tl_status, plan_date) {
-  if (!access_time) return null;
+  if (!access_time) {
+    // No specific time to compute lateness against, but still surface the
+    // Day/Night period if that much was set — don't blank the whole column.
+    if (access_period) return { label: access_period, bg: "#f8fafc", color: "#64748b" };
+    return null;
+  }
 
   const [h, m] = access_time.split(":").map(Number);
   if (isNaN(h) || isNaN(m)) return null;

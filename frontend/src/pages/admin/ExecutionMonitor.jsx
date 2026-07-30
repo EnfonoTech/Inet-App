@@ -558,7 +558,7 @@ export default function ExecutionMonitor() {
                       <td style={{ fontSize: "0.82rem" }}>{row.im_full_name || row.im || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.execution_date || "—"}</td>
                       <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
-                        {row.access_time ? `${row.access_time.slice(0, 5)}${row.access_period ? ` · ${row.access_period}` : ""}` : "—"}
+                        {row.access_time || row.access_period ? `${row.access_time ? row.access_time.slice(0, 5) : "—"}${row.access_period ? ` · ${row.access_period}` : ""}` : "—"}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         {(() => {
@@ -683,7 +683,7 @@ export default function ExecutionMonitor() {
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.plan_date}</td>
                       <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
-                        {row.access_time ? `${row.access_time.slice(0, 5)}${row.access_period ? ` · ${row.access_period}` : ""}` : "—"}
+                        {row.access_time || row.access_period ? `${row.access_time ? row.access_time.slice(0, 5) : "—"}${row.access_period ? ` · ${row.access_period}` : ""}` : "—"}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         {(() => {

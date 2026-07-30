@@ -683,7 +683,7 @@ export default function RolloutPlanning() {
             <button
               className="btn-primary"
               onClick={handleCreate}
-              disabled={creating || !planDate || !planEndDate || !visitType || !planTeam}
+              disabled={creating || !planDate || !planEndDate || !visitType || !planTeam || !accessTime || !accessPeriod}
             >
               {creating ? "Creating…" : `Create ${selected.size} plan${selected.size !== 1 ? "s" : ""}`}
             </button>
@@ -881,7 +881,7 @@ export default function RolloutPlanning() {
                   />
                 </div>
                 <div>
-                  <label style={labelStyle}>Access time</label>
+                  <label style={labelStyle}>Access time *</label>
                   <input
                     type="time"
                     value={accessTime}
@@ -890,7 +890,7 @@ export default function RolloutPlanning() {
                   />
                 </div>
                 <div>
-                  <label style={labelStyle}>Access period</label>
+                  <label style={labelStyle}>Access period *</label>
                   <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", padding: "9px 0" }}>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
                       <input type="radio" name="access_period_rp" checked={accessPeriod === ""} onChange={() => setAccessPeriod("")} />

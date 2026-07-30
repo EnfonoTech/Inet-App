@@ -1283,7 +1283,7 @@ export default function IMExecution() {
                       <td style={{ fontSize: "0.82rem" }}>{e.im_full_name || e.dispatch_im || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{e.execution_date || "—"}</td>
                       <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
-                        {e.access_time ? `${e.access_time.slice(0, 5)}${e.access_period ? ` · ${e.access_period}` : ""}` : "—"}
+                        {e.access_time || e.access_period ? `${e.access_time ? e.access_time.slice(0, 5) : "—"}${e.access_period ? ` · ${e.access_period}` : ""}` : "—"}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         {(() => {
@@ -1432,7 +1432,7 @@ export default function IMExecution() {
                         : e.plan_date || "—"}
                     </td>
                     <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
-                      {e.access_time ? `${e.access_time.slice(0, 5)}${e.access_period ? ` · ${e.access_period}` : ""}` : "—"}
+                      {e.access_time || e.access_period ? `${e.access_time ? e.access_time.slice(0, 5) : "—"}${e.access_period ? ` · ${e.access_period}` : ""}` : "—"}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {(() => {
