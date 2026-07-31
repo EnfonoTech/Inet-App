@@ -13807,6 +13807,73 @@ def _sanitize_archive_date(v):
     return None  # unparseable — skip field
 
 
+# Known decorations seen in archive data ("Rejected By Asad Mehmood" where
+# "Asad Mehmood" is the real owner) — stripped (case-insensitive, leading
+# position only) before re-checking against the real owner list. Shared by
+# both the archive-import path (_stamp_archive_pic_fields, below) and the
+# one-off cleanup patch (inet_app.patches.v1_0.fix_po_dispatch_legacy_data)
+# so future archive imports don't reintroduce the same bad data.
+_OWNER_LINK_KNOWN_PREFIXES = [
+    "rejected by",
+]
+
+
+def normalize_select_value(doctype, fieldname, value):
+    """Return the correctly-cased option for a Select field's value.
+
+    Frappe's Select validation is exact-match, so a value that only
+    case-differs from a real option (e.g. "PO line Canceled" vs the defined
+    "PO Line Canceled") throws on save with no help correcting it. Returns
+    the original value unchanged if it's already exact, already invalid in
+    some other way, or the field isn't a Select.
+    """
+    val = (value or "").strip()
+    if not val:
+        return value
+    meta = frappe.get_meta(doctype)
+    field = meta.get_field(fieldname)
+    if not field or field.fieldtype != "Select":
+        return value
+    valid_options = [o for o in (field.options or "").split("\n") if o.strip()]
+    if val in valid_options:
+        return value
+    for o in valid_options:
+        if o.lower() == val.lower():
+            return o
+    return value
+
+
+def resolve_or_create_owner_link(owner_doctype, value, owner_name_field="owner_name"):
+    """Resolve a PIC "owner" Link field value (ISDP Owner / IBuy Owner), even
+    when it's decorated with a known prefix (e.g. "Rejected By Asad Mehmood").
+
+    Returns (resolved_value_or_None, created_bool). resolved_value is None
+    when no real owner can be identified even after stripping known
+    prefixes — the caller should leave the field unset rather than write an
+    invalid link, and should NOT stash the original text in a
+    business-facing remark field (PIC Rejection Remark etc. are for genuine
+    PIC notes, not import-cleanup artifacts).
+    """
+    val = (value or "").strip()
+    if not val:
+        return None, False
+    if frappe.db.exists(owner_doctype, val):
+        return val, False
+    low = val.lower()
+    for prefix in _OWNER_LINK_KNOWN_PREFIXES:
+        if low.startswith(prefix):
+            stripped = val[len(prefix):].strip(" :-")
+            if not stripped:
+                continue
+            if frappe.db.exists(owner_doctype, stripped):
+                return stripped, False
+            frappe.get_doc({"doctype": owner_doctype, owner_name_field: stripped}).insert(
+                ignore_permissions=True
+            )
+            return stripped, True
+    return None, False
+
+
 def _stamp_archive_pic_fields(dispatch_name, src_line):
     """Copy PIC / invoice tracking fields from an archive row onto a PO Dispatch.
 
@@ -13850,6 +13917,24 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
             if not frappe.db.exists("Subcontract Master", str(v).strip()):
                 continue
             updates[k] = str(v).strip()
+        elif k in ("pic_status", "pic_status_ms2"):
+            # Select field — archive rows have been seen with a value that
+            # only case-differs from the real option (e.g. "PO line
+            # Canceled"); Frappe's Select validation is exact-match, so an
+            # unnormalized value would silently sit fine here (this path
+            # bypasses validate()) but throw the next time anyone runs this
+            # record through a real doc.save() (e.g. PIC Tracker updates).
+            updates[k] = normalize_select_value("PO Dispatch", k, str(v).strip())
+        elif k == "isdp_owner":
+            resolved, _ = resolve_or_create_owner_link("ISDP Owner", str(v).strip())
+            if resolved:
+                updates[k] = resolved
+            # else: not a recognizable owner (no known decoration prefix
+            # matched) — skip rather than write an invalid link.
+        elif k == "ibuy_owner":
+            resolved, _ = resolve_or_create_owner_link("IBuy Owner", str(v).strip())
+            if resolved:
+                updates[k] = resolved
         elif k in NUMERIC:
             try:
                 updates[k] = flt(v)
