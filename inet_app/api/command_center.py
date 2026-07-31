@@ -972,15 +972,21 @@ def _upsert_po_dispatch_for_line(
         "site_code": site_code,
         "site_name": site_name,
     }
+    proj_huawei_im = None
     if project_code and frappe.db.exists("Project Control Center", project_code):
         payload["project_code"] = project_code
         proj_owners = frappe.db.get_value(
-            "Project Control Center", project_code, ["isdp_owner", "ibuy_owner"], as_dict=True
+            "Project Control Center", project_code, ["isdp_owner", "ibuy_owner", "huawei_im"], as_dict=True
         ) or {}
         if proj_owners.get("isdp_owner"):
             payload["isdp_owner"] = proj_owners["isdp_owner"]
         if proj_owners.get("ibuy_owner"):
             payload["ibuy_owner"] = proj_owners["ibuy_owner"]
+        # Only ever applied on the brand-new PO Dispatch below, never on the
+        # existing_name update branch — a PM/IM may have already overridden
+        # huawei_im (e.g. from the rollout planning popup) and re-syncing
+        # this line must not stomp that back to the project's default.
+        proj_huawei_im = proj_owners.get("huawei_im")
 
     existing_name = frappe.db.get_value(
         "PO Dispatch", {"po_intake": po_intake_name, "po_line_no": po_line_no}, "name"
@@ -1001,6 +1007,8 @@ def _upsert_po_dispatch_for_line(
     for key, value in payload.items():
         if value is not None and value != "":
             setattr(doc, key, value)
+    if proj_huawei_im:
+        doc.huawei_im = proj_huawei_im
     return _insert_po_dispatch_with_poid(doc, poid)
 
 
@@ -2272,7 +2280,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
     dispatch_map = {}
     if parent_names:
         disp_fields_full = [
-            "name", "po_intake", "po_line_no", "system_id", "im",
+            "name", "po_intake", "po_line_no", "system_id", "im", "huawei_im",
             "dispatch_mode", "target_month", "region_type", "center_area",
             "ms1_amount", "ms2_amount", "pic_status", "pic_status_ms2",
         ]
@@ -2342,6 +2350,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
             line["ms2_amount"] = flt(dispatch_data.get("ms2_amount") or 0)
             line["pic_status"] = dispatch_data.get("pic_status")
             line["pic_status_ms2"] = dispatch_data.get("pic_status_ms2")
+            line["huawei_im"] = dispatch_data.get("huawei_im")
 
         if not line.get("region_type"):
             line["region_type"] = region_type_from_center_area(line.get("center_area"))
@@ -3302,7 +3311,14 @@ def _batch_item_activity_types(rows, item_key="item_code"):
 
 
 def _enrich_with_project_fields(rows, code_key="project_code"):
-    """Batch-fetch project_domain and huawei_im from Project Control Center."""
+    """Batch-fetch project_domain and huawei_im from Project Control Center.
+
+    huawei_im is now also a real field on PO Dispatch (defaults from the
+    project at dispatch time, overridable from the rollout planning popup).
+    If a row already carries a truthy huawei_im (i.e. the caller fetched
+    PO Dispatch's own column), that override wins; only rows with no
+    dispatch-level value fall back to the project's default here.
+    """
     codes = list({r.get(code_key) for r in rows if r.get(code_key)} - {None, ""})
     if not codes:
         return
@@ -3320,7 +3336,7 @@ def _enrich_with_project_fields(rows, code_key="project_code"):
     for row in rows:
         info = pcc_map.get(row.get(code_key)) or {}
         row["project_domain"] = info.get("project_domain") or ""
-        row["huawei_im"] = info.get("huawei_im") or ""
+        row["huawei_im"] = row.get("huawei_im") or info.get("huawei_im") or ""
 
 
 @frappe.whitelist()
@@ -3956,7 +3972,14 @@ def bulk_assign_po_dispatch_im(payload=None):
         except Exception as e:
             errors.append({"name": "pending lines", "error": str(e)})
 
-    for line in dispatched_bucket:
+    # Commit every COMMIT_BATCH rows instead of after every single one — with
+    # a few hundred selected lines, a commit-per-row loop spends most of its
+    # time on transaction fsync overhead rather than the actual updates
+    # (reported: ~500 rows taking minutes). Still frequent enough that a
+    # mid-batch crash only loses one small batch's progress, not everything.
+    COMMIT_BATCH = 25
+
+    for i, line in enumerate(dispatched_bucket):
         dispatch_name = line.get("dispatch_name")
         try:
             if frappe.db.exists("Work Done", {"system_id": dispatch_name}):
@@ -3966,12 +3989,15 @@ def bulk_assign_po_dispatch_im(payload=None):
                 "PO Dispatch", dispatch_name, "im", im, update_modified=True,
             )
             _cascade_im_on_dispatch(dispatch_name, im)
-            frappe.db.commit()
             reassigned_count += 1
         except Exception as e:
+            frappe.log_error(frappe.get_traceback(), "bulk_assign_po_dispatch_im: dispatched bucket")
             errors.append({"name": dispatch_name or line.get("name"), "error": str(e)})
+        if (i + 1) % COMMIT_BATCH == 0:
+            frappe.db.commit()
+    frappe.db.commit()
 
-    for line in closed_bucket:
+    for i, line in enumerate(closed_bucket):
         dispatch_name = line.get("dispatch_name")
         if not dispatch_name:
             continue
@@ -3982,10 +4008,13 @@ def bulk_assign_po_dispatch_im(payload=None):
             doc = frappe.get_doc("PO Dispatch", dispatch_name)
             doc.im = im
             doc.save(ignore_permissions=True)
-            frappe.db.commit()
             updated_closed_count += 1
         except Exception as e:
+            frappe.log_error(frappe.get_traceback(), "bulk_assign_po_dispatch_im: closed bucket")
             errors.append({"name": dispatch_name or line.get("name"), "error": str(e)})
+        if (i + 1) % COMMIT_BATCH == 0:
+            frappe.db.commit()
+    frappe.db.commit()
 
     return {
         "dispatched": dispatched_count,
@@ -4078,6 +4107,7 @@ def create_rollout_plans(payload):
         "teams": [{"team":"…","assigned_qty":0.5}, ...],  # multi-team split
         "access_time": "",  # optional
         "access_period": "Day" | "Night" | "",  # optional
+        "huawei_im": "",  # optional — overrides PO Dispatch.huawei_im when provided
         "visit_type": "Execution",
     }
 
@@ -4097,6 +4127,9 @@ def create_rollout_plans(payload):
     access_period = (payload.get("access_period") or "").strip()
     if access_period and access_period not in ("Day", "Night"):
         access_period = ""
+    huawei_im_override = (payload.get("huawei_im") or "").strip()
+    if huawei_im_override and not frappe.db.exists("Huawei IM", huawei_im_override):
+        frappe.throw(frappe._("Invalid Huawei IM selected"))
     visit_type = payload.get("visit_type") or "Execution"
 
     # Per-plan workflow toggles — IM/PM picks at planning time whether
@@ -4324,6 +4357,8 @@ def create_rollout_plans(payload):
 
         disp_updates = {"dispatch_status": "Planned"}
         disp_updates.update(remark_updates)
+        if huawei_im_override:
+            disp_updates["huawei_im"] = huawei_im_override
         frappe.db.set_value(
             "PO Dispatch",
             dispatch_name,
@@ -6216,7 +6251,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
         domain_parts.append("IFNULL(pd.internal_domain,'')")
     domain_parts.append("IFNULL(pcc.project_domain,'')")
     col_filter_map["domain"] = "CONCAT_WS(' ', " + ", ".join(domain_parts) + ")"
-    col_filter_map["huawei_im"] = "IFNULL(pcc.huawei_im,'')"
+    col_filter_map["huawei_im"] = "COALESCE(NULLIF(pd.huawei_im,''), pcc.huawei_im, '')"
     if frappe.db.has_column("PO Dispatch", "general_remark"):
         col_filter_map["general"] = "IFNULL(pd.general_remark,'')"
     if frappe.db.has_column("PO Dispatch", "manager_remark"):
@@ -6386,6 +6421,8 @@ def list_execution_monitor_rows(filters=None, limit=500):
             d_fields.append("poid")
         if frappe.db.has_column("PO Dispatch", "im"):
             d_fields.append("im")
+        if frappe.db.has_column("PO Dispatch", "huawei_im"):
+            d_fields.append("huawei_im")
         if frappe.db.has_column("PO Dispatch", "center_area"):
             d_fields.append("center_area")
         if frappe.db.has_column("PO Dispatch", "region_type"):
@@ -6473,6 +6510,7 @@ def list_execution_monitor_rows(filters=None, limit=500):
                 "team_name": team_name_map.get(p.team) if p.team else None,
                 "im": im_key,
                 "im_full_name": im_name_map.get(im_key) if im_key else None,
+                "huawei_im": d.get("huawei_im") if d else None,
                 "plan_date": p.plan_date,
                 "visit_type": p.visit_type,
                 "visit_number": p.get("visit_number") if p else None,
@@ -6968,6 +7006,8 @@ def list_work_done_rows(filters=None, limit=500):
             pd_fields_wd.append("poid")
         if frappe.db.has_column("PO Dispatch", "im"):
             pd_fields_wd.append("im")
+        if frappe.db.has_column("PO Dispatch", "huawei_im"):
+            pd_fields_wd.append("huawei_im")
         if frappe.db.has_column("PO Dispatch", "center_area"):
             pd_fields_wd.append("center_area")
         if frappe.db.has_column("PO Dispatch", "region_type"):
@@ -7068,6 +7108,7 @@ def list_work_done_rows(filters=None, limit=500):
                 "team_name": team_name_map_wd.get(team) if team else None,
                 "im": im_row,
                 "im_full_name": im_name_map_wd.get(im_row) if im_row else None,
+                "huawei_im": pd.get("huawei_im") if pd else None,
                 "item_code": pd.item_code if pd else None,
                 "item_description": pd.item_description if pd else None,
                 "customer": pd.get("customer") if pd else None,
@@ -7918,7 +7959,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         "issue_category": "IFNULL(rp.issue_category,'')",
         "issue_remarks": "IFNULL(rp.issue_remarks,'')",
         "execution_remarks": _latest_de_ir("remarks"),
-        "huawei_im": "IFNULL(pcc_ir.huawei_im,'')",
+        "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_ir.huawei_im, '')",
         "domain": "IFNULL(pcc_ir.project_domain,'')",
     }
     if frappe.db.has_column("Daily Execution", "ciag_status"):
@@ -8028,6 +8069,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             {im_full_sql_ir},
             rp.modified,
             pd.im,
+            pd.huawei_im,
             pd.po_no,
             pd.project_code,
             pd.site_code,
@@ -9560,7 +9602,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         "target_sar": "CAST(rp.target_amount AS CHAR)",
         "cancel": "IFNULL(rp.cancel_request_status,'')",
         "domain": "IFNULL(pcc_rp.project_domain,'')",
-        "huawei_im": "IFNULL(pcc_rp.huawei_im,'')",
+        "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_rp.huawei_im, '')",
     }
     if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
         col_filter_map["dummy_poid"] = "IFNULL(pd.original_dummy_poid,'')"
@@ -9677,6 +9719,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                pd.customer AS customer, pd.item_description, pd.is_dummy_po,
+               pd.huawei_im,
                {_remark_select()},
                it.team_name AS team_name,
                {im_full_sql}
@@ -9864,7 +9907,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         "qty": "CAST(de.achieved_qty AS CHAR)",
         "visit": "CAST(rp.visit_number AS CHAR)",
         "domain": "IFNULL(pcc_ex.project_domain,'')",
-        "huawei_im": "IFNULL(pcc_ex.huawei_im,'')",
+        "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_ex.huawei_im, '')",
     }
     if frappe.db.has_column("Daily Execution", "ciag_status"):
         col_filter_map["ciag"] = "IFNULL(de.ciag_status,'')"
@@ -9991,7 +10034,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                {ciag_req_sel} AS ciag_required,
                {access_time_sel} AS access_time,
                {access_period_sel} AS access_period,
-               pd.im AS dispatch_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
+               pd.im AS dispatch_im, pd.huawei_im, pd.site_code, pd.site_name, pd.po_no, pd.project_code, pd.item_code, pd.item_description,
                pd.is_dummy_po,
                pd.customer AS customer,
                {_remark_select()},
@@ -13532,7 +13575,7 @@ def list_backend_dispatches(
         "po_no": "IFNULL(pd.po_no,'')",
         "project": "IFNULL(pd.project_code,'')",
         "domain": "IFNULL(pcc_bk.project_domain,'')",
-        "huawei_im": "IFNULL(pcc_bk.huawei_im,'')",
+        "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_bk.huawei_im, '')",
         "item": "IFNULL(pd.item_code,'')",
         "description": "IFNULL(pd.item_description,'')",
         "qty": "CAST(pd.qty AS CHAR)",
@@ -13579,7 +13622,7 @@ def list_backend_dispatches(
                pd.po_no, pd.po_line_no,
                pd.item_code, pd.item_description,
                pd.qty, pd.line_amount,
-               pd.project_code, pd.customer, pd.im,
+               pd.project_code, pd.customer, pd.im, pd.huawei_im,
                pd.site_code, pd.site_name, pd.center_area, pd.region_type,
                pd.dispatch_status, pd.target_month,
                pd.backend_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark,

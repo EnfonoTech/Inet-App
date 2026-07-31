@@ -168,6 +168,7 @@ export default function PODispatch() {
   const [assigningBulkIm, setAssigningBulkIm] = useState(false);
   const [skipPreview, setSkipPreview] = useState([]);
   const [loadingSkipPreview, setLoadingSkipPreview] = useState(false);
+  const [assignImErrors, setAssignImErrors] = useState([]);
 
   const [successMsg, setSuccessMsg] = useState(null);
   const [errMsg, setErrMsg] = useState(null);
@@ -389,6 +390,7 @@ export default function PODispatch() {
   async function openAssignImModal() {
     setBulkAssignIm("");
     setSkipPreview([]);
+    setAssignImErrors([]);
     setShowAssignImModal(true);
     const selectedLines = rows.filter((r) => selected.has(r.name));
     const dispatchNames = selectedLines.map((r) => r.dispatch_name).filter(Boolean);
@@ -408,6 +410,7 @@ export default function PODispatch() {
   async function handleBulkAssignIm() {
     if (!bulkAssignIm || selected.size === 0) return;
     setAssigningBulkIm(true);
+    setAssignImErrors([]);
     try {
       const selectedLines = rows.filter((r) => selected.has(r.name));
       const res = await pmApi.bulkAssignPODispatchIm({ lines: selectedLines, im: bulkAssignIm });
@@ -420,12 +423,19 @@ export default function PODispatch() {
       const summary = parts.length ? parts.join(", ") : "No lines updated";
       showNotice(
         errCount ? "err" : "ok",
-        `${summary}.${errCount ? ` ${errCount} error${errCount !== 1 ? "s" : ""} — check line data.` : ""}`,
+        `${summary}.${errCount ? ` ${errCount} error${errCount !== 1 ? "s" : ""} — see details below.` : ""}`,
       );
-      setSelected(new Set());
-      setShowAssignImModal(false);
-      setBulkAssignIm("");
       loadData(activeTab);
+      if (errCount) {
+        // Keep the modal open and show the actual error text (deduped) so
+        // the user doesn't just see a bare count with no way to diagnose it.
+        console.error("bulkAssignPODispatchIm errors:", res.errors);
+        setAssignImErrors(res.errors);
+      } else {
+        setSelected(new Set());
+        setShowAssignImModal(false);
+        setBulkAssignIm("");
+      }
     } catch (err) {
       showNotice("err", err.message || "Assign IM failed");
     } finally {
@@ -566,6 +576,29 @@ export default function PODispatch() {
             ))}
           </select>
         </div>
+        {assignImErrors.length > 0 && (() => {
+          const byMessage = {};
+          for (const e of assignImErrors) {
+            const msg = e.error || "Unknown error";
+            (byMessage[msg] = byMessage[msg] || []).push(e.name);
+          }
+          const groups = Object.entries(byMessage).sort((a, b) => b[1].length - a[1].length);
+          return (
+            <div style={{ margin: "0 0 16px", padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, maxHeight: 220, overflowY: "auto" }}>
+              <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#991b1b", marginBottom: 8 }}>
+                {assignImErrors.length} line{assignImErrors.length !== 1 ? "s" : ""} failed:
+              </div>
+              {groups.map(([msg, names]) => (
+                <div key={msg} style={{ marginBottom: 8, fontSize: "0.78rem" }}>
+                  <div style={{ color: "#991b1b", fontWeight: 600 }}>{names.length}× — {msg}</div>
+                  <div style={{ color: "#7f1d1d", fontFamily: "monospace", fontSize: "0.72rem", marginTop: 2 }}>
+                    {names.slice(0, 8).join(", ")}{names.length > 8 ? ` … +${names.length - 8} more` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button className="btn-secondary" onClick={() => setShowAssignImModal(false)}>Cancel</button>
           <button className="btn-primary" onClick={handleBulkAssignIm} disabled={assigningBulkIm || !bulkAssignIm}>

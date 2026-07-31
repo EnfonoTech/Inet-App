@@ -23,6 +23,7 @@
   "project_code",
   "customer",
   "im",
+  "huawei_im",
   "column_break_vuud",
   "target_month",
   "planning_mode",
@@ -186,6 +187,12 @@
    "in_list_view": 1,
    "label": "Implementation Manager",
    "options": "IM Master"
+  },
+  {
+   "fieldname": "huawei_im",
+   "fieldtype": "Link",
+   "label": "Huawei IM",
+   "options": "Huawei IM"
   },
   {
    "fieldname": "target_month",

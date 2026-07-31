@@ -138,6 +138,8 @@ export default function RolloutPlanning() {
   const [planTeams, setPlanTeams] = useState([]);
   const [accessTime, setAccessTime] = useState("");
   const [accessPeriod, setAccessPeriod] = useState("");
+  const [huaweiImOverride, setHuaweiImOverride] = useState("");
+  const [huaweiIms, setHuaweiIms] = useState([]);
   const [qcRequired, setQcRequired] = useState(true);
   const [ciagRequired, setCiagRequired] = useState(true);
   const [teamsList, setTeamsList] = useState([]);
@@ -238,6 +240,7 @@ export default function RolloutPlanning() {
         if (!cancelled) setTeamsLoading(false);
       }
     })();
+    pmApi.listHuaweiIMs().then((res) => { if (!cancelled) setHuaweiIms(res || []); }).catch(() => {});
     return () => { cancelled = true; };
   }, [showModal]);
 
@@ -286,6 +289,12 @@ export default function RolloutPlanning() {
     setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
+    // Pre-fill with the current value only when every selected row already
+    // agrees on it (own override or project default); otherwise leave blank
+    // so submitting doesn't silently overwrite a mixed batch with one value.
+    const selRows = rows.filter((r) => selected.has(r.name));
+    const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
+    setHuaweiImOverride(huaweiVals.length === 1 ? huaweiVals[0] : "");
     setQcRequired(true);
     setCiagRequired(true);
     setManagerRemark("");
@@ -325,6 +334,7 @@ export default function RolloutPlanning() {
         teams: teamsPayload,
         access_time: accessTime,
         access_period: accessPeriod,
+        huawei_im: huaweiImOverride || undefined,
         qc_required: qcRequired ? 1 : 0,
         ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType,
@@ -905,6 +915,17 @@ export default function RolloutPlanning() {
                       Night
                     </label>
                   </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>Huawei IM</label>
+                  <SearchableSelect
+                    value={huaweiImOverride}
+                    onChange={setHuaweiImOverride}
+                    options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+                    placeholder="Defaults from project — set to override"
+                    style={{ width: "100%" }}
+                    minWidth={0}
+                  />
                 </div>
               </div>
 
