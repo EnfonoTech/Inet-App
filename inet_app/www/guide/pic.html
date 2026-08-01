@@ -46,10 +46,16 @@
 
   <hr>
 
-  <h2>5.2 PIC Tracker <span class="section-url">/pms/pic-tracker</span></h2>
-  <p>Your main daily working page. Every active PO line is here. Filter, edit, and bulk-update billing statuses.</p>
-  <p><strong>Toolbar:</strong> Text search, PIC Status MS1 (multi-select), PIC Status MS2 (multi-select), All Projects, All DUIDs, Clear, Refresh, <strong>Download CSV</strong>, row limit selector.</p>
-  <p><strong>Totals row</strong> at the bottom of the table sums all monetary columns over the current loaded rows.</p>
+  <h2>5.2 Pending <span class="section-url">/pms/pic-pending</span></h2>
+  <p>POIDs that haven't reached PIC yet — either milestone is still "Work Not Done" (site not confirmed, or no status set) or flagged "PO Need to Cancel". Every non-internal, non-dummy PO line lives on exactly one of Pending / PIC Tracker / Cancelled — a line only appears here while <em>both</em> its milestones are untouched; the moment either milestone progresses it moves to PIC Tracker.</p>
+  <p><strong>Set Cancellation Status</strong> — select rows, pick a milestone (MS1/MS2), and either flag them <strong>"PO Need to Cancel"</strong> (keeps the line here) or confirm <strong>"PO Line Canceled"</strong> (moves the line to the Cancelled page).</p>
+
+  <hr>
+
+  <h2>5.3 PIC Tracker <span class="section-url">/pms/pic-tracker</span></h2>
+  <p>Your main daily working page. Every line that has started moving through the acceptance and invoicing pipeline is here — from "Under Process to Apply" through "Commercial Invoice Closed". Filter, edit, bulk-update billing statuses, and raise invoices, all from one page. (Lines still untouched are on Pending; cancelled lines are on the Cancelled page.)</p>
+  <p><strong>Toolbar:</strong> Text search, PIC Status MS1 (multi-select), PIC Status MS2 (multi-select), All Projects, All DUIDs, Subcontract, ISDP Owner, iBuy Owner, Clear, Refresh, <strong>Download CSV</strong>, row limit selector.</p>
+  <p><strong>KPI strip</strong> (updates with filters): MS1 Total · MS1 Invoiced · MS2 Total · MS2 Invoiced (SAR values across the current view). <strong>Totals row</strong> at the bottom of the table sums all monetary columns over the current loaded rows.</p>
 
   <h3>Status pill colour coding</h3>
   <table>
@@ -79,29 +85,31 @@
   <p>Save / Cancel buttons. Validation errors shown inline.</p>
 
   <h3>Bulk Update</h3>
-  <p>Select multiple rows → click <strong>Bulk Update (N)</strong>. Modal: <strong>Milestone</strong> (MS1 or MS2 radio), <strong>Status</strong> dropdown, <strong>Remark</strong> (optional). Confirm updates all selected POIDs at once.</p>
+  <p>Select multiple rows → click <strong>Bulk Set Status (N)</strong>. Modal: <strong>Milestone</strong> (MS1 or MS2), <strong>New Status</strong> dropdown (any of the 11 PIC statuses, including flagging/confirming cancellation), <strong>Note</strong> (optional). Confirm updates all selected POIDs at once. Select rows → <strong>Reject (N)</strong> rejects the underlying Work Done with a required remark.</p>
+
+  <h3>Invoicing actions</h3>
+  <p>Select rows and use the same toolbar for invoicing — no separate page needed.</p>
+  <table>
+    <thead><tr><th>Action</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Create Sales Invoice</strong></td><td>Enabled once every selected line has a "Ready for Invoice" milestone. Detects whether to invoice MS1 or MS2 for each selected line, sets correct amounts and line references automatically, and creates Sales Invoice documents in ERPNext.</td></tr>
+    </tbody>
+  </table>
+  <p>To advance a line to "Commercial Invoice Submitted" or "Commercial Invoice Closed" directly (without creating a new invoice), use <strong>Bulk Set Status</strong> above — the same action used for every other status change.</p>
+  <div class="g-alert g-alert-success"><span class="g-alert-icon">✅</span><div><strong>Automatic status updates:</strong> When a Sales Invoice is <em>submitted</em> in ERPNext, the linked PO line automatically advances to "Commercial Invoice Submitted" and Work Done billing status becomes "Invoiced". No manual update required.</div></div>
+  <p>The <strong>Linked Invoice</strong> column shows every Sales Invoice raised against a line, with its status (Draft/Submitted) — click through to open it in ERPNext.</p>
 
   <h3>Download CSV</h3>
   <p>Exports all currently loaded rows as <code>pic-tracker-YYYY-MM-DD.csv</code>. Date fields trimmed to YYYY-MM-DD for spreadsheet compatibility.</p>
 
   <hr>
 
-  <h2>5.3 Invoice Tracker <span class="section-url">/pms/pic-invoice-tracker</span></h2>
-  <p>Focused view for lines at "Ready for Invoice" or beyond. Use this to create invoices and close milestones.</p>
-  <p><strong>KPI pills</strong> (update with filters): MS1 Total · MS1 Invoiced · MS2 Total · MS2 Invoiced (SAR values across current view).</p>
-  <table>
-    <thead><tr><th>Action</th><th>What it does</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Create Sales Invoice</strong></td><td>Detects whether to invoice MS1 or MS2 for each selected line. Sets correct amounts and line references automatically. Creates Sales Invoice documents in ERPNext.</td></tr>
-      <tr><td><strong>Mark Submitted</strong></td><td>Bulk-advance selected lines to "Commercial Invoice Submitted"</td></tr>
-      <tr><td><strong>Mark Closed</strong></td><td>Bulk-advance selected lines to "Commercial Invoice Closed"</td></tr>
-    </tbody>
-  </table>
-  <div class="g-alert g-alert-success"><span class="g-alert-icon">✅</span><div><strong>Automatic status updates:</strong> When a Sales Invoice is <em>submitted</em> in ERPNext, the linked PO line automatically advances to "Commercial Invoice Submitted" and Work Done billing status becomes "Invoiced". No manual update required.</div></div>
+  <h2>5.4 Cancelled <span class="section-url">/pms/pic-cancelled</span></h2>
+  <p>Read-only archive of every POID with "PO Line Canceled" on either milestone — for visibility and audit only, no actions here. A line is cancelled the moment you confirm it from the Pending page (or set it directly from PIC Tracker's Bulk Set Status); it then disappears from PIC Tracker and appears here instead.</p>
 
   <hr>
 
-  <h2>5.4 PIC Reports <span class="section-url">/pms/pic-reports</span></h2>
+  <h2>5.5 PIC Reports <span class="section-url">/pms/pic-reports</span></h2>
   <table>
     <thead><tr><th>Report</th><th>What it answers</th></tr></thead>
     <tbody>
@@ -115,7 +123,7 @@
 
   <hr>
 
-  <h2>5.5 How PIC Status Drives Work Done Billing</h2>
+  <h2>5.6 How PIC Status Drives Work Done Billing</h2>
   <table>
     <thead><tr><th>PIC action</th><th>Work Done billing shows</th></tr></thead>
     <tbody>
@@ -148,7 +156,7 @@
     <div class="g-workflow-connector">↓</div>
     <div class="g-workflow-row"><div class="g-workflow-num">9</div><div class="g-workflow-text"><strong>PIC tracks billing</strong> → PIC Tracker → edits each line: MS1 Applied Date → I-BUY Owner → advances status: Under Process → Under I-BUY → Under ISDP → Ready for Invoice.</div></div>
     <div class="g-workflow-connector">↓</div>
-    <div class="g-workflow-row"><div class="g-workflow-num">10</div><div class="g-workflow-text"><strong>PIC creates Sales Invoice</strong> → Invoice Tracker → select ready lines → Create Sales Invoice → one click generates the invoice.</div></div>
+    <div class="g-workflow-row"><div class="g-workflow-num">10</div><div class="g-workflow-text"><strong>PIC creates Sales Invoice</strong> → PIC Tracker → select ready lines → Create Sales Invoice → one click generates the invoice.</div></div>
     <div class="g-workflow-connector">↓</div>
     <div class="g-workflow-row"><div class="g-workflow-num">11</div><div class="g-workflow-text"><strong>Invoice closed</strong> → Payment received → PIC marks "Commercial Invoice Closed". Work Done shows Closed. Dashboards reflect final numbers within 5 minutes.</div></div>
   </div>
@@ -164,7 +172,7 @@
   <div class="g-trouble-item"><div class="g-trouble-issue">Material Request button not showing for a DUID</div><div class="g-trouble-fix">All received items for that DUID have already been requested; remaining quantity is zero.</div></div>
   <div class="g-trouble-item"><div class="g-trouble-issue">IM dashboard empty or showing wrong data</div><div class="g-trouble-fix">Contact your administrator to link your user account to your IM Master record and assign teams.</div></div>
   <div class="g-trouble-item"><div class="g-trouble-issue">Backend nav link not showing in IM sidebar</div><div class="g-trouble-fix">Your IM Master record needs "Can Assign Backend" enabled. Contact your Project Manager.</div></div>
-  <div class="g-trouble-item"><div class="g-trouble-issue">Invoice Tracker "Create Sales Invoice" fails</div><div class="g-trouble-fix">Check that the Customer and Item Code are set on the PO line. Verify the item has a valid billing rate in Customer Item Master.</div></div>
+  <div class="g-trouble-item"><div class="g-trouble-issue">PIC Tracker "Create Sales Invoice" fails</div><div class="g-trouble-fix">Check that the Customer and Item Code are set on the PO line. Verify the item has a valid billing rate in Customer Item Master.</div></div>
   <div class="g-trouble-item"><div class="g-trouble-issue">Return request submitted but stock hasn't moved</div><div class="g-trouble-fix">The IM needs to approve the return from the Returns tab in Material Requests.</div></div>
   <div class="g-trouble-item"><div class="g-trouble-issue">Expense claim stuck on Pending</div><div class="g-trouble-fix">Your IM reviews claims from the Expense Approvals page. Follow up with them directly.</div></div>
   <div class="g-trouble-item"><div class="g-trouble-issue">+ New Claim button is greyed out</div><div class="g-trouble-fix">Your user account must be linked to an Employee record. Contact your IM or administrator.</div></div>

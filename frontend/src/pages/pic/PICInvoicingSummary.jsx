@@ -34,15 +34,17 @@ function statusColor(status) {
   return "#334155";
 }
 
+// Every status in `order` always shows a row, even with zero lines — a
+// status with no data is still useful information (nothing stuck there),
+// not something to hide. Missing statuses get a zero-value stub; any
+// status the backend returned that isn't in `order` still appends at the end.
 function sortByStatus(rows, order) {
-  return [...rows].sort((a, b) => {
-    const ai = order.indexOf(a.pic_status);
-    const bi = order.indexOf(b.pic_status);
-    if (ai === -1 && bi === -1) return 0;
-    if (ai === -1) return 1;
-    if (bi === -1) return -1;
-    return ai - bi;
+  const byStatus = new Map(rows.map((r) => [r.pic_status, r]));
+  const known = order.map((status) => byStatus.get(status) || {
+    pic_status: status, row_count: 0, po_amount: 0, invoiced: 0, unbilled: 0, subcon_amt: 0, inet_amt: 0,
   });
+  const unknown = rows.filter((r) => !order.includes(r.pic_status));
+  return [...known, ...unknown];
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────
@@ -95,11 +97,13 @@ function TopSummaryCard({ top }) {
   );
 }
 
-const INVOICE_TRACKER_STATUSES_SET = new Set([
-  "Commercial Invoice Closed",
-  "Commercial Invoice Submitted",
-  "Ready for Invoice",
-]);
+// Pure-pending statuses route to the Pending page (Page 1) — a row only
+// actually lives there while its OTHER milestone is also untouched, but
+// most of a bucket's volume genuinely does. "PO Line Canceled" always means
+// the whole row lives on the Cancelled page (Page 3). Everything else is
+// unambiguous and lives on PIC Tracker (Page 2).
+const PENDING_STATUSES_SET = new Set(["Work Not Done", "PO Need to Cancel"]);
+const CANCELLED_STATUS = "PO Line Canceled";
 
 function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
   const navigate = useNavigate();
@@ -111,9 +115,10 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
   const sorted = statusOrder ? sortByStatus(rows, statusOrder) : rows;
 
   function handleRowClick(status) {
-    if (INVOICE_TRACKER_STATUSES_SET.has(status)) {
-      const param = milestone === "ms2" ? "ms2_status" : "ms1_status";
-      navigate(`/pic-invoice-tracker?${param}=${encodeURIComponent(status)}`);
+    if (status === CANCELLED_STATUS) {
+      navigate("/pic-cancelled");
+    } else if (PENDING_STATUSES_SET.has(status)) {
+      navigate("/pic-pending");
     } else {
       const param = milestone === "ms2" ? "pic_ms2_status" : "pic_status";
       navigate(`/pic-tracker?${param}=${encodeURIComponent(status)}`);

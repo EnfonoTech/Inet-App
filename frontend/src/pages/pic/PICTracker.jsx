@@ -10,6 +10,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { useAuth } from "../../context/AuthContext";
 import DateRangePicker from "../../components/DateRangePicker";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -38,8 +39,21 @@ const PIC_STATUSES = [
   "I-BUY Rejected",
   "ISDP Rejected",
   "Ready for Invoice",
+  "Commercial Invoice Submitted",
+  "Commercial Invoice Closed",
   "PO Need to Cancel",
   "PO Line Canceled",
+];
+
+// PO Dispatch's dispatch_status field — see po_dispatch.json.
+const PO_STATUSES = [
+  "Pending",
+  "Dispatched",
+  "Planned",
+  "Backend Assigned",
+  "Completed",
+  "Closed",
+  "Cancelled",
 ];
 
 // Columns the CSV includes — subset of the table columns the user actually
@@ -50,6 +64,8 @@ const CSV_COLUMNS = [
   ["contract_model", "Contract Model"],
   ["poid", "POID"],
   ["po_no", "PO No"],
+  ["customer", "Customer"],
+  ["im_full_name", "IM"],
   ["dispatch_status", "PO Status"],
   ["project_domain", "Project Domain"],
   ["project_code", "Project"],
@@ -87,6 +103,7 @@ const CSV_COLUMNS = [
   ["ms2_invoice_month", "MS2 Invoicing Month"],
   ["ms2_ibuy_inv_date", "MS2 IBUY/INV Date"],
   ["remaining_milestone_pct", "Remaining Milestone %"],
+  ["linked_invoices_csv", "Linked Invoice"],
 ];
 
 function downloadPicTrackerCsv(rows) {
@@ -113,45 +130,24 @@ function downloadPicTrackerCsv(rows) {
   URL.revokeObjectURL(a.href);
 }
 
-function IMStatusPill({ value }) {
-  if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
-  const v = String(value);
-  let bg, fg;
-  if (/Confirmation Done/i.test(v))      { bg = "rgba(16,185,129,0.12)"; fg = "#047857"; }
-  else if (/PIC Rejected/i.test(v))      { bg = "rgba(239,68,68,0.10)";  fg = "#b91c1c"; }
-  else if (/Ready for Confirmation/i.test(v)) { bg = "rgba(59,130,246,0.10)"; fg = "#1d4ed8"; }
-  else                                   { bg = "rgba(100,116,139,0.10)"; fg = "#475569"; }
-  return (
-    <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: bg, color: fg }}>
-      {v}
-    </span>
-  );
-}
-
-function StatusPill({ value }) {
-  if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
-  const v = String(value);
-  let bg = "rgba(100,116,139,0.10)", fg = "#475569";
-  if (/Closed|Accepted|Done|Submitted/i.test(v) && /Invoice|PAT/i.test(v)) { bg = "rgba(16,185,129,0.12)"; fg = "#047857"; }
-  else if (/Ready/i.test(v))  { bg = "rgba(59,130,246,0.10)";  fg = "#1d4ed8"; }
-  else if (/Under I-BUY/i.test(v)) { bg = "rgba(139,92,246,0.10)"; fg = "#6d28d9"; }
-  else if (/Under ISDP/i.test(v))  { bg = "rgba(168,85,247,0.10)"; fg = "#7e22ce"; }
-  else if (/Process|Apply|Pending/i.test(v)) { bg = "rgba(245,158,11,0.10)"; fg = "#b45309"; }
-  else if (/Rejected|Cancel/i.test(v))       { bg = "rgba(239,68,68,0.10)"; fg = "#b91c1c"; }
-  return (
-    <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: bg, color: fg }}>
-      {v}
-    </span>
-  );
-}
-
 export default function PICTracker() {
   const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  // True MS1/MS2 sums across every row matching the current filters — from
+  // the backend, independent of the row-limit cap. Distinct from the
+  // `totals` useMemo below, which sums only the currently loaded rows for
+  // the table's own footer (a spreadsheet-style "sum of what's visible").
+  const [aggTotals, setAggTotals] = useState({ ms1_amount: 0, ms1_invoiced: 0, ms2_amount: 0, ms2_invoiced: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [toastMsg, setToastMsg] = useState(null);
+
+  // Create Sales Invoice modal state (operates on current selection)
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
+  const [invoiceResult, setInvoiceResult] = useState(null);
 
   // Reject modal state (operates on current selection)
   const [showReject, setShowReject] = useState(false);
@@ -192,6 +188,7 @@ export default function PICTracker() {
   });
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const [poStatusFilter, setPoStatusFilter] = useState([]);
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
   const [subconFilter, setSubconFilter] = useState([]);
   const [isdpOwnerFilter, setIsdpOwnerFilter] = useState([]);
@@ -230,6 +227,7 @@ export default function PICTracker() {
         if (picMs2Filter.length) portal.pic_status_ms2 = picMs2Filter;
         if (projectFilter.length) portal.project_code = projectFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
+        if (poStatusFilter.length) portal.dispatch_status = poStatusFilter;
         if (dateRange.from) portal.from_date = dateRange.from;
         if (dateRange.to) portal.to_date = dateRange.to;
         if (subconFilter.length) portal.subcontractor = subconFilter;
@@ -237,9 +235,16 @@ export default function PICTracker() {
         if (ibuyOwnerFilter.length) portal.ibuy_owner = ibuyOwnerFilter;
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) portal.column_filters = colFilters;
-        const list = await pmApi.listPicRows(portal, rowLimit);
+        const res = await pmApi.listPicRows("active", portal, rowLimit);
         if (cancelled) return;
-        setRows(Array.isArray(list) ? list : []);
+        setRows(Array.isArray(res?.rows) ? res.rows : []);
+        setTotalCount(Number(res?.total_count) || 0);
+        setAggTotals({
+          ms1_amount: Number(res?.totals?.ms1_amount) || 0,
+          ms1_invoiced: Number(res?.totals?.ms1_invoiced) || 0,
+          ms2_amount: Number(res?.totals?.ms2_amount) || 0,
+          ms2_invoiced: Number(res?.totals?.ms2_invoiced) || 0,
+        });
         setSelected(new Set());
       } catch (err) {
         if (cancelled) return;
@@ -250,7 +255,7 @@ export default function PICTracker() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit, refreshKey, columnFiltersDebounced]);
+  }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, poStatusFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit, refreshKey, columnFiltersDebounced]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "isdp_owner", "ibuy_owner", "contract"]);
   const projectOptions = dispOpts.project_code || [];
@@ -259,7 +264,7 @@ export default function PICTracker() {
   const isdpOwnerOptions = (dispOpts.isdp_owner || []).filter(Boolean).map((v) => ({ id: v, label: v }));
   const ibuyOwnerOptions = (dispOpts.ibuy_owner || []).filter(Boolean).map((v) => ({ id: v, label: v }));
 
-  const hasFilters = !!(search || picFilter.length || picMs2Filter.length || projectFilter.length || duidFilter.length || dateRange.from || dateRange.to || subconFilter.length || isdpOwnerFilter.length || ibuyOwnerFilter.length);
+  const hasFilters = !!(search || picFilter.length || picMs2Filter.length || projectFilter.length || duidFilter.length || poStatusFilter.length || dateRange.from || dateRange.to || subconFilter.length || isdpOwnerFilter.length || ibuyOwnerFilter.length);
 
   // Totals row — sums numeric columns across the loaded rows. DataTablePro
   // reorders / hides tfoot cells the same way it does the body, so the totals
@@ -277,6 +282,54 @@ export default function PICTracker() {
       ms2_unbilled: sum("ms2_unbilled"),
     };
   }, [rows]);
+
+  const selectedRows = useMemo(
+    () => rows.filter((r) => selected.has(r.po_dispatch)),
+    [rows, selected],
+  );
+
+  // Only allow invoicing when every selected row has a Ready milestone
+  // (or MS1 already done with MS2 ready) — mirrors the retired Invoice
+  // Tracker page's gating logic. Checks pic_status_stored (the raw column),
+  // not pic_status_effective (which folds in the Work-Done-confirmation
+  // fallback and would never equal "Ready for Invoice").
+  const canInvoice = useMemo(() => {
+    if (selectedRows.length === 0) return false;
+    return selectedRows.every((r) => {
+      const ms1 = (r.pic_status_stored || "").trim();
+      const ms2 = (r.pic_status_ms2 || "").trim();
+      const ms1Ready = ms1 === "Ready for Invoice";
+      const ms2Ready = ms2 === "Ready for Invoice";
+      const ms1Done = ms1 === "Commercial Invoice Submitted" || ms1 === "Commercial Invoice Closed";
+      const ms2Zero = !(r.ms2_amount > 0);
+      if (ms1Ready || ms2Ready) return true;
+      if (ms1Done && ms2Zero) return false;
+      if (ms1Done && !ms2Ready) return false;
+      return false;
+    });
+  }, [selectedRows]);
+
+  function openInvoiceModal() {
+    setInvoiceResult(null);
+    setShowInvoiceModal(true);
+  }
+
+  async function createInvoice() {
+    if (!canInvoice) return;
+    setInvoiceBusy(true);
+    setInvoiceResult(null);
+    try {
+      const poList = selectedRows.map((r) => r.po_dispatch);
+      const res = await pmApi.createSalesInvoiceFromPic(poList, null);
+      setInvoiceResult(res);
+      await load();
+    } catch (err) {
+      setError(err.message || "Invoice creation failed");
+      setShowInvoiceModal(false);
+    } finally {
+      setInvoiceBusy(false);
+    }
+  }
 
   function toggleRow(name) {
     setSelected((p) => {
@@ -406,13 +459,18 @@ export default function PICTracker() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Invoice Tracker (PIC)</h1>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <h1 className="page-title">PIC Tracker</h1>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#f1f5f9", color: "#334155", border: "1px solid #e2e8f0", fontSize: "0.74rem", fontWeight: 700 }}>
+              <span style={{ opacity: 0.85 }}>Total Lines</span> <span>{fmtInt.format(totalCount)}</span>
+            </div>
+          </div>
           <div className="page-subtitle">
-            POIDs flow through the acceptance pipeline. Click a row to edit, or select rows for a bulk status change.
+            POIDs flow through the acceptance and invoicing pipeline. Click a row to edit, or select rows for a bulk status change or invoicing action.
           </div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="pic-invoice-tracker" rows={rows} />
+          <ExportExcelButton filename="pic-tracker" rows={rows} />
           <button type="button" className="btn-secondary" onClick={() => downloadPicTrackerCsv(rows)} disabled={!rows.length}>
             CSV
           </button>
@@ -428,6 +486,23 @@ export default function PICTracker() {
         </div>
       )}
 
+      {/* KPI strip — true sums across every row matching the current filters,
+          from the backend (see aggTotals), NOT just the loaded rows. */}
+      <div style={{ display: "flex", gap: 8, margin: "0 16px 6px", flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontSize: "0.74rem", fontWeight: 700 }}>
+          <span style={{ opacity: 0.85 }}>MS1 Total</span> <span>SAR {fmt.format(aggTotals.ms1_amount)}</span>
+        </div>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", fontSize: "0.74rem", fontWeight: 700 }}>
+          <span style={{ opacity: 0.85 }}>MS1 Invoiced</span> <span>SAR {fmt.format(aggTotals.ms1_invoiced)}</span>
+        </div>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", fontSize: "0.74rem", fontWeight: 700 }}>
+          <span style={{ opacity: 0.85 }}>MS2 Total</span> <span>SAR {fmt.format(aggTotals.ms2_amount)}</span>
+        </div>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a", fontSize: "0.74rem", fontWeight: 700 }}>
+          <span style={{ opacity: 0.85 }}>MS2 Invoiced</span> <span>SAR {fmt.format(aggTotals.ms2_invoiced)}</span>
+        </div>
+      </div>
+
       <div className="toolbar">
         <input
           type="search"
@@ -441,12 +516,13 @@ export default function PICTracker() {
         <SearchableSelect multi value={picMs2Filter} onChange={setPicMs2Filter} options={PIC_STATUSES} placeholder="All PIC Status (MS2)" minWidth={180} />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <SearchableSelect multi value={poStatusFilter} onChange={setPoStatusFilter} options={PO_STATUSES} placeholder="PO Status" minWidth={150} />
         <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
         <SearchableSelect multi value={isdpOwnerFilter} onChange={setIsdpOwnerFilter} options={isdpOwnerOptions} placeholder="ISDP Owner" minWidth={140} />
         <SearchableSelect multi value={ibuyOwnerFilter} onChange={setIbuyOwnerFilter} options={ibuyOwnerOptions} placeholder="iBuy Owner" minWidth={140} />
         {/* <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} /> */}
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setPicFilter([]); setPicMs2Filter([]); setProjectFilter([]); setDuidFilter([]); setDateRange({ from: "", to: "" }); setSubconFilter([]); setIsdpOwnerFilter([]); setIbuyOwnerFilter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setPicFilter([]); setPicMs2Filter([]); setProjectFilter([]); setDuidFilter([]); setPoStatusFilter([]); setDateRange({ from: "", to: "" }); setSubconFilter([]); setIsdpOwnerFilter([]); setIbuyOwnerFilter([]); }}>
             Clear
           </button>
         )}
@@ -472,6 +548,14 @@ export default function PICTracker() {
           >
             Bulk Set Status ({selected.size})
           </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={!canInvoice}
+            onClick={openInvoiceModal}
+          >
+            Create Sales Invoice
+          </button>
         </div>
       </div>
 
@@ -493,6 +577,8 @@ export default function PICTracker() {
                   <th>Contract Model</th>
                   <th>POID</th>
                   <th>PO No</th>
+                  <th>Customer</th>
+                  <th>IM</th>
                   <th>PO Status</th>
                   <th>Project Domain</th>
                   <th>Project</th>
@@ -519,13 +605,14 @@ export default function PICTracker() {
                   <th style={{ textAlign: "right" }}>MS2 %</th>
                   <th style={{ textAlign: "right" }}>MS2 Amt</th>
                   <th style={{ textAlign: "right" }}>MS2 Invoiced</th>
+                  <th>Linked Invoice</th>
                   <th>Edit</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={32} style={{ padding: 0 }}>
+                    <td colSpan={35} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                       ) : (
@@ -550,7 +637,9 @@ export default function PICTracker() {
                     <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch}</td>
                     <td>{r.po_no || "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{r.dispatch_status || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{r.customer || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }} title={r.im || ""}>{r.im_full_name || "—"}</td>
+                    <td><PoStatusBadge value={r.dispatch_status} /></td>
                     <td style={{ fontSize: "0.82rem" }}>{r.project_domain || "—"}</td>
                     <td title={r.project_name || ""}>{r.project_code || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.item_description || ""}>{r.item_code || "—"}</td>
@@ -561,8 +650,8 @@ export default function PICTracker() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.line_amount || 0)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.tax_rate || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.payment_terms || ""}>{r.payment_terms || "—"}</td>
-                    <td><IMStatusPill value={r.im_submission_status} /></td>
-                    <td><StatusPill value={r.pic_status_effective} /></td>
+                    <td><IMStatusBadge value={r.im_submission_status} /></td>
+                    <td><PicStatusBadge value={r.pic_status_effective} /></td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: r.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={r.pic_rejection_remark || ""}>{r.pic_rejection_remark || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.isdp_owner || ""}>{r.isdp_owner || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.ibuy_owner || ""}>{r.ibuy_owner || "—"}</td>
@@ -571,11 +660,34 @@ export default function PICTracker() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms1_invoiced || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_unbilled || 0) > 0 ? "#b45309" : "#94a3b8" }}>{fmt.format(r.ms1_unbilled || 0)}</td>
-                    <td><StatusPill value={r.pic_status_ms2} /></td>
+                    <td><PicStatusBadge value={r.pic_status_ms2} /></td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmtInt.format(r.ms2_pct)}%` : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms2_invoiced || 0)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {(() => {
+                        const csv = r.linked_invoices_csv;
+                        if (!csv) return <span style={{ color: "#cbd5e1", fontSize: "0.78rem" }}>—</span>;
+                        const entries = csv.split(", ").map((entry) => {
+                          const parts = entry.split("|");
+                          return { name: parts[0], status: parts[1] || "?" };
+                        });
+                        return (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {entries.map((inv) => (
+                              <a key={inv.name} href={`/app/sales-invoice/${inv.name}`} target="_blank" rel="noopener noreferrer"
+                                style={{ fontSize: "0.78rem", fontWeight: 600, color: "#1d4ed8", whiteSpace: "nowrap" }}>
+                                {inv.name}
+                                <span style={{ fontSize: "0.66rem", color: inv.status === "Submitted" ? "#047857" : "#b45309", marginLeft: 6 }}>
+                                  ({inv.status})
+                                </span>
+                              </a>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                       <button type="button" className="btn-secondary" style={{ padding: "3px 10px", fontSize: "0.78rem" }} onClick={() => openEdit(r)}>
                         Edit
@@ -594,12 +706,12 @@ export default function PICTracker() {
               </tbody>
               {rows.length > 0 && (
               <tfoot>
-                {/* 32 columns: checkbox · Subcontract · Contract Model · POID · PO No ·
+                {/* 35 columns: checkbox · Subcontract · Contract Model · POID · PO No · Customer · IM ·
                     PO Status · Project Domain · Project · Item · Description · DUID ·
                     Qty · Unit Price · Line Amount · Tax Rate · Payment Terms · IM Status ·
                     PIC Status MS1 · PIC Rejection Reason · ISDP Owner · iBuy Owner ·
                     Applied MS1 · MS1% · MS1 Amt · MS1 Inv · MS1 Unb ·
-                    PIC Status MS2 · Applied MS2 · MS2% · MS2 Amt · MS2 Inv · Edit */}
+                    PIC Status MS2 · Applied MS2 · MS2% · MS2 Amt · MS2 Inv · Linked Invoice · Edit */}
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
                   <td></td>{/* checkbox */}
                   <td colSpan={2} style={{ fontSize: "0.78rem", color: "#475569" }}>
@@ -607,6 +719,8 @@ export default function PICTracker() {
                   </td>{/* Subcontract + Contract Model */}
                   <td></td>{/* POID */}
                   <td></td>{/* PO No */}
+                  <td></td>{/* Customer */}
+                  <td></td>{/* IM */}
                   <td></td>{/* PO Status */}
                   <td></td>{/* Project Domain */}
                   <td></td>{/* Project */}
@@ -633,6 +747,7 @@ export default function PICTracker() {
                   <td></td>{/* MS2 % */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms2_invoiced)}</td>{/* MS2 Invoiced */}
+                  <td></td>{/* Linked Invoice */}
                   <td></td>{/* Edit */}
                 </tr>
               </tfoot>
@@ -731,6 +846,47 @@ export default function PICTracker() {
                 {bulkBusy ? "Updating…" : `Update ${selected.size}`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showInvoiceModal && selectedRows.length >= 1 && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => !invoiceBusy && setShowInvoiceModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(500px, 96vw)", maxHeight: "90vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 14px", fontSize: "1.05rem" }}>Create Sales Invoice — {selectedRows.length} line(s)</h3>
+
+            {invoiceResult ? (
+              <>
+                <div className="notice success" style={{ marginBottom: 12 }}>
+                  <span>✓</span> Sales Invoice <strong>{invoiceResult.sales_invoice}</strong> created with {invoiceResult.line_count || 1} item(s) — {invoiceResult.milestone}
+                </div>
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-secondary" onClick={() => { setShowInvoiceModal(false); setInvoiceResult(null); }}>Close</button>
+                  <a href={invoiceResult.invoice_url} target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "8px 16px", borderRadius: 8, fontSize: "0.84rem" }}>
+                    Open Invoice →
+                  </a>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 12 }}>
+                  <strong>{selectedRows.length} line(s)</strong> selected
+                  <div style={{ maxHeight: 120, overflow: "auto", marginTop: 6 }}>
+                    {selectedRows.map((r) => (
+                      <div key={r.po_dispatch} style={{ fontSize: "0.76rem", padding: "3px 0" }}>
+                        {r.poid || r.po_dispatch} · {r.customer || "—"} · MS1: SAR {fmt.format(r.ms1_amount || 0)} · MS2: SAR {fmt.format(r.ms2_amount || 0)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-secondary" disabled={invoiceBusy} onClick={() => setShowInvoiceModal(false)}>Cancel</button>
+                  <button type="button" className="btn-primary" disabled={invoiceBusy} onClick={createInvoice}>
+                    {invoiceBusy ? "Creating…" : "Create Draft Invoice"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

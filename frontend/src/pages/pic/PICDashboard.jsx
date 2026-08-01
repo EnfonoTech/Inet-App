@@ -7,11 +7,13 @@ import DashboardSwitcher from "../../components/DashboardSwitcher";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtMoney = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-const INVOICE_TRACKER_BUCKETS = new Set([
-  "Commercial Invoice Closed",
-  "Commercial Invoice Submitted",
-  "Ready for Invoice",
-]);
+// Buckets that are pure-pending (Page 1) — only when a row's OTHER milestone
+// is also untouched does it actually live there; a row with the other
+// milestone progressed shows on PIC Tracker instead. Clicking these buckets
+// goes to Pending, since most of the bucket's volume genuinely belongs there.
+const PENDING_BUCKETS = new Set(["Work Not Done", "PO Need to Cancel"]);
+// "PO Line Canceled" always means the whole row lives on the Cancelled page.
+const CANCELLED_BUCKET = "PO Line Canceled";
 
 // Acceptance buckets, in the order the spreadsheet shows them.
 const BUCKET_ORDER = [
@@ -153,7 +155,13 @@ export default function PICDashboard({ showSwitcher = false }) {
 
         {/* KPI tiles */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10, marginTop: 16 }}>
-          <HeroKPI label="Active Lines" value={fmt.format(kpi.line_count || 0)} hint="In acceptance pipeline" icon="📑" />
+          <HeroKPI label="All Lines" value={fmt.format(kpi.line_count || 0)} icon="📑">
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+              <LineTotalChip label="Pending" value={fmt.format(kpi.pending_count || 0)} clickable={bucketNavigable} onClick={() => navigate("/pic-pending")} />
+              <LineTotalChip label="Tracker" value={fmt.format(kpi.active_count || 0)} clickable={bucketNavigable} onClick={() => navigate("/pic-tracker")} />
+              <LineTotalChip label="Cancelled" value={fmt.format(kpi.cancelled_count || 0)} clickable={bucketNavigable} onClick={() => navigate("/pic-cancelled")} />
+            </div>
+          </HeroKPI>
           <HeroKPI label="Total Invoiced" value={fmtMoney.format(kpi.total_invoiced || 0)} suffix="SAR" tone="green" icon="✓" />
           <HeroKPI label="Unbilled MS1" value={fmtMoney.format(kpi.unbilled_ms1 || 0)} suffix="SAR" tone="amber" icon="❶" />
           <HeroKPI label="Unbilled MS2" value={fmtMoney.format(kpi.unbilled_ms2 || 0)} suffix="SAR" tone="amber" icon="❷" />
@@ -205,8 +213,10 @@ export default function PICDashboard({ showSwitcher = false }) {
               const dim = (row.line_count || 0) === 0;
               const clickable = bucketNavigable && !dim;
               function handleClick() {
-                if (INVOICE_TRACKER_BUCKETS.has(key)) {
-                  navigate(`/pic-invoice-tracker?ms1_status=${encodeURIComponent(key)}&ms2_status=${encodeURIComponent(key)}`);
+                if (key === CANCELLED_BUCKET) {
+                  navigate("/pic-cancelled");
+                } else if (PENDING_BUCKETS.has(key)) {
+                  navigate("/pic-pending");
                 } else {
                   navigate(`/pic-tracker?pic_status=${encodeURIComponent(key)}&pic_ms2_status=${encodeURIComponent(key)}`);
                 }
@@ -327,7 +337,7 @@ export default function PICDashboard({ showSwitcher = false }) {
   );
 }
 
-function HeroKPI({ label, value, suffix, hint, icon, tone }) {
+function HeroKPI({ label, value, suffix, hint, icon, tone, children }) {
   const accentBg = tone === "green" ? "rgba(16,185,129,0.18)" : tone === "amber" ? "rgba(245,158,11,0.20)" : "rgba(255,255,255,0.10)";
   return (
     <div style={{ background: accentBg, borderRadius: 10, padding: "11px 14px" }}>
@@ -339,7 +349,25 @@ function HeroKPI({ label, value, suffix, hint, icon, tone }) {
         {value}{suffix && <span style={{ marginLeft: 5, fontSize: "0.72rem", opacity: 0.75, fontWeight: 600 }}>{suffix}</span>}
       </div>
       {hint && <div style={{ fontSize: "0.7rem", opacity: 0.75, marginTop: 2 }}>{hint}</div>}
+      {children}
     </div>
+  );
+}
+
+function LineTotalChip({ label, value, onClick, clickable }) {
+  return (
+    <span
+      onClick={clickable ? onClick : undefined}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        background: "rgba(255,255,255,0.16)", borderRadius: 999,
+        padding: "2px 8px", fontSize: "0.68rem", fontWeight: 700,
+        cursor: clickable ? "pointer" : "default",
+      }}
+    >
+      <span style={{ opacity: 0.8 }}>{label}</span>
+      <span>{value}</span>
+    </span>
   );
 }
 

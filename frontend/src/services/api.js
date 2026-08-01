@@ -642,7 +642,10 @@ export const pmApi = {
     portal_filters: JSON.stringify(portalFilters || {}),
   }),
   getPicSummaryFilterOptions: () => call("inet_app.api.pic.get_pic_summary_filter_options"),
-  listPicRows: (portalFilters, limit) => call("inet_app.api.pic.list_pic_rows", {
+  // stage: "pending" | "active" | "cancelled" — required. Backs the 3 PIC
+  // pages (Pending / PIC Tracker / Cancelled); see list_pic_rows in pic.py.
+  listPicRows: (stage, portalFilters, limit) => call("inet_app.api.pic.list_pic_rows", {
+    stage,
     portal_filters: JSON.stringify(portalFilters || {}),
     // 0 = "All" (no LIMIT). Anything else is a positive cap.
     limit: Number.isFinite(Number(limit)) ? Number(limit) : 500,
@@ -670,11 +673,7 @@ export const pmApi = {
     owner: params?.owner || "",
   }),
 
-  // Invoice Tracker — PIC creates Sales Invoices from Ready for Invoice lines
-  listInvoiceTrackerRows: (filters, limit) => call("inet_app.api.pic.list_invoice_tracker_rows", {
-    filters: filters || {},
-    limit: Number.isFinite(Number(limit)) ? Number(limit) : 500,
-  }),
+  // PIC creates Sales Invoices from Ready for Invoice lines (PIC Tracker page)
   createSalesInvoiceFromPic: (poDispatch, milestone) => call("inet_app.api.pic.create_sales_invoice_from_pic", {
     po_dispatch: poDispatch,
     // null/undefined → server auto-detects the Ready milestone per line

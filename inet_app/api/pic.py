@@ -43,6 +43,49 @@ END
 """
 
 
+# A "PO Line Canceled" row auto-carries dispatch_status='Cancelled' (see
+# update_pic_row / bulk_update_pic_status), but PIC's own views must keep
+# showing it. Any default "hide dispatch_status='Cancelled'" guard in this
+# module should OR against this so those rows aren't hidden from the very
+# dashboards that report them.
+_PIC_LINE_CANCELED_SQL = (
+    "(IFNULL(pd.pic_status,'') = 'PO Line Canceled' OR IFNULL(pd.pic_status_ms2,'') = 'PO Line Canceled')"
+)
+
+
+# MS2's "effective" status — MS2 has no Work-Done-confirmation fallback rule
+# (that only drives MS1's initial state), so blank simply reads as
+# 'Work Not Done', same convention already used ad hoc elsewhere in this file.
+_PIC_MS2_EFFECTIVE_SQL = "COALESCE(NULLIF(pd.pic_status_ms2,''), 'Work Not Done')"
+
+_PIC_PENDING_STATUSES_SQL = "('Work Not Done', 'PO Need to Cancel')"
+
+# A row is "Pending" (hasn't reached PIC yet) only when BOTH milestones are
+# still untouched/flagged-to-cancel — a row with one milestone progressed
+# belongs in the Active stage even if the other hasn't started.
+_PIC_PENDING_SQL = f"""
+(({_PIC_INITIAL_RULE_SQL.strip()}) IN {_PIC_PENDING_STATUSES_SQL}
+ AND {_PIC_MS2_EFFECTIVE_SQL} IN {_PIC_PENDING_STATUSES_SQL})
+"""
+
+_PIC_DISPATCH_CANCELLED_SQL = "IFNULL(pd.dispatch_status,'') = 'Cancelled'"
+
+# Page-routing only: a dispatch-level cancellation — whether it came from
+# PIC's own "PO Line Canceled" or from an unrelated desk-level cancel of the
+# whole PO Dispatch — means the row is dead and belongs on the Cancelled
+# page even if PIC's own pic_status hasn't caught up yet. Kept separate from
+# _PIC_LINE_CANCELED_SQL, which other queries (dashboard/summary/report) use
+# purely as a pic_status-driven exemption — broadening that one would
+# silently change unrelated financial totals those queries were tuned for.
+_PIC_EFFECTIVELY_CANCELLED_SQL = f"({_PIC_LINE_CANCELED_SQL} OR {_PIC_DISPATCH_CANCELLED_SQL})"
+
+_PIC_STAGE_SQL = {
+    "pending": f"({_PIC_PENDING_SQL} AND NOT {_PIC_EFFECTIVELY_CANCELLED_SQL})",
+    "active": f"(NOT {_PIC_PENDING_SQL} AND NOT {_PIC_EFFECTIVELY_CANCELLED_SQL})",
+    "cancelled": _PIC_EFFECTIVELY_CANCELLED_SQL,
+}
+
+
 _PIC_FROM_JOIN = """
 FROM `tabPO Dispatch` pd
 LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
@@ -139,14 +182,19 @@ def _pic_role_or_throw():
 
 
 @frappe.whitelist()
-def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0):
+def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0, stage=None):
     """Return PO Dispatch rows enriched with PIC fields + initial-state rule.
 
     ``filters`` (legacy): currently unused; reserved for symmetry with the
     other list_* helpers.
+    ``stage``: one of "pending" / "active" / "cancelled" — the 3-way,
+    mutually-exclusive-and-collectively-exhaustive partition backing the 3
+    PIC pages (Pending / PIC Tracker / Cancelled). Required. See
+    ``_PIC_STAGE_SQL``.
     ``portal_filters`` (JSON dict): ``search``, ``project_code``, ``site_code``,
     ``im``, ``pic_status`` (multi), ``pic_status_ms2`` (multi),
-    ``from_date`` / ``to_date`` (against ``ms1_applied_date``).
+    ``from_date`` / ``to_date`` (against ``ms1_applied_date``). These narrow
+    further *within* ``stage`` — they no longer determine the default set.
     ``with_team_type``: when truthy, include the heavy Rollout Plan
     aggregate that resolves ``team_type`` / ``subcontractor`` /
     ``subcontractor_payout_pct`` / ``subcontractor_margin_pct``. Default
@@ -154,11 +202,18 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     aggregate is the dominant cost of the query.
     """
     _pic_role_or_throw()
+    if stage not in _PIC_STAGE_SQL:
+        frappe.throw(f"stage must be one of {sorted(_PIC_STAGE_SQL)}, got {stage!r}")
     pf = _portal_filters_dict(portal_filters)
     limit_page_length = _portal_row_limit(limit, 500)
     with_team_type = bool(cint(with_team_type))
 
-    where = ["1=1", "IFNULL(pd.is_internal_work, 0) = 0"]
+    where = [
+        "1=1",
+        "IFNULL(pd.is_internal_work, 0) = 0",
+        "IFNULL(pd.is_dummy_po, 0) = 0",
+        _PIC_STAGE_SQL[stage],
+    ]
     params = []
 
     for col, key in (
@@ -173,15 +228,10 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
 
     pic_vals = _ensure_list(pf.get("pic_status"))
     pic_ms2_vals = _ensure_list(pf.get("pic_status_ms2"))
-    # Lift restrictions when viewing fully-invoiced Closed lines (archive records).
-    viewing_closed = (
-        "Commercial Invoice Closed" in (pic_vals or [])
-        or "Commercial Invoice Closed" in (pic_ms2_vals or [])
-    )
 
     if pic_vals and pic_ms2_vals:
-        # Both filters set → OR logic (same as InvoiceTracker), so a line is
-        # shown if either its MS1 effective status or its MS2 status matches.
+        # Both filters set → OR logic, so a line is shown if either its MS1
+        # effective status or its MS2 status matches.
         ph1 = ", ".join(["%s"] * len(pic_vals))
         ph2 = ", ".join(["%s"] * len(pic_ms2_vals))
         where.append(
@@ -198,13 +248,6 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         ph = ", ".join(["%s"] * len(pic_ms2_vals))
         where.append(f"IFNULL(pd.pic_status_ms2,'') IN ({ph})")
         params.extend(pic_ms2_vals)
-    else:
-        # Default: show any line where MS1 OR MS2 has an active status.
-        # MS2-only lines (pic_status NULL, pic_status_ms2 set) must not be hidden.
-        where.append(
-            f"(({_PIC_INITIAL_RULE_SQL.strip()}) != 'Work Not Done'"
-            f" OR IFNULL(pd.pic_status_ms2,'') NOT IN ('', 'Work Not Done'))"
-        )
 
     if pf.get("from_date"):
         where.append("pd.ms1_applied_date >= %s")
@@ -222,21 +265,17 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         )
         params.extend(invoice_month_vals * 2)
 
+    # dispatch_status is purely an optional explicit narrowing filter here —
+    # the `stage` clause above (driven only by pic_status/pic_status_ms2) is
+    # what determines default visibility, deliberately not dispatch_status
+    # (which can be hand-set from the desk for reasons unrelated to the PIC
+    # flow; gating default visibility on it could let a row fall through all
+    # 3 pages).
     if pf.get("dispatch_status"):
         ds_vals = _ensure_list(pf.get("dispatch_status"))
         ph = ", ".join(["%s"] * len(ds_vals))
         where.append(f"IFNULL(pd.dispatch_status,'') IN ({ph})")
         params.extend(ds_vals)
-    elif not viewing_closed:
-        # Default: hide cancelled lines. Closed dispatch is kept visible because
-        # archive imports and completed PIC records carry dispatch_status='Closed'.
-        where.append("IFNULL(pd.dispatch_status,'') != 'Cancelled'")
-
-    # Default: hide fully-invoiced lines (remaining 0%) so PIC only sees
-    # work that still needs attention. Not applied when explicitly viewing
-    # "Commercial Invoice Closed" since those are intentionally at 0 unbilled.
-    if not pf.get("remaining_milestone_pct") and not viewing_closed:
-        where.append("(pd.ms1_unbilled + pd.ms2_unbilled) > 0")
 
     isdp_vals = _ensure_list(pf.get("isdp_owner"))
     if isdp_vals:
@@ -256,7 +295,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
 
     # Same subcontractor/contract-model resolution `team_cols` uses below —
     # computed here too so the per-column filter and general search can
-    # reference it (see list_invoice_tracker_rows for the pattern).
+    # reference it.
     if with_team_type:
         _subcon_expr_pic = "COALESCE(sm_pd.subcontractor_name, sm.subcontractor_name)"
         _contract_model_expr_pic = "COALESCE(sm_pd.contract_model, sm.contract_model)"
@@ -378,6 +417,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       pd.poid,
       pd.po_no,
       pd.po_line_no,
+      pd.customer,
       pd.item_code,
       pd.item_description,
       pd.qty,
@@ -418,12 +458,73 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     ORDER BY pd.modified DESC
     {_sql_limit_suffix(limit_page_length)}
     """
+    # Total matching count + MS1/MS2 sums, independent of the row-limit cap
+    # above — the FE "Total Lines" indicator and KPI strip must reflect
+    # every row matching the filters, not just however many were fetched
+    # into the table (a rowLimit=20 view must not show a 20-row sum as if
+    # it were the whole filtered set).
+    agg = (frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS total,
+               COALESCE(SUM(pd.ms1_amount), 0) AS ms1_amount_total,
+               COALESCE(SUM(pd.ms1_invoiced), 0) AS ms1_invoiced_total,
+               COALESCE(SUM(pd.ms2_amount), 0) AS ms2_amount_total,
+               COALESCE(SUM(pd.ms2_invoiced), 0) AS ms2_invoiced_total
+        {from_clause}
+        WHERE {' AND '.join(where)}
+        """,
+        tuple(params),
+        as_dict=True,
+    ) or [{}])[0]
+    total_count = cint(agg.get("total") or 0)
+
     rows = frappe.db.sql(sql, tuple(params), as_dict=True)
     if rows:
         act_map = _batch_item_activity_types(rows)
+        inv_map = _batch_linked_invoices([r["po_dispatch"] for r in rows])
         for r in rows:
             r["activity_type"] = act_map.get(r.get("item_code") or "")
-    return rows
+            r["linked_invoices_csv"] = inv_map.get(r["po_dispatch"])
+    return {
+        "rows": rows,
+        "total_count": total_count,
+        "totals": {
+            "ms1_amount": flt(agg.get("ms1_amount_total") or 0),
+            "ms1_invoiced": flt(agg.get("ms1_invoiced_total") or 0),
+            "ms2_amount": flt(agg.get("ms2_amount_total") or 0),
+            "ms2_invoiced": flt(agg.get("ms2_invoiced_total") or 0),
+        },
+    }
+
+
+def _batch_linked_invoices(po_dispatch_names):
+    """Return {po_dispatch: "SI-0001|Submitted, SI-0002|Draft"} for every name
+    in ``po_dispatch_names`` that has at least one linked Sales Invoice Item.
+
+    A separate batched query (not a JOIN folded into the caller's main
+    SELECT) so it can't multiply rows in callers — like ``list_pic_rows`` —
+    that already carry other one-to-many joins.
+    """
+    names = list({n for n in (po_dispatch_names or []) if n})
+    if not names or not frappe.db.has_column("Sales Invoice Item", "poid"):
+        return {}
+    ph = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"""
+        SELECT sii.poid AS po_dispatch,
+               GROUP_CONCAT(DISTINCT CONCAT(si.name, '|',
+                 CASE WHEN si.docstatus = 1 THEN 'Submitted'
+                      WHEN si.docstatus = 0 THEN 'Draft' ELSE '?' END)
+                 ORDER BY si.name SEPARATOR ', ') AS linked_invoices_csv
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus < 2
+        WHERE sii.poid IN ({ph})
+        GROUP BY sii.poid
+        """,
+        tuple(names),
+        as_dict=True,
+    )
+    return {r["po_dispatch"]: r["linked_invoices_csv"] for r in rows}
 
 
 @frappe.whitelist()
@@ -451,7 +552,7 @@ def pic_invoicing_summary(portal_filters=None):
     pf = _portal_filters_dict(portal_filters)
 
     # ── Common WHERE (applies to both MS1 and MS2 queries) ──────────────
-    where_common = ["1=1", "IFNULL(pd.is_internal_work, 0) = 0"]
+    where_common = ["1=1", "IFNULL(pd.is_internal_work, 0) = 0", "IFNULL(pd.is_dummy_po, 0) = 0"]
     params_common = []
 
     for col, key in (
@@ -489,7 +590,9 @@ def pic_invoicing_summary(portal_filters=None):
         where_common.append(f"IFNULL(pd.dispatch_status,'') IN ({ph})")
         params_common.extend(ds_vals)
     else:
-        where_common.append("IFNULL(pd.dispatch_status,'') != 'Cancelled'")
+        # "PO Line Canceled" rows are exempted — the summary must keep
+        # reporting that bucket even though it auto-carries dispatch_status='Cancelled'.
+        where_common.append(f"(IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})")
 
     # ── MS1: additional invoice-month filter ─────────────────────────────
     where_ms1 = list(where_common)
@@ -671,6 +774,7 @@ def update_pic_row(po_dispatch, fields):
     # Sync dispatch_status and Work Done billing_status from PIC status changes
     closed = "Commercial Invoice Closed"
     submitted = "Commercial Invoice Submitted"
+    cancelled = "PO Line Canceled"
     new_ms1 = (fields.get("pic_status") or "").strip()
     new_ms2 = (fields.get("pic_status_ms2") or "").strip()
     # Only close dispatch when both milestones are resolved
@@ -680,10 +784,16 @@ def update_pic_row(po_dispatch, fields):
         ms2_zero = flt(doc.ms2_amount or 0) == 0
         if ms1_closed and (ms2_closed or ms2_zero):
             doc.dispatch_status = "Closed"
+    # A line canceled on either milestone cancels the whole dispatch —
+    # takes priority over the closed check above.
+    if new_ms1 == cancelled or new_ms2 == cancelled:
+        doc.dispatch_status = "Cancelled"
     billing = None
     if new_ms1 == submitted or new_ms2 == submitted:
         billing = "Invoiced"
     elif new_ms1 == closed or new_ms2 == closed:
+        billing = "Closed"
+    elif new_ms1 == cancelled or new_ms2 == cancelled:
         billing = "Closed"
 
     doc.flags.ignore_permissions = True
@@ -691,16 +801,21 @@ def update_pic_row(po_dispatch, fields):
     frappe.db.commit()
 
     # Close the PO Intake Line only when both milestones are done:
-    # MS1 closed AND (MS2 closed OR MS2 amount is zero / doesn't exist)
+    # MS1 closed AND (MS2 closed OR MS2 amount is zero / doesn't exist).
+    # A line-canceled milestone cancels it immediately, with its own
+    # distinct "Cancelled" status (not merged into "Closed").
     ms1_closed = (doc.pic_status or "").strip() == closed
     ms2_closed = (doc.pic_status_ms2 or "").strip() == closed
     ms2_zero = flt(doc.ms2_amount or 0) == 0
-    if ms1_closed and (ms2_closed or ms2_zero):
+    ms1_cancelled = (doc.pic_status or "").strip() == cancelled
+    ms2_cancelled = (doc.pic_status_ms2 or "").strip() == cancelled
+    il_status = "Cancelled" if (ms1_cancelled or ms2_cancelled) else "Closed"
+    if (ms1_closed and (ms2_closed or ms2_zero)) or ms1_cancelled or ms2_cancelled:
         if doc.po_intake and doc.po_line_no:
             il = frappe.db.exists("PO Intake Line",
                 {"parent": doc.po_intake, "po_line_no": doc.po_line_no})
             if il and isinstance(il, str):
-                frappe.db.set_value("PO Intake Line", il, "po_line_status", "Closed")
+                frappe.db.set_value("PO Intake Line", il, "po_line_status", il_status)
                 frappe.db.commit()
 
     if billing:
@@ -814,10 +929,13 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
                 payload[remark_field] = str(remark)[:8000]
             if pic_status == "Commercial Invoice Closed":
                 payload["dispatch_status"] = "Closed"
+            elif pic_status == "PO Line Canceled":
+                payload["dispatch_status"] = "Cancelled"
             frappe.db.set_value("PO Dispatch", name, payload, update_modified=True)
 
-            # Also close the PO Intake Line when both MS1 and MS2 are done
-            if pic_status == "Commercial Invoice Closed":
+            # Also close the PO Intake Line when both MS1 and MS2 are done,
+            # or immediately when either milestone is line-canceled.
+            if pic_status in ("Commercial Invoice Closed", "PO Line Canceled"):
                 pd = frappe.db.get_value("PO Dispatch", name,
                     ["pic_status", "pic_status_ms2", "ms2_amount",
                      "po_intake", "po_line_no"], as_dict=True)
@@ -825,12 +943,15 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
                     ms1_cl = (pd.pic_status or "").strip() == "Commercial Invoice Closed"
                     ms2_cl = (pd.pic_status_ms2 or "").strip() == "Commercial Invoice Closed"
                     ms2_z = flt(pd.ms2_amount or 0) == 0
-                    if ms1_cl and (ms2_cl or ms2_z):
+                    ms1_cancelled = (pd.pic_status or "").strip() == "PO Line Canceled"
+                    ms2_cancelled = (pd.pic_status_ms2 or "").strip() == "PO Line Canceled"
+                    il_status = "Cancelled" if (ms1_cancelled or ms2_cancelled) else "Closed"
+                    if (ms1_cl and (ms2_cl or ms2_z)) or ms1_cancelled or ms2_cancelled:
                         if pd.po_intake and pd.po_line_no:
                             il = frappe.db.exists("PO Intake Line",
                                 {"parent": pd.po_intake, "po_line_no": pd.po_line_no})
                             if il and isinstance(il, str):
-                                frappe.db.set_value("PO Intake Line", il, "po_line_status", "Closed")
+                                frappe.db.set_value("PO Intake Line", il, "po_line_status", il_status)
             updated.append({"po_dispatch": name, status_field: pic_status})
         except Exception as e:
             errors.append({"po_dispatch": name, "error": frappe.utils.cstr(e)[:500]})
@@ -961,7 +1082,8 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
               ELSE 0
             END AS ms2_amount
           {_PIC_FROM_JOIN}
-          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
+          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+            AND (IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})
           {applied_clause}
           UNION ALL
           -- MS2 row: only emitted when ms2_amount > 0 AND its bucket differs
@@ -971,7 +1093,8 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
             0 AS ms1_amount,
             pd.ms2_amount AS ms2_amount
           {_PIC_FROM_JOIN}
-          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
+          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+            AND (IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})
             AND IFNULL(pd.ms2_amount, 0) > 0
             AND COALESCE(NULLIF(pd.pic_status_ms2,''),'Work Not Done')
                 != ({_PIC_INITIAL_RULE_SQL.strip()})
@@ -992,7 +1115,8 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
                COALESCE(SUM(pd.ms1_amount), 0) AS amount_ms1,
                COALESCE(SUM(pd.ms2_amount), 0) AS amount_ms2
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
+        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+          AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
           AND IFNULL(pd.ibuy_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under I-BUY'
           {applied_clause}
@@ -1010,7 +1134,8 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
                COALESCE(SUM(pd.ms1_amount), 0) AS amount_ms1,
                COALESCE(SUM(pd.ms2_amount), 0) AS amount_ms2
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
+        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+          AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
           AND IFNULL(pd.isdp_owner,'') != ''
           AND ({_PIC_INITIAL_RULE_SQL.strip()}) = 'Under ISDP'
           {applied_clause}
@@ -1066,7 +1191,8 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
               {split_ms2_cond}
               THEN IFNULL(pd.ms2_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 ELSE 0 END) AS subcon_ms2
         {_PIC_FROM_JOIN_LEAN}
-        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
+        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+          AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
         """,
         tuple(split_params),
         as_dict=True,
@@ -1083,15 +1209,25 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     }
 
     # ── Top-line KPIs — scoped by date when set.
+    # line_count is the "All Lines" tile — every PIC-scoped POID, matching
+    # the pending+active+cancelled total. total_invoiced/unbilled stay
+    # scoped to non-cancelled lines only — a cancelled PO's amount isn't
+    # outstanding revenue, so it must not inflate those money figures.
     kpi = frappe.db.sql(
         f"""
         SELECT
-          COALESCE(SUM(pd.ms1_invoiced + pd.ms2_invoiced), 0) AS total_invoiced,
-          COALESCE(SUM(pd.ms1_unbilled), 0) AS unbilled_ms1,
-          COALESCE(SUM(pd.ms2_unbilled), 0) AS unbilled_ms2,
-          COUNT(*) AS line_count
+          COALESCE(SUM(CASE WHEN IFNULL(pd.dispatch_status,'') != 'Cancelled'
+                            THEN pd.ms1_invoiced + pd.ms2_invoiced ELSE 0 END), 0) AS total_invoiced,
+          COALESCE(SUM(CASE WHEN IFNULL(pd.dispatch_status,'') != 'Cancelled'
+                            THEN pd.ms1_unbilled ELSE 0 END), 0) AS unbilled_ms1,
+          COALESCE(SUM(CASE WHEN IFNULL(pd.dispatch_status,'') != 'Cancelled'
+                            THEN pd.ms2_unbilled ELSE 0 END), 0) AS unbilled_ms2,
+          COUNT(*) AS line_count,
+          COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["pending"]} THEN 1 ELSE 0 END), 0) AS pending_count,
+          COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["active"]} THEN 1 ELSE 0 END), 0) AS active_count,
+          COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["cancelled"]} THEN 1 ELSE 0 END), 0) AS cancelled_count
         {_PIC_FROM_JOIN}
-        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
+        WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
         {applied_clause}
         """,
         tuple(applied_params),
@@ -1107,6 +1243,9 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
             "unbilled_ms1": flt(kpi.get("unbilled_ms1") or 0),
             "unbilled_ms2": flt(kpi.get("unbilled_ms2") or 0),
             "line_count": cint(kpi.get("line_count") or 0),
+            "pending_count": cint(kpi.get("pending_count") or 0),
+            "active_count": cint(kpi.get("active_count") or 0),
+            "cancelled_count": cint(kpi.get("cancelled_count") or 0),
         },
         "buckets": bucket_rows,
         "pending_ibuy": pending_ibuy,
@@ -1168,7 +1307,8 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                     ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
                     pd.ms1_amount, pd.ms2_amount
                   {_PIC_FROM_JOIN}
-                  WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
+                  WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+                    AND (IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})
                   {project_clause}
                 ) t
                 GROUP BY bucket
@@ -1256,7 +1396,8 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        DATEDIFF(CURDATE(), pd.ms1_applied_date) AS days_since_applied,
                        pd.ms1_amount
                 {_PIC_FROM_JOIN}
-                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
+                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+                  AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
                   AND pd.pic_status IN ('Under I-BUY', 'Under ISDP')
                   AND pd.ms1_applied_date IS NOT NULL
                   {project_clause}
@@ -1305,7 +1446,8 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        pd.ms2_amount,
                        (pd.ms1_amount + pd.ms2_amount) AS total
                 {_PIC_FROM_JOIN}
-                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND pd.pic_status = 'Commercial Invoice Closed'
+                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+                  AND pd.pic_status = 'Commercial Invoice Closed'
                   {project_clause}
                   {date_clause}
                 ORDER BY pd.ms1_payment_received_date DESC, pd.ms1_invoice_month DESC
@@ -1339,7 +1481,8 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        pd.pic_detail_remark,
                        pd.ms1_amount
                 {_PIC_FROM_JOIN}
-                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND pd.pic_status IN ('I-BUY Rejected', 'ISDP Rejected')
+                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+                  AND pd.pic_status IN ('I-BUY Rejected', 'ISDP Rejected')
                   AND IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
                   {project_clause}
                 ORDER BY pd.modified DESC
@@ -1363,205 +1506,6 @@ def get_pic_capability():
     }
 
 
-# ── Invoice Tracker ───────────────────────────────────────────────────
-INVOICE_TRACKER_STATUSES = (
-    "Ready for Invoice",
-    "Commercial Invoice Submitted",
-    "Commercial Invoice Closed",
-)
-
-
-@frappe.whitelist()
-def list_invoice_tracker_rows(filters=None, limit=500):
-    """Rows for the Invoice Tracker page — only lines in invoicing-stage statuses."""
-    if isinstance(filters, str):
-        filters = frappe.parse_json(filters)
-    filters = filters or {}
-    lim = _portal_row_limit(limit, 500)
-
-    ms1_vals = _ensure_list(filters.get("pic_status_ms1") or filters.get("pic_status"))
-    ms2_vals = _ensure_list(filters.get("pic_status_ms2"))
-
-    # All INVOICE_TRACKER_STATUSES are stored values — never computed via wd_sub.
-    # Use direct column checks so the wd_sub triple-join is not needed.
-    if not ms1_vals and not ms2_vals:
-        default = list(INVOICE_TRACKER_STATUSES)
-        ph = ", ".join(["%s"] * len(default))
-        wheres = [f"(IFNULL(pd.pic_status,'') IN ({ph}) OR IFNULL(pd.pic_status_ms2,'') IN ({ph}))"]
-        params = default + default
-    else:
-        parts = []
-        params = []
-        if ms1_vals:
-            ph1 = ", ".join(["%s"] * len(ms1_vals))
-            parts.append(f"IFNULL(pd.pic_status,'') IN ({ph1})")
-            params.extend(ms1_vals)
-        if ms2_vals:
-            ph2 = ", ".join(["%s"] * len(ms2_vals))
-            parts.append(f"IFNULL(pd.pic_status_ms2,'') IN ({ph2})")
-            params.extend(ms2_vals)
-        wheres = [f"({' OR '.join(parts)})"]
-    wheres.append("IFNULL(pd.is_internal_work, 0) = 0")
-    wheres.append("IFNULL(pd.dispatch_status,'') != 'Cancelled'")
-
-    # Optional filters
-    for col, key in (
-        ("IFNULL(pd.project_code,'')", "project_code"),
-        ("IFNULL(pd.site_code,'')", "site_code"),
-    ):
-        clause, p = _sql_in_or_eq(col, filters.get(key))
-        if clause:
-            wheres.append(clause)
-            params.extend(p)
-
-    if filters.get("from_date"):
-        wheres.append("pd.ms1_applied_date >= %s")
-        params.append(filters["from_date"])
-    if filters.get("to_date"):
-        wheres.append("pd.ms1_applied_date <= %s")
-        params.append(filters["to_date"])
-
-    isdp_vals = _ensure_list(filters.get("isdp_owner"))
-    if isdp_vals:
-        ph = ", ".join(["%s"] * len(isdp_vals))
-        wheres.append(f"IFNULL(pd.isdp_owner,'') IN ({ph})")
-        params.extend(isdp_vals)
-
-    ibuy_vals = _ensure_list(filters.get("ibuy_owner"))
-    if ibuy_vals:
-        ph = ", ".join(["%s"] * len(ibuy_vals))
-        wheres.append(f"IFNULL(pd.ibuy_owner,'') IN ({ph})")
-        params.extend(ibuy_vals)
-
-    subcon_vals = _ensure_list(filters.get("subcontractor"))
-    if subcon_vals:
-        ph = ", ".join(["%s"] * len(subcon_vals))
-        wheres.append(f"IFNULL(COALESCE(sm_pd_inv.name, sm_inv.name),'') IN ({ph})")
-        params.extend(subcon_vals)
-
-    # Per-column "Manage Table" filters — see list_im_rollout_plans (in
-    # command_center.py) for the rationale (each column matched independently
-    # and ANDed, not blended into the wide `search` clause below; same
-    # expressions widen that search too, so both paths cover the same fields).
-    # sm_pd_inv / sm_inv are the Subcontract Master joins defined further down
-    # in this function's FROM clause — referencing their aliases here is safe
-    # since only the final assembled SQL text matters, not Python code order.
-    col_filter_map = {
-        "subcontract": "COALESCE(sm_pd_inv.subcontractor_name, sm_inv.subcontractor_name)",
-        "contract_model": "COALESCE(sm_pd_inv.contract_model, sm_inv.contract_model)",
-        "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
-        "customer": "IFNULL(pd.customer,'')",
-        "project": "IFNULL(pd.project_code,'')",
-        "item": "CONCAT_WS(' ', IFNULL(pd.item_code,''), IFNULL(pd.item_description,''))",
-        "duid": "IFNULL(pd.site_code,'')",
-        "ms1_amount": "CAST(pd.ms1_amount AS CHAR)",
-        "ms2_amount": "CAST(pd.ms2_amount AS CHAR)",
-        "remaining": "CAST(pd.remaining_milestone_pct AS CHAR)",
-        "pic_status_ms1": "IFNULL(pd.pic_status,'')",
-        "pic_status_ms2": "IFNULL(pd.pic_status_ms2,'')",
-    }
-    # Not backend-filterable: "linked_invoice" is a GROUP_CONCAT computed in
-    # the SELECT (WHERE runs before GROUP BY) — client-side only.
-    column_filters = filters.get("column_filters")
-    if isinstance(column_filters, str):
-        try:
-            column_filters = frappe.parse_json(column_filters)
-        except Exception:
-            column_filters = None
-    if isinstance(column_filters, dict):
-        for col_key, raw_val in column_filters.items():
-            expr = col_filter_map.get(col_key)
-            if not expr:
-                continue
-            pat = _sql_like_pattern(raw_val)
-            if not pat:
-                continue
-            wheres.append(f"{expr} LIKE %s")
-            params.append(pat)
-
-    if filters.get("search") or filters.get("q"):
-        concat_parts = [
-            "IFNULL(pd.poid,''), IFNULL(pd.po_no,''),",
-            "IFNULL(pd.item_code,''), IFNULL(pd.item_description,''),",
-            "IFNULL(pd.project_code,''),",
-            "IFNULL(pd.site_code,''), IFNULL(pd.customer,''),",
-            "IFNULL(pd.pic_status,''), IFNULL(pd.pic_status_ms2,''),",
-            "IFNULL(pd.isdp_owner,''), IFNULL(pd.ibuy_owner,''),",
-            "COALESCE(sm_pd_inv.subcontractor_name, sm_inv.subcontractor_name, ''),",
-            "COALESCE(sm_pd_inv.contract_model, sm_inv.contract_model, '')",
-        ]
-        concat_expr = "CONCAT_WS(' ', " + " ".join(concat_parts) + ")"
-        clause, cparams = _sql_search_clause(
-            concat_expr,
-            filters.get("search") or filters.get("q") or "",
-            exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
-        )
-        if clause:
-            wheres.append(clause)
-            params.extend(cparams)
-
-    # Check if Sales Invoice Item has the poid column (accounting dimension)
-    si_join = ""
-    si_cols = "NULL AS linked_invoices_csv"
-    if frappe.db.has_column("Sales Invoice Item", "poid"):
-        si_join = (
-            "LEFT JOIN `tabSales Invoice Item` sii ON sii.poid = pd.name "
-            "LEFT JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus < 2"
-        )
-        si_cols = (
-            "GROUP_CONCAT(DISTINCT CONCAT(si.name, '|', "
-            "CASE WHEN si.docstatus = 1 THEN 'Submitted' "
-            "WHEN si.docstatus = 0 THEN 'Draft' ELSE '?' END) "
-            "ORDER BY si.name SEPARATOR ', ') AS linked_invoices_csv"
-        )
-
-    where_str = " AND ".join(wheres)
-    _sqc2 = _po_dispatch_col_expr("sqc_status")
-    _pat2 = _po_dispatch_col_expr("pat_status")
-    _isdp2 = _po_dispatch_col_expr("isdp_owner")
-    _ibuy2 = _po_dispatch_col_expr("ibuy_owner")
-    rows = frappe.db.sql(
-        f"""
-        SELECT pd.name, pd.poid, pd.po_no, pd.project_code, pd.customer,
-               pd.item_code, pd.item_description, pd.site_code, pd.site_name,
-               pd.qty, pd.rate, pd.line_amount, pd.dispatch_status,
-               pd.pic_status, pd.pic_status_ms2,
-               pd.ms1_amount, pd.ms1_invoiced, pd.ms1_unbilled,
-               pd.ms2_amount, pd.ms2_invoiced, pd.ms2_unbilled,
-               pd.remaining_milestone_pct,
-               pd.ms1_applied_date, pd.ms1_invoice_month, pd.ms1_ibuy_inv_date,
-               pd.ms2_applied_date, pd.ms2_invoice_month, pd.ms2_ibuy_inv_date,
-               {_sqc2}, {_pat2}, {_isdp2}, {_ibuy2},
-               pd.payment_terms, pd.tax_rate,
-               pd.ms1_payment_received_date, pd.ms2_payment_received_date,
-               COALESCE(sm_pd_inv.subcontractor_name, sm_inv.subcontractor_name) AS subcontractor,
-               COALESCE(sm_pd_inv.contract_model, sm_inv.contract_model) AS contract_model,
-               pd.modified,
-               {si_cols}
-        FROM `tabPO Dispatch` pd
-        LEFT JOIN (
-            SELECT rp.po_dispatch, MAX(it.subcontractor) AS subcontractor
-            FROM `tabRollout Plan` rp
-            LEFT JOIN `tabINET Team` it ON it.name = rp.team
-            GROUP BY rp.po_dispatch
-        ) plan_inv ON plan_inv.po_dispatch = pd.name
-        LEFT JOIN `tabINET Team` sc_team_inv ON sc_team_inv.name = pd.backend_team
-        LEFT JOIN `tabSubcontract Master` sm_inv
-               ON sm_inv.name = COALESCE(plan_inv.subcontractor, sc_team_inv.subcontractor)
-        LEFT JOIN `tabSubcontract Master` sm_pd_inv ON sm_pd_inv.name = pd.contract
-        {si_join}
-        WHERE {where_str}
-        GROUP BY pd.name
-        ORDER BY pd.creation DESC
-        {_sql_limit_suffix(lim)}
-        """,
-        tuple(params),
-        as_dict=True,
-    )
-    return rows or []
-
-
-@frappe.whitelist()
 @frappe.whitelist()
 def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
     """Create an ERPNext Sales Invoice (draft) from one or many PO Dispatches.
@@ -1572,6 +1516,7 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
     Does NOT change PIC status — status changes to 'Commercial Invoice Submitted'
     only when the Sales Invoice is submitted.
     """
+    _pic_role_or_throw()
     # Accept single string or JSON list
     if isinstance(po_dispatch, str) and po_dispatch.strip().startswith("["):
         po_dispatch = frappe.parse_json(po_dispatch)
@@ -1732,87 +1677,6 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
         "line_count": len(pds),
         "milestone": milestone_summary,
         "amount": total_amount,
-        "invoice_url": f"/app/sales-invoice/{inv_name}",
-    }
-
-
-    """Create an ERPNext Sales Invoice (draft) from a PO Dispatch.
-
-    Does NOT change PIC status — status changes to 'Commercial Invoice Submitted'
-    only when the Sales Invoice is submitted.
-    """
-    if not frappe.db.exists("PO Dispatch", po_dispatch):
-        frappe.throw("PO Dispatch not found.")
-
-    pd = frappe.db.get_value("PO Dispatch", po_dispatch, "*", as_dict=True)
-    if not pd:
-        frappe.throw("PO Dispatch not found.")
-
-    milestone = (milestone or "MS1").strip().upper()
-    if milestone not in ("MS1", "MS2"):
-        frappe.throw("milestone must be MS1 or MS2")
-
-    amount_field = "ms1_amount" if milestone == "MS1" else "ms2_amount"
-    status_field = "pic_status" if milestone == "MS1" else "pic_status_ms2"
-
-    # Prevent duplicate — block if this milestone already invoiced
-    current_status = (pd.get(status_field) or "").strip()
-    if current_status in ("Commercial Invoice Submitted", "Commercial Invoice Closed"):
-        frappe.throw(
-            f"{milestone} already invoiced — PIC status is '{current_status}'."
-        )
-
-    amount = flt(pd.get(amount_field) or 0)
-    if amount <= 0:
-        frappe.throw(f"{amount_field} is zero — nothing to invoice.")
-
-    # Check if ERPNext Sales Invoice doctype exists
-    if not frappe.db.exists("DocType", "Sales Invoice"):
-        frappe.throw("Sales Invoice doctype not found — ERPNext may not be installed.")
-
-    customer = pd.get("customer")
-    if not customer or not frappe.db.exists("Customer", customer):
-        frappe.throw(f"Customer '{customer}' not found.")
-
-    item_code = pd.get("item_code") or "Service"
-    if not frappe.db.exists("Item", item_code):
-        item_code = "Service"
-
-    # Get tax template from INET Settings
-    tax_template = frappe.db.get_single_value("INET Settings", "sales_tax_template")
-
-    try:
-        si = frappe.new_doc("Sales Invoice")
-        si.customer = customer
-        si.company = frappe.defaults.get_user_default("Company") or frappe.defaults.get_global_default("company")
-        si.due_date = frappe.utils.add_days(frappe.utils.nowdate(), 30)
-        if tax_template:
-            si.taxes_and_charges = tax_template
-        item_row = {
-            "item_code": item_code,
-            "qty": flt(pd.get("qty") or 1),
-            "rate": flt(pd.get("rate") or amount),
-            "amount": amount,
-        }
-        # Accounting dimension links to PO Dispatch doctype — use doc.name,
-        # not the business poid (which won't pass Link validation).
-        if frappe.db.has_column("Sales Invoice Item", "poid"):
-            item_row["poid"] = po_dispatch
-        si.append("items", item_row)
-        si.save(ignore_permissions=True)
-        inv_name = si.name
-    except Exception as e:
-        frappe.log_error(f"Sales Invoice creation failed: {e}")
-        frappe.throw(f"Failed to create Sales Invoice: {str(e)}")
-
-    # Do NOT set Commercial Invoice Submitted — only on actual submit.
-    # The PO Dispatch still shows Ready for Invoice until submit.
-
-    return {
-        "sales_invoice": inv_name,
-        "po_dispatch": po_dispatch,
-        "milestone": milestone,
-        "amount": amount,
         "invoice_url": f"/app/sales-invoice/{inv_name}",
     }
 
