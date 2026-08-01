@@ -654,11 +654,12 @@ export const pmApi = {
     po_dispatch,
     fields: JSON.stringify(fields || {}),
   }),
-  bulkUpdatePicStatus: (po_dispatches, pic_status, milestone, remark) => call("inet_app.api.pic.bulk_update_pic_status", {
+  bulkUpdatePicStatus: (po_dispatches, pic_status, milestone, remark, applied_date) => call("inet_app.api.pic.bulk_update_pic_status", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
     pic_status,
     milestone: milestone || "MS1",
     remark: remark || "",
+    applied_date: applied_date || "",
   }),
   getPicDashboard: (from_date, to_date, etag) => call("inet_app.api.pic.get_pic_dashboard", {
     from_date: from_date || "",

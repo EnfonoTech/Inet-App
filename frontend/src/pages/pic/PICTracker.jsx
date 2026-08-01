@@ -205,6 +205,7 @@ export default function PICTracker() {
   const [bulkMilestone, setBulkMilestone] = useState("MS1");
   const [bulkStatus, setBulkStatus] = useState("Under Process to Apply");
   const [bulkRemark, setBulkRemark] = useState("");
+  const [bulkAppliedDate, setBulkAppliedDate] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkErr, setBulkErr] = useState(null);
 
@@ -436,11 +437,12 @@ export default function PICTracker() {
     setBulkBusy(true);
     setBulkErr(null);
     try {
-      const res = await pmApi.bulkUpdatePicStatus(Array.from(selected), bulkStatus, bulkMilestone, bulkRemark);
+      const res = await pmApi.bulkUpdatePicStatus(Array.from(selected), bulkStatus, bulkMilestone, bulkRemark, bulkAppliedDate);
       const ok = res?.summary?.updated_count ?? 0;
       const errN = res?.summary?.error_count ?? 0;
       if (errN === 0) {
         setShowBulk(false);
+        setBulkAppliedDate("");
         setToastMsg(`Updated ${ok} POID${ok !== 1 ? "s" : ""} → ${bulkStatus} (${bulkMilestone}).`);
         setTimeout(() => setToastMsg(null), 4500);
         setSelected(new Set());
@@ -544,7 +546,7 @@ export default function PICTracker() {
             type="button"
             className="btn-primary"
             disabled={selected.size === 0}
-            onClick={() => { setBulkErr(null); setShowBulk(true); }}
+            onClick={() => { setBulkErr(null); setBulkAppliedDate(""); setShowBulk(true); }}
           >
             Bulk Set Status ({selected.size})
           </button>
@@ -596,12 +598,14 @@ export default function PICTracker() {
                   <th>ISDP Owner</th>
                   <th>iBuy Owner</th>
                   <th>Applied Date (MS1)</th>
+                  <th>Invoicing Month (MS1)</th>
                   <th style={{ textAlign: "right" }}>MS1 %</th>
                   <th style={{ textAlign: "right" }}>MS1 Amt</th>
                   <th style={{ textAlign: "right" }}>MS1 Invoiced</th>
                   <th style={{ textAlign: "right" }}>MS1 Unbilled</th>
                   <th>PIC Status (MS2)</th>
                   <th>Applied Date (MS2)</th>
+                  <th>Invoicing Month (MS2)</th>
                   <th style={{ textAlign: "right" }}>MS2 %</th>
                   <th style={{ textAlign: "right" }}>MS2 Amt</th>
                   <th style={{ textAlign: "right" }}>MS2 Invoiced</th>
@@ -612,7 +616,7 @@ export default function PICTracker() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={35} style={{ padding: 0 }}>
+                    <td colSpan={37} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                       ) : (
@@ -656,12 +660,14 @@ export default function PICTracker() {
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.isdp_owner || ""}>{r.isdp_owner || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.ibuy_owner || ""}>{r.ibuy_owner || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms1_applied_date ? String(r.ms1_applied_date).slice(0, 10) : "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.ms1_invoice_month ? fmtMonthLabel(String(r.ms1_invoice_month)) : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmtInt.format(r.ms1_pct)}%` : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms1_invoiced || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_unbilled || 0) > 0 ? "#b45309" : "#94a3b8" }}>{fmt.format(r.ms1_unbilled || 0)}</td>
                     <td><PicStatusBadge value={r.pic_status_ms2} /></td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.ms2_invoice_month ? fmtMonthLabel(String(r.ms2_invoice_month)) : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmtInt.format(r.ms2_pct)}%` : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms2_invoiced || 0)}</td>
@@ -706,12 +712,13 @@ export default function PICTracker() {
               </tbody>
               {rows.length > 0 && (
               <tfoot>
-                {/* 35 columns: checkbox · Subcontract · Contract Model · POID · PO No · Customer · IM ·
+                {/* 37 columns: checkbox · Subcontract · Contract Model · POID · PO No · Customer · IM ·
                     PO Status · Project Domain · Project · Item · Description · DUID ·
                     Qty · Unit Price · Line Amount · Tax Rate · Payment Terms · IM Status ·
                     PIC Status MS1 · PIC Rejection Reason · ISDP Owner · iBuy Owner ·
-                    Applied MS1 · MS1% · MS1 Amt · MS1 Inv · MS1 Unb ·
-                    PIC Status MS2 · Applied MS2 · MS2% · MS2 Amt · MS2 Inv · Linked Invoice · Edit */}
+                    Applied MS1 · Invoicing Month MS1 · MS1% · MS1 Amt · MS1 Inv · MS1 Unb ·
+                    PIC Status MS2 · Applied MS2 · Invoicing Month MS2 · MS2% · MS2 Amt · MS2 Inv ·
+                    Linked Invoice · Edit */}
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
                   <td></td>{/* checkbox */}
                   <td colSpan={2} style={{ fontSize: "0.78rem", color: "#475569" }}>
@@ -738,12 +745,14 @@ export default function PICTracker() {
                   <td></td>{/* ISDP Owner */}
                   <td></td>{/* iBuy Owner */}
                   <td></td>{/* Applied MS1 */}
+                  <td></td>{/* Invoicing Month MS1 */}
                   <td></td>{/* MS1 % */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms1_invoiced)}</td>{/* MS1 Invoiced */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>{fmt.format(totals.ms1_unbilled)}</td>{/* MS1 Unbilled */}
                   <td></td>{/* PIC Status MS2 */}
                   <td></td>{/* Applied MS2 */}
+                  <td></td>{/* Invoicing Month MS2 */}
                   <td></td>{/* MS2 % */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms2_invoiced)}</td>{/* MS2 Invoiced */}
@@ -833,6 +842,11 @@ export default function PICTracker() {
               <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} disabled={bulkBusy}>
                 {PIC_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Applied Date (optional)</label>
+              <input type="date" value={bulkAppliedDate} onChange={(e) => setBulkAppliedDate(e.target.value)} disabled={bulkBusy}
+                style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6 }} />
             </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>

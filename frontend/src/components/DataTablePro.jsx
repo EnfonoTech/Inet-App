@@ -90,6 +90,9 @@ function detectTableDoctype(pathname, tIdx) {
   return map[key] || null;
 }
 
+/** Monotonic counter so every table instance gets a stable, unique CSS scope for hidden-column rules. */
+let tableproUidCounter = 0;
+
 export default function DataTablePro() {
   const { pathname } = useLocation();
   const { role, user } = useAuth();
@@ -166,6 +169,15 @@ export default function DataTablePro() {
           if (table.dataset.tableproInitialized === "1") continue;
         table.dataset.tableproInitialized = "1";
         table.classList.add("data-table--tablepro");
+
+        // Scoped <style> element for hidden-column rules — see applyHidden().
+        // One attribute-selector rule per hidden column instead of touching
+        // every cell of every row keeps this O(hidden columns), not
+        // O(rows × columns), so it stays fast on tables with thousands of rows.
+        const tableUid = `tp${++tableproUidCounter}`;
+        table.dataset.tableproUid = tableUid;
+        const hiddenStyleEl = document.createElement("style");
+        document.head.appendChild(hiddenStyleEl);
 
         const wrapper = table.closest(".data-table-wrapper");
         if (!wrapper || !wrapper.parentElement) {
@@ -426,6 +438,17 @@ export default function DataTablePro() {
         };
 
         const applyOrder = () => {
+          // Cells render from React in natural column order. When the saved
+          // order matches that natural order (the common case — no manual
+          // drag-reorder yet), every row is already correctly ordered, so
+          // skip the per-row scan entirely instead of re-deriving that same
+          // no-op conclusion once per row — the difference between O(cols)
+          // and O(rows × cols) on tables with thousands of rows.
+          const naturalOrder = columns.map((c) => c.key);
+          const ordersMatch = state.order.length === naturalOrder.length
+            && state.order.every((k, i) => k === naturalOrder[i]);
+          if (ordersMatch) return;
+
           const rows = getRows();
           const orderIndex = state.order.reduce((acc, key, idx) => {
             acc[key] = idx;
@@ -454,14 +477,14 @@ export default function DataTablePro() {
         };
 
         const applyHidden = () => {
-          const allRows = [...table.querySelectorAll("thead tr"), ...table.querySelectorAll("tbody tr"), ...table.querySelectorAll("tfoot tr")];
-          allRows.forEach((row) => {
-            const cells = Array.from(row.children);
-            cells.forEach((cell) => {
-              const key = cell.dataset.colKey;
-              cell.style.display = key && state.hidden.has(key) ? "none" : "";
-            });
+          // colKeys come only from keyFromLabel() (already restricted to [a-z0-9_]),
+          // so they're always safe to inline into a CSS attribute selector as-is.
+          const rules = [];
+          state.hidden.forEach((key) => {
+            if (!key) return;
+            rules.push(`table[data-tablepro-uid="${tableUid}"] [data-col-key="${key}"]{display:none!important;}`);
           });
+          hiddenStyleEl.textContent = rules.join("\n");
         };
 
         const applyFooterColspan = () => {
@@ -1278,6 +1301,7 @@ export default function DataTablePro() {
           wrapResizeObs?.disconnect();
           tbodyMo.disconnect();
           if (tbodyReapplyTimer) clearTimeout(tbodyReapplyTimer);
+          hiddenStyleEl.remove();
         };
         }
       } finally {

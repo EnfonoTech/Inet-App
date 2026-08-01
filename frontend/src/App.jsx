@@ -190,6 +190,7 @@ function AppContent() {
               <Route path="/pic-cancelled" element={<PICCancelled />} />
               <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
               <Route path="/pic-reports" element={<PICReports />} />
+              <Route path="/po-dump" element={<PODump />} />
             </>
           )}
           {/* Admins also reach PIC pages so they can support / audit. */}

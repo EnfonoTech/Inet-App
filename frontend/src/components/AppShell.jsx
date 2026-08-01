@@ -163,6 +163,7 @@ const imNav = [
 
 const picNav = [
   { to: "/pic-dashboard",          label: "PIC Dashboard",      icon: "dashboard" },
+  { to: "/po-dump",                label: "PO Dump",            icon: "layers" },
   { to: "/pic-pending",            label: "Pending",            icon: "clock" },
   { to: "/pic-tracker",            label: "PIC Tracker",        icon: "barChart" },
   { to: "/pic-cancelled",          label: "Cancelled",          icon: "folder" },

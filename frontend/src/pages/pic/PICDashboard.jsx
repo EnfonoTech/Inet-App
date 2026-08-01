@@ -290,7 +290,7 @@ export default function PICDashboard({ showSwitcher = false }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {(showAllMonthly ? monthly : monthly.slice(-6)).map((m) => (
+                  {(showAllMonthly ? monthly : monthly.slice(0, 6)).map((m) => (
                     <tr key={m.invoice_month}>
                       <td>{m.invoice_month}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms1_invoiced || 0)}</td>
