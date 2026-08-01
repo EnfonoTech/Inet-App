@@ -55,7 +55,11 @@ function fmtFileSize(bytes) {
 function billingStatusFromPicStatus(picStatus) {
   if (!picStatus) return null;
   if (["Commercial Invoice Closed", "PO Line Canceled"].includes(picStatus)) return "Closed";
-  if (["Commercial Invoice Submitted", "Ready for Invoice", "Under I-BUY", "Under ISDP"].includes(picStatus)) return "Invoiced";
+  // "Ready for Invoice" / "Under I-BUY" / "Under ISDP" are pre-invoice PIC
+  // routing states — nothing has actually been invoiced yet. Only an
+  // actually-submitted commercial invoice counts, matching
+  // _PIC_STATUS_TO_BILLING in command_center.py (used by the Work Done pages).
+  if (picStatus === "Commercial Invoice Submitted") return "Invoiced";
   return "Pending";
 }
 
