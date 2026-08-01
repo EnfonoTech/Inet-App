@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
@@ -6,6 +6,25 @@ import { useAuth } from "../../context/AuthContext";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// "2024-05" -> "May-24"
+function fmtYearMonthLabel(ym) {
+  const [y, m] = String(ym).split("-");
+  return `${MONTH_SHORT[parseInt(m, 10) - 1]}-${y.slice(2)}`;
+}
+
+// "2026-05-04" -> "4th-May"
+function fmtDayLabel(dateStr) {
+  const d = new Date(`${String(dateStr).slice(0, 10)}T00:00:00`);
+  const day = d.getDate();
+  const suffix = day % 10 === 1 && day !== 11 ? "st"
+    : day % 10 === 2 && day !== 12 ? "nd"
+    : day % 10 === 3 && day !== 13 ? "rd"
+    : "th";
+  return `${day}${suffix}-${MONTH_SHORT[d.getMonth()]}`;
+}
 
 // ── Status display order ───────────────────────────────────────────────
 const MS1_STATUS_ORDER = [
@@ -217,10 +236,281 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
   );
 }
 
+// ── Payment Ledger tab ──────────────────────────────────────────────────
+// Invoicing ledger sectioned by Invoicing Month: year rows collapse to an
+// annual total, expand to months, expand a month to one row per day
+// (invoice lines applied the same day are summed together, never listed
+// individually). Only the month-grain summary loads up front; per-day
+// totals for a given month are fetched lazily the first time that month is
+// expanded (see pic_payment_ledger_month_detail in pic.py) — keeps this
+// fast even with years of history, matching the same render-cost lesson
+// PIC Tracker hit.
+function PaymentLedgerTab({ refreshKey }) {
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [expandedYears, setExpandedYears] = useState(() => new Set());
+  const [expandedMonths, setExpandedMonths] = useState(() => new Set());
+  const [monthDetails, setMonthDetails] = useState(() => new Map());
+  const [loadingMonths, setLoadingMonths] = useState(() => new Set());
+  const [monthErrors, setMonthErrors] = useState(() => new Map());
+
+  const [monthlyRollup, setMonthlyRollup] = useState(null);
+  const [monthlyLoading, setMonthlyLoading] = useState(true);
+  const [monthlyError, setMonthlyError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const rows = await pmApi.picPaymentLedgerSummary();
+        if (!cancelled) setSummary(Array.isArray(rows) ? rows : []);
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Failed to load payment ledger");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  // Same MS1/MS2-by-invoice-month data the PIC Dashboard's "Monthly
+  // Invoicing Roll-up" widget and the Reports "Monthly" report already
+  // compute — reused here as-is rather than duplicating the query.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setMonthlyLoading(true);
+      setMonthlyError(null);
+      try {
+        const res = await pmApi.getPicReport("monthly");
+        if (!cancelled) setMonthlyRollup(Array.isArray(res?.rows) ? res.rows : []);
+      } catch (err) {
+        if (!cancelled) setMonthlyError(err.message || "Failed to load monthly roll-up");
+      } finally {
+        if (!cancelled) setMonthlyLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  const byYear = useMemo(() => {
+    const map = new Map();
+    (summary || []).forEach((r) => {
+      const year = r.year_month.slice(0, 4);
+      if (!map.has(year)) map.set(year, []);
+      map.get(year).push(r);
+    });
+    return map;
+  }, [summary]);
+
+  const years = useMemo(() => Array.from(byYear.keys()).sort(), [byYear]);
+
+  const grandTotal = useMemo(() => (summary || []).reduce((acc, r) => ({
+    invoiced_amount: acc.invoiced_amount + (Number(r.invoiced_amount) || 0),
+    vat_amount: acc.vat_amount + (Number(r.vat_amount) || 0),
+    total_amount: acc.total_amount + (Number(r.total_amount) || 0),
+  }), { invoiced_amount: 0, vat_amount: 0, total_amount: 0 }), [summary]);
+
+  function yearTotal(year) {
+    return (byYear.get(year) || []).reduce((acc, r) => ({
+      invoiced_amount: acc.invoiced_amount + (Number(r.invoiced_amount) || 0),
+      vat_amount: acc.vat_amount + (Number(r.vat_amount) || 0),
+      total_amount: acc.total_amount + (Number(r.total_amount) || 0),
+    }), { invoiced_amount: 0, vat_amount: 0, total_amount: 0 });
+  }
+
+  function toggleYear(year) {
+    setExpandedYears((prev) => {
+      const next = new Set(prev);
+      if (next.has(year)) next.delete(year); else next.add(year);
+      return next;
+    });
+  }
+
+  async function toggleMonth(ym) {
+    setExpandedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(ym)) next.delete(ym); else next.add(ym);
+      return next;
+    });
+    if (!monthDetails.has(ym) && !loadingMonths.has(ym)) {
+      setLoadingMonths((prev) => new Set(prev).add(ym));
+      try {
+        const rows = await pmApi.picPaymentLedgerMonthDetail(ym);
+        setMonthDetails((prev) => new Map(prev).set(ym, Array.isArray(rows) ? rows : []));
+      } catch (err) {
+        setMonthErrors((prev) => new Map(prev).set(ym, err.message || "Failed to load month detail"));
+      } finally {
+        setLoadingMonths((prev) => {
+          const next = new Set(prev);
+          next.delete(ym);
+          return next;
+        });
+      }
+    }
+  }
+
+  if (loading) return <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>Loading…</div>;
+  if (error) return <div className="notice error" style={{ margin: "0 16px" }}><span>!</span> {error}</div>;
+  if (!years.length) return <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>No invoicing dates set yet.</div>;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, alignItems: "start" }}>
+    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ background: "#1e3a8a", color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: "0.88rem", letterSpacing: "0.04em" }}>
+        Invoicing Summary
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.84rem" }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", color: "#475569", fontSize: "0.72rem", textTransform: "uppercase" }}>
+              <th style={{ padding: "8px 14px", textAlign: "left", borderBottom: "1px solid #e2e8f0" }}>Remarks</th>
+              <th style={{ padding: "8px 14px", textAlign: "left", borderBottom: "1px solid #e2e8f0" }}>Payment Received Date</th>
+              <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Invoiced Amount</th>
+              <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>VAT Amount</th>
+              <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Total Invoice Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {years.map((year) => {
+              const yTotal = yearTotal(year);
+              const yExpanded = expandedYears.has(year);
+              return (
+                <Fragment key={year}>
+                  <tr onClick={() => toggleYear(year)} style={{ cursor: "pointer", background: "#eff6ff", borderTop: "1px solid #dbeafe" }}>
+                    <td style={{ padding: "9px 14px", fontWeight: 700, color: "#1e40af" }}>
+                      <span style={{ display: "inline-block", width: 14 }}>{yExpanded ? "▾" : "▸"}</span>
+                      Total Payment Invoices in {year}
+                    </td>
+                    <td style={{ padding: "9px 14px" }} />
+                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{fmt.format(yTotal.invoiced_amount)}</td>
+                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{fmt.format(yTotal.vat_amount)}</td>
+                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{fmt.format(yTotal.total_amount)}</td>
+                  </tr>
+                  {yExpanded && byYear.get(year).map((m) => {
+                    const mExpanded = expandedMonths.has(m.year_month);
+                    const details = monthDetails.get(m.year_month);
+                    const monthErr = monthErrors.get(m.year_month);
+                    return (
+                      <Fragment key={m.year_month}>
+                        <tr onClick={() => toggleMonth(m.year_month)} style={{ cursor: "pointer", background: "#f8fafc", borderTop: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "8px 14px 8px 34px", fontWeight: 600, color: "#334155" }}>
+                            <span style={{ display: "inline-block", width: 14 }}>{mExpanded ? "▾" : "▸"}</span>
+                            Sum of total invoices in {fmtYearMonthLabel(m.year_month)}
+                          </td>
+                          <td style={{ padding: "8px 14px" }} />
+                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(m.invoiced_amount)}</td>
+                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(m.vat_amount)}</td>
+                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(m.total_amount)}</td>
+                        </tr>
+                        {mExpanded && (
+                          loadingMonths.has(m.year_month) ? (
+                            <tr><td colSpan={5} style={{ padding: 16, textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
+                          ) : monthErr ? (
+                            <tr><td colSpan={5} style={{ padding: "8px 14px", color: "#b91c1c" }}>{monthErr}</td></tr>
+                          ) : (details || []).length === 0 ? (
+                            <tr><td colSpan={5} style={{ padding: "8px 14px 8px 54px", color: "#94a3b8" }}>No invoice lines.</td></tr>
+                          ) : (details || []).map((d) => (
+                            <tr key={d.applied_date} style={{ borderTop: "1px solid #f8fafc" }}>
+                              <td style={{ padding: "6px 14px 6px 54px", color: "#64748b", fontSize: "0.8rem" }}>
+                                {d.applied_date ? `Payment Invoice Date ${fmtDayLabel(d.applied_date)}` : "Payment Invoice Date (unspecified)"}
+                              </td>
+                              <td style={{ padding: "6px 14px", color: "#64748b", fontSize: "0.8rem" }}>{d.payment_received_date || "—"}</td>
+                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(d.invoiced_amount)}</td>
+                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(d.vat_amount)}</td>
+                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(d.total_amount)}</td>
+                            </tr>
+                          ))
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{ background: "#f8fafc", borderTop: "2px solid #e2e8f0", fontWeight: 700 }}>
+              <td style={{ padding: "9px 14px", color: "#0f172a" }} colSpan={2}>Grand Total</td>
+              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(grandTotal.invoiced_amount)}</td>
+              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(grandTotal.vat_amount)}</td>
+              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(grandTotal.total_amount)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+      <MonthlyRollupCard rows={monthlyRollup} loading={monthlyLoading} error={monthlyError} />
+    </div>
+  );
+}
+
+// Same MS1/MS2-by-Invoicing-Month figures as the PIC Dashboard's "Monthly
+// Invoicing Roll-up" widget — shown here too since this page is where the
+// PIC actually reviews invoicing detail, not just the dashboard.
+function MonthlyRollupCard({ rows, loading, error }) {
+  const sorted = useMemo(() => [...(rows || [])].sort((a, b) => a.invoice_month.localeCompare(b.invoice_month)), [rows]);
+  const totals = sorted.reduce((acc, r) => ({
+    ms1_invoiced: acc.ms1_invoiced + (Number(r.ms1_invoiced) || 0),
+    ms2_invoiced: acc.ms2_invoiced + (Number(r.ms2_invoiced) || 0),
+    total: acc.total + (Number(r.total) || 0),
+  }), { ms1_invoiced: 0, ms2_invoiced: 0, total: 0 });
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ background: "#0ea5e9", color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: "0.88rem", letterSpacing: "0.04em" }}>
+        Monthly Invoicing Roll-up
+      </div>
+      {loading ? (
+        <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+      ) : error ? (
+        <div className="notice error" style={{ margin: 12 }}><span>!</span> {error}</div>
+      ) : !sorted.length ? (
+        <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>No invoicing dates set yet.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc", color: "#475569", fontSize: "0.7rem", textTransform: "uppercase" }}>
+                <th style={{ padding: "7px 12px", textAlign: "left", borderBottom: "1px solid #e2e8f0" }}>Invoicing Month</th>
+                <th style={{ padding: "7px 12px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>First Payment</th>
+                <th style={{ padding: "7px 12px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Second Payment</th>
+                <th style={{ padding: "7px 12px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Total Invoice Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r, i) => (
+                <tr key={r.invoice_month} style={{ borderTop: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "6px 12px", color: "#334155" }}>({String(i + 1).padStart(2, "0")}) {fmtYearMonthLabel(r.invoice_month)}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(r.ms1_invoiced || 0) > 0 ? fmt.format(r.ms1_invoiced) : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(r.ms2_invoiced || 0) > 0 ? fmt.format(r.ms2_invoiced) : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.total || 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: "#f8fafc", borderTop: "2px solid #e2e8f0", fontWeight: 700 }}>
+                <td style={{ padding: "8px 12px", color: "#0f172a" }}>Grand Total</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_invoiced)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_invoiced)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.total)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────
 export default function PICInvoicingSummary() {
   const { role } = useAuth();
   const navigable = role === "pic";
+  const [tab, setTab] = useState("split");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -275,7 +565,11 @@ export default function PICInvoicingSummary() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Invoicing Summary</h1>
-          <div className="page-subtitle">INET / Subcons split across MS1 &amp; MS2 by PIC status</div>
+          <div className="page-subtitle">
+            {tab === "ledger"
+              ? "Payment-dated invoicing ledger — year and month totals, drill into individual invoice lines"
+              : "INET / Subcons split across MS1 & MS2 by PIC status"}
+          </div>
         </div>
         <div className="page-actions">
           <button type="button" className="btn-secondary" onClick={() => setRefreshKey((k) => k + 1)} disabled={loading}>
@@ -284,40 +578,59 @@ export default function PICInvoicingSummary() {
         </div>
       </div>
 
-      <div className="toolbar" style={{ flexWrap: "wrap", gap: 8 }}>
-        <SearchableSelect
-          multi value={contractFilter} onChange={setContractFilter}
-          options={contractOptions} placeholder="All Contracts" minWidth={180}
-        />
-        <SearchableSelect
-          multi value={subcontractFilter} onChange={setSubcontract}
-          options={subcontractOptions} placeholder="All Subcontracts" minWidth={200}
-        />
-        <SearchableSelect
-          multi value={ms1MonthFilter} onChange={setMs1Month}
-          options={monthOptions} placeholder="MS1 Month" minWidth={150}
-        />
-        <SearchableSelect
-          multi value={ms2MonthFilter} onChange={setMs2Month}
-          options={monthOptions} placeholder="MS2 Month" minWidth={150}
-        />
-        {hasFilters && (
-          <button className="btn-secondary" onClick={() => {
-            setContractFilter([]); setSubcontract([]); setMs1Month([]); setMs2Month([]);
-          }}>
-            Clear
-          </button>
-        )}
+      <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 8px", width: "fit-content" }}>
+        {[
+          { id: "split", label: "INET / Subcon Split" },
+          { id: "ledger", label: "Payment Ledger" },
+        ].map((tt) => {
+          const active = tab === tt.id;
+          return (
+            <button key={tt.id} type="button" role="tab" aria-selected={active} onClick={() => setTab(tt.id)}
+              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? "#1d4ed8" : "transparent", color: active ? "#fff" : "#475569" }}>
+              {tt.label}
+            </button>
+          );
+        })}
       </div>
 
-      {error && (
+      {tab === "split" && (
+        <div className="toolbar" style={{ flexWrap: "wrap", gap: 8 }}>
+          <SearchableSelect
+            multi value={contractFilter} onChange={setContractFilter}
+            options={contractOptions} placeholder="All Contracts" minWidth={180}
+          />
+          <SearchableSelect
+            multi value={subcontractFilter} onChange={setSubcontract}
+            options={subcontractOptions} placeholder="All Subcontracts" minWidth={200}
+          />
+          <SearchableSelect
+            multi value={ms1MonthFilter} onChange={setMs1Month}
+            options={monthOptions} placeholder="MS1 Month" minWidth={150}
+          />
+          <SearchableSelect
+            multi value={ms2MonthFilter} onChange={setMs2Month}
+            options={monthOptions} placeholder="MS2 Month" minWidth={150}
+          />
+          {hasFilters && (
+            <button className="btn-secondary" onClick={() => {
+              setContractFilter([]); setSubcontract([]); setMs1Month([]); setMs2Month([]);
+            }}>
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {tab === "split" && error && (
         <div className="notice error" style={{ margin: "0 16px 8px" }}>
           <span>!</span> {error}
         </div>
       )}
 
       <div className="page-content">
-        {data ? (
+        {tab === "ledger" ? (
+          <PaymentLedgerTab refreshKey={refreshKey} />
+        ) : data ? (
           <>
             <TopSummaryCard top={data.top} />
             <StatusTable

@@ -642,6 +642,12 @@ export const pmApi = {
     portal_filters: JSON.stringify(portalFilters || {}),
   }),
   getPicSummaryFilterOptions: () => call("inet_app.api.pic.get_pic_summary_filter_options"),
+  // "Payment Ledger" tab: month-grain summary (always loaded) + lazy
+  // itemized detail per month (fetched only when that month is expanded).
+  picPaymentLedgerSummary: () => call("inet_app.api.pic.pic_payment_ledger_summary"),
+  picPaymentLedgerMonthDetail: (yearMonth) => call("inet_app.api.pic.pic_payment_ledger_month_detail", {
+    year_month: yearMonth,
+  }),
   // stage: "pending" | "active" | "cancelled" — required. Backs the 3 PIC
   // pages (Pending / PIC Tracker / Cancelled); see list_pic_rows in pic.py.
   listPicRows: (stage, portalFilters, limit) => call("inet_app.api.pic.list_pic_rows", {

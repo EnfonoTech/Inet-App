@@ -680,6 +680,155 @@ def pic_invoicing_summary(portal_filters=None):
     }
 
 
+# PO Dispatch.tax_rate is a free-text field — almost always "15%", sometimes
+# a raw fraction like "0.15", occasionally blank. Normalize to a fraction for
+# VAT math; default to the standard 15% KSA rate when nothing is recorded.
+_TAX_RATE_FRACTION_SQL = """
+    CASE
+      WHEN {col} IS NULL OR {col} = '' THEN 0.15
+      WHEN LOCATE('%%', {col}) > 0 THEN CAST(REPLACE({col}, '%%', '') AS DECIMAL(10,4)) / 100
+      ELSE CAST({col} AS DECIMAL(10,4))
+    END
+"""
+
+
+def _payment_ledger_leg_sql(milestone):
+    """One UNION leg (MS1 or MS2) of the payment-ledger queries below.
+
+    Sectioned by ``ms{n}_invoice_month`` (the same field the rest of this
+    module calls "Invoicing Month" — matches the PIC Tracker column of the
+    same name). ``ms{n}_payment_received_date`` is a separate field, shown
+    only as the "Payment Received Date" display column — it's independent
+    of which month a line is filed under and is often blank until the
+    customer actually pays.
+    """
+    amt_col = f"pd.ms{milestone}_invoiced"
+    invoice_month_col = f"pd.ms{milestone}_invoice_month"
+    applied_col = f"pd.ms{milestone}_applied_date"
+    received_col = f"pd.ms{milestone}_payment_received_date"
+    vat_expr = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
+    where = f"""
+        IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+        AND {amt_col} IS NOT NULL AND {amt_col} != 0
+        AND {invoice_month_col} IS NOT NULL
+    """
+    return amt_col, invoice_month_col, applied_col, received_col, vat_expr, where
+
+
+@frappe.whitelist()
+def pic_payment_ledger_summary(portal_filters=None):
+    """Invoicing ledger, aggregated to month grain — sectioned by Invoicing Month.
+
+    Every MS1/MS2 invoice event (any PO Dispatch line with a nonzero
+    ms{1,2}_invoiced) is grouped by its ms{1,2}_invoice_month. VAT is
+    derived from tax_rate — there's no stored VAT amount on PO Dispatch.
+
+    Feeds the Invoicing Summary "Payment Ledger" tab's collapsible
+    year -> month tree. Year totals are summed client-side from these month
+    rows; per-day totals for a given month are fetched lazily by
+    pic_payment_ledger_month_detail() only when that month is expanded —
+    this endpoint alone stays small (one row per calendar month) regardless
+    of how many thousand invoice lines exist.
+    """
+    _pic_role_or_throw()
+    _portal_filters_dict(portal_filters)  # reserved for future filters
+
+    legs = []
+    for milestone in (1, 2):
+        amt_col, invoice_month_col, _applied_col, _received_col, vat_expr, where = _payment_ledger_leg_sql(milestone)
+        legs.append(f"""
+          SELECT {invoice_month_col} AS invoice_month, {amt_col} AS amt, ({vat_expr}) AS vat_rate
+          FROM `tabPO Dispatch` pd
+          WHERE {where}
+        """)
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT DATE_FORMAT(invoice_month, '%%Y-%%m') AS ym,
+               COALESCE(SUM(amt), 0) AS invoiced_amount,
+               COALESCE(SUM(amt * vat_rate), 0) AS vat_amount
+        FROM ({' UNION ALL '.join(legs)}) u
+        GROUP BY ym
+        ORDER BY ym ASC
+        """,
+        (),
+        as_dict=True,
+    )
+    out = []
+    for r in rows:
+        invoiced = flt(r.get("invoiced_amount"))
+        vat = flt(r.get("vat_amount"))
+        out.append({
+            "year_month": r["ym"],
+            "invoiced_amount": round(invoiced, 2),
+            "vat_amount": round(vat, 2),
+            "total_amount": round(invoiced + vat, 2),
+        })
+    return out
+
+
+@frappe.whitelist()
+def pic_payment_ledger_month_detail(year_month):
+    """Per-day totals for one YYYY-MM Invoicing Month.
+
+    Every MS1/MS2 invoice event in that month is bucketed by the day of its
+    ms{n}_applied_date (falling back to the invoice month itself when no
+    applied date was recorded) and summed — multiple invoice lines applied
+    on the same day collapse into one row, they are never listed
+    individually. "Payment Received Date" is carried along per bucket only
+    when every line in it agrees on the same date; it's a display field,
+    not the grouping key, so a mixed bucket just shows blank rather than a
+    misleading single date.
+
+    Lazy-loaded by the frontend only when the PIC expands that month's row
+    in the Payment Ledger tree — keeps the always-on summary endpoint above
+    cheap while still allowing drill-down to per-day totals.
+    """
+    _pic_role_or_throw()
+    year_month = str(year_month or "").strip()
+    if len(year_month) != 7 or year_month[4] != "-" or not (year_month[:4] + year_month[5:]).isdigit():
+        frappe.throw("year_month must be YYYY-MM")
+
+    legs = []
+    params = []
+    for milestone in (1, 2):
+        amt_col, invoice_month_col, applied_col, received_col, vat_expr, where = _payment_ledger_leg_sql(milestone)
+        legs.append(f"""
+          SELECT COALESCE({applied_col}, {invoice_month_col}) AS bucket_date,
+                 {received_col} AS received_date, {amt_col} AS amt, ({vat_expr}) AS vat_rate
+          FROM `tabPO Dispatch` pd
+          WHERE {where} AND DATE_FORMAT({invoice_month_col}, '%%Y-%%m') = %s
+        """)
+        params.append(year_month)
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT bucket_date,
+               MIN(received_date) AS min_received, MAX(received_date) AS max_received,
+               COALESCE(SUM(amt), 0) AS invoiced_amount,
+               COALESCE(SUM(amt * vat_rate), 0) AS vat_amount
+        FROM ({' UNION ALL '.join(legs)}) u
+        GROUP BY bucket_date
+        ORDER BY bucket_date ASC
+        """,
+        tuple(params),
+        as_dict=True,
+    )
+    out = []
+    for r in rows:
+        invoiced = flt(r.get("invoiced_amount"))
+        vat = flt(r.get("vat_amount"))
+        min_recv, max_recv = r.get("min_received"), r.get("max_received")
+        out.append({
+            "applied_date": str(r["bucket_date"]) if r.get("bucket_date") else None,
+            "payment_received_date": str(min_recv) if min_recv and min_recv == max_recv else None,
+            "invoiced_amount": round(invoiced, 2),
+            "vat_amount": round(vat, 2),
+            "total_amount": round(invoiced + vat, 2),
+        })
+    return out
+
+
 @frappe.whitelist()
 def get_pic_summary_filter_options():
     """Distinct contract models, invoice months, and subcontracts for the invoicing summary filters."""
@@ -731,10 +880,10 @@ def get_pic_summary_filter_options():
 _PIC_WRITABLE = (
     # MS1
     "pic_status", "isdp_owner", "ibuy_owner", "pic_detail_remark", "ms1_applied_date",
-    "ms1_invoice_month", "ms1_ibuy_inv_date",
+    "ms1_invoice_month", "ms1_ibuy_inv_date", "ms1_payment_received_date",
     # MS2
     "pic_status_ms2", "pic_detail_remark_ms2", "ms2_applied_date",
-    "ms2_invoice_month", "ms2_ibuy_inv_date",
+    "ms2_invoice_month", "ms2_ibuy_inv_date", "ms2_payment_received_date",
     # Common
     "ms1_pct", "ms2_pct",  # PIC may override the parsed split
     # Acceptance gates — PIC can correct typos coming from the master tracker

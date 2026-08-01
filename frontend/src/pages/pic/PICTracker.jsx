@@ -367,6 +367,8 @@ export default function PICTracker() {
       ms2_invoice_month: row.ms2_invoice_month || "",
       ms1_ibuy_inv_date: row.ms1_ibuy_inv_date || "",
       ms2_ibuy_inv_date: row.ms2_ibuy_inv_date || "",
+      ms1_payment_received_date: row.ms1_payment_received_date || "",
+      ms2_payment_received_date: row.ms2_payment_received_date || "",
     });
     setEditErr(null);
   }
@@ -380,6 +382,8 @@ export default function PICTracker() {
       ["ms2_applied_date", "MS2 Applied Date"],
       ["ms1_ibuy_inv_date", "MS1 iBuy Invoice Date"],
       ["ms2_ibuy_inv_date", "MS2 iBuy Invoice Date"],
+      ["ms1_payment_received_date", "MS1 Payment Received Date"],
+      ["ms2_payment_received_date", "MS2 Payment Received Date"],
     ];
     for (const [key, label] of futureDateFields) {
       const val = editFields[key];
@@ -1077,6 +1081,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
               invoicedKey="ms1_invoiced"
               invoiceMonthKey="ms1_invoice_month"
               ibuyDateKey="ms1_ibuy_inv_date"
+              receivedKey="ms1_payment_received_date"
               pctLabel={`${ms1Pct.toFixed(0)}% of line`}
               amount={ms1Amt}
               invoiced={ms1Inv}
@@ -1097,6 +1102,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
               invoicedKey="ms2_invoiced"
               invoiceMonthKey="ms2_invoice_month"
               ibuyDateKey="ms2_ibuy_inv_date"
+              receivedKey="ms2_payment_received_date"
               pctLabel={`${ms2Pct.toFixed(0)}% of line`}
               amount={ms2Amt}
               invoiced={ms2Inv}
@@ -1429,6 +1435,9 @@ function MilestonePanel({
         </Field>
         <Field label="IBUY / INV Date">
           <input type="date" value={fields[ibuyDateKey] || ""} onChange={(e) => set(ibuyDateKey, e.target.value)} disabled={busy} style={fieldInputStyle} />
+        </Field>
+        <Field label="Payment Received Date">
+          <input type="date" value={fields[receivedKey] || ""} onChange={(e) => set(receivedKey, e.target.value)} disabled={busy} style={fieldInputStyle} />
         </Field>
       </div>
     </Card>
