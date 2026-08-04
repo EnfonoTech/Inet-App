@@ -4290,7 +4290,13 @@ def create_rollout_plans(payload):
         # Visit # advances per POID: 1st plan = 1, 2nd = 2 (Re-Visit), etc.
         doc.visit_number = _next_visit_number_for_dispatch(dispatch_name)
         doc.visit_multiplier = visit_multiplier
-        doc.target_amount = flt(dispatch.line_amount) * visit_multiplier
+        # target_amount is this plan's own completion target (achieved_amount /
+        # target_amount = completion_pct, see _sync_execution_to_plan) — it must
+        # always be the full line amount, not multiplier-scaled, or a Re-Visit's
+        # completion tracking is measured against an artificially low bar.
+        # visit_multiplier is still stored above for its other, reporting-only
+        # uses (e.g. subcontract cost scaling) — just no longer baked into this.
+        doc.target_amount = flt(dispatch.line_amount)
         doc.plan_status = "Planned"
         # Issue & Risk fields — only attached when a re-plan carries them.
         if payload.get("issue_category"):
@@ -13907,8 +13913,15 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
         "ms1_invoice_month", "ms2_invoice_month",
         "ms1_ibuy_inv_date", "ms2_ibuy_inv_date",
     }
+    # Rows downgraded to "Pending" (see _archive_row_has_no_pic_progress) have
+    # no evidence any work was actually done — don't carry over the archive's
+    # subcontractor either, since that mapping is only meaningful for a line
+    # that genuinely progressed. Let the normal dispatch workflow assign it.
+    skip_contract = src_line.get("_target_status") == "Pending"
     updates = {}
     for k in PIC_KEYS:
+        if k == "contract" and skip_contract:
+            continue
         v = src_line.get(k)
         if v is None or v == "":
             continue
@@ -14143,9 +14156,37 @@ def _archive_status_for(po_status):
     if s in ("CANCELLED", "CANCELED", "CANCEL"):
         return "Cancelled"
     if s == "OPEN":
-        # Commercially open but operationally done — import as Completed
+        # Commercially open but operationally done — import as Completed.
+        # Caller downgrades this to "Pending" when the row's own PIC data
+        # shows no real progress on either milestone — see
+        # _archive_row_has_no_pic_progress().
         return "Completed"
     return None
+
+
+def _archive_row_has_no_pic_progress(row):
+    """True when an archive row's PIC Remarks columns show neither milestone
+    has actually progressed — blank, or the "Work Not Done" default itself.
+
+    An "OPEN" row defaults to dispatch_status=Completed on the assumption
+    the field work was already done historically; but if there's no PIC
+    data backing that up on either milestone, there's no evidence the work
+    was actually done, so it shouldn't be imported as Completed with
+    nothing behind it.
+    """
+    ms1_raw = str(row.get("pic_status") or "").strip()
+    ms2_raw = str(row.get("pic_status_ms2") or "").strip()
+    ms1 = normalize_select_value("PO Dispatch", "pic_status", ms1_raw) if ms1_raw else ""
+    ms2 = normalize_select_value("PO Dispatch", "pic_status_ms2", ms2_raw) if ms2_raw else ""
+    return ms1 in ("", "Work Not Done") and ms2 in ("", "Work Not Done")
+
+
+def _archive_line_status_for(dispatch_target):
+    """Map an archive dispatch_status classification to PO Intake Line's
+    (different) status enum — the two doctypes don't share "Pending"."""
+    if dispatch_target == "Pending":
+        return "Dispatched"  # a PO Dispatch already exists for this line
+    return dispatch_target
 
 
 @frappe.whitelist()
@@ -14307,6 +14348,8 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
             target = _archive_status_for(row.get("po_status"))
             if not target:
                 continue
+            if target == "Completed" and _archive_row_has_no_pic_progress(row):
+                target = "Pending"
             row["_target_status"] = target
             all_rows.append(row)
             if str(row.get("project_code") or "").strip():
@@ -14527,7 +14570,7 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                         "center_area": line_center_area,
                         "region_type": line_region,
                         "publish_date": line.get("publish_date") or None,
-                        "po_line_status": line.get("_target_status"),
+                        "po_line_status": _archive_line_status_for(line.get("_target_status")),
                         "dispatch_mode": "Manual",
                     }
 
