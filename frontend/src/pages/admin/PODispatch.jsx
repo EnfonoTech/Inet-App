@@ -114,7 +114,117 @@ const TABS = [
   { key: "New",        label: "Pending Dispatch" },
   { key: "Dispatched", label: "Dispatched" },
   { key: "all",        label: "All Lines" },
+  { key: "integrity_completed_no_evidence", label: "Completed, No Evidence" },
+  { key: "integrity_closed_unresolved",     label: "Closed, Unresolved Milestone" },
 ];
+
+// Data Integrity tabs — PO Dispatch status mismatches that need a PM
+// decision. Each has its own backend category + one or more fix actions;
+// see list_data_integrity_issues / fix_data_integrity_* in command_center.py.
+const INTEGRITY_TABS = {
+  integrity_completed_no_evidence: {
+    category: "completed_no_evidence",
+    blurb: "PO Status is \"Completed\" but neither milestone has progressed and there's no Work Done record behind it at all — no evidence the work actually happened.",
+    actions: [
+      {
+        label: "Reopen as Pending",
+        fixFn: "fixDataIntegrityCompletedNoEvidence",
+        note: "Reverts PO Status to Pending (or Dispatched if an IM is already assigned) so it re-enters the normal dispatch workflow.",
+      },
+    ],
+  },
+  integrity_closed_unresolved: {
+    category: "closed_unresolved_milestone",
+    blurb: "PO Status is \"Closed\" but MS1 or MS2 has a nonzero amount that was never actually invoiced or cancelled.",
+    actions: [
+      {
+        label: "Reopen to Completed",
+        fixFn: "fixDataIntegrityReopenClosed",
+        note: "Reverts PO Status from Closed back to Completed so the line falls back into PIC Tracker's normal workflow — PIC decides the real invoicing outcome there; PM doesn't set PIC status directly.",
+        // Only useful when the stuck milestone already has a real PIC status
+        // (something to send back into PIC Tracker for). A milestone with no
+        // status at all is already sitting on PIC's own Pending page
+        // regardless of PO Status, so there's nothing for PM to do here —
+        // PIC already has full visibility and the normal tools to resolve it.
+        visibleWhen: (selectedRows) => selectedRows.some((r) =>
+          (r.ms1_stuck && r.pic_status) || (r.ms2_stuck && r.pic_status_ms2)
+        ),
+      },
+    ],
+  },
+};
+
+function IntegrityTable({ rows, loading, selected, toggleRow, toggleAll, tabKey, showMs, fmt }) {
+  const colCount = showMs ? 10 : 9;
+  return (
+    <table className="data-table" data-table-key={`admin-po-dispatch-${tabKey}`}>
+      <thead>
+        <tr>
+          <th style={{ width: 36 }}>
+            <input type="checkbox" checked={rows.length > 0 && selected.size === rows.length} onChange={toggleAll} />
+          </th>
+          <th>POID</th>
+          <th>PO No</th>
+          <th>Project</th>
+          <th>DUID</th>
+          <th>PO Status</th>
+          <th>PIC Status (MS1)</th>
+          <th>PIC Status (MS2)</th>
+          {showMs ? (
+            <>
+              <th style={{ textAlign: "right" }}>MS1 Unbilled</th>
+              <th style={{ textAlign: "right" }}>MS2 Unbilled</th>
+            </>
+          ) : (
+            <th style={{ textAlign: "right" }}>Line Amount</th>
+          )}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr>
+            <td colSpan={colCount} style={{ padding: 0 }}>
+              {loading ? (
+                <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+              ) : (
+                <div className="empty-state">
+                  <div className="empty-icon">✓</div>
+                  <h3>No mismatches found</h3>
+                  <p>Nothing in this category right now.</p>
+                </div>
+              )}
+            </td>
+          </tr>
+        ) : rows.map((r) => (
+          <tr key={r.name}
+              data-doc-name={r.name}
+              className={selected.has(r.name) ? "row-selected" : ""}
+              onClick={() => toggleRow(r.name)}
+              style={{ cursor: "pointer" }}>
+            <td onClick={(e) => e.stopPropagation()}>
+              <input type="checkbox" checked={selected.has(r.name)} onChange={() => toggleRow(r.name)} />
+            </td>
+            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.name}</td>
+            <td>{r.po_no || "—"}</td>
+            <td title={r.project_name || ""}>{r.project_code || "—"}</td>
+            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.site_code || "—"}</td>
+            <td>{r.dispatch_status || "—"}</td>
+            <td style={{ color: showMs && r.ms1_stuck ? "#b91c1c" : undefined, fontWeight: showMs && r.ms1_stuck ? 700 : undefined }}>{r.pic_status || "—"}</td>
+            <td style={{ color: showMs && r.ms2_stuck ? "#b91c1c" : undefined, fontWeight: showMs && r.ms2_stuck ? 700 : undefined }}>{r.pic_status_ms2 || "—"}</td>
+            {showMs ? (
+              <>
+                <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ms1_stuck ? "#b45309" : "#94a3b8" }}>{fmt.format(r.ms1_unbilled || 0)}</td>
+                <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ms2_stuck ? "#b45309" : "#94a3b8" }}>{fmt.format(r.ms2_unbilled || 0)}</td>
+              </>
+            ) : (
+              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.line_amount || 0)}</td>
+            )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 const inputStyle = {
   width: "100%", padding: "9px 12px",
@@ -126,6 +236,36 @@ const labelStyle = { display: "block", fontSize: "0.78rem", fontWeight: 600, mar
 export default function PODispatch() {
   const { rowLimit } = useTableRowLimit();
   const [activeTab, setActiveTab] = useState("New");
+  const integrityDef = INTEGRITY_TABS[activeTab] || null;
+  const isIntegrityTab = !!integrityDef;
+  const [fixBusy, setFixBusy] = useState(false);
+  // Counts for both integrity categories, independent of which tab is
+  // active — the tab bar needs to know whether to show a tab it's not
+  // currently on. undefined (not yet loaded) is treated as "hide" so an
+  // empty tab never flashes before the real count arrives.
+  const [integrityCounts, setIntegrityCounts] = useState({});
+  const refreshIntegrityCounts = useCallback(() => {
+    Object.values(INTEGRITY_TABS).forEach((def) => {
+      pmApi.listDataIntegrityIssues(def.category)
+        .then((res) => setIntegrityCounts((prev) => ({ ...prev, [def.category]: Array.isArray(res) ? res.length : 0 })))
+        .catch(() => {});
+    });
+  }, []);
+  useEffect(() => { refreshIntegrityCounts(); }, [refreshIntegrityCounts]);
+  const visibleTabs = TABS.filter((t) => {
+    const def = INTEGRITY_TABS[t.key];
+    return !def || (integrityCounts[def.category] ?? 0) > 0;
+  });
+  // If the tab PM is currently on empties out (e.g. they just fixed the
+  // last line in it), it drops out of visibleTabs above — follow them
+  // somewhere still visible instead of stranding them on a hidden tab.
+  useEffect(() => {
+    if (integrityDef && integrityCounts[integrityDef.category] === 0) {
+      setActiveTab("New");
+      setSelected(new Set());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [integrityCounts, activeTab]);
   const showDispatched = activeTab === "Dispatched" || activeTab === "all";
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -134,6 +274,7 @@ export default function PODispatch() {
   const [selected, setSelected] = useState(new Set());
   const [tableSearch, setTableSearch] = useState("");
   const tableSearchDebounced = useDebounced(tableSearch, 300);
+  const [integritySearch, setIntegritySearch] = useState("");
   const [projectFilter, setProjectFilter] = useState([]);
   const [imFilter, setImFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
@@ -220,6 +361,11 @@ export default function PODispatch() {
     setSelected(new Set());
     (async () => {
       try {
+        if (integrityDef) {
+          const res = await pmApi.listDataIntegrityIssues(integrityDef.category);
+          if (!cancelled) setRows(Array.isArray(res) ? res : []);
+          return;
+        }
         const status = activeTab;
         const portal = { intake_tab: String(status || "").toLowerCase() };
         if (tableSearchDebounced.trim()) portal.search = tableSearchDebounced.trim();
@@ -260,7 +406,7 @@ export default function PODispatch() {
       .catch(() => setConvertProjectItemCodes([]));
   }, [convertProject]);
 
-  function switchTab(tab) { setActiveTab(tab); setSelected(new Set()); }
+  function switchTab(tab) { setActiveTab(tab); setSelected(new Set()); setIntegritySearch(""); }
 
   function toggleRow(name) {
     setSelected(prev => {
@@ -294,7 +440,7 @@ export default function PODispatch() {
 
   function toggleAll() {
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    const visible = integrityRowsFiltered.filter((r) => !dtpHidden.has(r.name));
     if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
       setSelected(new Set());
     } else {
@@ -442,6 +588,31 @@ export default function PODispatch() {
       setAssigningBulkIm(false);
     }
   }
+
+  // ── Data Integrity fix (Completed/No Evidence, Closed/Unresolved tabs) ──
+  async function submitIntegrityFix(fixFn) {
+    if (!selected.size) return;
+    setFixBusy(true);
+    try {
+      const res = await pmApi[fixFn](Array.from(selected));
+      const n = res?.count ?? 0;
+      showNotice("ok", `Fixed ${n} line${n !== 1 ? "s" : ""}.`);
+      setSelected(new Set());
+      loadData(activeTab);
+      refreshIntegrityCounts();
+    } catch (err) {
+      showNotice("err", err.message || "Fix failed");
+    } finally {
+      setFixBusy(false);
+    }
+  }
+
+  const selectedIntegrityRows = isIntegrityTab ? rows.filter((r) => selected.has(r.name)) : [];
+  const integritySearchNorm = integritySearch.trim().toLowerCase();
+  const integrityRowsFiltered = !isIntegrityTab || !integritySearchNorm
+    ? rows
+    : rows.filter((r) => [r.poid, r.po_no, r.project_code, r.project_name, r.site_code, r.name]
+        .some((v) => String(v || "").toLowerCase().includes(integritySearchNorm)));
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
@@ -684,7 +855,7 @@ export default function PODispatch() {
 
       {/* Tabs */}
       <div style={{ display: "flex", borderBottom: "2px solid #e2e8f0", marginBottom: 0 }}>
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button key={t.key} onClick={() => switchTab(t.key)} style={{
             padding: "10px 22px", background: "none", border: "none",
             borderBottom: activeTab === t.key ? "2px solid #6366f1" : "2px solid transparent",
@@ -700,35 +871,67 @@ export default function PODispatch() {
 
       {/* Toolbar */}
       <div className="toolbar">
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {/* Search filter */}
-          <input
-            type="search"
-            placeholder="Filter by POID, PO No, Item, Project, DUID..."
-            value={tableSearch}
-            onChange={e => setTableSearch(e.target.value)}
-            onPaste={(e) => handleSearchPaste(e, setTableSearch)}
-            style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
-          />
-          <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-          <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))} placeholder="All IMs" minWidth={170} />
-          <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={160} />
-          <SearchableSelect multi value={itemCodeFilter} onChange={setItemCodeFilter} options={itemCodeOptions} placeholder="All Item Codes" minWidth={160} />
-          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} placeholder="All Status" minWidth={150} />
-          <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
-          {hasFilters && (
-            <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setItemCodeFilter([]); setStatusFilter([]); setFromDate(""); setToDate(""); }}>
-              Clear
-            </button>
-          )}
-        </div>
+        {isIntegrityTab ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              type="search"
+              placeholder="Filter by POID, PO No, Project, DUID..."
+              value={integritySearch}
+              onChange={(e) => setIntegritySearch(e.target.value)}
+              onPaste={(e) => handleSearchPaste(e, setIntegritySearch)}
+              style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
+            />
+            {integritySearch && (
+              <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => setIntegritySearch("")}>
+                Clear
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {/* Search filter */}
+            <input
+              type="search"
+              placeholder="Filter by POID, PO No, Item, Project, DUID..."
+              value={tableSearch}
+              onChange={e => setTableSearch(e.target.value)}
+              onPaste={(e) => handleSearchPaste(e, setTableSearch)}
+              style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
+            />
+            <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+            <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))} placeholder="All IMs" minWidth={170} />
+            <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={160} />
+            <SearchableSelect multi value={itemCodeFilter} onChange={setItemCodeFilter} options={itemCodeOptions} placeholder="All Item Codes" minWidth={160} />
+            <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} placeholder="All Status" minWidth={150} />
+            <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
+            {hasFilters && (
+              <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setItemCodeFilter([]); setStatusFilter([]); setFromDate(""); setToDate(""); }}>
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="toolbar-actions">
-          {/* Works across all 3 tabs on whatever's selected - routes each line
-              by its own status (pending/dispatched/closed/cancelled). The
-              main place this matters is "All Lines", where a selection can
-              mix all of those at once. */}
-          {selected.size > 0 && (
+          {isIntegrityTab && integrityDef.actions
+            .filter((a) => !selected.size || !a.visibleWhen || a.visibleWhen(selectedIntegrityRows))
+            .map((a) => (
+              <button
+                key={a.fixFn}
+                className="btn-primary"
+                style={{ fontSize: "0.8rem" }}
+                onClick={() => submitIntegrityFix(a.fixFn)}
+                disabled={!selected.size || fixBusy}
+              >
+                {fixBusy ? "Fixing…" : `${a.label} (${selected.size})`}
+              </button>
+            ))}
+
+          {/* Works across all 3 dispatch tabs on whatever's selected - routes
+              each line by its own status (pending/dispatched/closed/cancelled).
+              The main place this matters is "All Lines", where a selection
+              can mix all of those at once. */}
+          {!isIntegrityTab && selected.size > 0 && (
             <button
               className="btn-primary"
               style={{ fontSize: "0.8rem" }}
@@ -777,8 +980,19 @@ export default function PODispatch() {
         {error && <div className="notice error" style={{ marginBottom: 16 }}><span>!</span> {error}</div>}
 
         <DataTableWrapper>
-          {(() => {
-            const colCount = showDispatched ? 20 : 17;
+          {isIntegrityTab ? (
+            <IntegrityTable
+              rows={integrityRowsFiltered}
+              loading={loading}
+              selected={selected}
+              toggleRow={toggleRow}
+              toggleAll={toggleAll}
+              tabKey={activeTab}
+              showMs={activeTab === "integrity_closed_unresolved"}
+              fmt={fmtAmt}
+            />
+          ) : (() => {
+            const colCount = showDispatched ? 21 : 18;
             return (
             <table className="data-table" data-table-key={`admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`}>
               <thead>
@@ -791,6 +1005,7 @@ export default function PODispatch() {
                   </th>
                   <th>POID</th>
                   <th>Status</th>
+                  <th>PO Status</th>
                   <th>Current Stage</th>
                   <th>System ID</th>
                   <th>PO No</th>
@@ -854,6 +1069,16 @@ export default function PODispatch() {
                           return (
                             <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: t.bg, color: t.fg }}>
                               {row.po_line_status}
+                            </span>
+                          );
+                        })() : "—"}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }} title="PO Dispatch.dispatch_status — compare against Status (PO Intake Line.po_line_status) to spot mismatches">
+                        {row.dispatch_status ? (() => {
+                          const t = statusTone(row.dispatch_status);
+                          return (
+                            <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: t.bg, color: t.fg }}>
+                              {row.dispatch_status}
                             </span>
                           );
                         })() : "—"}

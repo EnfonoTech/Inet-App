@@ -529,8 +529,18 @@ export const pmApi = {
     call("inet_app.api.pic.get_po_dispatch_im_attachments", { po_dispatch }),
   getPoDispatchPicAttachments: (po_dispatch) =>
     call("inet_app.api.pic.get_po_dispatch_pic_attachments", { po_dispatch }),
-  rejectPicLine: (po_dispatch, remark) =>
-    call("inet_app.api.pic.reject_pic_line", { po_dispatch, remark }),
+  // milestone: "MS1" | "MS2". im is only needed/used to backfill PO Dispatch.im
+  // on lines that have none — omit when not required. new_status overrides
+  // the server's auto-picked rejected status ("Work Not Done" / "I-BUY
+  // Rejected" / "ISDP Rejected") — omit/empty to let the server decide.
+  rejectPicLine: (po_dispatches, milestone, remark, im, new_status) =>
+    call("inet_app.api.pic.reject_pic_line", {
+      po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
+      milestone: milestone || "MS1",
+      remark,
+      im: im || "",
+      new_status: new_status || "",
+    }),
   getTeamOptions: () =>
     callCached("inet_app.api.command_center.get_team_options", {}, 300_000),
   getBackendTeamOptions: () =>
@@ -574,6 +584,14 @@ export const pmApi = {
   listPoTransferRequests: (scope, status) => call("inet_app.api.command_center.list_po_transfer_requests", { scope: scope || "all", status: status || "" }),
   listMyPendingPoTransferPoids: () => call("inet_app.api.command_center.list_my_pending_po_transfer_poids", {}),
   listIMMastersForTransferPicker: (search) => call("inet_app.api.command_center.list_im_masters_for_transfer_picker", { search: search || "", limit: 200 }),
+  // Data Integrity (PM/Admin) — categories: "completed_no_evidence", "closed_unresolved_milestone"
+  listDataIntegrityIssues: (category) => call("inet_app.api.command_center.list_data_integrity_issues", { category }),
+  fixDataIntegrityCompletedNoEvidence: (po_dispatches) => call("inet_app.api.command_center.fix_data_integrity_completed_no_evidence", {
+    po_dispatches: JSON.stringify(po_dispatches),
+  }),
+  fixDataIntegrityReopenClosed: (po_dispatches) => call("inet_app.api.command_center.fix_data_integrity_reopen_closed", {
+    po_dispatches: JSON.stringify(po_dispatches),
+  }),
   // Plan Cancel Request — IM requests PM approval to cancel a Rollout Plan.
   requestCancelPlan:  (rolloutPlan, reason) => call("inet_app.api.command_center.request_cancel_plan", { rollout_plan: rolloutPlan, reason: reason || "" }),
   pmDecideCancelPlan: (rolloutPlan, action, remark) => call("inet_app.api.command_center.pm_decide_cancel_plan", { rollout_plan: rolloutPlan, action, remark: remark || "" }),

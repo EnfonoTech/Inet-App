@@ -45,6 +45,18 @@ const PIC_STATUSES = [
   "PO Line Canceled",
 ];
 
+// Resulting-status choices for the Reject modal — anything except the two
+// invoiced statuses (a reject can't manufacture an invoiced state).
+const REJECT_STATUS_OPTIONS = PIC_STATUSES.filter(
+  (s) => s !== "Commercial Invoice Submitted" && s !== "Commercial Invoice Closed"
+);
+
+function currentPicStatusFor(row, milestone) {
+  if (!row) return "Work Not Done";
+  if (milestone === "MS2") return row.pic_status_ms2 || "Work Not Done";
+  return row.pic_status_effective || row.pic_status_stored || "Work Not Done";
+}
+
 // PO Dispatch's dispatch_status field — see po_dispatch.json.
 const PO_STATUSES = [
   "Pending",
@@ -152,8 +164,18 @@ export default function PICTracker() {
   // Reject modal state (operates on current selection)
   const [showReject, setShowReject] = useState(false);
   const [rejectRemark, setRejectRemark] = useState("");
+  const [rejectMilestone, setRejectMilestone] = useState("MS1");
+  // "" = let the server pick the default (Work Not Done / I-BUY Rejected /
+  // ISDP Rejected, based on the line's current status).
+  const [rejectNewStatus, setRejectNewStatus] = useState("");
   const [rejectBusy, setRejectBusy] = useState(false);
   const [rejectErr, setRejectErr] = useState(null);
+  // Lines the last reject attempt reported as missing an IM — surfaces an
+  // inline IM picker so the reject can be retried once one's chosen,
+  // instead of silently failing for legacy lines with no IM assigned.
+  const [rejectNeedsIm, setRejectNeedsIm] = useState([]);
+  const [rejectImOptions, setRejectImOptions] = useState([]);
+  const [rejectImPick, setRejectImPick] = useState("");
 
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -415,20 +437,45 @@ export default function PICTracker() {
   }
 
   async function submitReject() {
-    if (!selected.size) return;
+    const targets = rejectNeedsIm.length ? rejectNeedsIm : Array.from(selected);
+    if (!targets.length) return;
     if (!rejectRemark.trim()) { setRejectErr("Rejection remark is required."); return; }
-    const dispatches = Array.from(selected);
+    if (rejectNeedsIm.length && !rejectImPick) { setRejectErr("Pick an IM to notify, then retry."); return; }
     setRejectBusy(true);
     setRejectErr(null);
     try {
-      for (const po_dispatch of dispatches) {
-        await pmApi.rejectPicLine(po_dispatch, rejectRemark.trim());
+      const res = await pmApi.rejectPicLine(targets, rejectMilestone, rejectRemark.trim(), rejectImPick || undefined, rejectNewStatus || undefined);
+      const ok = res?.summary?.updated_count ?? 0;
+      const errs = res?.errors || [];
+      const missingIm = errs.filter((e) => /no im assigned/i.test(e.error || "")).map((e) => e.po_dispatch);
+      const otherErrs = errs.filter((e) => !/no im assigned/i.test(e.error || ""));
+
+      if (ok > 0) {
+        setToastMsg(`Rejected ${ok} POID${ok !== 1 ? "s" : ""} (${rejectMilestone}).`);
+        setTimeout(() => setToastMsg(null), 4500);
+        await load();
       }
-      setShowReject(false);
-      setSelected(new Set());
-      setToastMsg(`Rejected ${dispatches.length} POID${dispatches.length !== 1 ? "s" : ""}.`);
-      setTimeout(() => setToastMsg(null), 4500);
-      await load();
+
+      if (missingIm.length) {
+        setRejectNeedsIm(missingIm);
+        setSelected(new Set(missingIm));
+        setRejectErr(`${missingIm.length} POID${missingIm.length !== 1 ? "s" : ""} have no IM assigned — pick one below, then click Retry.`);
+        if (!rejectImOptions.length) {
+          pmApi.listIMMasters({}).then((rows) => {
+            setRejectImOptions((rows || []).map((r) => ({ id: r.name, label: r.full_name || r.name })));
+          }).catch(() => {});
+        }
+      } else if (otherErrs.length) {
+        setRejectNeedsIm([]);
+        setRejectErr(otherErrs.map((e) => e.error).join("; "));
+      } else {
+        setShowReject(false);
+        setRejectRemark("");
+        setRejectNewStatus("");
+        setRejectImPick("");
+        setRejectNeedsIm([]);
+        setSelected(new Set());
+      }
     } catch (err) {
       setRejectErr(err.message || "Rejection failed");
     } finally {
@@ -541,7 +588,12 @@ export default function PICTracker() {
           <button
             type="button"
             disabled={selected.size === 0}
-            onClick={() => { setRejectErr(null); setRejectRemark(""); setShowReject(true); }}
+            onClick={() => {
+              setRejectErr(null); setRejectRemark(""); setRejectMilestone("MS1");
+              const firstSel = rows.find((r) => selected.has(r.po_dispatch));
+              setRejectNewStatus(currentPicStatusFor(firstSel, "MS1"));
+              setRejectNeedsIm([]); setRejectImPick(""); setShowReject(true);
+            }}
             style={{ padding: "6px 14px", background: selected.size > 0 ? "#dc2626" : "#f1f5f9", color: selected.size > 0 ? "#fff" : "#94a3b8", border: "none", borderRadius: 6, fontWeight: 600, cursor: selected.size > 0 ? "pointer" : "default", fontSize: "0.88rem" }}
           >
             Reject ({selected.size})
@@ -796,10 +848,36 @@ export default function PICTracker() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <h3 style={{ margin: 0, fontSize: "1rem", color: "#991b1b" }}>
                 Reject Work Done
-                <span style={{ marginLeft: 8, fontSize: "0.82rem", color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span>
+                <span style={{ marginLeft: 8, fontSize: "0.82rem", color: "#64748b", fontWeight: 500 }}>· {(rejectNeedsIm.length || selected.size)} POID{(rejectNeedsIm.length || selected.size) !== 1 ? "s" : ""}</span>
               </h3>
               <button type="button" onClick={() => setShowReject(false)} disabled={rejectBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
             </div>
+            {!rejectNeedsIm.length && (
+              <div className="form-group" style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>
+                  Milestone
+                </label>
+                <select value={rejectMilestone} onChange={(e) => {
+                  const ms = e.target.value;
+                  setRejectMilestone(ms);
+                  const firstSel = rows.find((r) => selected.has(r.po_dispatch));
+                  setRejectNewStatus(currentPicStatusFor(firstSel, ms));
+                }} disabled={rejectBusy}>
+                  <option value="MS1">MS1 (1st Payment)</option>
+                  <option value="MS2">MS2 (2nd Payment)</option>
+                </select>
+              </div>
+            )}
+            {!rejectNeedsIm.length && (
+              <div className="form-group" style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>
+                  Resulting Status
+                </label>
+                <select value={rejectNewStatus} onChange={(e) => setRejectNewStatus(e.target.value)} disabled={rejectBusy}>
+                  {REJECT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
             <div className="form-group" style={{ marginBottom: 14 }}>
               <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>
                 Rejection Remark <span style={{ color: "#ef4444" }}>*</span>
@@ -807,18 +885,34 @@ export default function PICTracker() {
               <textarea
                 value={rejectRemark}
                 onChange={(e) => setRejectRemark(e.target.value)}
-                disabled={rejectBusy}
+                disabled={rejectBusy || !!rejectNeedsIm.length}
                 rows={4}
                 placeholder="Describe why this Work Done is being rejected…"
                 style={{ width: "100%", padding: 8, border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.88rem", resize: "vertical", boxSizing: "border-box" }}
               />
             </div>
+            {!!rejectNeedsIm.length && (
+              <div className="form-group" style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>
+                  Assign IM to notify <span style={{ color: "#ef4444" }}>*</span>
+                </label>
+                <SearchableSelect
+                  value={rejectImPick}
+                  onChange={setRejectImPick}
+                  options={rejectImOptions}
+                  placeholder="Select IM…"
+                  disabled={rejectBusy}
+                  style={{ width: "100%" }}
+                  triggerStyle={{ width: "100%", minWidth: "unset", boxSizing: "border-box" }}
+                />
+              </div>
+            )}
             {rejectErr && <div className="notice error" style={{ marginBottom: 10 }}>{rejectErr}</div>}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button type="button" className="btn-secondary" onClick={() => setShowReject(false)} disabled={rejectBusy}>Cancel</button>
               <button type="button" onClick={submitReject} disabled={rejectBusy}
                 style={{ padding: "6px 18px", background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: rejectBusy ? "default" : "pointer", fontSize: "0.9rem" }}>
-                {rejectBusy ? "Submitting…" : `Reject ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
+                {rejectBusy ? "Submitting…" : rejectNeedsIm.length ? `Retry ${rejectNeedsIm.length} POID${rejectNeedsIm.length !== 1 ? "s" : ""}` : `Reject ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
               </button>
             </div>
           </div>

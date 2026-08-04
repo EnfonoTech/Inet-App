@@ -875,6 +875,14 @@ def get_pic_summary_filter_options():
     }
 
 
+# A milestone counts as "resolved enough" to close the whole dispatch once
+# it's either actually closed or the invoice has been submitted — matching
+# the same definition the Data Integrity report uses (see
+# _DATA_INTEGRITY_TERMINAL_MS in command_center.py) so a dispatch that's
+# fine by that report's standard is also reachable by these normal write
+# paths, not just historically stamped that way by import/legacy bugs.
+_PIC_MS_RESOLVED_FOR_CLOSE = {"Commercial Invoice Closed", "Commercial Invoice Submitted"}
+
 # Fields the PIC is allowed to write via update_pic_row. Anything outside this
 # allowlist is silently ignored to keep the IM/admin-owned columns safe.
 _PIC_WRITABLE = (
@@ -926,10 +934,12 @@ def update_pic_row(po_dispatch, fields):
     cancelled = "PO Line Canceled"
     new_ms1 = (fields.get("pic_status") or "").strip()
     new_ms2 = (fields.get("pic_status_ms2") or "").strip()
-    # Only close dispatch when both milestones are resolved
-    if new_ms1 == closed or new_ms2 == closed:
-        ms1_closed = new_ms1 == closed or (doc.pic_status or "").strip() == closed
-        ms2_closed = new_ms2 == closed or (doc.pic_status_ms2 or "").strip() == closed
+    # Only close dispatch when both milestones are resolved — "resolved"
+    # means either actually closed or the invoice has been submitted (see
+    # _PIC_MS_RESOLVED_FOR_CLOSE).
+    if new_ms1 in _PIC_MS_RESOLVED_FOR_CLOSE or new_ms2 in _PIC_MS_RESOLVED_FOR_CLOSE:
+        ms1_closed = new_ms1 in _PIC_MS_RESOLVED_FOR_CLOSE or (doc.pic_status or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
+        ms2_closed = new_ms2 in _PIC_MS_RESOLVED_FOR_CLOSE or (doc.pic_status_ms2 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
         ms2_zero = flt(doc.ms2_amount or 0) == 0
         if ms1_closed and (ms2_closed or ms2_zero):
             doc.dispatch_status = "Closed"
@@ -953,8 +963,8 @@ def update_pic_row(po_dispatch, fields):
     # MS1 closed AND (MS2 closed OR MS2 amount is zero / doesn't exist).
     # A line-canceled milestone cancels it immediately, with its own
     # distinct "Cancelled" status (not merged into "Closed").
-    ms1_closed = (doc.pic_status or "").strip() == closed
-    ms2_closed = (doc.pic_status_ms2 or "").strip() == closed
+    ms1_closed = (doc.pic_status or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
+    ms2_closed = (doc.pic_status_ms2 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
     ms2_zero = flt(doc.ms2_amount or 0) == 0
     ms1_cancelled = (doc.pic_status or "").strip() == cancelled
     ms2_cancelled = (doc.pic_status_ms2 or "").strip() == cancelled
@@ -1091,8 +1101,8 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
 
             new_ms1 = pic_status if status_field == "pic_status" else (pd.pic_status or "")
             new_ms2 = pic_status if status_field == "pic_status_ms2" else (pd.pic_status_ms2 or "")
-            ms1_closed = (new_ms1 or "").strip() == "Commercial Invoice Closed"
-            ms2_closed = (new_ms2 or "").strip() == "Commercial Invoice Closed"
+            ms1_closed = (new_ms1 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
+            ms2_closed = (new_ms2 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
             ms2_zero = flt(pd.ms2_amount or 0) == 0
             ms1_cancelled = (new_ms1 or "").strip() == "PO Line Canceled"
             ms2_cancelled = (new_ms2 or "").strip() == "PO Line Canceled"
@@ -2277,38 +2287,140 @@ def get_work_done_attachments_for_dispatch(po_dispatch):
     )
 
 
+# A milestone that's already been invoiced can't be rejected — the other
+# milestone on the same line is independent and may still be rejectable.
+_REJECT_BLOCKED_STATUSES = {"Commercial Invoice Submitted", "Commercial Invoice Closed"}
+
 @frappe.whitelist()
-def reject_pic_line(po_dispatch, remark):
-    """PIC rejects a confirmed Work Done line. Saves rejection remark on PO
-    Dispatch and marks related Work Done docs as 'PIC Rejected'. pic_status
-    is intentionally left unchanged so the row stays visible in PIC tracker."""
+def reject_pic_line(po_dispatches, milestone="MS1", remark=None, im=None, new_status=None):
+    """PIC rejects one or more lines for a given milestone.
+
+    ``new_status`` is required and explicit — the PIC picks it (the frontend
+    pre-fills the line's current status as a starting point, but nothing is
+    auto-computed server-side). Can be any real pic_status option except
+    the two invoiced ones (a reject can't manufacture an invoiced state).
+
+    Marks a Work Done record 'PIC Rejected' so the IM sees it on their Work
+    Done page and can resubmit — if no confirmed Work Done exists for this
+    line (legacy/archive lines with no real execution history), one is
+    created on the spot rather than silently doing nothing. Blocked once
+    the target milestone has actually been invoiced (Commercial Invoice
+    Submitted/Closed); the other milestone on the same line can still be
+    rejected independently.
+
+    ``im`` is only used to backfill PO Dispatch.im when a line has none —
+    required in that case so there's someone to notify.
+    """
     _pic_role_or_throw()
-    po_dispatch = (po_dispatch or "").strip()
+    new_status = (new_status or "").strip()
+    if not new_status:
+        frappe.throw("new_status is required")
+    valid_statuses = [
+        o for o in (frappe.get_meta("PO Dispatch").get_field("pic_status").options or "").split("\n")
+        if o.strip()
+    ]
+    if new_status not in valid_statuses:
+        frappe.throw(f"Invalid new_status: {new_status}")
+    if new_status in _REJECT_BLOCKED_STATUSES:
+        frappe.throw(f"Can't set the resulting status to {new_status} via reject.")
+    if isinstance(po_dispatches, str):
+        try:
+            parsed = frappe.parse_json(po_dispatches)
+            if isinstance(parsed, (list, tuple)):
+                po_dispatches = parsed
+        except Exception:
+            po_dispatches = [po_dispatches]
+    if not isinstance(po_dispatches, (list, tuple)) or not po_dispatches:
+        frappe.throw("po_dispatches list is required")
+
     remark = (remark or "").strip()
-    if not po_dispatch:
-        frappe.throw("po_dispatch is required")
     if not remark:
         frappe.throw("Rejection remark is required")
-    if not frappe.db.exists("PO Dispatch", po_dispatch):
-        frappe.throw(f"PO Dispatch not found: {po_dispatch}")
 
-    wd_docs = frappe.get_all(
-        "Work Done",
-        filters={"system_id": po_dispatch, "submission_status": "Confirmation Done"},
-        fields=["name"],
-    )
-    for wd in wd_docs:
-        frappe.db.set_value("Work Done", wd.name, "submission_status", "PIC Rejected", update_modified=True)
+    milestone = str(milestone or "MS1").upper()
+    if milestone == "MS2":
+        status_field = "pic_status_ms2"
+        closed_flag = "ms2_closed"
+        # MS2 has no dedicated rejection-remark field like MS1's
+        # pic_rejection_remark — reuse its general-purpose detail remark.
+        remark_field = "pic_detail_remark_ms2"
+    else:
+        status_field = "pic_status"
+        closed_flag = "ms1_closed"
+        remark_field = "pic_rejection_remark"
 
-    if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
-        frappe.db.set_value("PO Dispatch", po_dispatch, "pic_rejection_remark", remark, update_modified=False)
-    frappe.db.commit()
-    # Notify IM (db.set_value doesn't fire hooks)
-    try:
-        from inet_app.api.notifications import notify_im_pic_rejected
-        notify_im_pic_rejected(po_dispatch)
-    except Exception:
-        pass
+    im = (im or "").strip() or None
+    if im and not frappe.db.exists("IM Master", im):
+        frappe.throw(f"Invalid IM: {im}")
+
+    updated = []
+    errors = []
+    for name in po_dispatches:
+        name = str(name or "").strip()
+        if not name:
+            continue
+        if not frappe.db.exists("PO Dispatch", name):
+            errors.append({"po_dispatch": name, "error": "Not found"})
+            continue
+
+        pd = frappe.db.get_value("PO Dispatch", name, ["im", "poid", status_field], as_dict=True)
+        label = pd.get("poid") or name
+        current_status = (pd.get(status_field) or "").strip()
+        if current_status in _REJECT_BLOCKED_STATUSES:
+            errors.append({
+                "po_dispatch": name,
+                "error": f"{label}: {milestone} is already {current_status} — can't reject an invoiced milestone.",
+            })
+            continue
+
+        if not pd.get("im"):
+            if not im:
+                errors.append({"po_dispatch": name, "error": f"{label}: No IM assigned — pick an IM to notify before rejecting."})
+                continue
+            frappe.db.set_value("PO Dispatch", name, "im", im, update_modified=False)
+
+        wd_docs = frappe.get_all(
+            "Work Done",
+            filters={"system_id": name, "submission_status": "Confirmation Done"},
+            fields=["name"],
+        )
+        if wd_docs:
+            for wd in wd_docs:
+                frappe.db.set_value("Work Done", wd.name, "submission_status", "PIC Rejected", update_modified=True)
+        else:
+            # No confirmed Work Done to reject (legacy/archive line) —
+            # create one now so the reject is a real, addressable record
+            # the IM can find and resubmit, instead of a silent no-op.
+            new_wd = frappe.new_doc("Work Done")
+            new_wd.system_id = name
+            new_wd.submission_status = "PIC Rejected"
+            new_wd.source = "Direct Close"  # closest existing option; no real execution chain behind this
+            new_wd.set(closed_flag, 1)
+            new_wd.insert(ignore_permissions=True)
+
+        frappe.db.set_value("PO Dispatch", name, status_field, new_status, update_modified=True)
+        if frappe.db.has_column("PO Dispatch", remark_field):
+            frappe.db.set_value("PO Dispatch", name, remark_field, remark, update_modified=False)
+        updated.append({"po_dispatch": name, status_field: new_status})
+
+    if updated:
+        frappe.db.commit()
+        try:
+            from inet_app.api.notifications import notify_im_pic_rejected
+            for u in updated:
+                notify_im_pic_rejected(u["po_dispatch"])
+        except Exception:
+            pass
+
+    return {
+        "updated": updated,
+        "errors": errors,
+        "summary": {
+            "total": len(po_dispatches),
+            "updated_count": len(updated),
+            "error_count": len(errors),
+        },
+    }
     return {"status": "ok", "rejected_work_done": [wd.name for wd in wd_docs]}
 
 

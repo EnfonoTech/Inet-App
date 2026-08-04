@@ -2282,11 +2282,11 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         disp_fields_full = [
             "name", "po_intake", "po_line_no", "system_id", "im", "huawei_im",
             "dispatch_mode", "target_month", "region_type", "center_area",
-            "ms1_amount", "ms2_amount", "pic_status", "pic_status_ms2",
+            "ms1_amount", "ms2_amount", "pic_status", "pic_status_ms2", "dispatch_status",
         ]
         disp_fields_base = [
             "name", "po_intake", "po_line_no", "system_id", "im",
-            "dispatch_mode", "target_month", "center_area",
+            "dispatch_mode", "target_month", "center_area", "dispatch_status",
         ]
         all_disp = []
         use_base_fields = False
@@ -2330,6 +2330,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         if dispatch_data:
             line["dispatch_name"] = dispatch_data.get("name")
             line["system_id"] = dispatch_data.get("system_id")
+            line["dispatch_status"] = dispatch_data.get("dispatch_status")
         if dispatch_data:
             # Was gated to po_line_status == "Dispatched" only, so the "All
             # Lines" tab silently showed a blank IM/target month/MS amounts
@@ -14905,6 +14906,160 @@ def _is_pm_role():
     INET IM alone is not enough — IMs cannot approve their own transfers."""
     roles = set(frappe.get_roles(frappe.session.user))
     return bool(roles & {"Administrator", "System Manager", "INET Admin"})
+
+
+# ---------------------------------------------------------------------------
+# Data Integrity — PM-facing review of PO Dispatch status mismatches that
+# slip in from manual desk edits, historical bugs, or archive import. Each
+# category here is a *symptom* (dispatch_status disagreeing with the real
+# evidence behind it), not a single root cause — new categories should be
+# added here as they're found rather than silently patched away, so PM has
+# one place to see and fix all of them instead of a one-off script per bug.
+# ---------------------------------------------------------------------------
+
+_DATA_INTEGRITY_TERMINAL_MS = {"Commercial Invoice Closed", "Commercial Invoice Submitted", "PO Line Canceled"}
+
+
+@frappe.whitelist()
+def list_data_integrity_issues(category):
+    """Rows for one Data Integrity category — see the tab definitions in
+    the frontend for the full category list."""
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+    category = (category or "").strip()
+
+    base_select = """
+        SELECT pd.name, pd.poid, pd.po_no, pd.project_code, proj.project_name,
+               pd.site_code, pd.dispatch_status, pd.pic_status, pd.pic_status_ms2,
+               pd.line_amount, pd.ms1_amount, pd.ms1_invoiced, pd.ms2_amount, pd.ms2_invoiced,
+               pd.modified
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
+    """
+
+    if category == "completed_no_evidence":
+        rows = frappe.db.sql(
+            f"""
+            {base_select}
+            WHERE pd.dispatch_status = 'Completed'
+              AND IFNULL(pd.is_internal_work, 0) = 0
+              AND IFNULL(pd.is_dummy_po, 0) = 0
+              AND IFNULL(pd.pic_status, '') IN ('', 'Work Not Done')
+              AND IFNULL(pd.pic_status_ms2, '') IN ('', 'Work Not Done')
+              AND NOT EXISTS (SELECT 1 FROM `tabWork Done` wd WHERE wd.system_id = pd.name)
+              -- Not "no evidence" if a real execution actually completed —
+              -- that's a different bug (Work Done generation didn't fire),
+              -- not an absence of work. Excluded here so it doesn't get
+              -- wrongly reopened as Pending.
+              AND NOT EXISTS (
+                SELECT 1 FROM `tabDaily Execution` de
+                JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+                WHERE rp.po_dispatch = pd.name
+                  AND (de.execution_status = 'Completed' OR de.tl_status = 'Completed')
+              )
+            ORDER BY pd.modified DESC
+            """,
+            as_dict=True,
+        )
+    elif category == "closed_unresolved_milestone":
+        ph = ", ".join(["%s"] * len(_DATA_INTEGRITY_TERMINAL_MS))
+        rows = frappe.db.sql(
+            f"""
+            {base_select}
+            WHERE pd.dispatch_status = 'Closed'
+              AND IFNULL(pd.is_internal_work, 0) = 0
+              AND IFNULL(pd.is_dummy_po, 0) = 0
+              AND (
+                (IFNULL(pd.ms1_amount, 0) > 0 AND IFNULL(pd.pic_status, '') NOT IN ({ph}))
+                OR
+                (IFNULL(pd.ms2_amount, 0) > 0 AND IFNULL(pd.pic_status_ms2, '') NOT IN ({ph}))
+              )
+            ORDER BY pd.modified DESC
+            """,
+            tuple(_DATA_INTEGRITY_TERMINAL_MS) * 2,
+            as_dict=True,
+        )
+        for r in rows:
+            r["ms1_stuck"] = bool(flt(r.get("ms1_amount")) > 0 and (r.get("pic_status") or "") not in _DATA_INTEGRITY_TERMINAL_MS)
+            r["ms2_stuck"] = bool(flt(r.get("ms2_amount")) > 0 and (r.get("pic_status_ms2") or "") not in _DATA_INTEGRITY_TERMINAL_MS)
+            r["ms1_unbilled"] = flt(r.get("ms1_amount")) - flt(r.get("ms1_invoiced")) if r["ms1_stuck"] else 0
+            r["ms2_unbilled"] = flt(r.get("ms2_amount")) - flt(r.get("ms2_invoiced")) if r["ms2_stuck"] else 0
+    else:
+        frappe.throw(f"Unknown category: {category}")
+
+    return rows
+
+
+def _reset_linked_intake_line_status(dispatch_name, status):
+    """Mirror a dispatch_status fix onto the linked PO Intake Line, mapping
+    to that doctype's own (different) status enum — see
+    _archive_line_status_for in pic.py for the same mapping rationale."""
+    po_intake, po_line_no = frappe.db.get_value(
+        "PO Dispatch", dispatch_name, ["po_intake", "po_line_no"]
+    ) or (None, None)
+    if not (po_intake and po_line_no):
+        return
+    intake_line = frappe.db.exists("PO Intake Line", {"parent": po_intake, "po_line_no": po_line_no})
+    if intake_line and isinstance(intake_line, str):
+        frappe.db.set_value("PO Intake Line", intake_line, "po_line_status", status, update_modified=False)
+
+
+@frappe.whitelist()
+def fix_data_integrity_completed_no_evidence(po_dispatches):
+    """Bulk fix for the "completed_no_evidence" category: no real Work Done
+    behind a Completed dispatch means there's no evidence work actually
+    happened, so reopen it as a normal open line instead of leaving it
+    falsely marked Completed. Reopens to "Dispatched" (not "Pending") when
+    an IM is already assigned — Pending would wrongly imply it was never
+    dispatched to anyone."""
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if isinstance(po_dispatches, str):
+        po_dispatches = frappe.parse_json(po_dispatches) or []
+    if not isinstance(po_dispatches, (list, tuple)) or not po_dispatches:
+        frappe.throw("po_dispatches list is required")
+
+    fixed = []
+    for name in po_dispatches:
+        name = str(name or "").strip()
+        if not name or not frappe.db.exists("PO Dispatch", name):
+            continue
+        has_im = bool(frappe.db.get_value("PO Dispatch", name, "im"))
+        frappe.db.set_value("PO Dispatch", name, "dispatch_status", "Dispatched" if has_im else "Pending", update_modified=True)
+        _reset_linked_intake_line_status(name, "Dispatched")
+        fixed.append(name)
+    if fixed:
+        frappe.db.commit()
+    return {"fixed": fixed, "count": len(fixed)}
+
+
+@frappe.whitelist()
+def fix_data_integrity_reopen_closed(po_dispatches):
+    """Bulk fix for the "closed_unresolved_milestone" category: reverts
+    dispatch_status from Closed back to Completed so the line falls back
+    into PIC Tracker's normal workflow — PIC decides the real invoicing
+    outcome there using the existing milestone logic, this doesn't guess
+    at a pic_status on their behalf."""
+    if not _is_pm_role():
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if isinstance(po_dispatches, str):
+        po_dispatches = frappe.parse_json(po_dispatches) or []
+    if not isinstance(po_dispatches, (list, tuple)) or not po_dispatches:
+        frappe.throw("po_dispatches list is required")
+
+    fixed = []
+    for name in po_dispatches:
+        name = str(name or "").strip()
+        if not name or not frappe.db.exists("PO Dispatch", name):
+            continue
+        if frappe.db.get_value("PO Dispatch", name, "dispatch_status") != "Closed":
+            continue
+        frappe.db.set_value("PO Dispatch", name, "dispatch_status", "Completed", update_modified=True)
+        _reset_linked_intake_line_status(name, "Completed")
+        fixed.append(name)
+    if fixed:
+        frappe.db.commit()
+    return {"fixed": fixed, "count": len(fixed)}
 
 
 def _resolve_caller_im_or_throw():
