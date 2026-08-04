@@ -241,13 +241,15 @@ export default function AppShell() {
     const poll = async () => {
       try {
         if (role === "admin") {
-          const [teamList, cancelList] = await Promise.all([
+          const [teamList, cancelList, transferList] = await Promise.all([
             pmApi.listTeamAllocationRequests("pending_pm"),
             pmApi.listPendingCancelRequests("Pending PM Approval"),
+            pmApi.listPoTransferRequests("pending_pm"),
           ]);
           const teamCount = (Array.isArray(teamList) ? teamList.length : 0);
           const cancelCount = (Array.isArray(cancelList) ? cancelList.length : 0);
-          if (!cancelled) setApprovalDotCount(teamCount + cancelCount);
+          const transferCount = (Array.isArray(transferList) ? transferList.length : 0);
+          if (!cancelled) setApprovalDotCount(teamCount + cancelCount + transferCount);
         } else {
           const list = await pmApi.listTeamAllocationRequests("incoming");
           const pending = (Array.isArray(list) ? list : []).filter(
