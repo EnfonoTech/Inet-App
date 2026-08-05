@@ -792,6 +792,24 @@ export default function POUpload() {
                         </tr>
                       ))}
                     </tbody>
+                    {validRows.length > 0 && (
+                      <tfoot>
+                        {/* # · Item Code · Item · PO No · Project Code · Project = 6 columns, then Qty · Rate · Line Amount, then Row Status */}
+                        <tr style={{ borderTop: "2px solid var(--border-medium, #e2e8f0)", background: "#f8fafc" }}>
+                          <td colSpan={6} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                            {validRows.length} row{validRows.length !== 1 ? "s" : ""}
+                          </td>
+                          <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                            {fmt.format(validRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                          </td>{/* Qty */}
+                          <td />{/* Rate */}
+                          <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                            {fmt.format(validRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                          </td>{/* Line Amount */}
+                          <td />{/* Row Status */}
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </DataTableWrapper>
               </div>
@@ -842,6 +860,24 @@ export default function POUpload() {
                         </tr>
                       ))}
                     </tbody>
+                    {errorRows.length > 0 && (
+                      <tfoot>
+                        {/* # · Item Code · PO No · Project Code = 4 columns, then Qty · Rate · Line Amount, then Status · Error = 2 columns */}
+                        <tr style={{ borderTop: "2px solid var(--border-medium, #e2e8f0)", background: "#f8fafc" }}>
+                          <td colSpan={4} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                            {errorRows.length} row{errorRows.length !== 1 ? "s" : ""}
+                          </td>
+                          <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                            {fmt.format(errorRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                          </td>{/* Qty */}
+                          <td />{/* Rate */}
+                          <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                            {fmt.format(errorRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                          </td>{/* Line Amount */}
+                          <td /><td />{/* Status · Error */}
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </DataTableWrapper>
               </div>
@@ -1308,6 +1344,22 @@ function POUploadHistory({ logs, onRefresh, onSelect }) {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            {/* Uploaded At · By · File · Customer = 4 columns, then POs · Imported · Overridden ·
+                Skipped · Closed · Cancelled, then Status · (actions) = 2 columns */}
+            <tr style={{ borderTop: "2px solid var(--border-medium, #e2e8f0)", background: "var(--bg, #f6f8fb)" }}>
+              <td colSpan={4} style={{ padding: "10px 14px", fontSize: "0.78rem", fontWeight: 700, color: "var(--text-secondary, #64748b)" }}>
+                {logs.length} upload{logs.length !== 1 ? "s" : ""}
+              </td>
+              <td style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700 }}>{fmt.format(logs.reduce((s, l) => s + (Number(l.po_count) || 0), 0))}</td>{/* POs */}
+              <td style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, color: "#059669" }}>{fmt.format(logs.reduce((s, l) => s + (Number(l.lines_imported) || 0), 0))}</td>{/* Imported */}
+              <td style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, color: "#2563eb" }}>{fmt.format(logs.reduce((s, l) => s + (Number(l.lines_overridden) || 0), 0))}</td>{/* Overridden */}
+              <td style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, color: "#b45309" }}>{fmt.format(logs.reduce((s, l) => s + (Number(l.lines_skipped) || 0), 0))}</td>{/* Skipped */}
+              <td style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, color: "#475569" }}>{fmt.format(logs.reduce((s, l) => s + (Number(l.lines_skipped_closed) || 0), 0))}</td>{/* Closed */}
+              <td style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700, color: "#b91c1c" }}>{fmt.format(logs.reduce((s, l) => s + (Number(l.lines_skipped_cancelled) || 0), 0))}</td>{/* Cancelled */}
+              <td /><td />{/* Status · actions */}
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>
@@ -1397,6 +1449,17 @@ function POUploadDetailModal({ log, onClose }) {
                 </tr>
               ))}
             </tbody>
+            {rows.length > 0 && (
+              <tfoot>
+                <tr style={{ borderTop: "2px solid var(--border-medium, #e2e8f0)", background: "var(--bg, #f6f8fb)" }}>
+                  <td colSpan={3} style={{ padding: "10px 14px", fontSize: "0.78rem", fontWeight: 700, color: "var(--text-secondary, #64748b)" }}>
+                    {rows.length} PO{rows.length !== 1 ? "s" : ""}
+                  </td>
+                  <td style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700 }}>{rows.reduce((s, p) => s + (Number(p.lines_added) || 0), 0)}</td>
+                  <td style={{ textAlign: "right", padding: "10px 14px", fontWeight: 700 }}>{rows.reduce((s, p) => s + (Number(p.lines_skipped) || 0), 0)}</td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>

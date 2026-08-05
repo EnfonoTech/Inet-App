@@ -1219,7 +1219,7 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
                       {fmt.format(totals.revenue)}
                     </td>
-                    <td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td />
                   </tr>
                 </tfoot>
               )}

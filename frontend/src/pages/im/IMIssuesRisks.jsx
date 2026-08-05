@@ -423,6 +423,21 @@ export default function IMIssuesRisks() {
                   </tr>
                 ))}
               </tbody>
+              {filteredRows.length > 0 && (
+                <tfoot>
+                  {/* checkbox·POID·Plan·Item Code·Description·Project·Domain·Huawei IM·DUID·Team·
+                      Plan Date·Exec Date·Attempt # = 13 columns, then Line Amount, then Region..Team Lead = 12 columns */}
+                  <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                    <td colSpan={13} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      {filteredRows.length} row{filteredRows.length !== 1 ? "s" : ""}
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                      {filteredRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0).toLocaleString()}
+                    </td>{/* Line Amount */}
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />{/* Region..Team Lead */}
+                  </tr>
+                </tfoot>
+              )}
             </table>
           )}
         </DataTableWrapper>

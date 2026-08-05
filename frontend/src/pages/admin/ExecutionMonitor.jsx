@@ -761,19 +761,24 @@ export default function ExecutionMonitor() {
               </tbody>
               {mainRows.length > 0 && (
                 <tfoot>
+                  {/* 30 columns: Plan · POID · Dummy POID · Item code · Description · Activity Type ·
+                      Project · Domain · Huawei IM · DUID · Center area · Region · Team · IM · Plan Date ·
+                      Access Time · Access · Visit Type · Visit No · Target · Plan Status · TL Status ·
+                      Exec Status · QC · CIAG · Issue Category · General · Manager · Team Lead · Open */}
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                     <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                       {mainRows.length} rows
-                    </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
-                    <td style={{ textAlign: "right", padding: "8px 16px" }} />
+                    </td>{/* Plan */}
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    {/* POID · Dummy POID · Item code · Description · Activity Type · Project · Domain ·
+                        Huawei IM · DUID · Center area · Region · Team · IM · Plan Date · Access Time ·
+                        Access · Visit Type · Visit No */}
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
                       {fmt.format(totals.target)}
-                    </td>
-                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#047857" }}>
-                      {fmt.format(totals.achieved)}
-                    </td>
+                    </td>{/* Target */}
                     <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    {/* Plan Status · TL Status · Exec Status · QC · CIAG · Issue Category · General ·
+                        Manager · Team Lead · Open */}
                   </tr>
                 </tfoot>
               )}

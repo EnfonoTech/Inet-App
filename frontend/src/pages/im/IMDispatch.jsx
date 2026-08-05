@@ -673,6 +673,10 @@ export default function IMDispatch() {
   });
 
   const planableRows = visibleRows.filter(planable);
+  const dispatchTotals = visibleRows.reduce((acc, r) => ({
+    qty: acc.qty + (parseFloat(r.qty) || 0),
+    amount: acc.amount + (parseFloat(r.line_amount) || 0),
+  }), { qty: 0, amount: 0 });
   // Distinct values across ALL dispatches — so dropdowns stay complete under any row limit.
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const [teamOptions, setTeamOptions] = useState([]);
@@ -1901,8 +1905,11 @@ export default function IMDispatch() {
               </tbody>
               {visibleRows.length > 0 && (
                 <tfoot>
+                  {/* checkbox·POID·Mode·Dummy POID·PO No·Project·Domain·Huawei IM·Item·Description·
+                      Activity Type = 11 columns, then Qty·Amount, then IM·DUID·Center area·Region·
+                      Status·Actions = 6 columns */}
                   <tr>
-                    <td colSpan={15} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                    <td colSpan={11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                       <strong>{visibleRows.length} row{visibleRows.length !== 1 ? "s" : ""}</strong>
                       {planScope !== "all" && visibleRows.length !== rows.length && (
                         <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#94a3b8" }}>
@@ -1915,6 +1922,9 @@ export default function IMDispatch() {
                           : <>Select rows with status <strong>Dispatched</strong> to create rollout plans.</>}
                       </span>
                     </td>
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(dispatchTotals.qty)}</td>{/* Qty */}
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(dispatchTotals.amount)}</td>{/* Amount */}
+                    <td /><td /><td /><td /><td /><td />{/* IM..Actions — one <td> per column, no colSpan (see PODispatch.jsx tfoot comment) */}
                   </tr>
                 </tfoot>
               )}

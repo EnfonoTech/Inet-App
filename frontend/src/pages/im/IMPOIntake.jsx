@@ -1271,6 +1271,23 @@ export default function IMPOIntake() {
                     );
                   })}
                 </tbody>
+                {transferVisibleRows.length > 0 && (
+                  <tfoot>
+                    {/* Request·Direction·From IM·To IM = 4 columns, then POIDs·Amount (SAR), then Status..Actions = 5 columns */}
+                    <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                      <td colSpan={4} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                        {transferVisibleRows.length} request{transferVisibleRows.length !== 1 ? "s" : ""}
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                        {transferVisibleRows.reduce((s, r) => s + (Number(r.poid_count) || 0), 0)}
+                      </td>{/* POIDs */}
+                      <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                        {fmt.format(transferVisibleRows.reduce((s, r) => s + (Number(r.total_amount) || 0), 0))}
+                      </td>{/* Amount (SAR) */}
+                      <td /><td /><td /><td /><td />{/* Status..Actions */}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
           ) : tab === "overview" ? (
               <table key="im-po-overview-v2" className="data-table" data-table-key="im-po-overview-v2" data-tablepro-no-dynamic="true">
@@ -1386,6 +1403,25 @@ export default function IMPOIntake() {
                     );
                   })}
                 </tbody>
+                {ovFilteredRows.length > 0 && (
+                  <tfoot>
+                    {/* POID·Dispatch Status·Closed Via·Billing Status·Mode·PO No·Project·Domain·DUID·
+                        Center Area·Region·Item Code·Description·Activity Type = 14 columns, then Qty·Line Amount (SAR),
+                        then Target Month..Actions = 10 columns */}
+                    <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                      <td colSpan={14} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                        {ovFilteredRows.length} row{ovFilteredRows.length !== 1 ? "s" : ""}
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                        {fmt.format(ovFilteredRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                      </td>{/* Qty */}
+                      <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                        {fmt.format(ovFilteredRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                      </td>{/* Line Amount (SAR) */}
+                      <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />{/* Target Month..Actions */}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
           ) : tab === "intake" ? (
             <>
@@ -1467,6 +1503,25 @@ export default function IMPOIntake() {
                     </tr>
                   ))}
                 </tbody>
+                {rows.length > 0 && (
+                  <tfoot>
+                    {/* checkbox·POID·Mode·PO No·Project·Domain·Huawei IM·Item·Description·Activity Type = 10 columns,
+                        then Qty·Rate (SAR)·Amount (SAR), then MS1..Actions = 6 columns */}
+                    <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                      <td colSpan={10} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                        {rows.length} row{rows.length !== 1 ? "s" : ""}
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                        {fmt.format(rows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                      </td>{/* Qty */}
+                      <td />{/* Rate (SAR) */}
+                      <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                        {fmt.format(rows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                      </td>{/* Amount (SAR) */}
+                      <td /><td /><td /><td /><td /><td />{/* MS1..Actions */}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
               {loading && rows.length === 0 ? (
                 <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
@@ -1572,6 +1627,24 @@ export default function IMPOIntake() {
                     );
                   })}
                 </tbody>
+                {filteredDummyRows.length > 0 && (
+                  <tfoot>
+                    {/* POID·Status·Mode·Project·Domain·DUID·Center Area·Region·Item Code·Description·
+                        Activity Type = 11 columns, then Qty·Line Amount (SAR), then Target Month..Actions = 8 columns */}
+                    <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                      <td colSpan={11} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                        {filteredDummyRows.length} row{filteredDummyRows.length !== 1 ? "s" : ""}
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                        {fmt.format(filteredDummyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                      </td>{/* Qty */}
+                      <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                        {fmt.format(filteredDummyRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                      </td>{/* Line Amount (SAR) */}
+                      <td /><td /><td /><td /><td /><td /><td /><td />{/* Target Month..Actions */}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
           )}
         </DataTableWrapper>

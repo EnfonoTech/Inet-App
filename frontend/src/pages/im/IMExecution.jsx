@@ -1579,7 +1579,7 @@ export default function IMExecution() {
               {filteredExecutions.length > 0 && (
                 <tfoot>
                   <tr>
-                    <td colSpan={22} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                    <td colSpan={26} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                       {filteredExecutions.length} row{filteredExecutions.length !== 1 ? "s" : ""}
                     </td>
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>

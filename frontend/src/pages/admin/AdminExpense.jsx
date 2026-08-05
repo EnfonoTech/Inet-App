@@ -388,6 +388,17 @@ export default function AdminExpense() {
                 ))
               )}
             </tbody>
+            {claims.length > 0 && (
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                  <td colSpan={5} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b" }}>
+                    {claims.length} claim{claims.length !== 1 ? "s" : ""}
+                  </td>{/* Claim # · Date · Team Lead · Team · IM */}
+                  <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>SAR {fmtAmt(totalAmt)}</td>{/* Amount */}
+                  <td /><td />{/* Status · Actions */}
+                </tr>
+              </tfoot>
+            )}
           </table>
         </DataTableWrapper>
       </div>

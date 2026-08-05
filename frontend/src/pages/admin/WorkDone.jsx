@@ -1146,7 +1146,7 @@ export default function WorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                       {fmt.format(totals.revenue)}
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                   </tr>
                 </tfoot>
               )}

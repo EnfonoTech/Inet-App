@@ -282,7 +282,7 @@ export default function PICPending() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={20} style={{ padding: 0 }}>
+                  <td colSpan={21} style={{ padding: 0 }}>
                     {loading ? (
                       <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                     ) : (

@@ -992,7 +992,11 @@ export default function PODispatch() {
               fmt={fmtAmt}
             />
           ) : (() => {
-            const colCount = showDispatched ? 21 : 18;
+            const colCount = showDispatched ? 24 : 21;
+            const totals = rows.reduce((acc, r) => ({
+              qty: acc.qty + (parseFloat(r.qty) || 0),
+              amount: acc.amount + (parseFloat(r.line_amount) || 0),
+            }), { qty: 0, amount: 0 });
             return (
             <table className="data-table" data-table-key={`admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`}>
               <thead>
@@ -1136,8 +1140,11 @@ export default function PODispatch() {
               </tbody>
               {rows.length > 0 && (
                 <tfoot>
+                  {/* checkbox·POID·Status·PO Status·Current Stage·System ID·PO No·Shipment No·
+                      Item Code·Description·Activity Type = 11 columns, then Qty·Rate·Amount,
+                      then everything after Amount (Project..Action, count varies by showDispatched) */}
                   <tr>
-                    <td colSpan={colCount}
+                    <td colSpan={11}
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                       <strong>{rows.length}</strong> row{rows.length !== 1 ? "s" : ""}
                       {activeTab === "Dispatched" && autoRows.length > 0 && (
@@ -1146,6 +1153,15 @@ export default function PODispatch() {
                         </span>
                       )}
                     </td>
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(totals.qty)}</td>{/* Qty */}
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />{/* Rate */}
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmtAmt.format(totals.amount)}</td>{/* Amount */}
+                    {/* Project..Action — one <td> per remaining column (DataTablePro's footer
+                        colspan logic treats every non-first cell as exactly one real column;
+                        a colSpan here would desync it from the header and misplace the row) */}
+                    {Array.from({ length: colCount - 14 }).map((_, i) => (
+                      <td key={i} style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    ))}
                   </tr>
                 </tfoot>
               )}

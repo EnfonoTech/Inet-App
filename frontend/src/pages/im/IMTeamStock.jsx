@@ -121,6 +121,15 @@ export default function IMTeamStock() {
                             </tr>
                           ))}
                         </tbody>
+                        <tfoot>
+                          <tr style={{ borderTop: "1px solid #e2e8f0" }}>
+                            <td style={{ padding: "6px 8px", fontWeight: 700, color: "#64748b" }}>Total</td>
+                            <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>
+                              {team.items.reduce((s, it) => s + (Number(it.qty) || 0), 0).toLocaleString()}
+                            </td>
+                            <td />
+                          </tr>
+                        </tfoot>
                       </table>
                     )}
                   </div>

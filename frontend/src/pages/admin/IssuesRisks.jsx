@@ -352,7 +352,7 @@ export default function IssuesRisks() {
               <tbody>
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={27} style={{ padding: 0 }}>
+                    <td colSpan={26} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading issues…</div>
                       ) : (
@@ -397,6 +397,21 @@ export default function IssuesRisks() {
                   </tr>
                 ))}
               </tbody>
+              {filteredRows.length > 0 && (
+                <tfoot>
+                  {/* checkbox·POID·Plan·Item Code·Description·Project·Domain·Huawei IM·DUID·Team·IM·
+                      Plan Date·Exec Date·Attempt # = 14 columns, then Line Amount, then Region..Team Lead = 11 columns */}
+                  <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                    <td colSpan={14} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      {filteredRows.length} row{filteredRows.length !== 1 ? "s" : ""}
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
+                      {filteredRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0).toLocaleString()}
+                    </td>{/* Line Amount */}
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />{/* Region..Team Lead */}
+                  </tr>
+                </tfoot>
+              )}
           </table>
         </DataTableWrapper>
         <TableRowsLimitFooter
