@@ -451,6 +451,20 @@ export const pmApi = {
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
   updateWorkDoneSubmission: (name, submission_status, note) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status, note }),
   submitMilestoneToPic: (work_done, milestone) => call("inet_app.api.command_center.submit_milestone_to_pic", { work_done, milestone }),
+  // "Resubmit to PIC" tab — legacy lines whose work (and often original PIC
+  // submission) already happened historically outside this system, so
+  // there's no Work Done record for the IM to act through. Filtered
+  // server-side (search/project/DUID/PO status/column filters), same as
+  // list_work_done_rows — never filtered from an already-loaded batch.
+  // limit: 0 = "All" (TABLE_ROW_LIMIT_ALL) — pass through as-is, don't
+  // coerce to the 500 default with ||, which would silently cap "All".
+  listLegacyMilestonesNeedingResubmission: (filters, limit) =>
+    call("inet_app.api.command_center.list_legacy_milestones_needing_resubmission", {
+      filters: JSON.stringify(filters || {}),
+      limit: limit ?? 500,
+    }),
+  resubmitLegacyMilestoneToPic: (po_dispatch, milestone, note) => call("inet_app.api.command_center.resubmit_legacy_milestone_to_pic", { po_dispatch, milestone, note }),
+  bulkResubmitLegacyMilestonesToPic: (payload) => call("inet_app.api.command_center.bulk_resubmit_legacy_milestones_to_pic", { payload: JSON.stringify(payload) }),
   updateWorkDoneIssue: (name, issue_flag) => call("inet_app.api.command_center.update_work_done_issue", { name, issue_flag }),
   updateSubconSubmission: (po_dispatch, submission_status, note) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status, note }),
   getWorkDoneAttachments: (name) => call("inet_app.api.command_center.get_work_done_attachments", { name }),

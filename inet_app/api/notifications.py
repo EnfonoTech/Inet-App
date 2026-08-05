@@ -202,6 +202,24 @@ def notify_pic_work_done_submitted(work_done_name):
 		)
 
 
+def notify_pic_legacy_milestone_submitted(po_dispatch_name, milestone):
+	"""Called directly from command_center.resubmit_legacy_milestone_to_pic() —
+	a legacy line with no Work Done record at all, so there's no execution
+	chain to walk like notify_pic_work_done_submitted() does; build the label
+	straight from the PO Dispatch instead."""
+	pd = frappe.db.get_value("PO Dispatch", po_dispatch_name, ["poid", "site_code"], as_dict=True)
+	label = _po_label(pd) if pd else None
+	label = label or po_dispatch_name
+	subject = f"[ALERT] {milestone} document submitted by IM (legacy line) — {label}"
+	for user in _users_by_role("INET PIC"):
+		_make_notification(
+			user,
+			subject,
+			"PO Dispatch", po_dispatch_name,
+			link="/pms/pic-tracker",
+		)
+
+
 def notify_im_pic_rejected(po_dispatch_name):
 	"""Called directly from pic.reject_pic_line(). Notifies the IM that owns
 	the PO Dispatch so they can resubmit or rectify the Work Done."""

@@ -7708,6 +7708,232 @@ def submit_milestone_to_pic(work_done, milestone):
 
 
 @frappe.whitelist()
+def list_legacy_milestones_needing_resubmission(filters=None, limit=500):
+    """All PO Dispatch lines owned by the calling IM with zero Work Done
+    records at all — legacy / archive-imported lines whose work (and often
+    its original PIC submission) already happened historically, outside
+    this system, so there's no Work Done page entry for the IM to act
+    through. This is a visibility/reference list, not a queue gated on
+    pic_status — every matching line stays listed regardless of its
+    current milestone status, so the IM always has a place to look up old
+    data and attach a supporting document if one still needs to go in.
+    ms1_needs/ms2_needs only gate whether resubmit_legacy_milestone_to_pic()
+    is still usable for that milestone (blocked once it's genuinely
+    finished — see _DATA_INTEGRITY_TERMINAL_MS), not whether the row shows
+    up here at all.
+
+    filters (all optional, filtered in SQL like every other list_* on this
+    page — never filtered client-side from an already-loaded batch):
+      search: free text across poid/po_no/project_code/site_code/name
+      project_code, site_code, dispatch_status: list or single value
+      column_filters: { <col_key>: text } from the Manage Table per-column
+        filter row on IMWorkDone.jsx's LegacyResubmitTable (table-key
+        im-workdone-v1-legacy) — keys are the slugified column headers.
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters) if filters else {}
+    filters = filters or {}
+
+    _require_inet_im_session()
+    caller_im = _resolve_caller_im_or_throw()
+    # 0 = "All" (TABLE_ROW_LIMIT_ALL) — genuinely unlimited, no LIMIT clause.
+    # Production can have far more of these than the dev site does.
+    limit_page_length = _portal_row_limit(limit, 500)
+
+    wheres = [
+        "pd.im = %s",
+        "IFNULL(pd.is_internal_work, 0) = 0",
+        "IFNULL(pd.is_dummy_po, 0) = 0",
+        "pd.dispatch_status IN ('Completed', 'Closed')",
+        "NOT EXISTS (SELECT 1 FROM `tabWork Done` wd WHERE wd.system_id = pd.name)",
+    ]
+    params = [caller_im]
+
+    for col, key in (("pd.project_code", "project_code"), ("pd.site_code", "site_code"), ("pd.dispatch_status", "dispatch_status")):
+        clause, p = _sql_in_or_eq(col, filters.get(key))
+        if clause:
+            wheres.append(clause)
+            params.extend(p)
+
+    # Keys match keyFromLabel() slugs of LegacyResubmitTable's headers
+    # (e.g. "PIC Status (MS1)" -> "pic_status_ms1"), not the DB column names.
+    col_filter_map = {
+        "poid": "IFNULL(pd.poid,'')",
+        "po_no": "IFNULL(pd.po_no,'')",
+        "project": "IFNULL(pd.project_code,'')",
+        "duid": "IFNULL(pd.site_code,'')",
+        "item_code": "IFNULL(pd.item_code,'')",
+        "item_description": "IFNULL(pd.item_description,'')",
+        "po_status": "IFNULL(pd.dispatch_status,'')",
+        "pic_status_ms1": "IFNULL(pd.pic_status,'')",
+        "pic_status_ms2": "IFNULL(pd.pic_status_ms2,'')",
+        "im_note": "IFNULL(pd.im_confirmation_note,'')",
+    }
+    column_filters = filters.get("column_filters")
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if isinstance(column_filters, dict):
+        for col_key, raw_val in column_filters.items():
+            expr = col_filter_map.get(col_key)
+            if not expr:
+                continue
+            pat = _sql_like_pattern(raw_val)
+            if not pat:
+                continue
+            wheres.append(f"{expr} LIKE %s")
+            params.append(pat)
+
+    like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
+    if like_pat:
+        wheres.append(
+            "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''), "
+            "IFNULL(pd.project_code,''), IFNULL(pd.site_code,''), pd.name) LIKE %s"
+        )
+        params.append(like_pat)
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.name, pd.poid, pd.po_no, pd.project_code, pd.site_code,
+               pd.item_code, pd.item_description, pd.dispatch_status,
+               pd.pic_status, pd.pic_status_ms2, pd.ms1_amount, pd.ms2_amount,
+               pd.im_confirmation_note, pd.modified,
+               (SELECT COUNT(*) FROM `tabFile` f
+                WHERE f.attached_to_doctype = 'PO Dispatch' AND f.attached_to_name = pd.name
+                  AND f.attached_to_field IN ('im_doc1', 'im_doc2', 'im_doc2a', 'im_doc2b', 'im_doc2c')
+               ) AS doc_count
+        FROM `tabPO Dispatch` pd
+        WHERE {" AND ".join(wheres)}
+        ORDER BY pd.modified DESC
+        {_sql_limit_suffix(limit_page_length)}
+        """,
+        tuple(params),
+        as_dict=True,
+    )
+    if rows:
+        act_map = _batch_item_activity_types(rows)
+        for r in rows:
+            r["activity_type"] = act_map.get(r.get("item_code") or "")
+            r["ms1_needs"] = bool(flt(r.get("ms1_amount")) > 0 and (r.get("pic_status") or "") not in _DATA_INTEGRITY_TERMINAL_MS)
+            r["ms2_needs"] = bool(flt(r.get("ms2_amount")) > 0 and (r.get("pic_status_ms2") or "") not in _DATA_INTEGRITY_TERMINAL_MS)
+    return rows
+
+
+@frappe.whitelist()
+def resubmit_legacy_milestone_to_pic(po_dispatch, milestone, note=None):
+    """Submit a supporting document / note for a legacy line's milestone —
+    no Work Done record involved, and no pic_status change either. These
+    lines aren't missing evidence that needs a status push to fix; the work
+    and its original PIC submission already happened historically, outside
+    this system (archive import). The only gap is that any leftover
+    document for it had nowhere to go through the system — this is that
+    place. Only blocked once the milestone is genuinely finished
+    (Commercial Invoice Closed/Submitted or PO Line Canceled —
+    _DATA_INTEGRITY_TERMINAL_MS); any other current status (Work Not Done,
+    Under Process to Apply, Under I-BUY, ...) is still open for this.
+    """
+    _require_inet_im_session()
+    caller_im = _resolve_caller_im_or_throw()
+
+    po_dispatch = (po_dispatch or "").strip()
+    milestone = str(milestone or "").strip().upper()
+    if milestone not in ("MS1", "MS2"):
+        frappe.throw("milestone must be MS1 or MS2")
+    if not po_dispatch or not frappe.db.exists("PO Dispatch", po_dispatch):
+        frappe.throw(f"PO Dispatch not found: {po_dispatch}")
+
+    pd = frappe.db.get_value(
+        "PO Dispatch", po_dispatch,
+        ["im", "ms1_amount", "pic_status", "ms2_amount", "pic_status_ms2"],
+        as_dict=True,
+    )
+    if pd.im != caller_im:
+        frappe.throw("Not permitted — this POID isn't assigned to you.", frappe.PermissionError)
+
+    amount = flt(pd.ms1_amount if milestone == "MS1" else pd.ms2_amount)
+    current_status = (pd.pic_status if milestone == "MS1" else pd.pic_status_ms2) or ""
+    if amount <= 0:
+        frappe.throw(f"{milestone} has no amount on this line — nothing to submit.")
+    if current_status in _DATA_INTEGRITY_TERMINAL_MS:
+        frappe.throw(f"{milestone} is already {current_status} — nothing left to submit.")
+
+    if note is not None and frappe.db.has_column("PO Dispatch", "im_confirmation_note"):
+        frappe.db.set_value("PO Dispatch", po_dispatch, "im_confirmation_note", (note or "").strip(), update_modified=True)
+    frappe.db.commit()
+
+    try:
+        from inet_app.api.notifications import notify_pic_legacy_milestone_submitted
+        notify_pic_legacy_milestone_submitted(po_dispatch, milestone)
+    except Exception:
+        pass
+
+    return {"po_dispatch": po_dispatch, "milestone": milestone}
+
+
+@frappe.whitelist()
+def bulk_resubmit_legacy_milestones_to_pic(payload=None):
+    """Bulk version of resubmit_legacy_milestone_to_pic — pushes several
+    legacy milestones to PIC in one call, optionally attaching a shared
+    file to each line's PO Dispatch first (same file_urls convention as
+    bulk_submit_work_done).
+    payload: {
+        items: [{po_dispatch, milestone, poid (optional, for error labels)}, ...],
+        note: str (optional, applied to every line),
+        file_urls: { slot: url | [url, ...] } (optional)
+    }
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload) if payload else {}
+    payload = payload or {}
+
+    items = payload.get("items") or []
+    if isinstance(items, str):
+        items = frappe.parse_json(items) if items.strip() else []
+    if not isinstance(items, list):
+        items = []
+    note = payload.get("note") or None
+    file_urls = payload.get("file_urls") or {}
+    if not items:
+        frappe.throw("No lines specified")
+
+    ALLOWED_SLOTS = {"im_doc1", "im_doc2", "im_doc2a", "im_doc2b", "im_doc2c"}
+    attached_to = set()
+    updated = 0
+    errors = []
+
+    for item in items:
+        po_dispatch = (item.get("po_dispatch") or "").strip()
+        milestone = (item.get("milestone") or "").strip().upper()
+        label = item.get("poid") or po_dispatch
+        try:
+            if po_dispatch and file_urls and po_dispatch not in attached_to:
+                for slot, urls in file_urls.items():
+                    if slot not in ALLOWED_SLOTS:
+                        continue
+                    url_list = urls if isinstance(urls, (list, tuple)) else [urls]
+                    for url in url_list:
+                        if not url:
+                            continue
+                        frappe.get_doc({
+                            "doctype": "File",
+                            "file_url": url,
+                            "attached_to_doctype": "PO Dispatch",
+                            "attached_to_name": po_dispatch,
+                            "attached_to_field": slot,
+                        }).insert(ignore_permissions=True)
+                attached_to.add(po_dispatch)
+            resubmit_legacy_milestone_to_pic(po_dispatch, milestone, note)
+            updated += 1
+        except Exception as e:
+            errors.append({"name": label, "error": str(e)})
+
+    frappe.db.commit()
+    return {"updated": updated, "errors": errors}
+
+
+@frappe.whitelist()
 def update_work_done_issue(name, issue_flag):
     """IM / PM sets the issue flag on a Work Done record."""
     name = (name or "").strip()

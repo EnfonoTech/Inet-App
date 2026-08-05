@@ -15,6 +15,7 @@ import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import RemarksCell from "../../components/RemarksCell";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { PoStatusBadge, PicStatusBadge } from "../pic/picShared";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const money = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
@@ -274,6 +275,78 @@ function IssueFlagCell({ flag, onClick }) {
   );
 }
 
+// "Resubmit to PIC" tab — a browsable list of ALL legacy lines (no Work
+// Done record at all), shown regardless of current PIC status, so the IM
+// always has a place to look up old data and submit a supporting document
+// through the system if one's still missing. Checkbox-selectable like every
+// other tab — the actual submit is a bulk toolbar action (per milestone),
+// not a per-row button, since a single line can carry MS1, MS2, or both.
+function LegacyResubmitTable({ rows, loading, selectedRows, onToggleRow, onToggleAll, onView }) {
+  const allSelected = rows.length > 0 && rows.every((r) => selectedRows.has(r.name));
+  return (
+    <table className="data-table" data-table-key="im-workdone-v1-legacy">
+      <thead>
+        <tr>
+          <th><input type="checkbox" checked={allSelected} onChange={onToggleAll} /></th>
+          <th>POID</th>
+          <th>PO No</th>
+          <th>Project</th>
+          <th>DUID</th>
+          <th>Item Code</th>
+          <th>Item Description</th>
+          <th>Activity Type</th>
+          <th>PO Status</th>
+          <th>PIC Status (MS1)</th>
+          <th style={{ textAlign: "right" }}>MS1 Amount</th>
+          <th>PIC Status (MS2)</th>
+          <th style={{ textAlign: "right" }}>MS2 Amount</th>
+          <th style={{ textAlign: "right" }}>Docs</th>
+          <th>IM Note</th>
+          <th>Last Updated</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr>
+            <td colSpan={17} style={{ padding: 0 }}>
+              {loading ? (
+                <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+              ) : (
+                <div className="empty-state">
+                  <div className="empty-icon">✓</div>
+                  <h3>No legacy lines</h3>
+                  <p>Nothing owned by you is missing a Work Done record.</p>
+                </div>
+              )}
+            </td>
+          </tr>
+        ) : rows.map((r) => (
+          <tr key={r.name}>
+            <td><input type="checkbox" checked={selectedRows.has(r.name)} onChange={() => onToggleRow(r.name)} /></td>
+            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.name}</td>
+            <td>{r.po_no || "—"}</td>
+            <td title={r.project_name || ""}>{r.project_code || "—"}</td>
+            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.site_code || "—"}</td>
+            <td style={{ fontFamily: "monospace", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{r.item_code || "—"}</td>
+            <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
+            <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{r.activity_type || "—"}</td>
+            <td><PoStatusBadge value={r.dispatch_status} /></td>
+            <td><PicStatusBadge value={r.pic_status} /></td>
+            <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_amount != null ? money.format(r.ms1_amount) : "—"}</td>
+            <td><PicStatusBadge value={r.pic_status_ms2} /></td>
+            <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_amount != null ? money.format(r.ms2_amount) : "—"}</td>
+            <td style={{ textAlign: "right" }}>{r.doc_count > 0 ? `📎 ${r.doc_count}` : "—"}</td>
+            <td style={{ fontSize: "0.8rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.im_confirmation_note || ""}>{r.im_confirmation_note || "—"}</td>
+            <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>{fmtTimestamp(r.modified)}</td>
+            <td><button type="button" className="btn-secondary" style={{ fontSize: "0.75rem", padding: "3px 10px" }} onClick={() => onView(r)}>View</button></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export default function IMWorkDone() {
   const { imName } = useAuth();
   const { rowLimit } = useTableRowLimit();
@@ -326,7 +399,162 @@ export default function IMWorkDone() {
   const [bulkIssueFlagBusy, setBulkIssueFlagBusy] = useState(false);
   const [bulkIssueFlagErr, setBulkIssueFlagErr] = useState(null);
   const [bulkIssueFlagResult, setBulkIssueFlagResult] = useState(null);
-  const [tab, setTab] = useState("active"); // "active" | "confirmed" | "pic_rejected"
+  const [tab, setTab] = useState("active"); // "active" | "confirmed" | "pic_rejected" | "legacy"
+
+  // ── Manage Table column filters ──────────────────────────────────────
+  // Each column's typed value is matched only against that column's own
+  // value on the backend (see column_filters / col_filter_map in
+  // list_work_done_rows / list_legacy_milestones_needing_resubmission), not
+  // blended into the top search box's wide multi-column search.
+  // One load effect serves every tab (table-key is `im-workdone-v1-${tab}`
+  // for Work Done, `im-workdone-v1-legacy` for the legacy table), so match
+  // any of those variants rather than one fixed key.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (!e.detail?.tableKey?.startsWith("im-workdone-v1-")) return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
+  // "Resubmit to PIC" tab — legacy lines whose work (and often original PIC
+  // submission) already happened historically outside this system, so
+  // there's no Work Done record to act through. Separate data source from
+  // the Work Done rows above (list_legacy_milestones_needing_resubmission),
+  // fetched independently so its tab-badge count stays accurate regardless
+  // of which tab is active. Filtered server-side (search/project/DUID/PO
+  // status/Manage Table column filters), same as every other tab on this
+  // page — never filtered from an already-loaded in-memory list.
+  const [legacyRows, setLegacyRows] = useState([]);
+  const [legacyLoading, setLegacyLoading] = useState(true);
+  const [legacyRefreshKey, setLegacyRefreshKey] = useState(0);
+  const loadLegacy = () => setLegacyRefreshKey((k) => k + 1);
+  const [legacyPoStatusFilter, setLegacyPoStatusFilter] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLegacyLoading(true);
+    const filters = {};
+    if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+    if (projectFilter.length) filters.project_code = projectFilter;
+    if (duidFilter.length) filters.site_code = duidFilter;
+    if (legacyPoStatusFilter.length) filters.dispatch_status = legacyPoStatusFilter;
+    const colFilters = JSON.parse(columnFiltersDebounced);
+    if (Object.keys(colFilters).length) filters.column_filters = colFilters;
+    pmApi.listLegacyMilestonesNeedingResubmission(filters, rowLimit)
+      .then((res) => { if (!cancelled) setLegacyRows(Array.isArray(res) ? res : []); })
+      .catch(() => { if (!cancelled) setLegacyRows([]); })
+      .finally(() => { if (!cancelled) setLegacyLoading(false); });
+    return () => { cancelled = true; };
+  }, [legacyRefreshKey, rowLimit, searchDebounced, projectFilter, duidFilter, legacyPoStatusFilter, columnFiltersDebounced]);
+
+  // Reuses the exact same modal + submitSubmission() as a real Work Done
+  // confirmation — submissionFor.is_legacy branches it to
+  // resubmitLegacyMilestoneToPic() instead of updateWorkDoneSubmission(),
+  // since there's no Work Done record to update.
+  function openResubmitLegacy(row, milestone) {
+    openSubmissionModal({
+      ...row,
+      name: null,
+      po_dispatch: row.name,
+      is_legacy: true,
+      milestone,
+      submission_status: "Confirmation Done",
+    });
+  }
+
+  // Bulk resubmit — one "Resubmit" action, milestone auto-detected per
+  // selected row from ms1_needs/ms2_needs (a row can contribute 1 or 2
+  // targets). Mirrors the "Update Submission" 1-vs-many convention:
+  // exactly 1 target opens the full single-line modal above, 2+ opens
+  // this lighter bulk modal (shared note + optional shared file).
+  const [legacyBulkOpen, setLegacyBulkOpen] = useState(false);
+  const [legacyBulkTargets, setLegacyBulkTargets] = useState([]);
+  const [legacyBulkDoc1Files, setLegacyBulkDoc1Files] = useState([]);
+  const [legacyBulkNote, setLegacyBulkNote] = useState("");
+  const [legacyBulkBusy, setLegacyBulkBusy] = useState(false);
+  const [legacyBulkErr, setLegacyBulkErr] = useState(null);
+  const [legacyBulkResult, setLegacyBulkResult] = useState(null);
+  const [legacyBulkExistingAttachments, setLegacyBulkExistingAttachments] = useState([]);
+  const [legacyBulkAttachLoading, setLegacyBulkAttachLoading] = useState(false);
+
+  function legacyResubmitTargets() {
+    const targets = [];
+    for (const r of filteredRows) {
+      if (!selectedRows.has(r.name)) continue;
+      if (r.ms1_needs) targets.push({ row: r, milestone: "MS1" });
+      if (r.ms2_needs) targets.push({ row: r, milestone: "MS2" });
+    }
+    return targets;
+  }
+
+  function openLegacyBulkResubmit(targets) {
+    setLegacyBulkTargets(targets);
+    setLegacyBulkErr(null);
+    setLegacyBulkResult(null);
+    setLegacyBulkNote("");
+    setLegacyBulkDoc1Files([]);
+    setLegacyBulkExistingAttachments([]);
+    setLegacyBulkAttachLoading(true);
+    const pds = [...new Set(targets.map((t) => t.row.name).filter(Boolean))];
+    Promise.all(pds.map((pd) => pmApi.getPoDispatchImAttachments(pd).catch(() => [])))
+      .then((results) => {
+        const seen = new Set();
+        const merged = [];
+        results.flat().forEach((f) => { if (f.file_url && !seen.has(f.file_url)) { seen.add(f.file_url); merged.push(f); } });
+        setLegacyBulkExistingAttachments(merged);
+      })
+      .finally(() => setLegacyBulkAttachLoading(false));
+    setLegacyBulkOpen(true);
+  }
+
+  function handleLegacyResubmitClick() {
+    const targets = legacyResubmitTargets();
+    if (!targets.length) return;
+    if (targets.length === 1) {
+      openResubmitLegacy(targets[0].row, targets[0].milestone);
+    } else {
+      openLegacyBulkResubmit(targets);
+    }
+  }
+
+  async function submitLegacyBulk() {
+    setLegacyBulkBusy(true);
+    setLegacyBulkErr(null);
+    try {
+      const fileUrls = {};
+      if (legacyBulkDoc1Files.length > 0) {
+        const urls = [];
+        for (const file of legacyBulkDoc1Files) {
+          const url = await pmApi.uploadFileGeneric(file);
+          if (url) urls.push(url);
+        }
+        if (urls.length) fileUrls.im_doc1 = urls;
+      }
+      const items = legacyBulkTargets.map((t) => ({ po_dispatch: t.row.name, milestone: t.milestone, poid: t.row.poid }));
+      const res = await pmApi.bulkResubmitLegacyMilestonesToPic({
+        items,
+        note: legacyBulkNote || undefined,
+        file_urls: Object.keys(fileUrls).length ? fileUrls : undefined,
+      });
+      setLegacyBulkResult(res);
+      if (res?.updated > 0) {
+        loadLegacy();
+        setSelectedRows(new Set());
+      }
+    } catch (err) {
+      setLegacyBulkErr(err.message || "Bulk resubmit failed");
+    } finally {
+      setLegacyBulkBusy(false);
+    }
+  }
 
   const WD_ISSUE_OPTIONS = [
     "", "POD/PPT required", "TFM Check list", "Spare part return",
@@ -417,7 +645,7 @@ export default function IMWorkDone() {
     setSubmissionBusy(true);
     setSubmissionErr(null);
     try {
-      const docname = submissionFor.is_subcon ? (submissionFor.po_dispatch || submissionFor.poid) : submissionFor.name;
+      const docname = (submissionFor.is_subcon || submissionFor.is_legacy) ? (submissionFor.po_dispatch || submissionFor.poid) : submissionFor.name;
       const po_dispatch = submissionFor.po_dispatch || submissionFor.poid;
       if (!docname) throw new Error("Missing document reference");
       if (!po_dispatch) throw new Error("Missing PO Dispatch reference");
@@ -438,7 +666,9 @@ export default function IMWorkDone() {
         for (const link of doc2Links) await pmApi.attachImLink(po_dispatch, link.url, link.name, "im_doc2");
       }
       let res;
-      if (submissionFor.is_subcon) {
+      if (submissionFor.is_legacy) {
+        res = await pmApi.resubmitLegacyMilestoneToPic(po_dispatch, submissionFor.milestone, imNote || undefined);
+      } else if (submissionFor.is_subcon) {
         res = await pmApi.updateSubconSubmission(docname, submissionPick, imNote || undefined);
       } else {
         res = await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick, imNote || undefined);
@@ -446,7 +676,7 @@ export default function IMWorkDone() {
       window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
       setSubmissionFor(null);
       if (res?.pic_warning) setSubmissionWarn(res.pic_warning);
-      loadData();
+      if (submissionFor.is_legacy) loadLegacy(); else loadData();
     } catch (err) {
       setSubmissionErr(err.message || "Failed to update submission status");
     } finally {
@@ -506,32 +736,14 @@ export default function IMWorkDone() {
     }
   }
 
-  // ── Manage Table column filters ──────────────────────────────────────
-  // Each column's typed value is matched only against that column's own
-  // value on the backend (see column_filters / col_filter_map in
-  // list_work_done_rows), not blended into the top search box's wide
-  // multi-column search.
-  // One load effect serves every tab (table-key is `im-workdone-v1-${tab}`),
-  // so match any of those variants rather than one fixed key.
-  const [columnFilters, setColumnFilters] = useState({});
-  useEffect(() => {
-    const onFiltersChanged = (e) => {
-      if (!e.detail?.tableKey?.startsWith("im-workdone-v1-")) return;
-      setColumnFilters(e.detail.filters || {});
-    };
-    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
-    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
-  }, []);
-  const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
-  );
-  const columnFiltersKey = JSON.stringify(activeColumnFilters);
-  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
-
   // Single useEffect with cancellation guard. Replaces the older
   // useResetOnRowLimitChange + separate-load pattern that left the table
   // blank when going from a higher to a lower row limit.
   useEffect(() => {
+    // "legacy" has its own separate fetch (list_legacy_milestones_needing_resubmission)
+    // — this endpoint doesn't recognize that tab value and would just return
+    // everything unfiltered, so skip the wasted round-trip entirely.
+    if (tab === "legacy") { setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
     (async () => {
@@ -561,6 +773,20 @@ export default function IMWorkDone() {
     return () => { cancelled = true; };
   }, [imName, rowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
 
+  // PIC Rejected tab badge — fetched independently of `tab`/`rows` because
+  // the backend now scopes list_work_done_rows to whichever tab is active
+  // (see that function's own comment), so deriving the count from `rows`
+  // only happened to be right while sitting on the "pic_rejected" tab
+  // itself (and hidden there) — every other tab showed 0 or stale data.
+  const [picRejectedBadgeCount, setPicRejectedBadgeCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.listWorkDoneRows({ im: imName || "", tab: "pic_rejected" }, rowLimit)
+      .then((list) => { if (!cancelled) setPicRejectedBadgeCount(Array.isArray(list) ? list.length : 0); })
+      .catch(() => { if (!cancelled) setPicRejectedBadgeCount(0); });
+    return () => { cancelled = true; };
+  }, [imName, rowLimit, refreshKey]);
+
   useEffect(() => {
     if (!detailRow) { setDetailAttachments([]); return; }
     const po_dispatch = detailRow.po_dispatch || detailRow.poid;
@@ -572,15 +798,19 @@ export default function IMWorkDone() {
       .finally(() => setDetailAttachLoading(false));
   }, [detailRow]);
 
-  useEffect(() => { setSelectedRows(new Set()); setSubmissionFilter([]); setColumnFilters({}); }, [tab]);
+  useEffect(() => { setSelectedRows(new Set()); setSubmissionFilter([]); setColumnFilters({}); setLegacyPoStatusFilter([]); }, [tab]);
 
   const tabRows = useMemo(() => {
+    if (tab === "legacy") return legacyRows;
     if (tab === "confirmed") return rows.filter((r) => r.submission_status === "Confirmation Done");
     if (tab === "pic_rejected") return rows.filter((r) => r.submission_status === "PIC Rejected" || !!r.pic_rejection_remark);
     return rows.filter((r) => r.submission_status !== "Confirmation Done" && r.submission_status !== "PIC Rejected" && !r.pic_rejection_remark);
-  }, [rows, tab]);
+  }, [rows, legacyRows, tab]);
 
   const filteredRows = useMemo(() => tabRows.filter((r) => {
+    // legacy rows are already filtered server-side (search/project/DUID/PO
+    // status/column filters all passed to list_legacy_milestones_needing_resubmission)
+    if (tab === "legacy") return true;
     if (submissionFilter.length) {
       const sub = r.submission_status || "";
       const wantsNone = submissionFilter.includes("__NONE__");
@@ -597,7 +827,7 @@ export default function IMWorkDone() {
     }
     if (sourceFilter.length && !sourceFilter.includes(r.source || "")) return false;
     return true;
-  }), [tabRows, submissionFilter, execStatusFilter, issueFlagFilter, sourceFilter]);
+  }), [tabRows, tab, submissionFilter, execStatusFilter, issueFlagFilter, sourceFilter]);
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
   const bulkActTypes = [...new Set(filteredRows.filter((r) => selectedRows.has(r.name)).map((r) => r.activity_type).filter(Boolean))];
@@ -606,7 +836,7 @@ export default function IMWorkDone() {
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate || legacyPoStatusFilter.length);
 
   const totals = filteredRows.reduce(
     (acc, r) => ({
@@ -624,9 +854,6 @@ export default function IMWorkDone() {
       transition: "color 120ms",
     };
   }
-
-  const confirmedCount = rows.filter((r) => r.submission_status === "Confirmation Done").length;
-  const picRejectedCount = rows.filter((r) => r.submission_status === "PIC Rejected" || !!r.pic_rejection_remark).length;
 
   return (
     <div>
@@ -646,18 +873,16 @@ export default function IMWorkDone() {
       {/* Tab bar */}
       <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", margin: "0 0 2px", paddingLeft: 4 }}>
         <button type="button" style={tabStyle(tab === "active")} onClick={() => setTab("active")}>Active</button>
-        <button type="button" style={tabStyle(tab === "confirmed")} onClick={() => setTab("confirmed")}>
-          Confirmation Done
-          {confirmedCount > 0 && tab !== "confirmed" && (
-            <span style={{ marginLeft: 6, background: "#dcfce7", color: "#14532d", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{confirmedCount}</span>
-          )}
-        </button>
+        <button type="button" style={tabStyle(tab === "confirmed")} onClick={() => setTab("confirmed")}>Confirmation Done</button>
         <button type="button" style={tabStyle(tab === "pic_rejected")} onClick={() => setTab("pic_rejected")}>
           PIC Rejected
-          {picRejectedCount > 0 && tab !== "pic_rejected" && (
-            <span style={{ marginLeft: 6, background: "#fee2e2", color: "#991b1b", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{picRejectedCount}</span>
+          {picRejectedBadgeCount > 0 && tab !== "pic_rejected" && (
+            <span style={{ marginLeft: 6, background: "#fee2e2", color: "#991b1b", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{picRejectedBadgeCount}</span>
           )}
         </button>
+        {legacyRows.length > 0 && (
+          <button type="button" style={tabStyle(tab === "legacy")} onClick={() => setTab("legacy")}>Resubmit to PIC</button>
+        )}
       </div>
       <div className="toolbar">
         <input
@@ -678,6 +903,7 @@ export default function IMWorkDone() {
             minWidth={150}
           />
         )}
+        {tab !== "legacy" && (
         <SearchableSelect
           multi
           value={issueFlagFilter}
@@ -686,6 +912,8 @@ export default function IMWorkDone() {
           placeholder="All Issue Flags"
           minWidth={150}
         />
+        )}
+        {tab !== "legacy" && (
         <SearchableSelect
           multi
           value={billingFilter}
@@ -694,6 +922,8 @@ export default function IMWorkDone() {
           placeholder="All Billing"
           minWidth={130}
         />
+        )}
+        {tab !== "legacy" && (
         <SearchableSelect
           multi
           value={execStatusFilter}
@@ -702,9 +932,23 @@ export default function IMWorkDone() {
           placeholder="All Exec Status"
           minWidth={150}
         />
+        )}
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        {tab === "legacy" && (
+          <SearchableSelect
+            multi
+            value={legacyPoStatusFilter}
+            onChange={setLegacyPoStatusFilter}
+            options={["Completed", "Closed"]}
+            placeholder="All PO Status"
+            minWidth={140}
+          />
+        )}
+        {tab !== "legacy" && (
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
+        )}
+        {tab !== "legacy" && (
         <SearchableSelect
           multi
           value={sourceFilter}
@@ -717,15 +961,17 @@ export default function IMWorkDone() {
           placeholder="All Sources"
           minWidth={140}
         />
+        )}
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setBillingFilter([]); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); setLegacyPoStatusFilter([]); }}
           >
             Clear
           </button>
         )}
+        {tab !== "legacy" && (
         <div className="toolbar-actions">
           {selectedRows.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
@@ -771,9 +1017,45 @@ export default function IMWorkDone() {
             Update Submission{selectedRows.size > 1 ? ` (${selectedRows.size})` : ""}
           </button>
         </div>
+        )}
+        {tab === "legacy" && (
+        <div className="toolbar-actions">
+          {selectedRows.size > 0 && (
+            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+              {selectedRows.size} selected
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={legacyResubmitTargets().length === 0}
+            onClick={handleLegacyResubmitClick}
+          >
+            Resubmit to PIC{(() => {
+              const n = legacyResubmitTargets().length;
+              return n > 0 ? ` (${n})` : "";
+            })()}
+          </button>
+        </div>
+        )}
       </div>
       <div className="page-content">
         <DataTableWrapper>
+          {tab === "legacy" ? (
+            <LegacyResubmitTable
+              rows={filteredRows}
+              loading={legacyLoading}
+              selectedRows={selectedRows}
+              onToggleRow={(name) => setSelectedRows((prev) => { const next = new Set(prev); next.has(name) ? next.delete(name) : next.add(name); return next; })}
+              onToggleAll={() => {
+                const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+                const visible = filteredRows.filter((r) => !dtpHidden.has(r.name));
+                const allSel = visible.length > 0 && visible.every((r) => selectedRows.has(r.name));
+                setSelectedRows(allSel ? new Set() : new Set(visible.map((r) => r.name)));
+              }}
+              onView={(r) => setDetailRow({ ...r, po_dispatch: r.name })}
+            />
+          ) : (
           <>
             <table key={`im-workdone-v1-${tab}`} className="data-table" data-table-key={`im-workdone-v1-${tab}`}>
               <thead>
@@ -948,10 +1230,11 @@ export default function IMWorkDone() {
               <div className="empty-state"><h3>{hasFilters ? "No results match your filters" : "No work done rows"}</h3></div>
             ) : null}
           </>
+          )}
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
+          loadedCount={tabRows.length}
           filteredCount={filteredRows.length}
           filterActive={hasFilters}
         />
@@ -1249,6 +1532,84 @@ export default function IMWorkDone() {
                   <button type="button" className="btn-secondary" disabled={bulkBusy} onClick={() => setBulkModalOpen(false)}>Cancel</button>
                   <button type="button" className="btn-primary" disabled={bulkBusy} onClick={submitBulk}>
                     {bulkBusy ? "Submitting…" : `Submit All (${selectedRows.size})`}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {legacyBulkOpen && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => !legacyBulkBusy && setLegacyBulkOpen(false)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(600px, 96vw)", maxHeight: "90dvh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Resubmit to PIC — {legacyBulkTargets.length} milestone{legacyBulkTargets.length !== 1 ? "s" : ""}</h3>
+              <button type="button" onClick={() => setLegacyBulkOpen(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }} disabled={legacyBulkBusy}>&times;</button>
+            </div>
+
+            <div style={{ marginBottom: 14, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 12px", maxHeight: 120, overflowY: "auto", fontFamily: "monospace", fontSize: "0.78rem", color: "#475569" }}>
+              {legacyBulkTargets.map((t) => `${t.row.poid || t.row.name} (${t.milestone})`).join("  ·  ")}
+            </div>
+
+            {legacyBulkResult ? (
+              <div>
+                <div style={{ padding: "12px 14px", background: "#ecfdf5", border: "1px solid #bbf7d0", borderRadius: 8, marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, color: "#047857", marginBottom: 4 }}>Updated {legacyBulkResult.updated} row{legacyBulkResult.updated !== 1 ? "s" : ""}</div>
+                  {legacyBulkResult.errors?.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>Failed ({legacyBulkResult.errors.length}):</div>
+                      {legacyBulkResult.errors.map((e, i) => (
+                        <div key={i} style={{ fontSize: "0.75rem", color: "#991b1b" }}>{e.name}: {e.error}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-primary" onClick={() => setLegacyBulkOpen(false)}>Close</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {legacyBulkErr && <div className="notice error" style={{ marginBottom: 12 }}>{legacyBulkErr}</div>}
+
+                <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+                  Supporting Document
+                </div>
+                {legacyBulkAttachLoading ? (
+                  <div style={{ color: "#94a3b8", fontSize: "0.82rem", padding: "6px 0", marginBottom: 8 }}>Loading existing documents…</div>
+                ) : legacyBulkExistingAttachments.length > 0 ? (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 5 }}>
+                      Existing Documents
+                    </div>
+                    <AttachmentSlotList attachments={legacyBulkExistingAttachments} docReq={null} />
+                    <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: 6 }}>Add a shared file below to attach it to all selected lines:</div>
+                  </div>
+                ) : null}
+                <FileSlot slotKey="DOC1" slotLabel="Confirmation Mail" accept=".msg" files={legacyBulkDoc1Files} setFiles={setLegacyBulkDoc1Files} required={false} />
+
+                <div className="form-group" style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>Note</label>
+                  <textarea
+                    value={legacyBulkNote}
+                    onChange={(e) => setLegacyBulkNote(e.target.value)}
+                    placeholder="Add any instructions or remarks for PIC…"
+                    rows={3}
+                    style={{ width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.88rem", resize: "vertical", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn-secondary" disabled={legacyBulkBusy} onClick={() => setLegacyBulkOpen(false)}>Cancel</button>
+                  <button type="button" className="btn-primary" disabled={legacyBulkBusy} onClick={submitLegacyBulk}>
+                    {legacyBulkBusy ? "Submitting…" : `Resubmit All (${legacyBulkTargets.length})`}
                   </button>
                 </div>
               </>
