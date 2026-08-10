@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
 import AttachmentsSection from "../../components/AttachmentsSection";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -604,7 +605,21 @@ export default function FieldExpense() {
   const tabTotal = visibleClaims.reduce((s, c) => s + grossAmt(c), 0);
   const tabTotalColor = { pending: "#b45309", unpaid: "#92400e", paid: "#15803d", all: "#1d4ed8" }[tab];
 
-  const pagedClaims = rowLimit === 0 ? visibleClaims : visibleClaims.slice(0, rowLimit);
+  // This page's fetch (`load`) never depends on `rowLimit` — it always pulls
+  // every claim and limits client-side, so there's no re-fetch to skip here.
+  // But slicing `visibleClaims` down to `rowLimit` BEFORE handing it to
+  // useProgressiveRows swapped in a new, shorter array reference on every
+  // limit change, forcing that hook through its expensive shrink-then-regrow
+  // chunking even though nothing was re-fetched. Pass the full (unsliced)
+  // tab-filtered claims through instead, and hide anything past the limit
+  // via CSS in the render loop below (see displayLimit) — a style change on
+  // already-mounted cards, not a removal.
+  const pagedClaims = visibleClaims;
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visiblePagedClaims = useProgressiveRows(pagedClaims, { paused: loading });
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(pagedClaims.length, displayLimit);
 
   useEffect(() => { load(); }, [load]);
 
@@ -708,12 +723,12 @@ export default function FieldExpense() {
       {visibleClaims.length > 0 ? (
         <>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {pagedClaims.map((c) => (
+            {visiblePagedClaims.map((c, idx) => (
               <button
                 key={c.name}
                 type="button"
                 onClick={() => setSelectedClaim(c)}
-                style={{ all: "unset", display: "block", cursor: "pointer" }}
+                style={{ all: "unset", display: idx >= displayLimit ? "none" : "block", cursor: "pointer" }}
               >
                 <div className="history-card" style={{ borderLeftColor: (c.status || "").toLowerCase() === "paid" ? "#22c55e" : effectiveStatus(c) === "Approved" ? "#f59e0b" : effectiveStatus(c) === "Rejected" ? "var(--red, #ef4444)" : "var(--blue, #3b82f6)" }}>
                   <div className="history-card-row">
@@ -748,8 +763,8 @@ export default function FieldExpense() {
           <TableRowsLimitFooter
             placement="tableCard"
             loadedCount={visibleClaims.length}
-            filteredCount={pagedClaims.length}
-            filterActive={rowLimit > 0 && visibleClaims.length > pagedClaims.length}
+            filteredCount={displayedCount}
+            filterActive={rowLimit > 0 && visibleClaims.length > displayedCount}
           />
         </>
       ) : loading ? (

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -154,9 +155,9 @@ function QcEditModal({ row, onClose, onSaved }) {
 }
 
 /* Mobile QC card */
-function QcCard({ row, selected, onToggle, onOpen }) {
+function QcCard({ row, selected, onToggle, onOpen, style }) {
   return (
-    <div className="qc-card field-list-card" onClick={() => onOpen(row)}>
+    <div className="qc-card field-list-card" style={style} onClick={() => onOpen(row)}>
       <div className="qc-card-header">
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -205,6 +206,13 @@ export default function FieldQcCiag() {
   const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  // How many of `visibleRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`.
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(rows.length, displayLimit);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [selectedPlans, setSelectedPlans] = useState(new Set());
@@ -229,9 +237,31 @@ export default function FieldQcCiag() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — the rows are already in memory; just show
+  // fewer of the same rows (see displayLimit/displayedCount above). Only
+  // growing the limit — or any OTHER filter actually changing — hits the
+  // server.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
-    let cancelled = false;
     if (!teamId) { setRows([]); setLoading(false); return; }
+
+    const signature = JSON.stringify([teamId, searchDebounced, columnFiltersDebounced]);
+    const prev = lastFetchRef.current;
+    const alreadyHaveEnough = prev.signature === signature && (
+      prev.limit === TABLE_ROW_LIMIT_ALL
+      || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+    );
+    if (alreadyHaveEnough) {
+      // Deliberately NOT calling setRows() here — leave `rows` exactly
+      // as-is; the render below hides anything beyond the new limit via
+      // CSS instead of unmounting rows that are already loaded.
+      return;
+    }
+
+    let cancelled = false;
     setLoading(true);
     (async () => {
       try {
@@ -250,7 +280,10 @@ export default function FieldQcCiag() {
             // there's nothing for the field user to act on.
             !(r.qc_required === 0 && r.ciag_required === 0)
         );
-        if (!cancelled) setRows(visible);
+        if (!cancelled) {
+          setRows(visible);
+          lastFetchRef.current = { signature, limit: rowLimit, rows: visible };
+        }
       } catch { if (!cancelled) setRows([]); }
       finally { if (!cancelled) setLoading(false); }
     })();
@@ -267,7 +300,10 @@ export default function FieldQcCiag() {
 
   function toggleAll() {
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    // Only rows within the current display limit — anything beyond it is
+    // hidden via CSS (see displayLimit above), not a real filter, but
+    // "select all" should still only ever act on what's actually shown.
+    const visible = rows.slice(0, displayedCount).filter((r) => !dtpHidden.has(r.name));
     if (visible.length > 0 && visible.every((r) => selectedPlans.has(r.name))) {
       setSelectedPlans(new Set());
     } else {
@@ -323,21 +359,22 @@ export default function FieldQcCiag() {
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
               <input
                 type="checkbox"
-                checked={rows.length > 0 && rows.every((r) => selectedPlans.has(r.name))}
+                checked={displayedCount > 0 && rows.slice(0, displayedCount).every((r) => selectedPlans.has(r.name))}
                 onChange={toggleAll}
                 style={{ width: 16, height: 16, accentColor: "var(--blue)", cursor: "pointer" }}
               />
               <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                {rows.length} plan{rows.length !== 1 ? "s" : ""}
+                {displayedCount} plan{displayedCount !== 1 ? "s" : ""}
               </span>
             </div>
-            {rows.map((r) => (
+            {visibleRows.map((r, idx) => (
               <QcCard
                 key={r.name}
                 row={r}
                 selected={selectedPlans.has(r.name)}
                 onToggle={toggleRow}
                 onOpen={setEditRow}
+                style={idx >= displayLimit ? { display: "none" } : undefined}
               />
             ))}
           </div>
@@ -362,14 +399,14 @@ export default function FieldQcCiag() {
 
       {/* ── Desktop table ────────────────────────────────── */}
       <div className="page-content field-desktop-only">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
           <table className="data-table" data-table-key="field-qc-ciag-v1">
             <thead>
               <tr>
                 <th style={{ width: 36 }}>
                   <input
                     type="checkbox"
-                    checked={rows.length > 0 && rows.every((r) => selectedPlans.has(r.name))}
+                    checked={displayedCount > 0 && rows.slice(0, displayedCount).every((r) => selectedPlans.has(r.name))}
                     onChange={toggleAll}
                   />
                 </th>
@@ -397,8 +434,8 @@ export default function FieldQcCiag() {
                     )}
                   </td>
                 </tr>
-              ) : rows.map((r) => (
-                <tr key={r.name} data-doc-name={r.name} className="row-link" onClick={() => setEditRow(r)}>
+              ) : visibleRows.map((r, idx) => (
+                <tr key={r.name} data-doc-name={r.name} className="row-link" onClick={() => setEditRow(r)} style={idx >= displayLimit ? { display: "none" } : undefined}>
                   <td onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
@@ -443,7 +480,7 @@ export default function FieldQcCiag() {
             </tbody>
           </table>
         </DataTableWrapper>
-        <TableRowsLimitFooter placement="tableCard" loadedCount={rows.length} filteredCount={rows.length} filterActive={!!search} />
+        <TableRowsLimitFooter placement="tableCard" loadedCount={displayedCount} filteredCount={displayedCount} filterActive={!!search} />
       </div>
 
       {/* ── Edit modal ───────────────────────────────────── */}
@@ -459,11 +496,18 @@ export default function FieldQcCiag() {
             const colFilters = JSON.parse(columnFiltersDebounced);
             if (Object.keys(colFilters).length) filters.column_filters = colFilters;
             pmApi.listExecutionMonitorRows(filters, rowLimit)
-              .then((list) => setRows(
-                (Array.isArray(list) ? list : []).filter(
+              .then((list) => {
+                const visible = (Array.isArray(list) ? list : []).filter(
                   (r) => String(r.execution_status || "") !== "Completed"
-                )
-              ))
+                );
+                setRows(visible);
+                // Keep the skip-fetch ref in sync with this out-of-band
+                // refresh too — otherwise a later grow back to a bigger
+                // limit could wrongly think it already has everything,
+                // based on data from before this save.
+                const signature = JSON.stringify([teamId, searchDebounced, columnFiltersDebounced]);
+                lastFetchRef.current = { signature, limit: rowLimit, rows: visible };
+              })
               .catch(() => {});
           }}
         />

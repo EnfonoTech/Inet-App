@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useSearchParams } from "react-router-dom";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { pmApi } from "../../services/api";
 import { useDebounced } from "../../hooks/useDebounced";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 /** Catch render errors inside the records panel so one bad doctype/row can't
  * wipe out the whole Masters page. Default fallback shows a friendly message. */
@@ -289,8 +290,32 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
   const searchFields = useMemo(() => Array.from(new Set(["name", ...cols])), [cols]);
   const searchFieldsKey = useMemo(() => searchFields.join("|"), [searchFields]);
 
+  // Remembers what the LAST real fetch actually returned, and under what
+  // limit + filters. Shrinking the row limit (e.g. All -> 20) never needs
+  // another round-trip — whatever's being asked for is already sitting in
+  // `records` from the larger fetch; the render below just hides the extra
+  // rows via CSS (see displayLimit/displayedCount) instead of slicing the
+  // array, which would still force React to unmount however many rows that
+  // drops. Only growing the limit — or any OTHER filter actually changing —
+  // hits the server. `signature` covers everything the fetch depends on
+  // except the row limit itself.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let alive = true;
+    const signature = JSON.stringify([doctype, fieldsKey, searchDebounced, colFiltersDebounced, searchFieldsKey]);
+    const prev = lastFetchRef.current;
+    const alreadyHaveEnough = prev.signature === signature && (
+      prev.limit === TABLE_ROW_LIMIT_ALL
+      || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+    );
+    if (alreadyHaveEnough) {
+      // Deliberately not touching `records` — leave it (and whatever's
+      // already mounted in the DOM) exactly as-is; the render hides the
+      // rows past the new limit via style instead.
+      return;
+    }
+
     setLoading(true);
     // NOTE: do NOT setRecords(null) here. A genuine doctype switch already
     // remounts this component (parent renders <RecordsErrorBoundary key={doctype}>),
@@ -307,6 +332,7 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
       if (!alive) return;
       setRecords(rows);
       setLoading(false);
+      lastFetchRef.current = { signature, limit: rowLimit, rows };
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -340,6 +366,17 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
   }, [records, filterableCols]);
 
   const hasFilters = !!search || Object.values(colFilters).some(Boolean);
+
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRecords = useProgressiveRows(records || [], { paused: loading });
+  // How many of `visibleRecords` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `records`
+  // (see the skip-fetch logic above: shrinking the limit after "All" already
+  // loaded everything doesn't trim `records`, since slicing it would still
+  // force React to tear down however many rows that drops).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min((records || []).length, displayLimit);
 
   if (!records || (records.length === 0 && !hasFilters)) {
     if (loading) {
@@ -389,11 +426,11 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
         </button>
       )}
       <span style={{ marginLeft: "auto", color: "#94a3b8", fontSize: "0.76rem" }}>
-        {records.length} record{records.length !== 1 ? "s" : ""}
+        {displayedCount} record{displayedCount !== 1 ? "s" : ""}
         {hasFilters && loading && " · updating…"}
       </span>
     </div>
-    <DataTableWrapper style={{ marginTop: 0 }}>
+    <DataTableWrapper style={{ marginTop: 0 }} loading={loading && records.length > 0}>
       <table className="data-table">
         <thead>
           <tr>
@@ -415,8 +452,8 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
               </td>
             </tr>
           )}
-          {records.map((row, idx) => (
-            <tr key={idx}>
+          {visibleRecords.map((row, idx) => (
+            <tr key={idx} style={idx >= displayLimit ? { display: "none" } : undefined}>
               <td style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{idx + 1}</td>
               <td>
                 <a
@@ -455,7 +492,7 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
         </tbody>
       </table>
     </DataTableWrapper>
-    <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />
+    <TableRowsLimitFooter placement="tableCard" loadedCount={displayedCount} />
     </>
   );
 }

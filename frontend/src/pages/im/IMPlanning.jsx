@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -9,6 +9,7 @@ import IMPlanningExecutionModal from "./IMPlanningExecutionModal";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView from "../../components/RecordDetailView";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
@@ -144,25 +145,53 @@ export default function IMPlanning() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20, or
+  // 2500 -> 20) never needs another round-trip — whatever's being asked for
+  // is already sitting in memory from the larger fetch; just show fewer of
+  // the same rows. Only growing the limit, or any OTHER filter actually
+  // changing, hits the server. See PICTracker.jsx for the reference
+  // implementation of this pattern.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     (async () => {
+      const portal = {};
+      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+      if (visitFilter.length) portal.visit_type = visitFilter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (teamFilter.length) portal.team = teamFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
+      if (fromDate) portal.from_date = fromDate;
+      if (toDate) portal.to_date = toDate;
+      if (dummyFilter) portal.dummy_preset = "dummy";
+      const portalArg = Object.keys(portal).length ? portal : undefined;
+      const signature = JSON.stringify([imName, statusFilter, portal, refreshKey]);
+
+      const prev = lastFetchRef.current;
+      const alreadyHaveEnough = prev.signature === signature && (
+        prev.limit === TABLE_ROW_LIMIT_ALL
+        || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+      );
+      if (alreadyHaveEnough) {
+        // Deliberately NOT calling setPlans() here — leave `plans` (and
+        // whatever's already mounted in the DOM) exactly as-is. Slicing it
+        // down would still force React to unmount however many rows that
+        // drops. The render below just hides anything beyond the new limit
+        // via CSS instead — see displayLimit.
+        return;
+      }
+
+      setLoading(true);
       try {
-        const portal = {};
-        if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
-        if (visitFilter.length) portal.visit_type = visitFilter;
-        if (projectFilter.length) portal.project_code = projectFilter;
-        if (teamFilter.length) portal.team = teamFilter;
-        if (duidFilter.length) portal.site_code = duidFilter;
-        if (fromDate) portal.from_date = fromDate;
-        if (toDate) portal.to_date = toDate;
-        if (dummyFilter) portal.dummy_preset = "dummy";
-        const portalArg = Object.keys(portal).length ? portal : undefined;
         const res = await pmApi.listIMRolloutPlans(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
-        if (!cancelled) setPlans(Array.isArray(res) ? res : []);
+        if (cancelled) return;
+        const fetchedRows = Array.isArray(res) ? res : [];
+        setPlans(fetchedRows);
+        lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
       } catch {
         if (!cancelled) setPlans([]);
       } finally {
@@ -170,6 +199,7 @@ export default function IMPlanning() {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     imName,
     statusFilter,
@@ -205,6 +235,14 @@ export default function IMPlanning() {
   }, [plans, dummyFilter]);
 
   const visibleNames = useMemo(() => new Set(filteredPlans.map((p) => p.name)), [filteredPlans]);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visiblePlans = useProgressiveRows(filteredPlans, { paused: loading });
+  // How many of `visiblePlans` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `plans`.
+  // `plans` itself may hold MORE than this (see the skip-fetch logic above).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(filteredPlans.length, displayLimit);
 
   useEffect(() => {
     setSelected((prev) => {
@@ -225,7 +263,10 @@ export default function IMPlanning() {
 
   function toggleAll() {
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-    const visible = filteredPlans.filter((p) => !dtpHidden.has(p.name));
+    // Only rows within the current display limit — anything beyond it is
+    // hidden via CSS (see displayLimit above), not a real filter, but
+    // "select all" should still only ever act on what's actually shown.
+    const visible = filteredPlans.slice(0, displayedCount).filter((p) => !dtpHidden.has(p.name));
     if (visible.length > 0 && visible.every((p) => selected.has(p.name))) {
       setSelected(new Set());
     } else {
@@ -342,7 +383,7 @@ export default function IMPlanning() {
           <h1 className="page-title">Rollout Execution</h1>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="im-planning" rows={plans} />
+          <ExportExcelButton filename="im-planning" rows={filteredPlans.slice(0, displayedCount)} />
           <button type="button" className="btn-secondary" onClick={() => loadPlans()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
@@ -440,7 +481,7 @@ export default function IMPlanning() {
       </div>
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && plans.length > 0}>
           <>
             <table className="data-table" data-table-key="im-planning-rollout">
               <thead>
@@ -448,7 +489,7 @@ export default function IMPlanning() {
                   <th>
                     <input
                       type="checkbox"
-                      checked={selected.size === filteredPlans.length && filteredPlans.length > 0}
+                      checked={displayedCount > 0 && filteredPlans.slice(0, displayedCount).every((p) => selected.has(p.name))}
                       onChange={toggleAll}
                     />
                   </th>
@@ -481,14 +522,14 @@ export default function IMPlanning() {
                 </tr>
               </thead>
               <tbody>
-                {filteredPlans.map((p) => (
+                {visiblePlans.map((p, idx) => (
                   <tr
                     key={p.name}
                     data-doc-name={p.name}
                     data-modified={p.modified}
                     className={selected.has(p.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(p.name)}
-                    style={{ cursor: "pointer", ...(p.is_dummy_po ? { background: "#fffbeb" } : Number(p.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}
+                    style={idx >= displayLimit ? { display: "none" } : { cursor: "pointer", ...(p.is_dummy_po ? { background: "#fffbeb" } : Number(p.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}
                   >
                     <td onClick={(e) => e.stopPropagation()}>
                       <input
@@ -608,7 +649,7 @@ export default function IMPlanning() {
                 <tfoot>
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                     <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                      {filteredPlans.length} plan{filteredPlans.length !== 1 ? "s" : ""}
+                      {displayedCount} plan{displayedCount !== 1 ? "s" : ""}
                       {selected.size > 0 && (
                         <span style={{ marginLeft: 12, color: "#6366f1", fontWeight: 600 }}>
                           {selected.size} selected
@@ -641,8 +682,8 @@ export default function IMPlanning() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={filteredPlans.length}
-          filteredCount={filteredPlans.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={!!hasFilters}
         />
       </div>

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import {
@@ -37,9 +38,9 @@ function dateOnly(v) {
 }
 
 /* Mobile time log card */
-function TimelogCard({ row }) {
+function TimelogCard({ row, style }) {
   return (
-    <div className="timelog-card">
+    <div className="timelog-card" style={style}>
       <div className="timelog-card-header">
         <div>
           <div className="timelog-duration" style={row.is_running ? { color: "var(--amber)" } : {}}>
@@ -86,6 +87,14 @@ export default function Timesheet() {
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleLogs = useProgressiveRows(logs, { paused: loading });
+  // How many of `visibleLogs` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `logs`. See
+  // the skip-fetch logic in the fetch effect below / PICTracker.jsx.
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(logs.length, displayLimit);
   const [runningTimers, setRunningTimers] = useState([]);
   const [, tick] = useState(0);
 
@@ -137,18 +146,44 @@ export default function Timesheet() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20, or
+  // 2500 -> 20) never needs another round-trip — whatever's being asked for
+  // is already sitting in memory from the larger fetch; just show fewer of
+  // the same rows. Only growing the limit (needing rows that were never
+  // fetched at all) — or any OTHER filter actually changing, or an explicit
+  // Refresh (refreshKey) — hits the server. See PICTracker.jsx for the
+  // reference implementation.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     (async () => {
+      const filters = {};
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) filters.column_filters = colFilters;
+      const signature = JSON.stringify([teamId, filters, refreshKey]);
+
+      const prev = lastFetchRef.current;
+      const alreadyHaveEnough = prev.signature === signature && (
+        prev.limit === TABLE_ROW_LIMIT_ALL
+        || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+      );
+      if (alreadyHaveEnough) {
+        // Already have at least this many rows in memory from a larger (or
+        // equal) fetch under the same filters — just show fewer of them via
+        // the CSS-hide render below, no re-fetch and no state mutation.
+        return;
+      }
+
+      setLoading(true);
       try {
-        const filters = {};
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
         if (!cancelled) {
-          setLogs(res?.logs || []);
-          setTotal(res?.total ?? (res?.logs || []).length);
+          const fetchedRows = res?.logs || [];
+          setLogs(fetchedRows);
+          setTotal(res?.total ?? fetchedRows.length);
+          lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
         }
       } catch {
         if (!cancelled) { setLogs([]); setTotal(0); }
@@ -351,7 +386,7 @@ export default function Timesheet() {
             alignItems: "center",
             fontSize: "0.8rem",
           }}>
-            <span style={{ color: "var(--text-muted)" }}>{logs.length} of {total} log{total !== 1 ? "s" : ""}</span>
+            <span style={{ color: "var(--text-muted)" }}>{displayedCount} of {total} log{total !== 1 ? "s" : ""}</span>
             <span style={{ fontFamily: "monospace", fontWeight: 700, color: "var(--blue)" }}>
               {fmt.format(totalHours)} h total
             </span>
@@ -363,7 +398,9 @@ export default function Timesheet() {
       <div className="field-mobile-only">
         {logs.length > 0 ? (
           <div className="field-card-list">
-            {logs.map((row) => <TimelogCard key={row.name} row={row} />)}
+            {visibleLogs.map((row, idx) => (
+              <TimelogCard key={row.name} row={row} style={idx >= displayLimit ? { display: "none" } : undefined} />
+            ))}
           </div>
         ) : loading ? (
           <div className="field-card-list">
@@ -388,9 +425,9 @@ export default function Timesheet() {
       <div className="page-content field-desktop-only">
         <div style={{ background: "var(--bg-white)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontSize: "0.82rem", color: "var(--text-muted)" }}>
-            {loading ? "Loading…" : `${logs.length} of ${total} log(s) · ${fmt.format(totalHours)} h total`}
+            {loading ? "Loading…" : `${displayedCount} of ${total} log(s) · ${fmt.format(totalHours)} h total`}
           </div>
-          <DataTableWrapper className="data-table-wrapper--nested">
+          <DataTableWrapper className="data-table-wrapper--nested" loading={loading && logs.length > 0}>
             <table className="data-table" data-table-key="field-timesheet-v1">
               <thead>
                 <tr>
@@ -418,8 +455,8 @@ export default function Timesheet() {
                       )}
                     </td>
                   </tr>
-                ) : logs.map((row) => (
-                  <tr key={row.name}>
+                ) : visibleLogs.map((row, idx) => (
+                  <tr key={row.name} style={idx >= displayLimit ? { display: "none" } : undefined}>
                     <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.name}</td>
                     <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || row.project_code || "—"}</td>
@@ -443,7 +480,7 @@ export default function Timesheet() {
               </tbody>
             </table>
           </DataTableWrapper>
-          <TableRowsLimitFooter placement="tableCard" loadedCount={logs.length} />
+          <TableRowsLimitFooter placement="tableCard" loadedCount={displayedCount} />
         </div>
       </div>
     </div>

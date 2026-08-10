@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -19,6 +19,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -135,7 +136,7 @@ function parseAttachments(raw) {
 }
 
 export default function ExecutionMonitor() {
-  const { rowLimit } = useTableRowLimit();
+  const { rowLimit, setRowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -157,6 +158,25 @@ export default function ExecutionMonitor() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [tab, setTab] = useState("all"); // "all" | "internal_done"
+  // "All" is stored per-path, not per-tab — the backend fetch is tab-scoped
+  // (filters.tab below), so switching tabs is a genuinely different,
+  // separately-limited fetch. Without this, picking "All" on one tab and
+  // switching to the other would silently re-trigger an unlimited fetch for
+  // a tab the user never asked "All" for on this occasion.
+  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== tab
+    ? TABLE_ROW_LIMIT_DEFAULT
+    : rowLimit;
+  const confirmRowLimit = useCallback((n) => {
+    confirmedAllTabRef.current = tab;
+    setRowLimit(n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, setRowLimit]);
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters + tab. Shrinking the row limit (e.g. All -> 20) on
+  // the SAME tab never needs another round-trip. See PICTracker.jsx for the
+  // reference implementation.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
   const [internalSearch, setInternalSearch] = useState("");
   const [internalImFilter, setInternalImFilter] = useState([]);
   const [internalTeamFilter, setInternalTeamFilter] = useState([]);
@@ -242,7 +262,6 @@ export default function ExecutionMonitor() {
   // blank when going from a higher to a lower row limit.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
     (async () => {
       try {
@@ -269,9 +288,26 @@ export default function ExecutionMonitor() {
         if (internalToDate) filters.internal_to_date = internalToDate;
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) filters.column_filters = colFilters;
-        const list = await pmApi.listExecutionMonitorRows(filters, rowLimit);
+        const signature = JSON.stringify([filters]);
+
+        const prev = lastFetchRef.current;
+        const alreadyHaveEnough = prev.signature === signature && (
+          prev.limit === TABLE_ROW_LIMIT_ALL
+          || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
+        );
+        if (alreadyHaveEnough) {
+          // Same tab + filters, already have at least this many rows from a
+          // larger (or equal) fetch — show fewer via the CSS-hide render
+          // below, no re-fetch and no state mutation.
+          return;
+        }
+
+        setLoading(true);
+        const list = await pmApi.listExecutionMonitorRows(filters, effectiveRowLimit);
         if (cancelled) return;
-        setRows(Array.isArray(list) ? list : []);
+        const fetchedRows = Array.isArray(list) ? list : [];
+        setRows(fetchedRows);
+        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
         setLastRefresh(new Date());
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load execution data");
@@ -289,7 +325,7 @@ export default function ExecutionMonitor() {
         intervalRef.current = null;
       }
     };
-  }, [rowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, internalImFilter, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate, tab]);
+  }, [effectiveRowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, internalImFilter, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate, tab]);
 
   function formatTime(d) {
     if (!d) return "";
@@ -370,7 +406,18 @@ export default function ExecutionMonitor() {
     internalDomainFilter.length || internalTypeFilter.length || internalFromDate || internalToDate
   );
 
-  const totals = mainRows.reduce(
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleMainRows = useProgressiveRows(mainRows, { paused: loading });
+  const visibleInternalDone = useProgressiveRows(filteredInternalDone, { paused: loading });
+  // How many of each visible* array to actually show — anything beyond this
+  // is hidden via CSS in the render below rather than removed from `rows`
+  // (see the skip-fetch cache in the fetch effect above / PICTracker.jsx).
+  const displayLimit = effectiveRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveRowLimit;
+  const displayedMainCount = Math.min(mainRows.length, displayLimit);
+  const displayedInternalCount = Math.min(filteredInternalDone.length, displayLimit);
+
+  const totals = mainRows.slice(0, displayedMainCount).reduce(
     (acc, r) => ({
       target: acc.target + (parseFloat(r.target_amount) || 0),
     }),
@@ -392,7 +439,7 @@ export default function ExecutionMonitor() {
           </div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="execution-monitor" rows={rows} />
+          <ExportExcelButton filename="execution-monitor" rows={tab === "internal_done" ? filteredInternalDone.slice(0, displayedInternalCount) : mainRows.slice(0, displayedMainCount)} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
@@ -501,7 +548,7 @@ export default function ExecutionMonitor() {
           </div>
         )}
 
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
           {tab === "internal_done" ? (
             <table key="execution-monitor-internal-done" className="data-table" data-table-key="execution-monitor-internal-done">
               <thead>
@@ -546,8 +593,8 @@ export default function ExecutionMonitor() {
                     </td>
                   </tr>
                 ) : (
-                  filteredInternalDone.map((row) => (
-                    <tr key={row.name} style={{ background: "#f0fdfa" }}>
+                  visibleInternalDone.map((row, idx) => (
+                    <tr key={row.name} style={idx >= displayedInternalCount ? { display: "none" } : { background: "#f0fdfa" }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.execution_name || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.item_code || row.site_name || "—"}</td>
@@ -593,9 +640,9 @@ export default function ExecutionMonitor() {
                 <tfoot>
                   <tr>
                     <td colSpan={16} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                      {filteredInternalDone.length} row{filteredInternalDone.length !== 1 ? "s" : ""} done
+                      {displayedInternalCount} row{displayedInternalCount !== 1 ? "s" : ""} done
                       {filteredInternalDone.length !== internalDoneRows.length && (
-                        <span style={{ color: "#64748b", marginLeft: 10, fontWeight: 500 }}>of {internalDoneRows.length} total</span>
+                        <span style={{ color: "#64748b", marginLeft: 10, fontWeight: 500 }}>of {Math.min(internalDoneRows.length, displayLimit)} total</span>
                       )}
                     </td>
                   </tr>
@@ -659,10 +706,10 @@ export default function ExecutionMonitor() {
                       )}
                     </td>
                   </tr>
-                ) : mainRows.map((row) => {
+                ) : visibleMainRows.map((row, idx) => {
                   const target = row.target_amount || 0;
                   return (
-                    <tr key={row.name} style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}>
+                    <tr key={row.name} style={idx >= displayedMainCount ? { display: "none" } : { ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() ? `Dummy POID: ${row.original_dummy_poid}` : ""}>
@@ -767,7 +814,7 @@ export default function ExecutionMonitor() {
                       Exec Status · QC · CIAG · Issue Category · General · Manager · Team Lead · Open */}
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                     <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                      {mainRows.length} rows
+                      {displayedMainCount} rows
                     </td>{/* Plan */}
                     <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     {/* POID · Dummy POID · Item code · Description · Activity Type · Project · Domain ·
@@ -787,9 +834,11 @@ export default function ExecutionMonitor() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={mainRows.length}
-          filteredCount={mainRows.length}
-          filterActive={hasFilters}
+          loadedCount={tab === "internal_done" ? displayedInternalCount : displayedMainCount}
+          filteredCount={tab === "internal_done" ? displayedInternalCount : displayedMainCount}
+          filterActive={tab === "internal_done" ? hasInternalFilters : hasFilters}
+          value={effectiveRowLimit}
+          onChange={confirmRowLimit}
         />
       </div>
 

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
@@ -150,13 +151,45 @@ function FieldRow({ label, children }) {
 
 export default function IMPOIntake() {
   const { imName } = useAuth();
-  const { rowLimit } = useTableRowLimit();
+  const { rowLimit, setRowLimit } = useTableRowLimit();
 
   // ── Tab ─────────────────────────────────────────────────────────────────
   const [tab, setTab] = useState("intake"); // "intake" | "dummy" | "overview"
+  // "All" is stored per-path, not per-tab. "intake" fetches unconditionally
+  // in the background regardless of active tab (see "Intake load" effect
+  // below), so it always just uses the raw preference — but "dummy" and
+  // "overview" are only fetched when you switch INTO them, sharing that
+  // same preference. Without this, picking "All" on one tab and switching
+  // to "dummy"/"overview" would silently re-trigger an unlimited fetch for
+  // a tab the user never asked "All" for on this occasion. Track which tab
+  // "All" was actually confirmed for; any other tab falls back to the
+  // normal default limit until explicitly re-picked.
+  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
+  const effectiveRowLimitForTab = useCallback((t) => (
+    rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== t
+      ? TABLE_ROW_LIMIT_DEFAULT
+      : rowLimit
+  ), [rowLimit]);
+  const effectiveDummyRowLimit = effectiveRowLimitForTab("dummy");
+  const effectiveOvRowLimit = effectiveRowLimitForTab("overview");
+  const confirmRowLimit = useCallback((n) => {
+    confirmedAllTabRef.current = tab;
+    setRowLimit(n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, setRowLimit]);
+  // Remember what the LAST real fetch for each of these two tabs returned,
+  // and under what limit + filters — shrinking the limit on the SAME tab
+  // never needs another round-trip. See PICTracker.jsx for the reference.
+  const lastDummyFetchRef = useRef({ signature: null, limit: null, rows: [] });
+  const lastOvFetchRef = useRef({ signature: null, limit: null, rows: [] });
 
   // ── Intake tab state ─────────────────────────────────────────────────
   const [rows, setRows] = useState([]);
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip. See PICTracker.jsx for the reference
+  // implementation.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(new Set());
@@ -342,7 +375,6 @@ export default function IMPOIntake() {
   useEffect(() => {
     if (!imName) { setRows([]); setLoading(false); return; }
     let cancelled = false;
-    setLoading(true);
     setError(null);
     (async () => {
       try {
@@ -355,11 +387,28 @@ export default function IMPOIntake() {
         if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
         if (projectFilter.length) portal.project_code = projectFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
+        const signature = JSON.stringify([filters, portal]);
+
+        const prev = lastFetchRef.current;
+        const alreadyHaveEnough = prev.signature === signature && (
+          prev.limit === TABLE_ROW_LIMIT_ALL
+          || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+        );
+        if (alreadyHaveEnough) {
+          // Same filters, already have at least this many rows from a
+          // larger (or equal) fetch — show fewer via the CSS-hide render
+          // below, no re-fetch and no state mutation.
+          return;
+        }
+
+        setLoading(true);
         const res = await pmApi.listPODispatches(filters, rowLimit, portal);
         if (cancelled) return;
         const arr = Array.isArray(res) ? res : [];
         const TERMINAL = new Set(TERMINAL_STATUSES);
-        setRows(arr.filter((r) => !TERMINAL.has(r.dispatch_status || "")));
+        const fetchedRows = arr.filter((r) => !TERMINAL.has(r.dispatch_status || ""));
+        setRows(fetchedRows);
+        lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
         setSelected(new Set());
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load PO intake");
@@ -389,8 +438,6 @@ export default function IMPOIntake() {
   useEffect(() => {
     if (!imName || tab !== "dummy") return;
     let cancelled = false;
-    setDummyLoading(true);
-    setDummyError(null);
     (async () => {
       try {
         const preset = dummyStatusFilter === "mapped" ? "mapped_dummy"
@@ -405,8 +452,25 @@ export default function IMPOIntake() {
         if (dummyToDate) portal.to_date = dummyToDate;
         const dummyColFilters = JSON.parse(dummyColumnFiltersDebounced);
         if (Object.keys(dummyColFilters).length) portal.column_filters = dummyColFilters;
-        const res = await pmApi.listPODispatches([["im", "=", imName]], rowLimit, portal);
-        if (!cancelled) setDummyRows(Array.isArray(res) ? res : []);
+        const signature = JSON.stringify([portal, dummyRefreshKey]);
+
+        const prev = lastDummyFetchRef.current;
+        const alreadyHaveEnough = prev.signature === signature && (
+          prev.limit === TABLE_ROW_LIMIT_ALL
+          || (effectiveDummyRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveDummyRowLimit <= prev.limit)
+        );
+        if (alreadyHaveEnough) {
+          setDummyLoading(false);
+          return;
+        }
+
+        setDummyLoading(true);
+        setDummyError(null);
+        const res = await pmApi.listPODispatches([["im", "=", imName]], effectiveDummyRowLimit, portal);
+        if (cancelled) return;
+        const fetchedRows = Array.isArray(res) ? res : [];
+        setDummyRows(fetchedRows);
+        lastDummyFetchRef.current = { signature, limit: effectiveDummyRowLimit, rows: fetchedRows };
       } catch (err) {
         if (!cancelled) setDummyError(err.message || "Failed to load dummy POs");
       } finally {
@@ -414,14 +478,12 @@ export default function IMPOIntake() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, tab, rowLimit, dummyStatusFilter, dummySearchDebounced, dummyProjectFilter, dummyDomainFilter, dummyDuidFilter, dummyFromDate, dummyToDate, dummyRefreshKey, dummyColumnFiltersDebounced]);
+  }, [imName, tab, effectiveDummyRowLimit, dummyStatusFilter, dummySearchDebounced, dummyProjectFilter, dummyDomainFilter, dummyDuidFilter, dummyFromDate, dummyToDate, dummyRefreshKey, dummyColumnFiltersDebounced]);
 
   // ── Overview load ────────────────────────────────────────────────────
   useEffect(() => {
     if (!imName || tab !== "overview") return;
     let cancelled = false;
-    setOvLoading(true);
-    setOvError(null);
     (async () => {
       try {
         const filters = [["im", "=", imName]];
@@ -436,8 +498,25 @@ export default function IMPOIntake() {
         if (ovDirectCloseOnly) portal.direct_close_only = true;
         const ovColFilters = JSON.parse(ovColumnFiltersDebounced);
         if (Object.keys(ovColFilters).length) portal.column_filters = ovColFilters;
-        const res = await pmApi.listPODispatches(filters, rowLimit, portal);
-        if (!cancelled) setOvRows(Array.isArray(res) ? res : []);
+        const signature = JSON.stringify([filters, portal, ovRefreshKey]);
+
+        const prev = lastOvFetchRef.current;
+        const alreadyHaveEnough = prev.signature === signature && (
+          prev.limit === TABLE_ROW_LIMIT_ALL
+          || (effectiveOvRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveOvRowLimit <= prev.limit)
+        );
+        if (alreadyHaveEnough) {
+          setOvLoading(false);
+          return;
+        }
+
+        setOvLoading(true);
+        setOvError(null);
+        const res = await pmApi.listPODispatches(filters, effectiveOvRowLimit, portal);
+        if (cancelled) return;
+        const fetchedRows = Array.isArray(res) ? res : [];
+        setOvRows(fetchedRows);
+        lastOvFetchRef.current = { signature, limit: effectiveOvRowLimit, rows: fetchedRows };
       } catch (err) {
         if (!cancelled) setOvError(err.message || "Failed to load POIDs");
       } finally {
@@ -445,7 +524,7 @@ export default function IMPOIntake() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, tab, rowLimit, ovSearchDebounced, ovProjectFilter, ovDomainFilter, ovStatusFilter, ovDuidFilter, ovFromDate, ovToDate, ovDirectCloseOnly, ovRefreshKey, ovColumnFiltersDebounced]);
+  }, [imName, tab, effectiveOvRowLimit, ovSearchDebounced, ovProjectFilter, ovDomainFilter, ovStatusFilter, ovDuidFilter, ovFromDate, ovToDate, ovDirectCloseOnly, ovRefreshKey, ovColumnFiltersDebounced]);
 
   // ── Transfers load (outgoing + incoming, merged; split by sub-tab client-side) ──
   useEffect(() => {
@@ -490,6 +569,15 @@ export default function IMPOIntake() {
   const transferVisibleRows = transferSubTab === "outgoing" ? transferOutgoingPending
     : transferSubTab === "incoming" ? transferIncomingPending
     : transferHistoryRows;
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const mountedTransferRows = useProgressiveRows(transferVisibleRows, { paused: transferListLoading });
+  const mountedRows = useProgressiveRows(rows, { paused: loading });
+  // How many of `mountedRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows` (see
+  // the skip-fetch cache in the "Intake load" effect above / PICTracker.jsx).
+  const intakeDisplayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const intakeDisplayedCount = Math.min(rows.length, intakeDisplayLimit);
 
   async function submitCancelTransfer() {
     if (!cancelTransferTarget) return;
@@ -944,12 +1032,24 @@ export default function IMPOIntake() {
     return rows_;
   }, [dummyRows, dummyDomainFilter, dummyTeamFilter, planSummaries]);
 
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const mountedOvRows = useProgressiveRows(ovFilteredRows, { paused: ovLoading });
+  const mountedDummyRows = useProgressiveRows(filteredDummyRows, { paused: dummyLoading });
+  // How many of each mounted* array to actually show — anything beyond this
+  // is hidden via CSS in the render below rather than removed from
+  // dummyRows/ovRows (see the skip-fetch caches above / PICTracker.jsx).
+  const ovDisplayLimit = effectiveOvRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveOvRowLimit;
+  const ovDisplayedCount = Math.min(ovFilteredRows.length, ovDisplayLimit);
+  const dummyDisplayLimit = effectiveDummyRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveDummyRowLimit;
+  const dummyDisplayedCount = Math.min(filteredDummyRows.length, dummyDisplayLimit);
+
   function toggleRow(name) {
     setSelected((prev) => { const next = new Set(prev); next.has(name) ? next.delete(name) : next.add(name); return next; });
   }
   function toggleAll() {
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    const visible = rows.slice(0, intakeDisplayedCount).filter((r) => !dtpHidden.has(r.name));
     if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
       setSelected(new Set());
     } else {
@@ -987,7 +1087,7 @@ export default function IMPOIntake() {
           </div>
         </div>
         <div className="page-actions">
-          {tab === "intake" && <ExportExcelButton filename="im-po-intake" rows={rows} />}
+          {tab === "intake" && <ExportExcelButton filename="im-po-intake" rows={rows.slice(0, intakeDisplayedCount)} />}
           {tab === "dummy" && <ExportExcelButton filename="dummy-pos" rows={filteredDummyRows} />}
           {tab === "overview" && <ExportExcelButton filename="all-poids" rows={ovFilteredRows} />}
           {tab === "transfers" && <ExportExcelButton filename="po-transfers" rows={transferVisibleRows} />}
@@ -1188,9 +1288,17 @@ export default function IMPOIntake() {
       {/* ── ONE page-content always rendered (fixes tab-switch CSS) ────── */}
       <div className="page-content">
         <DataTableWrapper
-          loadedCount={tab === "intake" ? (loading ? null : rows.length) : tab === "dummy" ? (dummyLoading ? null : dummyRows.length) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : (ovLoading ? null : ovRows.length)}
-          filteredCount={tab === "intake" ? rows.length : tab === "dummy" ? filteredDummyRows.length : tab === "transfers" ? transferVisibleRows.length : ovFilteredRows.length}
+          loadedCount={tab === "intake" ? (loading ? null : intakeDisplayedCount) : tab === "dummy" ? (dummyLoading ? null : Math.min(dummyRows.length, dummyDisplayLimit)) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : (ovLoading ? null : Math.min(ovRows.length, ovDisplayLimit))}
+          filteredCount={tab === "intake" ? intakeDisplayedCount : tab === "dummy" ? dummyDisplayedCount : tab === "transfers" ? transferVisibleRows.length : ovDisplayedCount}
           filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : tab === "transfers" ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
+          loading={
+            tab === "intake" ? (loading && rows.length > 0) :
+            tab === "dummy" ? (dummyLoading && dummyRows.length > 0) :
+            tab === "transfers" ? (transferListLoading && transferVisibleRows.length > 0) :
+            (ovLoading && ovRows.length > 0)
+          }
+          rowLimitValue={tab === "dummy" ? effectiveDummyRowLimit : tab === "overview" ? effectiveOvRowLimit : undefined}
+          onRowLimitChange={tab === "dummy" || tab === "overview" ? confirmRowLimit : undefined}
         >
           {tab === "transfers" ? (
               <table key="im-po-transfers" className="data-table" data-table-key="im-po-transfers">
@@ -1232,7 +1340,7 @@ export default function IMPOIntake() {
                         )}
                       </td>
                     </tr>
-                  ) : transferVisibleRows.map((r) => {
+                  ) : mountedTransferRows.map((r) => {
                     const sc = statusToneForTransfer(r.request_status);
                     const canCancel = r._direction === "outgoing" && r.request_status === "Pending PM Approval";
                     return (
@@ -1336,7 +1444,7 @@ export default function IMPOIntake() {
                         )}
                       </td>
                     </tr>
-                  ) : ovFilteredRows.map((row) => {
+                  ) : mountedOvRows.map((row, idx) => {
                     const ps = ovPlanSummaries[row.name];
                     const sc = dispatchStatusColor(row.dispatch_status);
                     const isDummy = !!Number(row.is_dummy_po);
@@ -1346,7 +1454,7 @@ export default function IMPOIntake() {
                     const iflag = ps?.issue_flag || "";
                     const ifsc = iflag ? issueFlagColor(iflag) : null;
                     return (
-                      <tr key={row.name} data-doc-name={row.name} style={{ opacity: isClosed ? 0.65 : 1, background: isDummy ? "#fffbeb" : undefined }}>
+                      <tr key={row.name} data-doc-name={row.name} style={idx >= ovDisplayedCount ? { display: "none" } : { opacity: isClosed ? 0.65 : 1, background: isDummy ? "#fffbeb" : undefined }}>
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>
                           {row.poid || row.name}
                           {isDummy && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#fed7aa", color: "#92400e" }}>Dummy</span>}
@@ -1410,7 +1518,7 @@ export default function IMPOIntake() {
                         then Target Month..Actions = 10 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                       <td colSpan={14} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                        {ovFilteredRows.length} row{ovFilteredRows.length !== 1 ? "s" : ""}
+                        {ovDisplayedCount} row{ovDisplayedCount !== 1 ? "s" : ""}
                       </td>
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                         {fmt.format(ovFilteredRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
@@ -1428,7 +1536,7 @@ export default function IMPOIntake() {
               <table key="im-po-intake-v2" className="data-table" data-table-key="im-po-intake-v2">
                 <thead>
                   <tr>
-                    <th><input type="checkbox" checked={selected.size === rows.length && rows.length > 0} onChange={toggleAll} /></th>
+                    <th><input type="checkbox" checked={selected.size === intakeDisplayedCount && intakeDisplayedCount > 0} onChange={toggleAll} /></th>
                     <th>POID</th>
                     <th>Mode</th>
                     <th>PO No</th>
@@ -1450,8 +1558,8 @@ export default function IMPOIntake() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.name} data-doc-name={row.name} className={selected.has(row.name) ? "row-selected" : ""} onClick={() => toggleRow(row.name)} style={{ cursor: "pointer", background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined }}>
+                  {mountedRows.map((row, idx) => (
+                    <tr key={row.name} data-doc-name={row.name} className={selected.has(row.name) ? "row-selected" : ""} onClick={() => toggleRow(row.name)} style={idx >= intakeDisplayedCount ? { display: "none" } : { cursor: "pointer", background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined }}>
                       <td onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(row.name)} onChange={() => toggleRow(row.name)} />
                       </td>
@@ -1509,14 +1617,14 @@ export default function IMPOIntake() {
                         then Qty·Rate (SAR)·Amount (SAR), then MS1..Actions = 6 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                       <td colSpan={10} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                        {rows.length} row{rows.length !== 1 ? "s" : ""}
+                        {intakeDisplayedCount} row{intakeDisplayedCount !== 1 ? "s" : ""}
                       </td>
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(rows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                        {fmt.format(rows.slice(0, intakeDisplayedCount).reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                       </td>{/* Qty */}
                       <td />{/* Rate (SAR) */}
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(rows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                        {fmt.format(rows.slice(0, intakeDisplayedCount).reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
                       </td>{/* Amount (SAR) */}
                       <td /><td /><td /><td /><td /><td />{/* MS1..Actions */}
                     </tr>
@@ -1575,11 +1683,11 @@ export default function IMPOIntake() {
                         )}
                       </td>
                     </tr>
-                  ) : filteredDummyRows.map((row) => {
+                  ) : mountedDummyRows.map((row, idx) => {
                     const isOpen = !!Number(row.is_dummy_po);
                     const ps = planSummaries[row.name];
                     return (
-                      <tr key={row.name} data-doc-name={row.name} style={{ background: isOpen ? "#fffbeb" : undefined }}>
+                      <tr key={row.name} data-doc-name={row.name} style={idx >= dummyDisplayedCount ? { display: "none" } : { background: isOpen ? "#fffbeb" : undefined }}>
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>{row.poid || row.name}</td>
                         <td>
                           {isOpen
@@ -1633,7 +1741,7 @@ export default function IMPOIntake() {
                         Activity Type = 11 columns, then Qty·Line Amount (SAR), then Target Month..Actions = 8 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                       <td colSpan={11} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                        {filteredDummyRows.length} row{filteredDummyRows.length !== 1 ? "s" : ""}
+                        {dummyDisplayedCount} row{dummyDisplayedCount !== 1 ? "s" : ""}
                       </td>
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                         {fmt.format(filteredDummyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}

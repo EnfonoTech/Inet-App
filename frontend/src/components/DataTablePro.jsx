@@ -666,6 +666,19 @@ export default function DataTablePro() {
           if (!key) {
             if (!naturalOrderIds) return;
             const rows = Array.from(tbody.children).filter((r) => r.tagName === "TR");
+            // Skip the reorder entirely when the DOM is already in natural order.
+            // This is the common case: captureNaturalOrder() snapshots the current
+            // order right before every normal applyAll() run (fresh data, tab
+            // switch, refresh), so by the time we get here it's virtually always
+            // already correct. Without this check, "no sort active" meant
+            // re-appending every single row one at a time regardless — on a
+            // table with thousands of rows that's thousands of real DOM moves
+            // (each a genuine detach+reattach, not a cheap no-op) just to land
+            // back in the order the rows already were in. This is very likely
+            // the single biggest cost in the "switch to a huge tab" slowdown.
+            const alreadyNatural = rows.length === naturalOrderIds.length
+              && rows.every((r, i) => (r.dataset.docName || "") === naturalOrderIds[i]);
+            if (alreadyNatural) return;
             const byId = new Map(rows.map((r) => [r.dataset.docName || "", r]));
             naturalOrderIds.forEach((id) => {
               const r = id && byId.get(id);
@@ -722,17 +735,19 @@ export default function DataTablePro() {
         };
 
         const applyWidths = () => {
+          // Diff before writing: on a table with thousands of rows, unconditionally
+          // writing 3 style properties per cell on every applyAll() pass adds up to
+          // well over a million style mutations for something that, for the vast
+          // majority of already-correctly-styled cells (unchanged rows reused by
+          // React's key, or any column with no custom width at all), is a no-op.
+          // Reading .style.<prop> is a cheap CSSOM read (no layout), so this turns
+          // "always write" into "write only what actually changed."
           const setCellPx = (cell, width) => {
-            if (width) {
-              const px = `${width}px`;
-              cell.style.width = px;
-              cell.style.minWidth = px;
-              cell.style.maxWidth = px;
-            } else {
-              cell.style.width = "";
-              cell.style.minWidth = "";
-              cell.style.maxWidth = "";
-            }
+            const px = width ? `${width}px` : "";
+            if (cell.style.width === px && cell.style.minWidth === px && cell.style.maxWidth === px) return;
+            cell.style.width = px;
+            cell.style.minWidth = px;
+            cell.style.maxWidth = px;
           };
           const widthForKey = (key) => {
             if (selectColumnKey && key === selectColumnKey) return TABLEPRO_SELECT_COL_PX;
@@ -774,9 +789,16 @@ export default function DataTablePro() {
               const txt = String(cell?.textContent || "").toLowerCase();
               return txt.includes(val);
             });
-            row.style.display = pass ? "" : "none";
-            if (pass) delete row.dataset.tableproFiltered;
-            else row.dataset.tableproFiltered = "1";
+            // Same diff-before-write reasoning as applyWidths() above — most rows'
+            // pass/fail state is unchanged between calls, so skip the write (and the
+            // dataset mutation, which is itself a DOM write) when nothing changed.
+            const nextDisplay = pass ? "" : "none";
+            if (row.style.display !== nextDisplay) row.style.display = nextDisplay;
+            if (pass) {
+              if (row.dataset.tableproFiltered) delete row.dataset.tableproFiltered;
+            } else if (row.dataset.tableproFiltered !== "1") {
+              row.dataset.tableproFiltered = "1";
+            }
           });
         };
 
@@ -1281,6 +1303,14 @@ export default function DataTablePro() {
             scheduleReinitFromDom();
             return;
           }
+          // Skip re-scanning while a caller is bulk-mounting rows in chunks
+          // (see hooks/useProgressiveRows.js) — re-running applyAll() on every
+          // chunk's mutation makes progressive mounting cost O(rows²) instead
+          // of O(rows), since each pass re-walks the whole currently-mounted
+          // table. The caller clears this flag right before its final chunk
+          // commits, so that last mutation still lands here and triggers one
+          // full pass once mounting is actually done.
+          if (window.__inetTableBulkLoading) return;
           // The mutation has already landed in the DOM by the time this callback
           // runs, so this reflects React's freshly-delivered (unsorted-by-us) row
           // order — the right moment to (re)baseline what "Clear Sort" restores.

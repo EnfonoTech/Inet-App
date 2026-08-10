@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -18,6 +18,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import RescheduleModal from "../../components/RescheduleModal";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -144,7 +145,7 @@ function parseAttachments(raw) {
 
 export default function IMExecution() {
   const { imName } = useAuth();
-  const { rowLimit } = useTableRowLimit();
+  const { rowLimit, setRowLimit } = useTableRowLimit();
   const [executions, setExecutions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState([]);
@@ -156,6 +157,25 @@ export default function IMExecution() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [dummyFilter, setDummyFilter] = useState("");
   const [tab, setTab] = useState("poid"); // "poid" | "internal_done"
+  // "All" is stored per-path, not per-tab — the backend fetch is tab-scoped
+  // (portal.tab below), so switching tabs is a genuinely different,
+  // separately-limited fetch. Without this, picking "All" on one tab and
+  // switching to the other would silently re-trigger an unlimited fetch for
+  // a tab the user never asked "All" for on this occasion.
+  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== tab
+    ? TABLE_ROW_LIMIT_DEFAULT
+    : rowLimit;
+  const confirmRowLimit = useCallback((n) => {
+    confirmedAllTabRef.current = tab;
+    setRowLimit(n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, setRowLimit]);
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters + tab. Shrinking the row limit (e.g. All -> 20) on
+  // the SAME tab never needs another round-trip. See PICTracker.jsx for the
+  // reference implementation.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
   const [internalSearch, setInternalSearch] = useState("");
   const [internalTeamFilter, setInternalTeamFilter] = useState([]);
   const [internalDomainFilter, setInternalDomainFilter] = useState([]);
@@ -265,7 +285,6 @@ export default function IMExecution() {
       setLoading(false);
       return;
     }
-    setLoading(true);
     (async () => {
       try {
         const portal = {};
@@ -290,8 +309,26 @@ export default function IMExecution() {
         if (internalFromDate) portal.internal_from_date = internalFromDate;
         if (internalToDate) portal.internal_to_date = internalToDate;
         const portalArg = Object.keys(portal).length ? portal : undefined;
-        const res = await pmApi.listIMDailyExecutions(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
-        if (!cancelled) setExecutions(Array.isArray(res) ? res : []);
+        const signature = JSON.stringify([portal, statusFilter]);
+
+        const prev = lastFetchRef.current;
+        const alreadyHaveEnough = prev.signature === signature && (
+          prev.limit === TABLE_ROW_LIMIT_ALL
+          || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
+        );
+        if (alreadyHaveEnough) {
+          // Same tab + filters, already have at least this many rows from a
+          // larger (or equal) fetch — show fewer via the CSS-hide render
+          // below, no re-fetch and no state mutation.
+          return;
+        }
+
+        setLoading(true);
+        const res = await pmApi.listIMDailyExecutions(imName, statusFilter.length ? statusFilter : undefined, effectiveRowLimit, portalArg);
+        if (cancelled) return;
+        const fetchedRows = Array.isArray(res) ? res : [];
+        setExecutions(fetchedRows);
+        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
       } catch {
         if (!cancelled) setExecutions([]);
       } finally {
@@ -302,7 +339,7 @@ export default function IMExecution() {
   }, [
     imName,
     statusFilter,
-    rowLimit,
+    effectiveRowLimit,
     searchDebounced,
     qcFilter,
     ciagFilter,
@@ -382,13 +419,24 @@ export default function IMExecution() {
     return rows;
   }, [internalDoneExecutions, internalSearchDebounced, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate]);
 
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleExecutions = useProgressiveRows(filteredExecutions, { paused: loading });
+  const visibleInternalDone = useProgressiveRows(filteredInternalDone, { paused: loading });
+  // How many of each visible* array to actually show — anything beyond this
+  // is hidden via CSS in the render below rather than removed from
+  // `executions` (see the skip-fetch cache in the fetch effect above).
+  const displayLimit = effectiveRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveRowLimit;
+  const displayedExecCount = Math.min(filteredExecutions.length, displayLimit);
+  const displayedInternalCount = Math.min(filteredInternalDone.length, displayLimit);
+
   const hasInternalFilters = !!(
     internalSearch || internalTeamFilter.length || internalDomainFilter.length ||
     internalTypeFilter.length || internalFromDate || internalToDate
   );
 
   const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate || dummyFilter);
-  const totalAchieved = executions.reduce((s, e) => s + (e.achieved_qty || 0), 0);
+  const totalAchieved = executions.slice(0, displayLimit).reduce((s, e) => s + (e.achieved_qty || 0), 0);
   // Multi-team plans have one Daily Execution per team but only ONE
   // Work Done per plan. De-duplicate by rollout_plan: surface a single
   // representative DE per plan so the "Create Work Done" button doesn't
@@ -733,7 +781,7 @@ export default function IMExecution() {
           <h1 className="page-title">Rollout Work Done</h1>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="im-execution" rows={executions} />
+          <ExportExcelButton filename="im-execution" rows={tab === "internal_done" ? filteredInternalDone.slice(0, displayedInternalCount) : filteredExecutions.slice(0, displayedExecCount)} />
         </div>
       </div>
 
@@ -1229,7 +1277,7 @@ export default function IMExecution() {
       </>)}
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && executions.length > 0}>
           {tab === "internal_done" ? (
               <table key="im-execution-internal-done" className="data-table" data-table-key="im-execution-internal-done">
                 <thead>
@@ -1271,8 +1319,8 @@ export default function IMExecution() {
                         )}
                       </td>
                     </tr>
-                  ) : filteredInternalDone.map((e) => (
-                    <tr key={e.name} data-doc-name={e.name} data-modified={e.modified} style={{ background: "#f0fdfa" }}>
+                  ) : visibleInternalDone.map((e, idx) => (
+                    <tr key={e.name} data-doc-name={e.name} data-modified={e.modified} style={idx >= displayedInternalCount ? { display: "none" } : { background: "#f0fdfa" }}>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.rollout_plan || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{e.item_code || e.site_name || "—"}</td>
@@ -1322,9 +1370,9 @@ export default function IMExecution() {
                   <tfoot>
                     <tr>
                       <td colSpan={16} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                        <strong>{filteredInternalDone.length} row{filteredInternalDone.length !== 1 ? "s" : ""} done</strong>
+                        <strong>{displayedInternalCount} row{displayedInternalCount !== 1 ? "s" : ""} done</strong>
                         {filteredInternalDone.length !== internalDoneExecutions.length && (
-                          <span style={{ color: "#64748b", marginLeft: 10 }}>of {internalDoneExecutions.length} total</span>
+                          <span style={{ color: "#64748b", marginLeft: 10 }}>of {Math.min(internalDoneExecutions.length, displayLimit)} total</span>
                         )}
                       </td>
                     </tr>
@@ -1339,10 +1387,10 @@ export default function IMExecution() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={filteredExecutions.length > 0 && filteredExecutions.every((e) => selectedExecs.has(e.name))}
+                      checked={displayedExecCount > 0 && filteredExecutions.slice(0, displayedExecCount).every((e) => selectedExecs.has(e.name))}
                       onChange={() => {
                         const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-                        const visible = filteredExecutions.filter((e) => !dtpHidden.has(e.name));
+                        const visible = filteredExecutions.slice(0, displayedExecCount).filter((e) => !dtpHidden.has(e.name));
                         if (visible.length > 0 && visible.every((e) => selectedExecs.has(e.name))) {
                           setSelectedExecs(new Set());
                         } else {
@@ -1385,8 +1433,8 @@ export default function IMExecution() {
                 </tr>
               </thead>
               <tbody>
-                {filteredExecutions.map((e) => (
-                  <tr key={e.name} data-doc-name={e.name} data-modified={e.modified} style={e.is_dummy_po ? { background: "#fffbeb" } : Number(e.is_internal_work || 0) ? { background: "#f0fdfa" } : undefined}>
+                {visibleExecutions.map((e, idx) => (
+                  <tr key={e.name} data-doc-name={e.name} data-modified={e.modified} style={idx >= displayedExecCount ? { display: "none" } : (e.is_dummy_po ? { background: "#fffbeb" } : Number(e.is_internal_work || 0) ? { background: "#f0fdfa" } : undefined)}>
                     <td>
                       <input
                         type="checkbox"
@@ -1580,7 +1628,7 @@ export default function IMExecution() {
                 <tfoot>
                   <tr>
                     <td colSpan={26} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                      {filteredExecutions.length} row{filteredExecutions.length !== 1 ? "s" : ""}
+                      {displayedExecCount} row{displayedExecCount !== 1 ? "s" : ""}
                     </td>
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                       {fmt.format(totalAchieved)}
@@ -1612,9 +1660,11 @@ export default function IMExecution() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={filteredExecutions.length}
-          filteredCount={filteredExecutions.length}
-          filterActive={!!hasFilters}
+          loadedCount={tab === "internal_done" ? displayedInternalCount : displayedExecCount}
+          filteredCount={tab === "internal_done" ? displayedInternalCount : displayedExecCount}
+          filterActive={tab === "internal_done" ? hasInternalFilters : !!hasFilters}
+          value={effectiveRowLimit}
+          onChange={confirmRowLimit}
         />
       </div>
       {mapForRow && (

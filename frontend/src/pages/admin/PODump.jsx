@@ -4,10 +4,11 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmtNum = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -45,6 +46,16 @@ export default function PODump() {
   const [toDate, setToDate] = useState(cached.current?.toDate ?? "");
   const [rows, setRows] = useState(cached.current?.rows || []);
   const [loading, setLoading] = useState(false);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  // How many of `visibleRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`
+  // (see the skip-fetch logic below: shrinking the limit after "All"
+  // already loaded everything doesn't trim `rows` — slicing it would
+  // still force React to tear down however many rows that drops).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(rows.length, displayLimit);
   const [error, setError] = useState(null);
   const [meta, setMeta] = useState(cached.current?.meta || null);
   const [detailRow, setDetailRow] = useState(null);
@@ -85,10 +96,32 @@ export default function PODump() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — whatever's being asked for is already
+  // sitting in memory from the larger fetch; just show fewer of the same
+  // rows (see displayLimit/displayedCount above). Only growing the limit —
+  // or any OTHER filter actually changing — hits the server.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   // Auto-fetch on any param change. A short debounce keeps rapid checkbox /
   // date-picker toggles from firing multiple requests in flight.
   useEffect(() => {
     if (!activeStatuses.length) { setRows([]); setMeta(null); return; }
+
+    const signature = JSON.stringify([fromDate, toDate, activeStatuses, searchDebounced, columnFiltersDebounced]);
+    const prev = lastFetchRef.current;
+    const alreadyHaveEnough = prev.signature === signature && (
+      prev.limit === TABLE_ROW_LIMIT_ALL
+      || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+    );
+    if (alreadyHaveEnough) {
+      // Deliberately NOT calling setRows() here — leave `rows` (and
+      // whatever's already mounted in the DOM) exactly as-is; the render
+      // below just hides anything beyond the new limit via CSS instead.
+      return;
+    }
+
     let cancelled = false;
     const t = setTimeout(async () => {
       setLoading(true);
@@ -100,6 +133,7 @@ export default function PODump() {
           const nextRows = Array.isArray(res?.rows) ? res.rows : [];
           setMeta(res);
           setRows(nextRows);
+          lastFetchRef.current = { signature, limit: rowLimit, rows: nextRows };
           writeCache({
             fromDate, toDate, rowLimit,
             showOpen, showClosed, showCancelled,
@@ -117,7 +151,7 @@ export default function PODump() {
   }, [fromDate, toDate, rowLimit, showOpen, showClosed, showCancelled, searchDebounced, columnFiltersDebounced]);
 
   function downloadCsv() {
-    const exportRows = rows;
+    const exportRows = rows.slice(0, displayedCount);
     if (!exportRows.length) return;
     const keys = Object.keys(exportRows[0]);
     const esc = (v) => {
@@ -272,13 +306,13 @@ export default function PODump() {
           Range {meta.from_date} → {meta.to_date} ·{" "}
           {activeStatuses.join(" + ")} ·{" "}
           {search
-            ? <><strong>{rows.length}</strong> matching of {rows.length} row{rows.length !== 1 ? "s" : ""}</>
-            : <>{rows.length} row{rows.length !== 1 ? "s" : ""}</>}
+            ? <><strong>{displayedCount}</strong> matching of {displayedCount} row{displayedCount !== 1 ? "s" : ""}</>
+            : <>{displayedCount} row{displayedCount !== 1 ? "s" : ""}</>}
         </div>
       )}
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
             <table className="data-table" data-table-key="admin-po-dump-v1">
               <thead>
                 <tr>
@@ -319,8 +353,8 @@ export default function PODump() {
                       </div>
                     </td>
                   </tr>
-                ) : rows.map((r, i) => (
-                  <tr key={`${r.id || r.poid || r.po_no || "line"}-${i}`}>
+                ) : visibleRows.map((r, i) => (
+                  <tr key={`${r.id || r.poid || r.po_no || "line"}-${i}`} style={i >= displayLimit ? { display: "none" } : undefined}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.id || "—"}</td>
                     <td>{r.po_line_status || r.po_status || "—"}</td>
                     <td>{r.po_no || "—"}</td>
@@ -348,7 +382,7 @@ export default function PODump() {
                       then Qty·Unit Price·Amount, then Start Date·End Date·Action = 3 columns */}
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                     <td colSpan={8} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                      {rows.length} row{rows.length !== 1 ? "s" : ""}
+                      {displayedCount} row{displayedCount !== 1 ? "s" : ""}
                     </td>
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                       {fmtNum.format(rows.reduce((s, r) => s + (Number(r.requested_qty) || 0), 0))}
@@ -365,8 +399,8 @@ export default function PODump() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={rows.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={!!search || activeStatuses.length < 3}
         />
       </div>

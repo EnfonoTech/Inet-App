@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -75,6 +76,13 @@ export default function PICCancelled() {
   const [rows, setRows] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  // How many of `visibleRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`.
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(rows.length, displayLimit);
   const [error, setError] = useState(null);
   const [toastMsg, setToastMsg] = useState(null);
   const [search, setSearch] = useState("");
@@ -91,27 +99,64 @@ export default function PICCancelled() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkErr, setBulkErr] = useState(null);
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const load = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20, or
+  // 2500 -> 20) never needs another round-trip — whatever's being asked for
+  // is already sitting in memory from the larger fetch; just show fewer of
+  // the same rows. Only growing the limit (needing rows that were never
+  // fetched at all) — or any OTHER filter actually changing — hits the
+  // server. `signature` covers everything the fetch depends on except the
+  // row limit itself, so a limit-only shrink is the only thing this skips.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
       const portal = {};
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
       if (projectFilter.length) portal.project_code = projectFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
       if (subconFilter.length) portal.subcontractor = subconFilter;
-      const res = await pmApi.listPicRows("cancelled", portal, rowLimit);
-      setRows(Array.isArray(res?.rows) ? res.rows : []);
-      setTotalCount(Number(res?.total_count) || 0);
-      setSelected(new Set());
-    } catch (err) {
-      setError(err.message || "Failed to load cancelled POIDs");
-    } finally {
-      setLoading(false);
-    }
-  }
+      const signature = JSON.stringify([portal, refreshKey]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [searchDebounced, projectFilter, duidFilter, subconFilter, rowLimit]);
+      const prev = lastFetchRef.current;
+      const alreadyHaveEnough = prev.signature === signature && (
+        prev.limit === TABLE_ROW_LIMIT_ALL
+        || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+      );
+      if (alreadyHaveEnough) {
+        // Deliberately NOT calling setRows() here — leave `rows` (and
+        // whatever's already mounted in the DOM) exactly as-is. Slicing it
+        // down would still force React to unmount however many rows that
+        // drops — real DOM-teardown cost regardless of how cheaply React's
+        // own diffing decides to do it. The render below hides anything
+        // beyond the new limit via CSS instead. See PICTracker.jsx.
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await pmApi.listPicRows("cancelled", portal, rowLimit);
+        if (cancelled) return;
+        const fetchedRows = Array.isArray(res?.rows) ? res.rows : [];
+        setRows(fetchedRows);
+        setTotalCount(Number(res?.total_count) || 0);
+        setSelected(new Set());
+        lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
+      } catch (err) {
+        if (cancelled) return;
+        setError(err.message || "Failed to load cancelled POIDs");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchDebounced, projectFilter, duidFilter, subconFilter, rowLimit, refreshKey]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
   const projectOptions = dispOpts.project_code || [];
@@ -134,10 +179,14 @@ export default function PICCancelled() {
   }
   function toggleAll() {
     if (rows.length === 0) return;
-    if (rows.every((r) => selected.has(r.po_dispatch))) {
+    // Only rows within the current display limit — anything beyond it is
+    // hidden via CSS (see displayLimit above), not a real filter, but
+    // "select all" should still only ever act on what's actually shown.
+    const visible = rows.slice(0, displayedCount);
+    if (visible.length > 0 && visible.every((r) => selected.has(r.po_dispatch))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(rows.map((r) => r.po_dispatch)));
+      setSelected(new Set(visible.map((r) => r.po_dispatch)));
     }
   }
 
@@ -182,7 +231,7 @@ export default function PICCancelled() {
           </div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="pic-cancelled" rows={rows} />
+          <ExportExcelButton filename="pic-cancelled" rows={rows.slice(0, displayedCount)} />
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
@@ -236,12 +285,12 @@ export default function PICCancelled() {
       )}
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
           <table className="data-table" data-table-key="pic-cancelled-v3">
             <thead>
               <tr>
                 <th style={{ width: 36 }}>
-                  <input type="checkbox" checked={rows.length > 0 && rows.every((r) => selected.has(r.po_dispatch))} onChange={toggleAll} />
+                  <input type="checkbox" checked={displayedCount > 0 && rows.slice(0, displayedCount).every((r) => selected.has(r.po_dispatch))} onChange={toggleAll} />
                 </th>
                 <th>Subcontract</th>
                 <th>Contract Model</th>
@@ -280,12 +329,12 @@ export default function PICCancelled() {
                     )}
                   </td>
                 </tr>
-              ) : rows.map((r) => (
+              ) : visibleRows.map((r, idx) => (
                 <tr key={r.po_dispatch}
                     data-doc-name={r.po_dispatch}
                     className={selected.has(r.po_dispatch) ? "row-selected" : ""}
                     onClick={() => toggleRow(r.po_dispatch)}
-                    style={{ cursor: "pointer" }}>
+                    style={idx >= displayLimit ? { display: "none" } : { cursor: "pointer" }}>
                   <td onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(r.po_dispatch)} onChange={() => toggleRow(r.po_dispatch)} />
                   </td>
@@ -323,7 +372,7 @@ export default function PICCancelled() {
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
                   <td></td>{/* checkbox */}
                   <td colSpan={2} style={{ fontSize: "0.78rem", color: "#475569" }}>
-                    {fmtInt.format(rows.length)} row{rows.length !== 1 ? "s" : ""}
+                    {fmtInt.format(displayedCount)} row{displayedCount !== 1 ? "s" : ""}
                   </td>{/* Subcontract + Contract Model */}
                   <td></td>{/* POID */}
                   <td></td>{/* PO No */}
@@ -350,8 +399,8 @@ export default function PICCancelled() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={rows.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={!!hasFilters}
         />
       </div>

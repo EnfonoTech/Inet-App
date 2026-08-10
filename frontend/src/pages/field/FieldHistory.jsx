@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { pmApi } from "../../services/api";
 import { isNotRequired } from "../../utils/qcCiagFlags";
@@ -36,10 +37,10 @@ function formatDate(v) {
    latest execution, joined server-side. Shows the field team's
    tl_status ("My Status") plus the IM's execution_status ("IM Status")
    so the team lead can see whether the IM has confirmed. */
-function HistoryCard({ r }) {
+function HistoryCard({ r, hidden }) {
   const dateStr = r.execution_date || r.plan_date;
   return (
-    <div className={`history-card ${statusAccent(r.tl_status || r.execution_status)}`}>
+    <div className={`history-card ${statusAccent(r.tl_status || r.execution_status)}`} style={hidden ? { display: "none" } : undefined}>
       <div className="history-card-row">
         <div style={{ fontWeight: 700, fontSize: "0.82rem", color: "var(--text)" }}>
           {r.poid || r.name}
@@ -112,6 +113,16 @@ export default function FieldHistory() {
   const { rowLimit } = useTableRowLimit();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRecords = useProgressiveRows(records, { paused: loading });
+  // How many of `visibleRecords` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `records`
+  // (see the skip-fetch logic in the fetch effect: shrinking the limit after
+  // "All" already loaded everything doesn't trim `records`, since slicing it
+  // would still force React to tear down however many rows that drops).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(records.length, displayLimit);
 
   // ── Manage Table column filters ──────────────────────────────────────
   // Each column's typed value is matched only against that column's own
@@ -132,9 +143,34 @@ export default function FieldHistory() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real fetch actually returned, and under what
+  // limit + filters. Shrinking the row limit (e.g. All -> 20) never needs
+  // another round-trip — whatever's being asked for is already sitting in
+  // `records` from the larger fetch; the render below just hides the extra
+  // rows via CSS (see displayLimit/displayedCount above) instead of slicing
+  // the array, which would still force React to unmount however many rows
+  // that drops. Only growing the limit — or teamId/column filters actually
+  // changing — hits the server.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let cancelled = false;
     if (!teamId) { setRecords([]); setLoading(false); return; }
+
+    const colFilters = JSON.parse(columnFiltersDebounced);
+    const signature = JSON.stringify([teamId, colFilters]);
+    const prev = lastFetchRef.current;
+    const alreadyHaveEnough = prev.signature === signature && (
+      prev.limit === TABLE_ROW_LIMIT_ALL
+      || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+    );
+    if (alreadyHaveEnough) {
+      // Deliberately not touching `records` — leave it (and whatever's
+      // already mounted in the DOM) exactly as-is; the render hides the
+      // rows past the new limit via style instead.
+      return;
+    }
+
     setLoading(true);
     (async () => {
       try {
@@ -144,7 +180,6 @@ export default function FieldHistory() {
         // /api/resource/Daily Execution returned only DE columns and
         // forced the table to render with mostly empty cells.
         const teamFilters = { team: teamId };
-        const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) teamFilters.column_filters = colFilters;
         const list = await pmApi.listExecutionMonitorRows(teamFilters, rowLimit);
         // History = rows where the field team has actually started or
@@ -154,7 +189,10 @@ export default function FieldHistory() {
         const onlyExecuted = (Array.isArray(list) ? list : []).filter(
           (r) => !!r.execution_name
         );
-        if (!cancelled) setRecords(onlyExecuted);
+        if (!cancelled) {
+          setRecords(onlyExecuted);
+          lastFetchRef.current = { signature, limit: rowLimit, rows: onlyExecuted };
+        }
       } catch {
         if (!cancelled) setRecords([]);
       } finally {
@@ -172,7 +210,7 @@ export default function FieldHistory() {
           <div className="page-subtitle">Past execution records for {teamId || "your team"}</div>
         </div>
         <div className="page-actions">
-          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{records.length} records</span>
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{displayedCount} records</span>
         </div>
       </div>
 
@@ -180,7 +218,7 @@ export default function FieldHistory() {
       <div className="field-mobile-only">
         {records.length > 0 ? (
           <div className="field-card-list">
-            {records.map((r) => <HistoryCard key={r.name} r={r} />)}
+            {visibleRecords.map((r, idx) => <HistoryCard key={r.name} r={r} hidden={idx >= displayLimit} />)}
           </div>
         ) : loading ? (
           <div className="field-card-list">
@@ -203,7 +241,7 @@ export default function FieldHistory() {
 
       {/* ── Desktop table ─────────────────────────────────── */}
       <div className="page-content field-desktop-only">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && records.length > 0}>
           <table className="data-table" data-table-key="field-history-v1">
             <thead>
               <tr>
@@ -238,8 +276,8 @@ export default function FieldHistory() {
                     )}
                   </td>
                 </tr>
-              ) : records.map((r) => (
-                <tr key={r.name}>
+              ) : visibleRecords.map((r, idx) => (
+                <tr key={r.name} style={idx >= displayLimit ? { display: "none" } : undefined}>
                   <td style={{ fontFamily: "monospace", fontSize: "0.74rem" }} title={r.execution_name ? "" : "No execution recorded yet"}>
                     {r.execution_name || "—"}
                   </td>
@@ -281,7 +319,7 @@ export default function FieldHistory() {
             </tbody>
           </table>
         </DataTableWrapper>
-        <TableRowsLimitFooter placement="tableCard" loadedCount={records.length} />
+        <TableRowsLimitFooter placement="tableCard" loadedCount={displayedCount} />
       </div>
     </div>
   );

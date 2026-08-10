@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
@@ -11,6 +11,7 @@ import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/R
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -113,6 +114,13 @@ export default function RolloutPlanning() {
   const location = useLocation();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  // How many of `visibleRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`.
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(rows.length, displayLimit);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -193,27 +201,53 @@ export default function RolloutPlanning() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — whatever's being asked for is already in
+  // memory from the larger fetch; just show fewer of the same rows (see
+  // displayLimit/displayedCount above). Only growing the limit — or any
+  // OTHER filter actually changing — hits the server.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
+    const portal = {};
+    if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+    const colFilters = JSON.parse(columnFiltersDebounced);
+    if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+    if (projectFilter.length) portal.project_code = projectFilter;
+    if (imFilter.length) portal.im = imFilter;
+    if (duidFilter.length) portal.site_code = duidFilter;
+    if (fromDate) portal.from_date = fromDate;
+    if (toDate) portal.to_date = toDate;
+    if (planScope === "open_dummy") portal.dummy_preset = "dummy";
+    const filters = planScope === "all" || planScope === "open_dummy"
+      ? {}
+      : { dispatch_status: "Dispatched" };
+
+    const signature = JSON.stringify([filters, portal, refreshKey]);
+    const prev = lastFetchRef.current;
+    const alreadyHaveEnough = prev.signature === signature && (
+      prev.limit === TABLE_ROW_LIMIT_ALL
+      || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+    );
+    if (alreadyHaveEnough) {
+      // Deliberately NOT calling setRows() here — leave `rows` exactly
+      // as-is; the render below hides anything beyond the new limit via
+      // CSS instead of unmounting rows that are already loaded.
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
     (async () => {
       try {
-        const portal = {};
-        if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
-        if (projectFilter.length) portal.project_code = projectFilter;
-        if (imFilter.length) portal.im = imFilter;
-        if (duidFilter.length) portal.site_code = duidFilter;
-        if (fromDate) portal.from_date = fromDate;
-        if (toDate) portal.to_date = toDate;
-        if (planScope === "open_dummy") portal.dummy_preset = "dummy";
-        const filters = planScope === "all" || planScope === "open_dummy"
-          ? {}
-          : { dispatch_status: "Dispatched" };
         const list = await pmApi.listPODispatches(filters, rowLimit, portal);
-        if (!cancelled) setRows(Array.isArray(list) ? list : []);
+        if (!cancelled) {
+          const nextRows = Array.isArray(list) ? list : [];
+          setRows(nextRows);
+          lastFetchRef.current = { signature, limit: rowLimit, rows: nextRows };
+        }
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load dispatches");
       } finally {
@@ -273,7 +307,10 @@ export default function RolloutPlanning() {
 
   function toggleAll() {
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-    const visible = rows.filter((r) => !dtpHidden.has(r.name));
+    // Only rows within the current display limit — anything beyond it is
+    // hidden via CSS (see displayLimit above), not a real filter, but
+    // "select all" should still only ever act on what's actually shown.
+    const visible = rows.slice(0, displayedCount).filter((r) => !dtpHidden.has(r.name));
     if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
       setSelected(new Set());
     } else {
@@ -378,7 +415,7 @@ export default function RolloutPlanning() {
         <div className="page-actions">
           <ExportExcelButton
             filename="rollout-planning"
-            rows={rows}
+            rows={rows.slice(0, displayedCount)}
             columns={[
               { key: "poid",        label: "POID" },
               { key: "item_code",   label: "Item" },
@@ -511,14 +548,14 @@ export default function RolloutPlanning() {
           </div>
         )}
 
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
           <table key={`admin-rollout-planning-${planScope}`} className="data-table" data-table-key={`admin-rollout-planning-${planScope}`}>
               <thead>
                 <tr>
                   <th>
                     <input
                       type="checkbox"
-                      checked={selected.size === rows.length && rows.length > 0}
+                      checked={displayedCount > 0 && rows.slice(0, displayedCount).every((r) => selected.has(r.name))}
                       onChange={toggleAll}
                     />
                   </th>
@@ -567,13 +604,13 @@ export default function RolloutPlanning() {
                       )}
                     </td>
                   </tr>
-                ) : rows.map((row) => (
+                ) : visibleRows.map((row, idx) => (
                   <tr
                     key={row.name}
                     data-doc-name={row.name}
                     className={selected.has(row.name) ? "row-selected" : ""}
                     onClick={() => toggleRow(row.name)}
-                    style={{ cursor: "pointer", ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}
+                    style={idx >= displayLimit ? { display: "none" } : { cursor: "pointer", ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}
                   >
                     <td onClick={(e) => e.stopPropagation()}>
                       <input
@@ -654,7 +691,7 @@ export default function RolloutPlanning() {
               <tfoot>
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                   <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                    {rows.length} row{rows.length !== 1 ? "s" : ""}
+                    {displayedCount} row{displayedCount !== 1 ? "s" : ""}
                     {selected.size > 0 && (
                       <span style={{ marginLeft: 12, color: "#6366f1", fontWeight: 600 }}>
                         {selected.size} selected
@@ -673,8 +710,8 @@ export default function RolloutPlanning() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={rows.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={filterActiveForFooter}
         />
       </div>

@@ -52,6 +52,9 @@
   flex-direction: column;
   overflow-x: auto;
   overflow-y: hidden;
+  /* Anchors .data-table-loading-overlay (absolute, inset:0) to the table card
+     itself rather than the page. */
+  position: relative;
   /* No fixed cap here — the flex chain under .content-outlet lets the wrapper
    * fill the remaining viewport height. The fallback below is used only when
    * the wrapper renders outside that flex chain (standalone embeds). */
@@ -72,6 +75,30 @@
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
+}
+
+/* Dims the previous tab/filter's rows and shows a spinner on top while a
+   refetch is in flight, so stale data on screen is never mistaken for the
+   current selection — see DataTableWrapper.jsx `loading` prop. Sits above
+   the sticky thead (z-index 10) and tfoot (z-index 9), below the Manage
+   Table / Filters panel (z-index 20). */
+.data-table-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 15;
+}
+
+.data-table-loading-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(29, 78, 216, 0.18);
+  border-top-color: var(--blue, #1d4ed8);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
 
 /* Row-limit bar docked as table card footer (rendered in-page by

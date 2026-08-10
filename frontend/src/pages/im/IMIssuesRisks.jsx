@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -13,6 +13,7 @@ import AttachmentsSection from "../../components/AttachmentsSection";
 import DateRangePicker from "../../components/DateRangePicker";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -145,32 +146,60 @@ export default function IMIssuesRisks() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — whatever's being asked for is already sitting
+  // in memory from the larger fetch; just show fewer of the same rows via
+  // CSS (see displayLimit/displayedCount below). Only growing the limit, or
+  // any OTHER filter actually changing, hits the server.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     (async () => {
+      const portal = {};
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (teamFilter.length) portal.team = teamFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
+      if (issueCatFilter.length) portal.issue_category = issueCatFilter;
+      if (execStatusFilter.length) portal.execution_status = execStatusFilter;
+      if (tlStatusFilter.length) portal.tl_status = tlStatusFilter;
+      if (qcFilter.length) portal.qc_status = qcFilter;
+      if (ciagFilter.length) portal.ciag_status = ciagFilter;
+      if (fromDate) portal.from_date = fromDate;
+      if (toDate) portal.to_date = toDate;
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+      const portalArg = Object.keys(portal).length ? portal : undefined;
+      const searchArg = searchDebounced.trim() || undefined;
+      const signature = JSON.stringify([portal, searchArg, imName || "", refreshKey]);
+
+      const prev = lastFetchRef.current;
+      const alreadyHaveEnough = prev.signature === signature && (
+        prev.limit === TABLE_ROW_LIMIT_ALL
+        || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+      );
+      if (alreadyHaveEnough) {
+        // Deliberately NOT calling setRows() here — leave `rows` exactly as
+        // is. Slicing it down would still force React to unmount however
+        // many rows that drops — real DOM-teardown cost regardless of how
+        // cheaply React's own diffing decides to do it. The render below
+        // just hides anything beyond the new limit via CSS instead.
+        return;
+      }
+
+      setLoading(true);
       try {
-        const portal = {};
-        if (projectFilter.length) portal.project_code = projectFilter;
-        if (teamFilter.length) portal.team = teamFilter;
-        if (duidFilter.length) portal.site_code = duidFilter;
-        if (issueCatFilter.length) portal.issue_category = issueCatFilter;
-        if (execStatusFilter.length) portal.execution_status = execStatusFilter;
-        if (tlStatusFilter.length) portal.tl_status = tlStatusFilter;
-        if (qcFilter.length) portal.qc_status = qcFilter;
-        if (ciagFilter.length) portal.ciag_status = ciagFilter;
-        if (fromDate) portal.from_date = fromDate;
-        if (toDate) portal.to_date = toDate;
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
-        const portalArg = Object.keys(portal).length ? portal : undefined;
         const res = await pmApi.listIssueRiskRows(
           imName || "",
           rowLimit,
-          searchDebounced.trim() || undefined,
+          searchArg,
           portalArg,
         );
-        if (!cancelled) setRows(Array.isArray(res) ? res : []);
+        if (cancelled) return;
+        const fetchedRows = Array.isArray(res) ? res : [];
+        setRows(fetchedRows);
+        lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
       } catch {
         if (!cancelled) setRows([]);
       } finally {
@@ -192,6 +221,15 @@ export default function IMIssuesRisks() {
       return true;
     });
   }, [rows, issueCatFilter, execStatusFilter, tlStatusFilter, qcFilter, ciagFilter, fromDate, toDate]);
+
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRows = useProgressiveRows(filteredRows, { paused: loading });
+  // How many of `filteredRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`
+  // (see the skip-fetch logic above for why `rows` itself isn't trimmed).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(filteredRows.length, displayLimit);
 
   const qcOptions = useMemo(() => [...new Set(rows.map((r) => r.qc_status).filter(Boolean))].sort(), [rows]);
   const ciagOptions = useMemo(() => [...new Set(rows.map((r) => r.ciag_status).filter(Boolean))].sort(), [rows]);
@@ -234,7 +272,10 @@ export default function IMIssuesRisks() {
 
   function toggleAll() {
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-    const visible = filteredRows.filter((r) => !dtpHidden.has(r.rollout_plan));
+    // Only rows within the current display limit — anything beyond it is
+    // hidden via CSS (see displayLimit above), not a real filter, but
+    // "select all" should still only ever act on what's actually shown.
+    const visible = filteredRows.slice(0, displayedCount).filter((r) => !dtpHidden.has(r.rollout_plan));
     if (visible.length > 0 && visible.every((r) => selected.has(r.rollout_plan))) {
       setSelected(new Set());
     } else {
@@ -306,7 +347,7 @@ export default function IMIssuesRisks() {
           <div className="page-subtitle">Your replanned rollout plans with issue categories.</div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="im-issues-and-risks" rows={filteredRows} />
+          <ExportExcelButton filename="im-issues-and-risks" rows={filteredRows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </div>
@@ -342,7 +383,7 @@ export default function IMIssuesRisks() {
         </div>
       </div>
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
           {loading && rows.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading issues…</div>
           ) : filteredRows.length === 0 ? (
@@ -354,7 +395,7 @@ export default function IMIssuesRisks() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={filteredRows.length > 0 && filteredRows.every((r) => selected.has(r.rollout_plan))}
+                      checked={displayedCount > 0 && filteredRows.slice(0, displayedCount).every((r) => selected.has(r.rollout_plan))}
                       onChange={toggleAll}
                     />
                   </th>
@@ -386,8 +427,8 @@ export default function IMIssuesRisks() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r) => (
-                  <tr key={`${r.rollout_plan}-${r.execution_name || ""}`} data-doc-name={r.rollout_plan} style={{ ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
+                {visibleRows.map((r, idx) => (
+                  <tr key={`${r.rollout_plan}-${r.execution_name || ""}`} data-doc-name={r.rollout_plan} style={idx >= displayLimit ? { display: "none" } : { ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}>
                     <td>
                       <input
                         type="checkbox"
@@ -429,7 +470,7 @@ export default function IMIssuesRisks() {
                       Plan Date·Exec Date·Attempt # = 13 columns, then Line Amount, then Region..Team Lead = 12 columns */}
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                     <td colSpan={13} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
-                      {filteredRows.length} row{filteredRows.length !== 1 ? "s" : ""}
+                      {displayedCount} row{displayedCount !== 1 ? "s" : ""}
                     </td>
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                       {filteredRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0).toLocaleString()}
@@ -443,8 +484,8 @@ export default function IMIssuesRisks() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={filteredRows.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={!!hasFilters}
         />
       </div>

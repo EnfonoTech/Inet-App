@@ -3,8 +3,9 @@ import { pmApi } from "../../services/api";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import DateRangePicker from "../../components/DateRangePicker";
 import AttachmentsSection from "../../components/AttachmentsSection";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -411,7 +412,21 @@ export default function IMExpense({ isAdmin = false }) {
   const totalAmt = useMemo(() => rows.reduce((s, c) => s + grossAmt(c), 0), [rows]);
   const hasFilters = search || dateFrom || dateTo || (tab === "all" && statusFilter) || imFilter || teamFilter;
 
-  const visibleRows = rowLimit === 0 ? rows : rows.slice(0, rowLimit);
+  // This page's fetch (`load`) never depends on `rowLimit` — it always pulls
+  // the full matching set and limits client-side, so there's no re-fetch to
+  // skip here. But slicing `rows` down to `rowLimit` BEFORE handing it to
+  // useProgressiveRows swapped in a new, shorter array reference on every
+  // limit change, forcing that hook through its expensive shrink-then-regrow
+  // chunking even though nothing was re-fetched. Pass the full (unsliced)
+  // rows through instead, and hide anything past the limit via CSS in the
+  // render loop below (see displayLimit) — a style change on already-
+  // mounted rows, not a removal.
+  const visibleRows = rows;
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const mountedRows = useProgressiveRows(visibleRows, { paused: loading });
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(visibleRows.length, displayLimit);
 
   const clearFilters = () => {
     setSearch(""); setDateFrom(""); setDateTo(""); setStatusFilter("");
@@ -491,8 +506,9 @@ export default function IMExpense({ isAdmin = false }) {
       <div className="page-content">
         <DataTableWrapper
           loadedCount={loading ? null : rows.length}
-          filteredCount={visibleRows.length}
+          filteredCount={displayedCount}
           filterActive={hasFilters}
+          loading={loading && rows.length > 0}
         >
           <table className="data-table" data-table-key={`im-expense-v1-${isAdmin ? "admin" : "im"}`}>
                 <thead>
@@ -522,8 +538,8 @@ export default function IMExpense({ isAdmin = false }) {
                         )}
                       </td>
                     </tr>
-                  ) : visibleRows.map((c) => (
-                    <tr key={c.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                  ) : mountedRows.map((c, idx) => (
+                    <tr key={c.name} style={idx >= displayLimit ? { display: "none" } : { borderBottom: "1px solid #f1f5f9" }}>
                       <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: "0.8rem", color: "#1e40af" }}>{c.name}</td>
                       <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.posting_date}</td>
                       <td style={{ padding: "10px 14px", fontSize: "0.83rem" }}>{c.employee_name || c.employee}</td>

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import RecordDetailView from "../../components/RecordDetailView";
@@ -59,6 +60,17 @@ export default function IMProjects() {
   const { rowLimit } = useTableRowLimit();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading]   = useState(true);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleProjects = useProgressiveRows(projects, { paused: loading });
+  // How many of `visibleProjects` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `projects`.
+  // `projects` itself may hold MORE than this after a shrink (see
+  // lastFetchRef below: shrinking the limit doesn't trim `projects`, since
+  // slicing it would still force React to tear down however many rows that
+  // drops — real DOM-removal cost regardless of how the diffing gets there).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(projects.length, displayLimit);
   const [search, setSearch]     = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [statusFilter, setStatusFilter] = useState("");
@@ -114,23 +126,50 @@ export default function IMProjects() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — whatever's being asked for is already sitting
+  // in memory from the larger fetch; just show fewer of the same rows via
+  // the CSS-hide render below. Only growing the limit, or any OTHER filter
+  // actually changing, hits the server. See PICTracker.jsx for the reference
+  // implementation of this pattern.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let cancelled = false;
     if (!imName) { setLoading(false); return; }
+
+    const colFilters = JSON.parse(columnFiltersDebounced);
+    const params = {
+      implementation_manager: imName,
+      search: searchDebounced.trim() || undefined,
+      status: statusFilter || undefined,
+      domain: domainFilter || undefined,
+      huawei_im: huaweiImFilter || undefined,
+      column_filters: Object.keys(colFilters).length ? colFilters : undefined,
+    };
+    const signature = JSON.stringify([params]);
+
+    const prev = lastFetchRef.current;
+    const alreadyHaveEnough = prev.signature === signature && (
+      prev.limit === TABLE_ROW_LIMIT_ALL
+      || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+    );
+    if (alreadyHaveEnough) {
+      // Leave `projects` (and whatever's already mounted) exactly as-is —
+      // the render below hides anything beyond the new limit via CSS.
+      return;
+    }
+
     setLoading(true);
     (async () => {
       try {
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        const list = await pmApi.listProjects({
-          limit: rowLimit,
-          implementation_manager: imName,
-          search: searchDebounced.trim() || undefined,
-          status: statusFilter || undefined,
-          domain: domainFilter || undefined,
-          huawei_im: huaweiImFilter || undefined,
-          column_filters: Object.keys(colFilters).length ? colFilters : undefined,
-        });
-        if (!cancelled) setProjects(Array.isArray(list) ? list : []);
+        const list = await pmApi.listProjects({ limit: rowLimit, ...params });
+        if (!cancelled) {
+          const fetchedRows = Array.isArray(list) ? list : [];
+          setProjects(fetchedRows);
+          lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
+        }
       } catch {
         if (!cancelled) setProjects([]);
       } finally {
@@ -154,9 +193,9 @@ export default function IMProjects() {
         </div>
         <div className="page-actions">
           <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
-            {projects.length} project{projects.length !== 1 ? "s" : ""}
+            {displayedCount} project{displayedCount !== 1 ? "s" : ""}
           </span>
-          <ExportExcelButton filename="im-projects" rows={projects} />
+          <ExportExcelButton filename="im-projects" rows={projects.slice(0, displayedCount)} />
         </div>
       </div>
 
@@ -215,7 +254,7 @@ export default function IMProjects() {
       </div>
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && projects.length > 0}>
           <table className="data-table" data-table-key="im-projects-v1">
             <thead>
               <tr>
@@ -255,8 +294,8 @@ export default function IMProjects() {
                     )}
                   </td>
                 </tr>
-              ) : projects.map((p) => (
-                  <tr key={p.name}>
+              ) : visibleProjects.map((p, idx) => (
+                  <tr key={p.name} style={idx >= displayLimit ? { display: "none" } : undefined}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{p.project_code}</td>
                     <td style={{ fontWeight: 600 }}>{p.project_name}</td>
                     <td>{p.customer}</td>
@@ -305,8 +344,8 @@ export default function IMProjects() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={projects.length}
-          filteredCount={projects.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={!!hasFilters}
         />
       </div>

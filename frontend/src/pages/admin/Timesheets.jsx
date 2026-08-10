@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import SearchableSelect from "../../components/SearchableSelect";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -30,6 +31,14 @@ export default function Timesheets() {
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleLogs = useProgressiveRows(logs, { paused: loading });
+  // How many of `visibleLogs` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `logs`. See
+  // the skip-fetch logic in the fetch effect below / PICTracker.jsx.
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(logs.length, displayLimit);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
@@ -62,22 +71,47 @@ export default function Timesheets() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20, or
+  // 2500 -> 20) never needs another round-trip — whatever's being asked for
+  // is already sitting in memory from the larger fetch; just show fewer of
+  // the same rows. Only growing the limit (needing rows that were never
+  // fetched at all) — or any OTHER filter actually changing — hits the
+  // server. See PICTracker.jsx for the reference implementation.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     (async () => {
+      const filters = {};
+      if (dateFrom) filters.from_date = dateFrom;
+      if (dateTo) filters.to_date = dateTo;
+      if (teamFilter.length) filters.team_id = teamFilter;
+      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) filters.column_filters = colFilters;
+      const signature = JSON.stringify([filters]);
+
+      const prev = lastFetchRef.current;
+      const alreadyHaveEnough = prev.signature === signature && (
+        prev.limit === TABLE_ROW_LIMIT_ALL
+        || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+      );
+      if (alreadyHaveEnough) {
+        // Already have at least this many rows in memory from a larger (or
+        // equal) fetch under the same filters — just show fewer of them via
+        // the CSS-hide render below, no re-fetch and no state mutation.
+        return;
+      }
+
+      setLoading(true);
       try {
-        const filters = {};
-        if (dateFrom) filters.from_date = dateFrom;
-        if (dateTo) filters.to_date = dateTo;
-        if (teamFilter.length) filters.team_id = teamFilter;
-        if (searchDebounced.trim()) filters.search = searchDebounced.trim();
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
         if (!cancelled) {
-          setLogs(res?.logs || []);
-          setTotal(res?.total ?? (res?.logs || []).length);
+          const fetchedRows = res?.logs || [];
+          setLogs(fetchedRows);
+          setTotal(res?.total ?? fetchedRows.length);
+          lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
         }
       } catch {
         if (!cancelled) { setLogs([]); setTotal(0); }
@@ -97,18 +131,18 @@ export default function Timesheets() {
         <div>
           <h1 className="page-title">Execution time logs</h1>
           <div className="page-subtitle">
-            Field time on rollouts · {searchDebounced.trim() ? `${total} matching · ` : ""}{logs.length} loaded · {fmt.format(totalHours)} h
+            Field time on rollouts · {searchDebounced.trim() ? `${total} matching · ` : ""}{displayedCount} loaded · {fmt.format(totalHours)} h
           </div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="timesheets" rows={logs} />
+          <ExportExcelButton filename="timesheets" rows={logs.slice(0, displayedCount)} />
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14, margin: "0 28px 20px" }}>
         <div className="summary-card accent-blue">
           <div className="card-label">Log lines</div>
-          <div className="card-value">{searchDebounced.trim() ? total : logs.length}</div>
+          <div className="card-value">{searchDebounced.trim() ? total : displayedCount}</div>
         </div>
         <div className="summary-card accent-green">
           <div className="card-label">Total hours</div>
@@ -157,7 +191,7 @@ export default function Timesheets() {
       </div>
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && logs.length > 0}>
             <table className="data-table" data-table-key="admin-timesheets-v1">
               <thead>
                 <tr>
@@ -187,8 +221,8 @@ export default function Timesheets() {
                       )}
                     </td>
                   </tr>
-                ) : logs.map((row) => (
-                  <tr key={row.name}>
+                ) : visibleLogs.map((row, idx) => (
+                  <tr key={row.name} style={idx >= displayLimit ? { display: "none" } : undefined}>
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
                     <td>{row.user_full_name || row.user}</td>
                     <td style={{ fontFamily: "monospace", fontSize: 12 }}>{row.team_id || "—"}</td>
@@ -233,8 +267,8 @@ export default function Timesheets() {
                         fontSize: "0.78rem",
                       }}
                     >
-                      TOTALS ({logs.length}
-                      {hasFilters && ` of ${logs.length}`} / {total} in range)
+                      TOTALS ({displayedCount}
+                      {hasFilters && ` of ${displayedCount}`} / {total} in range)
                     </td>
                     <td
                       style={{
@@ -255,8 +289,8 @@ export default function Timesheets() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={logs.length}
-          filteredCount={searchDebounced.trim() ? total : logs.length}
+          loadedCount={displayedCount}
+          filteredCount={searchDebounced.trim() ? total : displayedCount}
           filterActive={!!(search || dateFrom || dateTo || teamFilter)}
         />
       </div>

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -12,6 +12,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import AttachmentsSection from "../../components/AttachmentsSection";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
@@ -168,8 +169,13 @@ function DetailItem({ label, value }) {
 
 export default function IMDispatch() {
   const { imName } = useAuth();
-  const { rowLimit } = useTableRowLimit();
+  const { rowLimit, setRowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters + planScope. Shrinking the row limit (e.g. All ->
+  // 20) on the SAME scope never needs another round-trip. See
+  // PICTracker.jsx for the reference implementation.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [modeFilter, setModeFilter] = useState("all");
@@ -183,6 +189,20 @@ export default function IMDispatch() {
   // "All POIDs (re-plan)" shows them so the IM can pick one and create the
   // next sequential visit (visit_number auto-increments).
   const [planScope, setPlanScope] = useState("unplanned"); // "unplanned" | "all"
+  // "All" is stored per-path, not per-scope — the backend fetch is scoped by
+  // planScope (listFilters below), so switching scope is a genuinely
+  // different, separately-limited fetch. Without this, picking "All" on one
+  // scope and switching to the other would silently re-trigger an unlimited
+  // fetch for a scope the user never asked "All" for on this occasion.
+  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? planScope : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== planScope
+    ? TABLE_ROW_LIMIT_DEFAULT
+    : rowLimit;
+  const confirmRowLimit = useCallback((n) => {
+    confirmedAllTabRef.current = planScope;
+    setRowLimit(n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planScope, setRowLimit]);
   const searchDebounced = useDebounced(search, 300);
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -285,7 +305,6 @@ export default function IMDispatch() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
     if (!imName) {
       setRows([]);
@@ -324,22 +343,39 @@ export default function IMDispatch() {
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
         const portalArg = Object.keys(portal).length ? portal : undefined;
+        const signature = JSON.stringify([listFilters, portal]);
+
+        const prev = lastFetchRef.current;
+        const alreadyHaveEnough = prev.signature === signature && (
+          prev.limit === TABLE_ROW_LIMIT_ALL
+          || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
+        );
+        if (alreadyHaveEnough) {
+          // Same scope + filters, already have at least this many rows from
+          // a larger (or equal) fetch — show fewer via the CSS-hide render
+          // below, no re-fetch and no state mutation.
+          setLoading(false);
+          return;
+        }
+
+        setLoading(true);
         const [res, agg] = await Promise.all([
-          pmApi.listPODispatches(listFilters, rowLimit, portalArg),
+          pmApi.listPODispatches(listFilters, effectiveRowLimit, portalArg),
           // Stats badges (Ready/Auto/Manual/Dummy) stay scope-independent -
           // always computed from the unscoped `filters`, not `listFilters`.
           pmApi.getPODispatchStats(filters, portalArg).catch(() => null),
         ]);
-        if (!cancelled) {
-          setRows(Array.isArray(res) ? res : []);
-          if (agg && typeof agg === "object") {
-            setStats({
-              total: Number(agg.total) || 0,
-              auto: Number(agg.auto) || 0,
-              manual: Number(agg.manual) || 0,
-              dispatched: Number(agg.dispatched) || 0,
-            });
-          }
+        if (cancelled) return;
+        const fetchedRows = Array.isArray(res) ? res : [];
+        setRows(fetchedRows);
+        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
+        if (agg && typeof agg === "object") {
+          setStats({
+            total: Number(agg.total) || 0,
+            auto: Number(agg.auto) || 0,
+            manual: Number(agg.manual) || 0,
+            dispatched: Number(agg.dispatched) || 0,
+          });
         }
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load dispatches");
@@ -350,7 +386,7 @@ export default function IMDispatch() {
     return () => { cancelled = true; };
   }, [
     imName,
-    rowLimit,
+    effectiveRowLimit,
     searchDebounced,
     modeFilter,
     dummyFilter,
@@ -672,8 +708,16 @@ export default function IMDispatch() {
     return (r.dispatch_status || "") === "Dispatched";
   });
 
-  const planableRows = visibleRows.filter(planable);
-  const dispatchTotals = visibleRows.reduce((acc, r) => ({
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const mountedRows = useProgressiveRows(visibleRows, { paused: loading });
+  // How many of `mountedRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows` (see
+  // the skip-fetch cache in the fetch effect above / PICTracker.jsx).
+  const displayLimit = effectiveRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveRowLimit;
+  const displayedCount = Math.min(visibleRows.length, displayLimit);
+  const planableRows = visibleRows.slice(0, displayedCount).filter(planable);
+  const dispatchTotals = visibleRows.slice(0, displayedCount).reduce((acc, r) => ({
     qty: acc.qty + (parseFloat(r.qty) || 0),
     amount: acc.amount + (parseFloat(r.line_amount) || 0),
   }), { qty: 0, amount: 0 });
@@ -904,7 +948,7 @@ export default function IMDispatch() {
           >
             Internal Work
           </button>
-          <ExportExcelButton filename="im-dispatch" rows={visibleRows} />
+          <ExportExcelButton filename="im-dispatch" rows={visibleRows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading..." : "Refresh"}
           </button>
@@ -1707,7 +1751,7 @@ export default function IMDispatch() {
           </div>
         )}
 
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
           <table key={`im-dispatch-${planScope}`} className="data-table" data-table-key={`im-dispatch-${planScope}`}>
               <thead>
                 <tr>
@@ -1762,7 +1806,7 @@ export default function IMDispatch() {
                       )}
                     </td>
                   </tr>
-                ) : visibleRows.map((row) => {
+                ) : mountedRows.map((row, idx) => {
                   const canPlan = planable(row);
                   const wasDf = row.was_dummy_po == 1 || row.was_dummy_po === true || String(row.was_dummy_po || "") === "1";
                   const origCell = (row.original_dummy_poid || "").trim();
@@ -1772,7 +1816,7 @@ export default function IMDispatch() {
                     <tr
                       key={row.name}
                       data-doc-name={row.name}
-                      style={{
+                      style={idx >= displayedCount ? { display: "none" } : {
                         background: !!Number(row.is_dummy_po) ? "#fffbeb" : !!Number(row.is_internal_work) ? "#f0fdfa" : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
                         opacity: canPlan ? 1 : 0.85,
                       }}
@@ -1910,7 +1954,7 @@ export default function IMDispatch() {
                       Status·Actions = 6 columns */}
                   <tr>
                     <td colSpan={11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                      <strong>{visibleRows.length} row{visibleRows.length !== 1 ? "s" : ""}</strong>
+                      <strong>{displayedCount} row{displayedCount !== 1 ? "s" : ""}</strong>
                       {planScope !== "all" && visibleRows.length !== rows.length && (
                         <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#94a3b8" }}>
                           ({rows.length - visibleRows.length} planned hidden)
@@ -1932,9 +1976,11 @@ export default function IMDispatch() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={visibleRows.length}
+          loadedCount={Math.min(rows.length, displayLimit)}
+          filteredCount={displayedCount}
           filterActive={!!hasFilters || visibleRows.length !== rows.length}
+          value={effectiveRowLimit}
+          onChange={confirmRowLimit}
         />
       </div>
 

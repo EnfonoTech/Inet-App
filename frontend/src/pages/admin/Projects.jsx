@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { useDebounced } from "../../hooks/useDebounced";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -260,6 +261,17 @@ export default function Projects() {
   const { rowLimit } = useTableRowLimit();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleProjects = useProgressiveRows(projects, { paused: loading });
+  // How many of `visibleProjects` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `projects`.
+  // `projects` itself may hold MORE than this after a shrink (see
+  // lastFetchRef below: shrinking the limit doesn't trim `projects`, since
+  // slicing it would still force React to tear down however many rows that
+  // drops — real DOM-removal cost regardless of how the diffing gets there).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(projects.length, displayLimit);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [domainFilter, setDomainFilter] = useState("");
@@ -296,21 +308,47 @@ export default function Projects() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — whatever's being asked for is already sitting
+  // in memory from the larger fetch; just show fewer of the same rows via
+  // the CSS-hide render below. Only growing the limit, or any OTHER filter
+  // actually changing, hits the server. See PICTracker.jsx for the reference
+  // implementation of this pattern.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let cancelled = false;
+    const colFilters = JSON.parse(columnFiltersDebounced);
+    const params = {
+      search: search || undefined,
+      status: statusFilter || undefined,
+      domain: domainFilter || undefined,
+      huawei_im: huaweiImFilter || undefined,
+      column_filters: Object.keys(colFilters).length ? colFilters : undefined,
+    };
+    const signature = JSON.stringify([params, refreshKey]);
+
+    const prev = lastFetchRef.current;
+    const alreadyHaveEnough = prev.signature === signature && (
+      prev.limit === TABLE_ROW_LIMIT_ALL
+      || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+    );
+    if (alreadyHaveEnough) {
+      // Leave `projects` (and whatever's already mounted) exactly as-is —
+      // the render below hides anything beyond the new limit via CSS.
+      return;
+    }
+
     setLoading(true);
     (async () => {
       try {
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        const res = await pmApi.listProjects({
-          limit: rowLimit,
-          search: search || undefined,
-          status: statusFilter || undefined,
-          domain: domainFilter || undefined,
-          huawei_im: huaweiImFilter || undefined,
-          column_filters: Object.keys(colFilters).length ? colFilters : undefined,
-        });
-        if (!cancelled) setProjects(res || []);
+        const res = await pmApi.listProjects({ limit: rowLimit, ...params });
+        if (!cancelled) {
+          const fetchedRows = res || [];
+          setProjects(fetchedRows);
+          lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
+        }
       } catch {
         if (!cancelled) setProjects([]);
       } finally {
@@ -328,7 +366,7 @@ export default function Projects() {
           <div className="page-subtitle">Manage all INET telecom projects</div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="projects" rows={projects} />
+          <ExportExcelButton filename="projects" rows={projects.slice(0, displayedCount)} />
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New Project</button>
         </div>
       </div>
@@ -379,7 +417,7 @@ export default function Projects() {
 
       {/* Table — scrollable on narrow viewports (data-table-wrapper) */}
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && projects.length > 0}>
           <table className="data-table" data-table-key="admin-projects-v1">
             <thead>
               <tr>
@@ -407,8 +445,8 @@ export default function Projects() {
                     )}
                   </td>
                 </tr>
-              ) : projects.map(p => (
-                <tr key={p.name} onClick={() => navigate("/projects/" + p.project_code)} style={{ cursor: "pointer" }}>
+              ) : visibleProjects.map((p, idx) => (
+                <tr key={p.name} onClick={() => navigate("/projects/" + p.project_code)} style={idx >= displayLimit ? { display: "none" } : { cursor: "pointer" }}>
                   <td style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: 12 }}>{p.project_code}</td>
                   <td style={{ fontWeight: 600, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.project_name}</td>
                   <td>{p.project_domain || "\u2014"}</td>
@@ -438,7 +476,7 @@ export default function Projects() {
             </tbody>
           </table>
         </DataTableWrapper>
-        <TableRowsLimitFooter placement="tableCard" loadedCount={projects.length} />
+        <TableRowsLimitFooter placement="tableCard" loadedCount={displayedCount} />
       </div>
 
       <CreateProjectModal

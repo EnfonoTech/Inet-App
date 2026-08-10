@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -15,6 +15,7 @@ import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import RemarksCell from "../../components/RemarksCell";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge, PicStatusBadge } from "../pic/picShared";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -281,8 +282,9 @@ function IssueFlagCell({ flag, onClick }) {
 // through the system if one's still missing. Checkbox-selectable like every
 // other tab — the actual submit is a bulk toolbar action (per milestone),
 // not a per-row button, since a single line can carry MS1, MS2, or both.
-function LegacyResubmitTable({ rows, loading, selectedRows, onToggleRow, onToggleAll, onView }) {
-  const allSelected = rows.length > 0 && rows.every((r) => selectedRows.has(r.name));
+function LegacyResubmitTable({ rows, loading, selectedRows, onToggleRow, onToggleAll, onView, displayLimit = Infinity }) {
+  const visible = rows.slice(0, displayLimit);
+  const allSelected = visible.length > 0 && visible.every((r) => selectedRows.has(r.name));
   return (
     <table className="data-table" data-table-key="im-workdone-v1-legacy">
       <thead>
@@ -321,8 +323,8 @@ function LegacyResubmitTable({ rows, loading, selectedRows, onToggleRow, onToggl
               )}
             </td>
           </tr>
-        ) : rows.map((r) => (
-          <tr key={r.name}>
+        ) : rows.map((r, idx) => (
+          <tr key={r.name} style={idx >= displayLimit ? { display: "none" } : undefined}>
             <td><input type="checkbox" checked={selectedRows.has(r.name)} onChange={() => onToggleRow(r.name)} /></td>
             <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.name}</td>
             <td>{r.po_no || "—"}</td>
@@ -349,9 +351,16 @@ function LegacyResubmitTable({ rows, loading, selectedRows, onToggleRow, onToggl
 
 export default function IMWorkDone() {
   const { imName } = useAuth();
-  const { rowLimit } = useTableRowLimit();
+  const { rowLimit, setRowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — the rows are already in memory. Signature
+  // includes `tab` (via filters.tab below) so switching tabs still always
+  // refetches — only a limit-only shrink on the SAME tab is skipped. See
+  // PICTracker.jsx for the reference implementation.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [billingFilter, setBillingFilter] = useState([]);
@@ -400,6 +409,20 @@ export default function IMWorkDone() {
   const [bulkIssueFlagErr, setBulkIssueFlagErr] = useState(null);
   const [bulkIssueFlagResult, setBulkIssueFlagResult] = useState(null);
   const [tab, setTab] = useState("active"); // "active" | "confirmed" | "pic_rejected" | "legacy"
+  // "All" is stored per-path, not per-tab, so without this it silently
+  // carries over to whichever tab you switch to next — re-triggering an
+  // unlimited fetch+render for a tab the user never asked "All" for on this
+  // occasion. Track which tab "All" was actually confirmed for; any OTHER
+  // tab falls back to the normal default limit until explicitly re-picked.
+  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== tab
+    ? TABLE_ROW_LIMIT_DEFAULT
+    : rowLimit;
+  const confirmRowLimit = useCallback((n) => {
+    confirmedAllTabRef.current = tab;
+    setRowLimit(n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, setRowLimit]);
 
   // ── Manage Table column filters ──────────────────────────────────────
   // Each column's typed value is matched only against that column's own
@@ -437,10 +460,10 @@ export default function IMWorkDone() {
   const [legacyRefreshKey, setLegacyRefreshKey] = useState(0);
   const loadLegacy = () => setLegacyRefreshKey((k) => k + 1);
   const [legacyPoStatusFilter, setLegacyPoStatusFilter] = useState([]);
+  const lastLegacyFetchRef = useRef({ signature: null, limit: null, rows: [] });
 
   useEffect(() => {
     let cancelled = false;
-    setLegacyLoading(true);
     const filters = {};
     if (searchDebounced.trim()) filters.search = searchDebounced.trim();
     if (projectFilter.length) filters.project_code = projectFilter;
@@ -448,12 +471,30 @@ export default function IMWorkDone() {
     if (legacyPoStatusFilter.length) filters.dispatch_status = legacyPoStatusFilter;
     const colFilters = JSON.parse(columnFiltersDebounced);
     if (Object.keys(colFilters).length) filters.column_filters = colFilters;
-    pmApi.listLegacyMilestonesNeedingResubmission(filters, rowLimit)
-      .then((res) => { if (!cancelled) setLegacyRows(Array.isArray(res) ? res : []); })
+    const signature = JSON.stringify([filters, legacyRefreshKey]);
+
+    const prev = lastLegacyFetchRef.current;
+    const alreadyHaveEnough = prev.signature === signature && (
+      prev.limit === TABLE_ROW_LIMIT_ALL
+      || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
+    );
+    if (alreadyHaveEnough) {
+      setLegacyLoading(false);
+      return () => { cancelled = true; };
+    }
+
+    setLegacyLoading(true);
+    pmApi.listLegacyMilestonesNeedingResubmission(filters, effectiveRowLimit)
+      .then((res) => {
+        if (cancelled) return;
+        const fetchedRows = Array.isArray(res) ? res : [];
+        setLegacyRows(fetchedRows);
+        lastLegacyFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
+      })
       .catch(() => { if (!cancelled) setLegacyRows([]); })
       .finally(() => { if (!cancelled) setLegacyLoading(false); });
     return () => { cancelled = true; };
-  }, [legacyRefreshKey, rowLimit, searchDebounced, projectFilter, duidFilter, legacyPoStatusFilter, columnFiltersDebounced]);
+  }, [legacyRefreshKey, effectiveRowLimit, searchDebounced, projectFilter, duidFilter, legacyPoStatusFilter, columnFiltersDebounced]);
 
   // Reuses the exact same modal + submitSubmission() as a real Work Done
   // confirmation — submissionFor.is_legacy branches it to
@@ -745,7 +786,6 @@ export default function IMWorkDone() {
     // everything unfiltered, so skip the wasted round-trip entirely.
     if (tab === "legacy") { setLoading(false); return; }
     let cancelled = false;
-    setLoading(true);
     (async () => {
       try {
         const filters = { im: imName || "", tab };
@@ -761,9 +801,26 @@ export default function IMWorkDone() {
         if (submissionFilter.length) filters.submission_status = submissionFilter;
         if (execStatusFilter.length) filters.execution_status = execStatusFilter;
         if (issueFlagFilter.length) filters.issue_flag = issueFlagFilter;
-        const list = await pmApi.listWorkDoneRows(filters, rowLimit);
+        const signature = JSON.stringify([filters]);
+
+        const prev = lastFetchRef.current;
+        const alreadyHaveEnough = prev.signature === signature && (
+          prev.limit === TABLE_ROW_LIMIT_ALL
+          || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
+        );
+        if (alreadyHaveEnough) {
+          // Same tab + filters, already have at least this many rows from a
+          // larger (or equal) fetch — show fewer via the CSS-hide render
+          // below instead, no re-fetch and no state mutation.
+          return;
+        }
+
+        setLoading(true);
+        const list = await pmApi.listWorkDoneRows(filters, effectiveRowLimit);
         if (cancelled) return;
-        setRows(Array.isArray(list) ? list : []);
+        const fetchedRows = Array.isArray(list) ? list : [];
+        setRows(fetchedRows);
+        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
       } catch {
         if (!cancelled) setRows([]);
       } finally {
@@ -771,7 +828,7 @@ export default function IMWorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, rowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
+  }, [imName, effectiveRowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
 
   // PIC Rejected tab badge — fetched independently of `tab`/`rows` because
   // the backend now scopes list_work_done_rows to whichever tab is active
@@ -829,6 +886,18 @@ export default function IMWorkDone() {
     return true;
   }), [tabRows, tab, submissionFilter, execStatusFilter, issueFlagFilter, sourceFilter]);
 
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRows = useProgressiveRows(filteredRows, { paused: tab === "legacy" ? legacyLoading : loading });
+  // How many of `visibleRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`/
+  // `legacyRows` (see the skip-fetch caches above / PICTracker.jsx).
+  const displayLimit = effectiveRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveRowLimit;
+  const displayedCount = Math.min(filteredRows.length, displayLimit);
+  // Pre-client-filter count, capped the same way — used for the footer's
+  // "Loaded X" figure (distinct from filteredRows' "matches filter" count).
+  const displayedTabCount = Math.min(tabRows.length, displayLimit);
+
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
   const bulkActTypes = [...new Set(filteredRows.filter((r) => selectedRows.has(r.name)).map((r) => r.activity_type).filter(Boolean))];
   const bulkDocReq = bulkActTypes.length === 1 ? (DOC_REQUIREMENTS[bulkActTypes[0]] || null) : null;
@@ -838,7 +907,7 @@ export default function IMWorkDone() {
   const duidOptions = dispOpts.site_code || [];
   const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate || legacyPoStatusFilter.length);
 
-  const totals = filteredRows.reduce(
+  const totals = filteredRows.slice(0, displayedCount).reduce(
     (acc, r) => ({
       lineAmount: acc.lineAmount + (parseFloat(r.line_amount) || 0),
       revenue: acc.revenue + (parseFloat(r.revenue_sar) || 0),
@@ -865,7 +934,7 @@ export default function IMWorkDone() {
           </div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="im-work-done" rows={filteredRows} />
+          <ExportExcelButton filename="im-work-done" rows={filteredRows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </div>
@@ -1040,16 +1109,17 @@ export default function IMWorkDone() {
         )}
       </div>
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={tab === "legacy" ? (legacyLoading && legacyRows.length > 0) : (loading && rows.length > 0)}>
           {tab === "legacy" ? (
             <LegacyResubmitTable
-              rows={filteredRows}
+              rows={visibleRows}
+              displayLimit={displayLimit}
               loading={legacyLoading}
               selectedRows={selectedRows}
               onToggleRow={(name) => setSelectedRows((prev) => { const next = new Set(prev); next.has(name) ? next.delete(name) : next.add(name); return next; })}
               onToggleAll={() => {
                 const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-                const visible = filteredRows.filter((r) => !dtpHidden.has(r.name));
+                const visible = filteredRows.slice(0, displayedCount).filter((r) => !dtpHidden.has(r.name));
                 const allSel = visible.length > 0 && visible.every((r) => selectedRows.has(r.name));
                 setSelectedRows(allSel ? new Set() : new Set(visible.map((r) => r.name)));
               }}
@@ -1063,15 +1133,15 @@ export default function IMWorkDone() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={filteredRows.length > 0 && filteredRows.every((r) => selectedRows.has(r.name))}
-                      ref={(el) => { if (el) el.indeterminate = selectedRows.size > 0 && !filteredRows.every((r) => selectedRows.has(r.name)); }}
+                      checked={displayedCount > 0 && filteredRows.slice(0, displayedCount).every((r) => selectedRows.has(r.name))}
+                      ref={(el) => { if (el) el.indeterminate = selectedRows.size > 0 && !filteredRows.slice(0, displayedCount).every((r) => selectedRows.has(r.name)); }}
                       onChange={() => {
                         const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-                        const visible = filteredRows.filter((r) => !dtpHidden.has(r.name));
+                        const visible = filteredRows.slice(0, displayedCount).filter((r) => !dtpHidden.has(r.name));
                         const allSel = visible.length > 0 && visible.every((r) => selectedRows.has(r.name));
                         setSelectedRows(allSel ? new Set() : new Set(visible.map((r) => r.name)));
                       }}
-                      title={filteredRows.every((r) => selectedRows.has(r.name)) ? "Deselect all" : "Select all"}
+                      title={filteredRows.slice(0, displayedCount).every((r) => selectedRows.has(r.name)) ? "Deselect all" : "Select all"}
                     />
                   </th>
                   <th>Project Code</th>
@@ -1111,14 +1181,14 @@ export default function IMWorkDone() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r) => (
+                {visibleRows.map((r, idx) => (
                   <tr
                     key={r.name}
                     data-doc-name={r.name}
                     data-modified={r.modified}
                     className={selectedRows.has(r.name) ? "row-selected" : ""}
                     onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(r.name) ? next.delete(r.name) : next.add(r.name); return next; })}
-                    style={{ cursor: "pointer", ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}
+                    style={idx >= displayedCount ? { display: "none" } : { cursor: "pointer", ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}
                   >
                     <td style={{ width: 36, padding: "6px 4px", textAlign: "center", boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
                       <input
@@ -1209,7 +1279,7 @@ export default function IMWorkDone() {
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                     <td />
                     <td style={{ fontSize: "0.75rem", fontWeight: 700, color: "#64748b", padding: "8px 12px", whiteSpace: "nowrap" }}>
-                      {filteredRows.length} rows
+                      {displayedCount} rows
                     </td>
                     <td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
@@ -1234,9 +1304,11 @@ export default function IMWorkDone() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={tabRows.length}
-          filteredCount={filteredRows.length}
+          loadedCount={displayedTabCount}
+          filteredCount={displayedCount}
           filterActive={hasFilters}
+          value={effectiveRowLimit}
+          onChange={confirmRowLimit}
         />
       </div>
 

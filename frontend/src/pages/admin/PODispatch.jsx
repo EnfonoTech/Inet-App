@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -10,6 +10,7 @@ import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/R
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -234,8 +235,24 @@ const inputStyle = {
 const labelStyle = { display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 5, color: "#475569" };
 
 export default function PODispatch() {
-  const { rowLimit } = useTableRowLimit();
+  const { rowLimit, setRowLimit } = useTableRowLimit();
   const [activeTab, setActiveTab] = useState("New");
+  // "All" is stored per-path, not per-tab, so without this it silently
+  // carries over to whichever tab you switch to next — re-triggering an
+  // unlimited fetch+render for a tab the user never asked "All" for on this
+  // occasion. Track which tab "All" was actually confirmed for (either just
+  // clicked, or already the active tab when clicked); any OTHER tab falls
+  // back to the normal default limit until the user explicitly picks "All"
+  // again while on it. Switching back to the confirmed tab still honors it.
+  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? activeTab : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== activeTab
+    ? TABLE_ROW_LIMIT_DEFAULT
+    : rowLimit;
+  const confirmRowLimit = useCallback((n) => {
+    confirmedAllTabRef.current = activeTab;
+    setRowLimit(n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, setRowLimit]);
   const integrityDef = INTEGRITY_TABS[activeTab] || null;
   const isIntegrityTab = !!integrityDef;
   const [fixBusy, setFixBusy] = useState(false);
@@ -269,6 +286,24 @@ export default function PODispatch() {
   const showDispatched = activeTab === "Dispatched" || activeTab === "all";
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  // See useProgressiveRows — mounts large row sets (e.g. "All Lines" with
+  // 19k+ rows) in chunks so the browser doesn't show "Page Unresponsive".
+  // paused:loading skips growing/shrinking a tab's own render while a NEW
+  // tab's fetch is already in flight, so we don't waste frames growing a
+  // table we're about to switch away from anyway.
+  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  // How many of `visibleRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`. See
+  // the skip-fetch logic in the fetch effect below / PICTracker.jsx. Doesn't
+  // apply to integrity tabs — those never use the row-limit selector at all.
+  const displayLimit = effectiveRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveRowLimit;
+  const displayedCount = isIntegrityTab ? rows.length : Math.min(rows.length, displayLimit);
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — the rows are already in memory; just show
+  // fewer of them. Signature includes everything the fetch depends on
+  // except the row limit, so a limit-only shrink is the only thing skipped.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
   const [error, setError] = useState(null);
   const [imList, setImList] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -356,12 +391,12 @@ export default function PODispatch() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
     setSelected(new Set());
     (async () => {
       try {
         if (integrityDef) {
+          setLoading(true);
           const res = await pmApi.listDataIntegrityIssues(integrityDef.category);
           if (!cancelled) setRows(Array.isArray(res) ? res : []);
           return;
@@ -384,11 +419,28 @@ export default function PODispatch() {
         if (toDate) portal.to_date = toDate;
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+        const signature = JSON.stringify([portal]);
+
+        const prev = lastFetchRef.current;
+        const alreadyHaveEnough = prev.signature === signature && (
+          prev.limit === TABLE_ROW_LIMIT_ALL
+          || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
+        );
+        if (alreadyHaveEnough) {
+          // Same tab + filters, and we already have at least this many rows
+          // from a larger (or equal) fetch — just show fewer via the
+          // CSS-hide render below, no re-fetch, no state mutation.
+          return;
+        }
+
+        setLoading(true);
         const [poLines, ims] = await Promise.all([
-          pmApi.listPOIntakeLines(status, rowLimit, portal),
+          pmApi.listPOIntakeLines(status, effectiveRowLimit, portal),
           pmApi.listIMMasters({ status: "Active" }),
         ]);
-        if (!cancelled) setRows(Array.isArray(poLines) ? poLines : []);
+        const fetchedRows = Array.isArray(poLines) ? poLines : [];
+        if (!cancelled) setRows(fetchedRows);
+        if (!cancelled) lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
         if (!cancelled) setImList(Array.isArray(ims) ? ims : []);
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load data");
@@ -397,7 +449,7 @@ export default function PODispatch() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeTab, rowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, itemCodeFilter, statusFilter, fromDate, toDate, refreshKey, columnFiltersDebounced]);
+  }, [activeTab, effectiveRowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, itemCodeFilter, statusFilter, fromDate, toDate, refreshKey, columnFiltersDebounced]);
 
   useEffect(() => {
     if (!convertProject) { setConvertProjectItemCodes([]); return; }
@@ -440,7 +492,9 @@ export default function PODispatch() {
 
   function toggleAll() {
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-    const visible = integrityRowsFiltered.filter((r) => !dtpHidden.has(r.name));
+    // displayedCount is rows.length on integrity tabs (no row-limit there),
+    // so this only actually narrows anything on the main New/Dispatched/all tabs.
+    const visible = integrityRowsFiltered.slice(0, displayedCount).filter((r) => !dtpHidden.has(r.name));
     if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
       setSelected(new Set());
     } else {
@@ -502,7 +556,7 @@ export default function PODispatch() {
     }
   }
 
-  const autoRows = rows.filter(r => r.dispatch_mode === "Auto");
+  const autoRows = rows.slice(0, displayedCount).filter(r => r.dispatch_mode === "Auto");
   // All projects that have any Auto-mode PO Dispatch, not just ones in the loaded slice.
   const { options: dispatchFilterOpts } = useFilterOptions("PO Dispatch", ["project_code"]);
   const uniqueProjects = dispatchFilterOpts.project_code || [];
@@ -842,7 +896,7 @@ export default function PODispatch() {
           <div className="page-subtitle">Dispatch PO lines to an Implementation Manager; field team is chosen at rollout planning.</div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename={`po-dispatch-${activeTab}`} rows={rows} />
+          <ExportExcelButton filename={`po-dispatch-${activeTab}`} rows={rows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={() => loadData(activeTab)} disabled={loading}>
             {loading ? "Loading..." : "Refresh"}
           </button>
@@ -979,7 +1033,7 @@ export default function PODispatch() {
       <div className="page-content">
         {error && <div className="notice error" style={{ marginBottom: 16 }}><span>!</span> {error}</div>}
 
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
           {isIntegrityTab ? (
             <IntegrityTable
               rows={integrityRowsFiltered}
@@ -993,7 +1047,7 @@ export default function PODispatch() {
             />
           ) : (() => {
             const colCount = showDispatched ? 24 : 21;
-            const totals = rows.reduce((acc, r) => ({
+            const totals = rows.slice(0, displayedCount).reduce((acc, r) => ({
               qty: acc.qty + (parseFloat(r.qty) || 0),
               amount: acc.amount + (parseFloat(r.line_amount) || 0),
             }), { qty: 0, amount: 0 });
@@ -1003,7 +1057,7 @@ export default function PODispatch() {
                 <tr>
                   <th style={{ width: 36 }}>
                     <input type="checkbox"
-                      checked={selected.size === rows.length && rows.length > 0}
+                      checked={selected.size === displayedCount && displayedCount > 0}
                       onChange={toggleAll}
                     />
                   </th>
@@ -1051,14 +1105,14 @@ export default function PODispatch() {
                       )}
                     </td>
                   </tr>
-                ) : rows.map(row => {
+                ) : visibleRows.map((row, idx) => {
                   const isAuto = row.dispatch_mode === "Auto";
                   return (
                     <tr key={row.name}
                       data-doc-name={row.name}
                       className={selected.has(row.name) ? "row-selected" : ""}
                       onClick={() => toggleRow(row.name)}
-                      style={{
+                      style={idx >= displayedCount ? { display: "none" } : {
                         cursor: "pointer",
                         background: isAuto && activeTab === "Dispatched" ? "rgba(99,102,241,0.04)" : undefined,
                       }}
@@ -1146,10 +1200,10 @@ export default function PODispatch() {
                   <tr>
                     <td colSpan={11}
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
-                      <strong>{rows.length}</strong> row{rows.length !== 1 ? "s" : ""}
+                      <strong>{displayedCount}</strong> row{displayedCount !== 1 ? "s" : ""}
                       {activeTab === "Dispatched" && autoRows.length > 0 && (
                         <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600 }}>
-                          Auto: {autoRows.length} · Manual: {rows.length - autoRows.length}
+                          Auto: {autoRows.length} · Manual: {displayedCount - autoRows.length}
                         </span>
                       )}
                     </td>
@@ -1171,9 +1225,11 @@ export default function PODispatch() {
         </DataTableWrapper>
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={rows.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={!!tableSearch || !!projectFilter.length || !!imFilter.length || !!duidFilter.length || !!itemCodeFilter.length || !!statusFilter.length || !!fromDate || !!toDate}
+          value={effectiveRowLimit}
+          onChange={confirmRowLimit}
         />
       </div>
     </div>

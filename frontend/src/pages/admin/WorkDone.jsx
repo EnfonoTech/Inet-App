@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
@@ -15,6 +15,7 @@ import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -521,38 +522,64 @@ export default function WorkDone() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
+  // needs another round-trip — whatever's being asked for is already sitting
+  // in memory from the larger fetch; just show fewer of the same rows via
+  // CSS (see displayLimit/displayedCount below). Only growing the limit, or
+  // any OTHER filter actually changing, hits the server.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   // Single useEffect with cancellation guard. Replaces the older
   // useResetOnRowLimitChange + separate-load pattern that left the table
   // blank when going from a higher to a lower row limit.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     (async () => {
+      const filters = {};
+      if (billingFilter.length) filters.billing_status = billingFilter;
+      if (imFilter.length) filters.im = imFilter;
+      if (teamFilter.length) filters.team = teamFilter;
+      if (projectFilter.length) filters.project_code = projectFilter;
+      if (duidFilter.length) filters.site_code = duidFilter;
+      if (fromDate) filters.from_date = fromDate;
+      if (toDate) filters.to_date = toDate;
+      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      if (workTypeFilter.length) {
+        // "Field Work" (Rollout Execution) also covers legacy rows with no
+        // source stamped at all — mirrors the display default used below
+        // (`row.source || "Rollout Execution"`).
+        filters.source = workTypeFilter.includes("Rollout Execution")
+          ? [...workTypeFilter, ""]
+          : workTypeFilter;
+      }
+      if (issueFlagFilter.length) filters.issue_flag = issueFlagFilter;
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) filters.column_filters = colFilters;
+      const signature = JSON.stringify([filters, refreshKey]);
+
+      const prev = lastFetchRef.current;
+      const alreadyHaveEnough = prev.signature === signature && (
+        prev.limit === TABLE_ROW_LIMIT_ALL
+        || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+      );
+      if (alreadyHaveEnough) {
+        // Deliberately NOT calling setRows() here — leave `rows` exactly as
+        // is. Slicing it down would still force React to unmount however
+        // many rows that drops — real DOM-teardown cost regardless of how
+        // cheaply React's own diffing decides to do it. The render below
+        // just hides anything beyond the new limit via CSS instead.
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
       try {
-        const filters = {};
-        if (billingFilter.length) filters.billing_status = billingFilter;
-        if (imFilter.length) filters.im = imFilter;
-        if (teamFilter.length) filters.team = teamFilter;
-        if (projectFilter.length) filters.project_code = projectFilter;
-        if (duidFilter.length) filters.site_code = duidFilter;
-        if (fromDate) filters.from_date = fromDate;
-        if (toDate) filters.to_date = toDate;
-        if (searchDebounced.trim()) filters.search = searchDebounced.trim();
-        if (workTypeFilter.length) {
-          // "Field Work" (Rollout Execution) also covers legacy rows with no
-          // source stamped at all — mirrors the display default used below
-          // (`row.source || "Rollout Execution"`).
-          filters.source = workTypeFilter.includes("Rollout Execution")
-            ? [...workTypeFilter, ""]
-            : workTypeFilter;
-        }
-        if (issueFlagFilter.length) filters.issue_flag = issueFlagFilter;
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         const list = await pmApi.listWorkDoneRows(filters, rowLimit);
         if (cancelled) return;
-        setRows(Array.isArray(list) ? list : []);
+        const fetchedRows = Array.isArray(list) ? list : [];
+        setRows(fetchedRows);
+        lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load work done data");
       } finally {
@@ -580,6 +607,15 @@ export default function WorkDone() {
     }
     return r;
   }, [rows, issueFlagFilter, workTypeFilter]);
+
+  // See useProgressiveRows — mounts large row sets in chunks so the browser
+  // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
+  const visibleRows = useProgressiveRows(filteredRows, { paused: loading });
+  // How many of `filteredRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`
+  // (see the skip-fetch logic above for why `rows` itself isn't trimmed).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(filteredRows.length, displayLimit);
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
 
@@ -633,7 +669,7 @@ export default function WorkDone() {
           <div className="page-subtitle">Completed work entries with billing status</div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="work-done" rows={rows} />
+          <ExportExcelButton filename="work-done" rows={filteredRows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
@@ -811,7 +847,7 @@ export default function WorkDone() {
           </div>
         )}
 
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && filteredRows.length > 0}>
         {tab === "summary" ? (
           <div style={{ padding: "20px 20px 40px", background: "#f8fafc" }}>
             {summaryLoading ? (
@@ -1001,15 +1037,19 @@ export default function WorkDone() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={filteredRows.length > 0 && filteredRows.every((r) => selectedRows.has(r.name))}
-                      ref={(el) => { if (el) el.indeterminate = selectedRows.size > 0 && !filteredRows.every((r) => selectedRows.has(r.name)); }}
+                      checked={displayedCount > 0 && filteredRows.slice(0, displayedCount).every((r) => selectedRows.has(r.name))}
+                      ref={(el) => { if (el) el.indeterminate = selectedRows.size > 0 && !filteredRows.slice(0, displayedCount).every((r) => selectedRows.has(r.name)); }}
                       onChange={() => {
                         const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-                        const visible = filteredRows.filter((r) => !dtpHidden.has(r.name));
+                        // Only rows within the current display limit — anything
+                        // beyond it is hidden via CSS (see displayLimit above),
+                        // not a real filter, but "select all" should still only
+                        // ever act on what's actually shown.
+                        const visible = filteredRows.slice(0, displayedCount).filter((r) => !dtpHidden.has(r.name));
                         const allSel = visible.length > 0 && visible.every((r) => selectedRows.has(r.name));
                         setSelectedRows(allSel ? new Set() : new Set(visible.map((r) => r.name)));
                       }}
-                      title={filteredRows.every((r) => selectedRows.has(r.name)) ? "Deselect all" : "Select all"}
+                      title={filteredRows.slice(0, displayedCount).every((r) => selectedRows.has(r.name)) ? "Deselect all" : "Select all"}
                     />
                   </th>
                   <th>POID</th>
@@ -1043,14 +1083,14 @@ export default function WorkDone() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row) => {
+                {visibleRows.map((row, idx) => {
                   const revenue = parseFloat(row.revenue_sar || row.revenue || row.line_amount) || 0;
                   return (
                     <tr key={row.name}
                       data-doc-name={row.name}
                       data-modified={row.modified}
                       className={selectedRows.has(row.name) ? "row-selected" : ""}
-                      style={{ ...(row.is_dummy_po ? { background: "#fffbeb" } : {}), cursor: "pointer" }}
+                      style={idx >= displayLimit ? { display: "none" } : { ...(row.is_dummy_po ? { background: "#fffbeb" } : {}), cursor: "pointer" }}
                       onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(row.name) ? next.delete(row.name) : next.add(row.name); return next; })}
                     >
                       <td onClick={(e) => e.stopPropagation()}>
@@ -1139,7 +1179,7 @@ export default function WorkDone() {
                 <tfoot>
                   <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
                     <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
-                      {filteredRows.length} rows
+                      {displayedCount} rows
                     </td>
                     <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
@@ -1172,8 +1212,8 @@ export default function WorkDone() {
         {tab === "list" && (
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={filteredRows.length}
-          filteredCount={filteredRows.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={!!hasFilters}
         />
         )}

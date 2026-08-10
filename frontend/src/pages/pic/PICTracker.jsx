@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
-import { useTableRowLimit } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -11,6 +11,7 @@ import { useAuth } from "../../context/AuthContext";
 import DateRangePicker from "../../components/DateRangePicker";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -238,29 +239,61 @@ export default function PICTracker() {
   const [refreshKey, setRefreshKey] = useState(0);
   const load = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  // Remembers what the LAST real server fetch actually returned, and under
+  // what limit + filters. Shrinking the row limit (e.g. All -> 20, or
+  // 2500 -> 20) never needs another round-trip — whatever's being asked for
+  // is already sitting in memory from the larger fetch; just show fewer of
+  // the same rows. Only growing the limit (needing rows that were never
+  // fetched at all) — or any OTHER filter actually changing — hits the
+  // server. `signature` covers everything the fetch depends on except the
+  // row limit itself, so a limit-only shrink is the only thing this skips.
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const portal = {};
+      if (searchDebounced.trim()) portal.search = searchDebounced.trim();
+      if (picFilter.length) portal.pic_status = picFilter;
+      if (picMs2Filter.length) portal.pic_status_ms2 = picMs2Filter;
+      if (projectFilter.length) portal.project_code = projectFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
+      if (poStatusFilter.length) portal.dispatch_status = poStatusFilter;
+      if (dateRange.from) portal.from_date = dateRange.from;
+      if (dateRange.to) portal.to_date = dateRange.to;
+      if (subconFilter.length) portal.subcontractor = subconFilter;
+      if (isdpOwnerFilter.length) portal.isdp_owner = isdpOwnerFilter;
+      if (ibuyOwnerFilter.length) portal.ibuy_owner = ibuyOwnerFilter;
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+      const signature = JSON.stringify([portal, refreshKey]);
+
+      const prev = lastFetchRef.current;
+      const alreadyHaveEnough = prev.signature === signature && (
+        prev.limit === TABLE_ROW_LIMIT_ALL
+        || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+      );
+      if (alreadyHaveEnough) {
+        // Deliberately NOT calling setRows() here — leave `rows` (and
+        // whatever's already mounted in the DOM) exactly as-is. Slicing it
+        // down would still force React to unmount however many rows that
+        // drops, which is real, unavoidable DOM-teardown cost regardless of
+        // how cheaply React's own diffing decides to do it. Instead the
+        // render below just hides anything beyond the new limit via CSS —
+        // a style change on already-existing rows, not a removal, so
+        // DataTablePro's mutation watcher (childList only) doesn't even see
+        // it. total_count/totals are server-computed aggregates over the
+        // whole filtered set, independent of the row limit — still correct.
+        return;
+      }
+
       setLoading(true);
       setError(null);
       try {
-        const portal = {};
-        if (searchDebounced.trim()) portal.search = searchDebounced.trim();
-        if (picFilter.length) portal.pic_status = picFilter;
-        if (picMs2Filter.length) portal.pic_status_ms2 = picMs2Filter;
-        if (projectFilter.length) portal.project_code = projectFilter;
-        if (duidFilter.length) portal.site_code = duidFilter;
-        if (poStatusFilter.length) portal.dispatch_status = poStatusFilter;
-        if (dateRange.from) portal.from_date = dateRange.from;
-        if (dateRange.to) portal.to_date = dateRange.to;
-        if (subconFilter.length) portal.subcontractor = subconFilter;
-        if (isdpOwnerFilter.length) portal.isdp_owner = isdpOwnerFilter;
-        if (ibuyOwnerFilter.length) portal.ibuy_owner = ibuyOwnerFilter;
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
         const res = await pmApi.listPicRows("active", portal, rowLimit);
         if (cancelled) return;
-        setRows(Array.isArray(res?.rows) ? res.rows : []);
+        const fetchedRows = Array.isArray(res?.rows) ? res.rows : [];
+        setRows(fetchedRows);
         setTotalCount(Number(res?.total_count) || 0);
         setAggTotals({
           ms1_amount: Number(res?.totals?.ms1_amount) || 0,
@@ -269,6 +302,7 @@ export default function PICTracker() {
           ms2_invoiced: Number(res?.totals?.ms2_invoiced) || 0,
         });
         setSelected(new Set());
+        lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
       } catch (err) {
         if (cancelled) return;
         setError(err.message || "Failed to load PIC rows");
@@ -279,6 +313,36 @@ export default function PICTracker() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, poStatusFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit, refreshKey, columnFiltersDebounced]);
+
+  // Tried true row virtualization here (@tanstack/react-virtual) to also
+  // fix scroll-time paint lag on top of the freeze fix below — reverted:
+  // DataTablePro's MutationObserver reprocesses the whole table on every
+  // tbody child-list change, and the virtualizer swaps rows in/out on every
+  // scroll tick, so the two fought each other and the table stopped
+  // rendering rows entirely. See useProgressiveRows — mounts large row sets
+  // in chunks so the browser doesn't show "Page Unresponsive" on tables with
+  // "All" rows loaded (19k+ on PIC Tracker / PO Dispatch). "All" still means
+  // every row; only how fast it lands in the DOM changes. Scrolling through
+  // a fully-mounted 19k-row table can still show brief paint lag since every
+  // row stays in the DOM — a real but much smaller remaining limitation.
+  // mounting: true while rows are still being chunked into the DOM, even
+  // after the fetch itself (loading) has already resolved — a big "All"
+  // table takes several more seconds to finish mounting past that point,
+  // and without this the loading overlay disappears looking "done" while
+  // scrolling still reveals blank, not-yet-mounted rows underneath.
+  const [mounting, setMounting] = useState(false);
+  const visibleRows = useProgressiveRows(rows, { paused: loading, onMountingChange: setMounting });
+  // How many of `visibleRows` to actually show — anything beyond this is
+  // hidden via CSS in the render below rather than removed from `rows`.
+  // `rows` itself may hold MORE than this (see the skip-fetch logic above:
+  // shrinking the limit after "All" already loaded everything doesn't trim
+  // `rows`, since slicing it would still force React to tear down however
+  // many rows that drops — real DOM-removal cost regardless of how the
+  // diffing gets there). Hiding via style instead is a plain attribute
+  // update on rows that already exist, so it's cheap AND doesn't trigger
+  // DataTablePro's mutation watcher (childList only, not attributes).
+  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  const displayedCount = Math.min(rows.length, displayLimit);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "isdp_owner", "ibuy_owner", "contract"]);
   const projectOptions = dispOpts.project_code || [];
@@ -364,7 +428,10 @@ export default function PICTracker() {
   function toggleAll() {
     if (rows.length === 0) return;
     const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
-    const visible = rows.filter((r) => !dtpHidden.has(r.po_dispatch));
+    // Only rows within the current display limit — anything beyond it is
+    // hidden via CSS (see displayLimit above), not a real filter, but
+    // "select all" should still only ever act on what's actually shown.
+    const visible = rows.slice(0, displayedCount).filter((r) => !dtpHidden.has(r.po_dispatch));
     if (visible.length > 0 && visible.every((r) => selected.has(r.po_dispatch))) {
       setSelected(new Set());
     } else {
@@ -523,8 +590,8 @@ export default function PICTracker() {
           </div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="pic-tracker" rows={rows} />
-          <button type="button" className="btn-secondary" onClick={() => downloadPicTrackerCsv(rows)} disabled={!rows.length}>
+          <ExportExcelButton filename="pic-tracker" rows={rows.slice(0, displayedCount)} />
+          <button type="button" className="btn-secondary" onClick={() => downloadPicTrackerCsv(rows.slice(0, displayedCount))} disabled={!displayedCount}>
             CSV
           </button>
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
@@ -624,12 +691,12 @@ export default function PICTracker() {
       )}
 
       <div className="page-content">
-        <DataTableWrapper>
+        <DataTableWrapper loading={loading && rows.length > 0}>
           <table className="data-table" data-table-key="pic-tracker-v2">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
-                    <input type="checkbox" checked={rows.length > 0 && rows.every((r) => selected.has(r.po_dispatch))} onChange={toggleAll} />
+                    <input type="checkbox" checked={displayedCount > 0 && rows.slice(0, displayedCount).every((r) => selected.has(r.po_dispatch))} onChange={toggleAll} />
                   </th>
                   <th>Subcontract</th>
                   <th>Contract Model</th>
@@ -684,12 +751,12 @@ export default function PICTracker() {
                       )}
                     </td>
                   </tr>
-                ) : rows.map((r) => (
+                ) : visibleRows.map((r, idx) => (
                   <tr key={r.po_dispatch}
                       data-doc-name={r.po_dispatch}
                       className={selected.has(r.po_dispatch) ? "row-selected" : ""}
                       onClick={() => toggleRow(r.po_dispatch)}
-                      style={{ cursor: "pointer" }}>
+                      style={idx >= displayLimit ? { display: "none" } : { cursor: "pointer" }}>
                     <td onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(r.po_dispatch)} onChange={() => toggleRow(r.po_dispatch)} />
                     </td>
@@ -778,7 +845,7 @@ export default function PICTracker() {
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
                   <td></td>{/* checkbox */}
                   <td colSpan={2} style={{ fontSize: "0.78rem", color: "#475569" }}>
-                    {fmtInt.format(rows.length)} row{rows.length !== 1 ? "s" : ""}
+                    {fmtInt.format(displayedCount)} row{displayedCount !== 1 ? "s" : ""}
                   </td>{/* Subcontract + Contract Model */}
                   <td></td>{/* POID */}
                   <td></td>{/* PO No */}
@@ -819,10 +886,21 @@ export default function PICTracker() {
               )}
             </table>
         </DataTableWrapper>
+        {mounting && (
+          // Deliberately NOT an overlay on the table — an overlay covers
+          // whatever's currently scrolled into view, including rows that
+          // already mounted fine, making them look blank/washed out too.
+          // This just notes that the tail end is still filling in, without
+          // touching the rows themselves.
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", fontSize: "0.78rem", color: "#64748b" }}>
+            <span style={{ width: 12, height: 12, border: "2px solid rgba(29,78,216,0.18)", borderTopColor: "var(--blue, #1d4ed8)", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+            Loading remaining rows…
+          </div>
+        )}
         <TableRowsLimitFooter
           placement="tableCard"
-          loadedCount={rows.length}
-          filteredCount={rows.length}
+          loadedCount={displayedCount}
+          filteredCount={displayedCount}
           filterActive={!!hasFilters}
         />
       </div>
