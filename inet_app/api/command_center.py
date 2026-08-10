@@ -16332,7 +16332,10 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                 FROM `tabRollout Plan` rp
                 INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
                 LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
-                WHERE rp.team = it.name
+                WHERE (rp.team = it.name OR EXISTS (
+                        SELECT 1 FROM `tabRollout Plan Team` rpt_dom
+                        WHERE rpt_dom.parent = rp.name AND rpt_dom.team = it.name
+                      ))
                   AND rp.plan_status IN ('Planned','In Execution','Completed')
                   AND rp.plan_date = {date_expr}
                   AND IFNULL(pcc.project_domain,'') != ''
@@ -16341,7 +16344,10 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                 SELECT GROUP_CONCAT(DISTINCT IFNULL(pd2.project_code,'') ORDER BY pd2.project_code SEPARATOR ', ')
                 FROM `tabRollout Plan` rp2
                 INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
-                WHERE rp2.team = it.name
+                WHERE (rp2.team = it.name OR EXISTS (
+                        SELECT 1 FROM `tabRollout Plan Team` rpt_proj
+                        WHERE rpt_proj.parent = rp2.name AND rpt_proj.team = it.name
+                      ))
                   AND rp2.plan_status IN ('Planned','In Execution','Completed')
                   AND rp2.plan_date = {date_expr}
                   AND IFNULL(pd2.project_code,'') != ''
@@ -16349,7 +16355,10 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             (
                 SELECT COUNT(*)
                 FROM `tabRollout Plan` rpa
-                WHERE rpa.team = it.name
+                WHERE (rpa.team = it.name OR EXISTS (
+                        SELECT 1 FROM `tabRollout Plan Team` rpt_act
+                        WHERE rpt_act.parent = rpa.name AND rpt_act.team = it.name
+                      ))
                   AND rpa.plan_status IN ('Planned','In Execution')
                   AND rpa.plan_date = {date_expr}
             ) AS active_plan_count,
@@ -16364,7 +16373,10 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                     ) THEN 'In Execution'
                     WHEN EXISTS (
                         SELECT 1 FROM `tabRollout Plan` rp_s
-                        WHERE rp_s.team = it.name
+                        WHERE (rp_s.team = it.name OR EXISTS (
+                                SELECT 1 FROM `tabRollout Plan Team` rpt_stat
+                                WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
+                              ))
                           AND rp_s.plan_status IN ('Planned', 'In Execution', 'Completed')
                           AND rp_s.plan_date = {date_expr}
                     ) THEN 'Planned'
@@ -16471,7 +16483,10 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                 FROM `tabRollout Plan` rp
                 INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
                 LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
-                WHERE rp.team = it.name
+                WHERE (rp.team = it.name OR EXISTS (
+                        SELECT 1 FROM `tabRollout Plan Team` rpt_dom
+                        WHERE rpt_dom.parent = rp.name AND rpt_dom.team = it.name
+                      ))
                   AND rp.plan_status IN ('Planned','In Execution','Completed')
                   AND rp.plan_date = {date_expr}
                   AND IFNULL(pcc.project_domain,'') != ''
@@ -16480,7 +16495,10 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                 SELECT GROUP_CONCAT(DISTINCT IFNULL(pd2.project_code,'') ORDER BY pd2.project_code SEPARATOR ', ')
                 FROM `tabRollout Plan` rp2
                 INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
-                WHERE rp2.team = it.name
+                WHERE (rp2.team = it.name OR EXISTS (
+                        SELECT 1 FROM `tabRollout Plan Team` rpt_proj
+                        WHERE rpt_proj.parent = rp2.name AND rpt_proj.team = it.name
+                      ))
                   AND rp2.plan_status IN ('Planned','In Execution','Completed')
                   AND rp2.plan_date = {date_expr}
                   AND IFNULL(pd2.project_code,'') != ''
@@ -16488,7 +16506,10 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
             (
                 SELECT COUNT(*)
                 FROM `tabRollout Plan` rpa
-                WHERE rpa.team = it.name
+                WHERE (rpa.team = it.name OR EXISTS (
+                        SELECT 1 FROM `tabRollout Plan Team` rpt_act
+                        WHERE rpt_act.parent = rpa.name AND rpt_act.team = it.name
+                      ))
                   AND rpa.plan_status IN ('Planned','In Execution')
                   AND rpa.plan_date = {date_expr}
             ) AS active_plan_count,
@@ -16503,7 +16524,10 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                     ) THEN 'In Execution'
                     WHEN EXISTS (
                         SELECT 1 FROM `tabRollout Plan` rp_s
-                        WHERE rp_s.team = it.name
+                        WHERE (rp_s.team = it.name OR EXISTS (
+                                SELECT 1 FROM `tabRollout Plan Team` rpt_stat
+                                WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
+                              ))
                           AND rp_s.plan_status IN ('Planned', 'In Execution', 'Completed')
                           AND rp_s.plan_date = {date_expr}
                     ) THEN 'Planned'
