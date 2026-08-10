@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
 import AttachmentsSection from "../../components/AttachmentsSection";
@@ -588,13 +588,19 @@ export default function FieldExpense() {
     }
   }, []);
 
-  const pendingClaims = claims.filter(
+  // Memoized deliberately — useProgressiveRows (below, via pagedClaims) does
+  // a reference check during render to decide whether the row set actually
+  // changed. An inline `.filter()` here returns a NEW array on every render
+  // regardless of whether `claims` actually changed, which makes that check
+  // always true — an infinite render loop (React error #301, "too many
+  // re-renders"). See the same fix/comment in IMDispatch.jsx.
+  const pendingClaims = useMemo(() => claims.filter(
     (c) => effectiveStatus(c) !== "Approved" && effectiveStatus(c) !== "Rejected"
-  );
-  const unpaidClaims = claims.filter(
+  ), [claims]);
+  const unpaidClaims = useMemo(() => claims.filter(
     (c) => effectiveStatus(c) === "Approved" && (c.status || "").toLowerCase() !== "paid"
-  );
-  const paidClaims = claims.filter((c) => (c.status || "").toLowerCase() === "paid");
+  ), [claims]);
+  const paidClaims = useMemo(() => claims.filter((c) => (c.status || "").toLowerCase() === "paid"), [claims]);
 
   const visibleClaims =
     tab === "pending" ? pendingClaims :

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
@@ -703,10 +703,16 @@ export default function IMDispatch() {
     Number(r.is_dummy_po) === 1
     && (!r.po_no || String(r.po_no).startsWith("DUMMY-"));
   const openDummyCount = rows.filter((r) => Number(r.is_dummy_po) === 1).length;
-  const visibleRows = rows.filter((r) => {
+  // Memoized deliberately — useProgressiveRows (below) does a reference
+  // check (`prevRows !== rows`) during render to decide whether the row set
+  // actually changed. An inline `.filter()` here returns a NEW array on
+  // every render regardless of whether `rows`/`planScope` actually changed,
+  // which made that check always true — an infinite render loop (React
+  // error #301, "too many re-renders") on every mount of this page.
+  const visibleRows = useMemo(() => rows.filter((r) => {
     if (planScope === "all") return true;
     return (r.dispatch_status || "") === "Dispatched";
-  });
+  }), [rows, planScope]);
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
