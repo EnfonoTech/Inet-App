@@ -166,6 +166,7 @@ const picNav = [
   { to: "/po-dump",                label: "PO Dump",            icon: "layers" },
   { to: "/pic-pending",            label: "Pending",            icon: "clock" },
   { to: "/pic-tracker",            label: "PIC Tracker",        icon: "barChart" },
+  { to: "/pic-closed",             label: "Closed",             icon: "checkCircle" },
   { to: "/pic-cancelled",          label: "Cancelled",          icon: "folder" },
   { to: "/pic-invoicing-summary",  label: "Invoicing Summary",  icon: "barChart" },
   { to: "/pic-reports",            label: "Reports",            icon: "clipboard" },

@@ -53,6 +53,7 @@ const OperationsOverview  = lazy(() => import("./pages/OperationsOverview"));
 const PICDashboard        = lazy(() => import("./pages/pic/PICDashboard"));
 const PICPending          = lazy(() => import("./pages/pic/PICPending"));
 const PICTracker          = lazy(() => import("./pages/pic/PICTracker"));
+const PICClosed           = lazy(() => import("./pages/pic/PICClosed"));
 const PICCancelled        = lazy(() => import("./pages/pic/PICCancelled"));
 const PICReports          = lazy(() => import("./pages/pic/PICReports"));
 const PICInvoicingSummary = lazy(() => import("./pages/pic/PICInvoicingSummary"));
@@ -187,6 +188,7 @@ function AppContent() {
               <Route path="/pic-dashboard" element={<PICDashboard />} />
               <Route path="/pic-pending" element={<PICPending />} />
               <Route path="/pic-tracker" element={<PICTracker />} />
+              <Route path="/pic-closed" element={<PICClosed />} />
               <Route path="/pic-cancelled" element={<PICCancelled />} />
               <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
               <Route path="/pic-reports" element={<PICReports />} />
@@ -199,6 +201,7 @@ function AppContent() {
               <Route path="/pic-dashboard" element={<PICDashboard showSwitcher />} />
               <Route path="/pic-pending" element={<PICPending />} />
               <Route path="/pic-tracker" element={<PICTracker />} />
+              <Route path="/pic-closed" element={<PICClosed />} />
               <Route path="/pic-cancelled" element={<PICCancelled />} />
               <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
               <Route path="/pic-reports" element={<PICReports />} />

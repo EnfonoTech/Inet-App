@@ -15,21 +15,44 @@ import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-// The only 2 statuses a Pending row can ever carry — see _PIC_PENDING_SQL in
-// pic.py. This page's one job: move a line from "not yet reached PIC" to
-// flagged-for-cancel, and from flagged to actually cancelled (which moves it
-// off this page entirely, onto the Cancelled page).
-const TARGET_STATUSES = ["PO Need to Cancel", "PO Line Canceled"];
+const INV_MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+function fmtMonthLabel(ym) {
+  const [y, m] = String(ym).slice(0, 7).split("-");
+  return `${INV_MONTH_NAMES[parseInt(m, 10) - 1]} ${y}`;
+}
 
-// PO Dispatch's dispatch_status field — see po_dispatch.json.
-const PO_STATUSES = [
-  "Pending",
-  "Dispatched",
-  "Planned",
-  "Backend Assigned",
-  "Completed",
-  "Closed",
-  "Cancelled",
+// Full PIC status vocabulary — same list as PICTracker.jsx — used for the
+// MS1/MS2 status filter dropdowns. Every closed row has at least one
+// milestone at "Commercial Invoice Closed" or "Commercial Invoice
+// Submitted", but the OTHER milestone can be any status (or blank/zero), so
+// the full list is the useful filter surface here.
+const PIC_STATUSES = [
+  "Work Not Done",
+  "Under Process to Apply",
+  "Under I-BUY",
+  "Under ISDP",
+  "I-BUY Rejected",
+  "ISDP Rejected",
+  "Ready for Invoice",
+  "Commercial Invoice Submitted",
+  "Commercial Invoice Closed",
+  "PO Need to Cancel",
+  "PO Line Canceled",
+];
+
+// Revert targets — anything except the two invoiced statuses (reverting out
+// of Closed can't land back on an invoiced state; use the normal Tracker
+// flow to move between the two invoiced statuses instead).
+const REVERT_STATUS_OPTIONS = [
+  "Work Not Done",
+  "Under Process to Apply",
+  "Under I-BUY",
+  "Under ISDP",
+  "I-BUY Rejected",
+  "ISDP Rejected",
+  "Ready for Invoice",
+  "PO Need to Cancel",
 ];
 
 function DetailModal({ row, onClose }) {
@@ -48,25 +71,27 @@ function DetailModal({ row, onClose }) {
           pills={[
             row.project_code ? { label: "Project", value: row.project_code, tone: "amber" } : null,
             row.site_code ? { label: "DUID", value: row.site_code, tone: "green" } : null,
-            row.dispatch_status ? { label: "PO Status", value: row.dispatch_status, tone: "slate" } : null,
+            row.dispatch_status ? { label: "PO Status", value: row.dispatch_status, tone: "rose" } : null,
           ].filter(Boolean)}
           hero={
             <DetailHero>
               <DetailStatTile label="Qty" value={row.qty != null ? fmtInt.format(row.qty) : "—"} />
               <DetailStatTile label="Rate" value={row.rate != null ? fmt.format(row.rate) : "—"} />
               <DetailStatTile label="Line Amount" value={fmt.format(row.line_amount || 0)} tone="green" />
-              <DetailStatTile label="PIC Status (MS1)" value={row.pic_status_effective || "Work Not Done"} tone="amber" />
+              <DetailStatTile label="Closed on" value={row.dispatch_status || "—"} tone="green" />
             </DetailHero>
           }
           hiddenFields={[
             "po_dispatch", "poid", "project_code", "site_code", "dispatch_status",
-            "qty", "rate", "line_amount", "pic_status_effective",
+            "qty", "rate", "line_amount",
           ]}
           keyOrder={[
             "po_no", "customer", "subcontractor", "contract_model", "im_full_name",
             "project_name", "project_domain", "site_name", "item_code", "item_description",
             "tax_rate", "payment_terms", "im_submission_status", "im_confirmation_note",
-            "pic_status_ms2", "pic_detail_remark", "pic_detail_remark_ms2",
+            "pic_status_effective", "pic_status_ms2", "pic_detail_remark", "pic_detail_remark_ms2",
+            "ms1_applied_date", "ms2_applied_date", "ms1_amount", "ms2_amount",
+            "ms1_invoiced", "ms2_invoiced",
           ]}
         />
       </div>
@@ -74,7 +99,17 @@ function DetailModal({ row, onClose }) {
   );
 }
 
-export default function PICPending() {
+// A row lands here once both milestones are resolved (MS1 closed/submitted,
+// and MS2 either also resolved or zero — see _PIC_EFFECTIVELY_CLOSED_SQL in
+// pic.py, which reuses the same dispatch_status='Closed' signal
+// update_pic_row/bulk_update_pic_status already compute). Kept as its own
+// module — mirroring Cancelled — rather than left mixed into Active, so
+// PIC's day-to-day Tracker view only ever shows lines that still need
+// attention. The one action here: revert a line back to Active with a
+// specific milestone status, for when PIC needs to reopen something that
+// was closed too early (e.g. an invoice gets disputed after being marked
+// Submitted).
+export default function PICClosed() {
   const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -87,23 +122,28 @@ export default function PICPending() {
   const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
   const displayedCount = Math.min(rows.length, displayLimit);
   const [error, setError] = useState(null);
-  const [selected, setSelected] = useState(new Set());
   const [toastMsg, setToastMsg] = useState(null);
-  const [detailRow, setDetailRow] = useState(null);
-
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
-  const [poStatusFilter, setPoStatusFilter] = useState([]);
   const [subconFilter, setSubconFilter] = useState([]);
+  const [imFilter, setImFilter] = useState([]);
+  const [picFilter, setPicFilter] = useState([]);
+  const [picMs2Filter, setPicMs2Filter] = useState([]);
+  const [detailRow, setDetailRow] = useState(null);
+  const [selected, setSelected] = useState(new Set());
 
-  const [showBulk, setShowBulk] = useState(false);
-  const [bulkMilestone, setBulkMilestone] = useState("MS1");
-  const [bulkStatus, setBulkStatus] = useState(TARGET_STATUSES[0]);
-  const [bulkRemark, setBulkRemark] = useState("");
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkErr, setBulkErr] = useState(null);
+  const [showRevert, setShowRevert] = useState(false);
+  const [revertMilestone, setRevertMilestone] = useState("MS1");
+  const [revertStatus, setRevertStatus] = useState(REVERT_STATUS_OPTIONS[0]);
+  const [revertRemark, setRevertRemark] = useState("");
+  const [revertBusy, setRevertBusy] = useState(false);
+  const [revertErr, setRevertErr] = useState(null);
+
+  const [showMarkClosed, setShowMarkClosed] = useState(false);
+  const [markClosedBusy, setMarkClosedBusy] = useState(false);
+  const [markClosedErr, setMarkClosedErr] = useState(null);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const load = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -125,8 +165,10 @@ export default function PICPending() {
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
       if (projectFilter.length) portal.project_code = projectFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
-      if (poStatusFilter.length) portal.dispatch_status = poStatusFilter;
       if (subconFilter.length) portal.subcontractor = subconFilter;
+      if (imFilter.length) portal.im = imFilter;
+      if (picFilter.length) portal.pic_status = picFilter;
+      if (picMs2Filter.length) portal.pic_status_ms2 = picMs2Filter;
       const signature = JSON.stringify([portal, refreshKey]);
 
       const prev = lastFetchRef.current;
@@ -147,7 +189,7 @@ export default function PICPending() {
       setLoading(true);
       setError(null);
       try {
-        const res = await pmApi.listPicRows("pending", portal, rowLimit);
+        const res = await pmApi.listPicRows("closed", portal, rowLimit);
         if (cancelled) return;
         const fetchedRows = Array.isArray(res?.rows) ? res.rows : [];
         setRows(fetchedRows);
@@ -156,25 +198,40 @@ export default function PICPending() {
         lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
       } catch (err) {
         if (cancelled) return;
-        setError(err.message || "Failed to load pending POIDs");
+        setError(err.message || "Failed to load closed POIDs");
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, projectFilter, duidFilter, poStatusFilter, subconFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, projectFilter, duidFilter, subconFilter, imFilter, picFilter, picMs2Filter, rowLimit, refreshKey]);
 
-  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract", "im"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
   const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
+  // useFilterOptions only gives raw IM ids (link field) — enrich with the
+  // full name from whatever's currently loaded, same pattern as
+  // RolloutPlanning.jsx's imOptionRows. Falls back to the raw id for an IM
+  // not present in the current slice.
+  const imOptions = useMemo(() => {
+    const ids = dispOpts.im || [];
+    const labelById = {};
+    for (const r of rows) {
+      if (r.im && r.im_full_name) labelById[r.im] = r.im_full_name;
+    }
+    return ids.map((id) => ({ id, label: labelById[id] || id }));
+  }, [dispOpts.im, rows]);
 
-  const hasFilters = !!(search || projectFilter.length || duidFilter.length || poStatusFilter.length || subconFilter.length);
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || subconFilter.length || imFilter.length || picFilter.length || picMs2Filter.length);
 
   const totals = useMemo(() => {
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
-    return { qty: sum("qty"), line_amount: sum("line_amount"), ms1_amount: sum("ms1_amount") };
+    return {
+      qty: sum("qty"), line_amount: sum("line_amount"),
+      ms1_amount: sum("ms1_amount"), ms2_amount: sum("ms2_amount"),
+    };
   }, [rows]);
 
   function toggleRow(name) {
@@ -197,27 +254,71 @@ export default function PICPending() {
     }
   }
 
-  async function submitBulk() {
+  // How many of the current selection actually have a milestone sitting at
+  // "Commercial Invoice Submitted" — shown in the Mark Closed confirmation
+  // so PIC knows upfront how many rows the action will actually touch vs.
+  // leave untouched (e.g. rows already fully Closed on both milestones).
+  const markClosedEligible = useMemo(() => {
+    const byName = new Map(rows.map((r) => [r.po_dispatch, r]));
+    let count = 0;
+    for (const name of selected) {
+      const r = byName.get(name);
+      if (!r) continue;
+      if (r.pic_status_effective === "Commercial Invoice Submitted" || r.pic_status_ms2 === "Commercial Invoice Submitted") count++;
+    }
+    return count;
+  }, [rows, selected]);
+
+  async function submitMarkClosed() {
     if (!selected.size) return;
-    setBulkBusy(true);
-    setBulkErr(null);
+    setMarkClosedBusy(true);
+    setMarkClosedErr(null);
     try {
-      const res = await pmApi.bulkUpdatePicStatus(Array.from(selected), bulkStatus, bulkMilestone, bulkRemark);
+      const res = await pmApi.closePicSubmittedMilestones(Array.from(selected));
       const ok = res?.summary?.updated_count ?? 0;
+      const noChange = res?.summary?.no_change_count ?? 0;
       const errN = res?.summary?.error_count ?? 0;
       if (errN === 0) {
-        setShowBulk(false);
-        setToastMsg(`Updated ${ok} POID${ok !== 1 ? "s" : ""} → ${bulkStatus} (${bulkMilestone}).`);
-        setTimeout(() => setToastMsg(null), 4500);
+        setShowMarkClosed(false);
+        setToastMsg(
+          `Marked ${ok} POID${ok !== 1 ? "s" : ""} fully Closed (Submitted → Closed)`
+          + (noChange ? ` — ${noChange} already had nothing to close.` : ".")
+        );
+        setTimeout(() => setToastMsg(null), 5500);
         setSelected(new Set());
         await load();
       } else {
-        setBulkErr(`${ok} updated, ${errN} failed`);
+        setMarkClosedErr(`${ok} updated, ${noChange} unchanged, ${errN} failed`);
       }
     } catch (err) {
-      setBulkErr(err.message || "Bulk update failed");
+      setMarkClosedErr(err.message || "Mark Closed failed");
     } finally {
-      setBulkBusy(false);
+      setMarkClosedBusy(false);
+    }
+  }
+
+  async function submitRevert() {
+    if (!selected.size) return;
+    setRevertBusy(true);
+    setRevertErr(null);
+    try {
+      const res = await pmApi.bulkUpdatePicStatus(Array.from(selected), revertStatus, revertMilestone, revertRemark);
+      const ok = res?.summary?.updated_count ?? 0;
+      const errN = res?.summary?.error_count ?? 0;
+      if (errN === 0) {
+        setShowRevert(false);
+        setToastMsg(`Reverted ${ok} POID${ok !== 1 ? "s" : ""} to ${revertStatus} (${revertMilestone}) — moved back to Active.`);
+        setTimeout(() => setToastMsg(null), 4500);
+        setSelected(new Set());
+        setRevertRemark("");
+        await load();
+      } else {
+        setRevertErr(`${ok} updated, ${errN} failed`);
+      }
+    } catch (err) {
+      setRevertErr(err.message || "Revert failed");
+    } finally {
+      setRevertBusy(false);
     }
   }
 
@@ -226,18 +327,15 @@ export default function PICPending() {
       <div className="page-header">
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <h1 className="page-title">Pending</h1>
+            <h1 className="page-title">Closed</h1>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#f1f5f9", color: "#334155", border: "1px solid #e2e8f0", fontSize: "0.74rem", fontWeight: 700 }}>
               <span style={{ opacity: 0.85 }}>Total Lines</span> <span>{fmtInt.format(totalCount)}</span>
             </div>
           </div>
-          <div className="page-subtitle">
-            POIDs that haven't reached PIC yet (Work Not Done / no status), plus lines flagged "PO Need to Cancel".
-            Select rows to flag them for cancellation or confirm the cancellation.
-          </div>
+          <div className="page-subtitle">Fully closed POIDs.</div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton filename="pic-pending" rows={rows.slice(0, displayedCount)} />
+          <ExportExcelButton filename="pic-closed" rows={rows.slice(0, displayedCount)} />
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
@@ -259,12 +357,14 @@ export default function PICPending() {
           onPaste={(e) => handleSearchPaste(e, setSearch)}
           style={{ minWidth: 280 }}
         />
+        <SearchableSelect multi value={picFilter} onChange={setPicFilter} options={PIC_STATUSES} placeholder="All PIC Status (MS1)" minWidth={180} />
+        <SearchableSelect multi value={picMs2Filter} onChange={setPicMs2Filter} options={PIC_STATUSES} placeholder="All PIC Status (MS2)" minWidth={180} />
+        <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imOptions} placeholder="All IMs" minWidth={160} />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
-        <SearchableSelect multi value={poStatusFilter} onChange={setPoStatusFilter} options={PO_STATUSES} placeholder="PO Status" minWidth={150} />
         <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setPoStatusFilter([]); setSubconFilter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setImFilter([]); setPicFilter([]); setPicMs2Filter([]); }}>
             Clear
           </button>
         )}
@@ -278,9 +378,17 @@ export default function PICPending() {
             type="button"
             className="btn-primary"
             disabled={selected.size === 0}
-            onClick={() => { setBulkErr(null); setBulkStatus(TARGET_STATUSES[0]); setShowBulk(true); }}
+            onClick={() => { setMarkClosedErr(null); setShowMarkClosed(true); }}
           >
-            Set Cancellation Status ({selected.size})
+            Mark Closed ({selected.size})
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={selected.size === 0}
+            onClick={() => { setRevertErr(null); setShowRevert(true); }}
+          >
+            Revert to Active ({selected.size})
           </button>
         </div>
       </div>
@@ -293,7 +401,7 @@ export default function PICPending() {
 
       <div className="page-content">
         <DataTableWrapper loading={loading && rows.length > 0}>
-          <table className="data-table" data-table-key="pic-pending-v3">
+          <table className="data-table" data-table-key="pic-closed-v3">
             <thead>
               <tr>
                 <th style={{ width: 36 }}>
@@ -316,9 +424,16 @@ export default function PICPending() {
                 <th style={{ textAlign: "right" }}>Line Amount</th>
                 <th>IM Status</th>
                 <th>PIC Status (MS1)</th>
+                <th>Applied Date (MS1)</th>
+                <th>Invoicing Month (MS1)</th>
                 <th style={{ textAlign: "right" }}>MS1 %</th>
                 <th style={{ textAlign: "right" }}>MS1 Amt</th>
                 <th>PIC Status (MS2)</th>
+                <th>Applied Date (MS2)</th>
+                <th>Invoicing Month (MS2)</th>
+                <th style={{ textAlign: "right" }}>MS2 %</th>
+                <th style={{ textAlign: "right" }}>MS2 Amt</th>
+                <th>Linked Invoice</th>
                 <th>Remarks</th>
                 <th>View</th>
               </tr>
@@ -326,14 +441,14 @@ export default function PICPending() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={23} style={{ padding: 0 }}>
+                  <td colSpan={30} style={{ padding: 0 }}>
                     {loading ? (
                       <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                     ) : (
                       <div className="empty-state">
-                        <div className="empty-icon">📥</div>
-                        <h3>{hasFilters ? "No matching POIDs" : "Nothing pending"}</h3>
-                        <p>{hasFilters ? "Adjust your filters." : "Every POID has either reached PIC or been cancelled."}</p>
+                        <div className="empty-icon">✅</div>
+                        <h3>{hasFilters ? "No matching POIDs" : "No closed lines"}</h3>
+                        <p>{hasFilters ? "Adjust your filters." : "Fully closed POIDs will appear here."}</p>
                       </div>
                     )}
                   </td>
@@ -364,9 +479,38 @@ export default function PICPending() {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.line_amount || 0)}</td>
                   <td><IMStatusBadge value={r.im_submission_status} /></td>
                   <td><PicStatusBadge value={r.pic_status_effective} /></td>
+                  <td style={{ fontSize: "0.78rem" }}>{r.ms1_applied_date ? String(r.ms1_applied_date).slice(0, 10) : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{r.ms1_invoice_month ? fmtMonthLabel(String(r.ms1_invoice_month)) : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmtInt.format(r.ms1_pct)}%` : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
                   <td><PicStatusBadge value={r.pic_status_ms2} /></td>
+                  <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{r.ms2_invoice_month ? fmtMonthLabel(String(r.ms2_invoice_month)) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmtInt.format(r.ms2_pct)}%` : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    {(() => {
+                      const csv = r.linked_invoices_csv;
+                      if (!csv) return <span style={{ color: "#cbd5e1", fontSize: "0.78rem" }}>—</span>;
+                      const entries = csv.split(", ").map((entry) => {
+                        const parts = entry.split("|");
+                        return { name: parts[0], status: parts[1] || "?" };
+                      });
+                      return (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {entries.map((inv) => (
+                            <a key={inv.name} href={`/app/sales-invoice/${inv.name}`} target="_blank" rel="noopener noreferrer"
+                              style={{ fontSize: "0.78rem", fontWeight: 600, color: "#1d4ed8", whiteSpace: "nowrap" }}>
+                              {inv.name}
+                              <span style={{ fontSize: "0.66rem", color: inv.status === "Submitted" ? "#047857" : "#b45309", marginLeft: 6 }}>
+                                ({inv.status})
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td style={{ fontSize: "0.78rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#64748b" }} title={r.pic_detail_remark || r.pic_detail_remark_ms2 || ""}>
                     {r.pic_detail_remark || r.pic_detail_remark_ms2 || "—"}
                   </td>
@@ -400,9 +544,16 @@ export default function PICPending() {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.line_amount)}</td>{/* Line Amount */}
                   <td></td>{/* IM Status */}
                   <td></td>{/* PIC Status MS1 */}
+                  <td></td>{/* Applied Date MS1 */}
+                  <td></td>{/* Invoicing Month MS1 */}
                   <td></td>{/* MS1 % */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
                   <td></td>{/* PIC Status MS2 */}
+                  <td></td>{/* Applied Date MS2 */}
+                  <td></td>{/* Invoicing Month MS2 */}
+                  <td></td>{/* MS2 % */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
+                  <td></td>{/* Linked Invoice */}
                   <td></td>{/* Remarks */}
                   <td></td>{/* View */}
                 </tr>
@@ -418,43 +569,61 @@ export default function PICPending() {
         />
       </div>
 
-      {showBulk && (
+      {showMarkClosed && (
         <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-             onClick={bulkBusy ? undefined : () => setShowBulk(false)}>
+             onClick={markClosedBusy ? undefined : () => setShowMarkClosed(false)}>
           <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(440px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
                onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: "1rem" }}>Set Cancellation Status <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size}</span></h3>
-              <button type="button" onClick={() => setShowBulk(false)} disabled={bulkBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Mark Closed <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size}</span></h3>
+              <button type="button" onClick={() => setShowMarkClosed(false)} disabled={markClosedBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            <div style={{ fontSize: "0.82rem", fontWeight: 600, color: markClosedEligible ? "#047857" : "#b45309", marginBottom: 12, padding: "8px 10px", background: markClosedEligible ? "#ecfdf5" : "#fffbeb", border: `1px solid ${markClosedEligible ? "#a7f3d0" : "#fde68a"}`, borderRadius: 8 }}>
+              {markClosedEligible} of {selected.size} have a Submitted milestone to close.
+            </div>
+            {markClosedErr && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {markClosedErr}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="btn-secondary" onClick={() => setShowMarkClosed(false)} disabled={markClosedBusy}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitMarkClosed} disabled={markClosedBusy}>
+                {markClosedBusy ? "Updating…" : `Mark Closed (${selected.size})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRevert && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={revertBusy ? undefined : () => setShowRevert(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(440px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Revert to Active <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size}</span></h3>
+              <button type="button" onClick={() => setShowRevert(false)} disabled={revertBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
             </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Milestone</label>
-              <select value={bulkMilestone} onChange={(e) => setBulkMilestone(e.target.value)} disabled={bulkBusy}>
+              <select value={revertMilestone} onChange={(e) => setRevertMilestone(e.target.value)} disabled={revertBusy}>
                 <option value="MS1">MS1 (1st Payment)</option>
                 <option value="MS2">MS2 (2nd Payment)</option>
               </select>
             </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>New Status</label>
-              <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} disabled={bulkBusy}>
-                {TARGET_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+              <select value={revertStatus} onChange={(e) => setRevertStatus(e.target.value)} disabled={revertBusy}>
+                {REVERT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-              {bulkStatus === "PO Line Canceled" && (
-                <div style={{ fontSize: "0.76rem", color: "#b45309", marginTop: 6 }}>
-                  This cancels the whole dispatch and moves it to the Cancelled page.
-                </div>
-              )}
             </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>
-              <textarea rows={2} value={bulkRemark} onChange={(e) => setBulkRemark(e.target.value)} disabled={bulkBusy}
+              <textarea rows={2} value={revertRemark} onChange={(e) => setRevertRemark(e.target.value)} disabled={revertBusy}
                 style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
             </div>
-            {bulkErr && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {bulkErr}</div>}
+            {revertErr && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {revertErr}</div>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button type="button" className="btn-secondary" onClick={() => setShowBulk(false)} disabled={bulkBusy}>Cancel</button>
-              <button type="button" className="btn-primary" onClick={submitBulk} disabled={bulkBusy}>
-                {bulkBusy ? "Updating…" : `Update ${selected.size}`}
+              <button type="button" className="btn-secondary" onClick={() => setShowRevert(false)} disabled={revertBusy}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitRevert} disabled={revertBusy}>
+                {revertBusy ? "Updating…" : `Revert ${selected.size}`}
               </button>
             </div>
           </div>

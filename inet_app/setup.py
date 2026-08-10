@@ -284,7 +284,10 @@ def _ensure_pic_permissions():
 
     # Doctypes PIC needs and the flags it requires (permlevel 0)
     doctypes = [
-        ("Sales Invoice",                  {"read": 1, "write": 1, "create": 1}),
+        # delete/cancel: PIC needs to remove a stray/duplicate draft invoice
+        # and cancel an already-submitted one (e.g. to correct a mistake)
+        # without going through an Administrator.
+        ("Sales Invoice",                  {"read": 1, "write": 1, "create": 1, "delete": 1, "cancel": 1}),
         ("Sales Invoice Item",             {"read": 1, "write": 1, "create": 1}),
         ("Sales Taxes and Charges",        {"read": 1}),
         ("Sales Taxes and Charges Template", {"read": 1}),

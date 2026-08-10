@@ -120,9 +120,16 @@ function TopSummaryCard({ top }) {
 // actually lives there while its OTHER milestone is also untouched, but
 // most of a bucket's volume genuinely does. "PO Line Canceled" always means
 // the whole row lives on the Cancelled page (Page 3). Everything else is
-// unambiguous and lives on PIC Tracker (Page 2).
-const PENDING_STATUSES_SET = new Set(["Work Not Done", "PO Need to Cancel"]);
+// unambiguous and lives on PIC Tracker (Page 2). "PO Need to Cancel" is NOT
+// here — per _PIC_PENDING_STATUSES_SQL in pic.py only "Work Not Done" counts
+// as pending; a flagged-to-cancel row is deterministically Active/Tracker.
+const PENDING_STATUSES_SET = new Set(["Work Not Done"]);
 const CANCELLED_STATUS = "PO Line Canceled";
+// "Commercial Invoice Closed" on one milestone only actually lands on the
+// Closed page once BOTH milestones are resolved — see the matching
+// CLOSED_BUCKETS comment in PICDashboard.jsx for the same "majority case"
+// reasoning applied here.
+const CLOSED_STATUSES_SET = new Set(["Commercial Invoice Closed"]);
 
 function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
   const navigate = useNavigate();
@@ -138,6 +145,8 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
       navigate("/pic-cancelled");
     } else if (PENDING_STATUSES_SET.has(status)) {
       navigate("/pic-pending");
+    } else if (CLOSED_STATUSES_SET.has(status)) {
+      navigate("/pic-closed");
     } else {
       const param = milestone === "ms2" ? "pic_ms2_status" : "pic_status";
       navigate(`/pic-tracker?${param}=${encodeURIComponent(status)}`);

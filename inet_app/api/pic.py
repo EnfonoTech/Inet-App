@@ -58,11 +58,15 @@ _PIC_LINE_CANCELED_SQL = (
 # 'Work Not Done', same convention already used ad hoc elsewhere in this file.
 _PIC_MS2_EFFECTIVE_SQL = "COALESCE(NULLIF(pd.pic_status_ms2,''), 'Work Not Done')"
 
-_PIC_PENDING_STATUSES_SQL = "('Work Not Done', 'PO Need to Cancel')"
+_PIC_PENDING_STATUSES_SQL = "('Work Not Done')"
 
 # A row is "Pending" (hasn't reached PIC yet) only when BOTH milestones are
-# still untouched/flagged-to-cancel — a row with one milestone progressed
-# belongs in the Active stage even if the other hasn't started.
+# still genuinely untouched — a row with one milestone progressed (including
+# just flagged "PO Need to Cancel") belongs in the Active stage even if the
+# other hasn't started. "PO Need to Cancel" deliberately does NOT count as
+# "still pending" here — flagging a line to cancel is itself PIC taking
+# action on it, so it belongs on the Active page like any other in-progress
+# status, not lumped in with untouched "Work Not Done" rows.
 _PIC_PENDING_SQL = f"""
 (({_PIC_INITIAL_RULE_SQL.strip()}) IN {_PIC_PENDING_STATUSES_SQL}
  AND {_PIC_MS2_EFFECTIVE_SQL} IN {_PIC_PENDING_STATUSES_SQL})
@@ -79,9 +83,18 @@ _PIC_DISPATCH_CANCELLED_SQL = "IFNULL(pd.dispatch_status,'') = 'Cancelled'"
 # silently change unrelated financial totals those queries were tuned for.
 _PIC_EFFECTIVELY_CANCELLED_SQL = f"({_PIC_LINE_CANCELED_SQL} OR {_PIC_DISPATCH_CANCELLED_SQL})"
 
+# Page-routing only, same spirit as _PIC_EFFECTIVELY_CANCELLED_SQL above:
+# dispatch_status='Closed' is already the authoritative "both milestones
+# resolved" signal update_pic_row/bulk_update_pic_status compute and persist
+# (see _PIC_MS_RESOLVED_FOR_CLOSE below) — reuse it directly rather than
+# re-deriving the same rule here a second time.
+_PIC_DISPATCH_CLOSED_SQL = "IFNULL(pd.dispatch_status,'') = 'Closed'"
+_PIC_EFFECTIVELY_CLOSED_SQL = f"({_PIC_DISPATCH_CLOSED_SQL} AND NOT {_PIC_EFFECTIVELY_CANCELLED_SQL})"
+
 _PIC_STAGE_SQL = {
     "pending": f"({_PIC_PENDING_SQL} AND NOT {_PIC_EFFECTIVELY_CANCELLED_SQL})",
-    "active": f"(NOT {_PIC_PENDING_SQL} AND NOT {_PIC_EFFECTIVELY_CANCELLED_SQL})",
+    "active": f"(NOT {_PIC_PENDING_SQL} AND NOT {_PIC_EFFECTIVELY_CANCELLED_SQL} AND NOT {_PIC_EFFECTIVELY_CLOSED_SQL})",
+    "closed": _PIC_EFFECTIVELY_CLOSED_SQL,
     "cancelled": _PIC_EFFECTIVELY_CANCELLED_SQL,
 }
 
@@ -527,6 +540,41 @@ def _batch_linked_invoices(po_dispatch_names):
     return {r["po_dispatch"]: r["linked_invoices_csv"] for r in rows}
 
 
+def _batch_draft_invoices_by_milestone(poids):
+    """Return {(poid, "MS1"|"MS2"): sales_invoice_name} for every DRAFT
+    (docstatus=0) Sales Invoice Item among ``poids`` — used by
+    create_sales_invoice_from_pic to block spinning up a duplicate draft for
+    a POID/milestone that already has one sitting unsubmitted.
+
+    A legacy line with no ``milestone`` tag can't be attributed to one
+    milestone or the other, so it conservatively blocks BOTH — safer than
+    guessing and letting a real duplicate through.
+    """
+    names = list({n for n in (poids or []) if n})
+    if not names or not frappe.db.has_column("Sales Invoice Item", "poid"):
+        return {}
+    ph = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"""
+        SELECT sii.poid AS poid, UPPER(IFNULL(sii.milestone,'')) AS milestone, si.name AS si_name
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        WHERE si.docstatus = 0 AND sii.poid IN ({ph})
+        """,
+        tuple(names),
+        as_dict=True,
+    )
+    out = {}
+    for r in rows:
+        ms = r["milestone"]
+        if ms in ("MS1", "MS2"):
+            out.setdefault((r["poid"], ms), r["si_name"])
+        else:
+            out.setdefault((r["poid"], "MS1"), r["si_name"])
+            out.setdefault((r["poid"], "MS2"), r["si_name"])
+    return out
+
+
 @frappe.whitelist()
 def pic_invoicing_summary(portal_filters=None):
     """Aggregate invoicing summary grouped by PIC status — INET vs Subcon split.
@@ -883,6 +931,41 @@ def get_pic_summary_filter_options():
 # paths, not just historically stamped that way by import/legacy bugs.
 _PIC_MS_RESOLVED_FOR_CLOSE = {"Commercial Invoice Closed", "Commercial Invoice Submitted"}
 
+_PIC_REJECTED_STATUSES = {"I-BUY Rejected", "ISDP Rejected"}
+
+
+def _reflect_pic_rejection(po_dispatch_name, closed_flag):
+    """Mirror a milestone landing on I-BUY Rejected / ISDP Rejected onto the
+    IM's own portal: marks/creates a Work Done record 'PIC Rejected' (same
+    as reject_pic_line does) so it shows up on IM Work Done's PIC Rejected
+    tab, then notifies the IM. Factored out so update_pic_row and
+    bulk_update_pic_status get the same reflection reject_pic_line always
+    had — without this, setting one of these two statuses via the generic
+    "Bulk Set Status" path (instead of the dedicated Reject action) silently
+    skipped both the IM notification and the Work Done record entirely.
+    """
+    wd_docs = frappe.get_all(
+        "Work Done",
+        filters={"system_id": po_dispatch_name, "submission_status": "Confirmation Done"},
+        fields=["name"],
+    )
+    if wd_docs:
+        for wd in wd_docs:
+            frappe.db.set_value("Work Done", wd.name, "submission_status", "PIC Rejected", update_modified=True)
+    else:
+        new_wd = frappe.new_doc("Work Done")
+        new_wd.system_id = po_dispatch_name
+        new_wd.submission_status = "PIC Rejected"
+        new_wd.source = "Direct Close"  # closest existing option; no real execution chain behind this
+        new_wd.set(closed_flag, 1)
+        new_wd.insert(ignore_permissions=True)
+    frappe.db.commit()
+    try:
+        from inet_app.api.notifications import notify_im_pic_rejected
+        notify_im_pic_rejected(po_dispatch_name)
+    except Exception:
+        pass
+
 # Fields the PIC is allowed to write via update_pic_row. Anything outside this
 # allowlist is silently ignored to keep the IM/admin-owned columns safe.
 _PIC_WRITABLE = (
@@ -917,6 +1000,8 @@ def update_pic_row(po_dispatch, fields):
         frappe.throw("Internal work does not enter the PIC / invoicing flow.")
 
     doc = frappe.get_doc("PO Dispatch", po_dispatch)
+    old_ms1 = (doc.pic_status or "").strip()
+    old_ms2 = (doc.pic_status_ms2 or "").strip()
     touched = []
     for k, v in fields.items():
         if k not in _PIC_WRITABLE_SET:
@@ -934,19 +1019,47 @@ def update_pic_row(po_dispatch, fields):
     cancelled = "PO Line Canceled"
     new_ms1 = (fields.get("pic_status") or "").strip()
     new_ms2 = (fields.get("pic_status_ms2") or "").strip()
-    # Only close dispatch when both milestones are resolved — "resolved"
-    # means either actually closed or the invoice has been submitted (see
-    # _PIC_MS_RESOLVED_FOR_CLOSE).
-    if new_ms1 in _PIC_MS_RESOLVED_FOR_CLOSE or new_ms2 in _PIC_MS_RESOLVED_FOR_CLOSE:
-        ms1_closed = new_ms1 in _PIC_MS_RESOLVED_FOR_CLOSE or (doc.pic_status or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
-        ms2_closed = new_ms2 in _PIC_MS_RESOLVED_FOR_CLOSE or (doc.pic_status_ms2 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
+    ms1_touched = "pic_status" in fields
+    ms2_touched = "pic_status_ms2" in fields
+    # "resolved" means either actually closed or the invoice has been
+    # submitted (see _PIC_MS_RESOLVED_FOR_CLOSE). Only recompute when this
+    # call actually touches a milestone status — eff_ms1/eff_ms2 fall back
+    # to the stored value for whichever one this call didn't touch, so a
+    # single-milestone update still sees the OTHER milestone's real state.
+    if ms1_touched or ms2_touched:
+        eff_ms1 = new_ms1 if ms1_touched else old_ms1
+        eff_ms2 = new_ms2 if ms2_touched else old_ms2
+        ms1_resolved = eff_ms1 in _PIC_MS_RESOLVED_FOR_CLOSE
+        ms2_resolved = eff_ms2 in _PIC_MS_RESOLVED_FOR_CLOSE
         ms2_zero = flt(doc.ms2_amount or 0) == 0
-        if ms1_closed and (ms2_closed or ms2_zero):
+        if ms1_resolved and (ms2_resolved or ms2_zero):
             doc.dispatch_status = "Closed"
+        elif (doc.dispatch_status or "").strip() == "Closed":
+            # Was Closed; this change means it no longer qualifies — PIC
+            # reopened the invoicing state on one of the milestones. The
+            # underlying work is still done, so land back on "Completed"
+            # (not further back) rather than leaving a stale "Closed".
+            doc.dispatch_status = "Completed"
     # A line canceled on either milestone cancels the whole dispatch —
-    # takes priority over the closed check above.
+    # takes priority over the closed/revert check above.
     if new_ms1 == cancelled or new_ms2 == cancelled:
         doc.dispatch_status = "Cancelled"
+
+    # Manually flipping a milestone to Submitted/Closed here (as opposed to
+    # the normal Sales-Invoice-submit flow, which sets pic_status and
+    # ms1_invoiced together) would otherwise leave ms1_invoiced/ms2_invoiced
+    # at whatever they were before — commonly 0 — while the status claims
+    # the milestone is done. Force the invoiced amount to match on a
+    # genuine transition so status and money can't drift apart; ms1_unbilled/
+    # ms2_unbilled then self-correct via _compute_ms_amounts() in
+    # doc.save() below. ms1_invoiced/ms2_invoiced aren't in _PIC_WRITABLE, so
+    # there's no legitimate partial-invoice value in `fields` this could
+    # clobber.
+    if ms1_touched and new_ms1 in _PIC_MS_RESOLVED_FOR_CLOSE and old_ms1 != new_ms1:
+        doc.ms1_invoiced = flt(doc.ms1_amount or 0)
+    if ms2_touched and new_ms2 in _PIC_MS_RESOLVED_FOR_CLOSE and old_ms2 != new_ms2:
+        doc.ms2_invoiced = flt(doc.ms2_amount or 0)
+
     billing = None
     if new_ms1 == submitted or new_ms2 == submitted:
         billing = "Invoiced"
@@ -959,6 +1072,15 @@ def update_pic_row(po_dispatch, fields):
     doc.save()
     frappe.db.commit()
 
+    # Reflect a NEW transition into I-BUY Rejected / ISDP Rejected onto the
+    # IM's own portal — see _reflect_pic_rejection. Gated on old != new so
+    # editing some unrelated field on an already-rejected line doesn't
+    # re-notify every time.
+    if ms1_touched and new_ms1 in _PIC_REJECTED_STATUSES and old_ms1 != new_ms1:
+        _reflect_pic_rejection(doc.name, "ms1_closed")
+    if ms2_touched and new_ms2 in _PIC_REJECTED_STATUSES and old_ms2 != new_ms2:
+        _reflect_pic_rejection(doc.name, "ms2_closed")
+
     # Close the PO Intake Line only when both milestones are done:
     # MS1 closed AND (MS2 closed OR MS2 amount is zero / doesn't exist).
     # A line-canceled milestone cancels it immediately, with its own
@@ -968,14 +1090,27 @@ def update_pic_row(po_dispatch, fields):
     ms2_zero = flt(doc.ms2_amount or 0) == 0
     ms1_cancelled = (doc.pic_status or "").strip() == cancelled
     ms2_cancelled = (doc.pic_status_ms2 or "").strip() == cancelled
-    il_status = "Cancelled" if (ms1_cancelled or ms2_cancelled) else "Closed"
-    if (ms1_closed and (ms2_closed or ms2_zero)) or ms1_cancelled or ms2_cancelled:
-        if doc.po_intake and doc.po_line_no:
-            il = frappe.db.exists("PO Intake Line",
-                {"parent": doc.po_intake, "po_line_no": doc.po_line_no})
-            if il and isinstance(il, str):
+    if ms1_cancelled or ms2_cancelled:
+        il_status = "Cancelled"
+    elif ms1_closed and (ms2_closed or ms2_zero):
+        il_status = "Closed"
+    else:
+        il_status = None
+    if doc.po_intake and doc.po_line_no:
+        il = frappe.db.exists("PO Intake Line",
+            {"parent": doc.po_intake, "po_line_no": doc.po_line_no})
+        if il and isinstance(il, str):
+            if il_status:
                 frappe.db.set_value("PO Intake Line", il, "po_line_status", il_status)
                 frappe.db.commit()
+            elif ms1_touched or ms2_touched:
+                # Neither closed nor cancelled after an explicit status
+                # change — if the intake line was previously Closed, reopen
+                # it too rather than leaving it stale.
+                current_il_status = frappe.db.get_value("PO Intake Line", il, "po_line_status")
+                if current_il_status == "Closed":
+                    frappe.db.set_value("PO Intake Line", il, "po_line_status", "Completed")
+                    frappe.db.commit()
 
     if billing:
         wd_names = frappe.db.get_all("Work Done", {"system_id": doc.name}, pluck="name")
@@ -1093,12 +1228,13 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
             # alone was the bug: MS1 → Commercial Invoice Closed used to
             # force dispatch_status=Closed even with MS2 still open.
             pd = frappe.db.get_value("PO Dispatch", name,
-                ["pic_status", "pic_status_ms2", "ms2_amount",
-                 "po_intake", "po_line_no"], as_dict=True)
+                ["pic_status", "pic_status_ms2", "ms1_amount", "ms2_amount",
+                 "po_intake", "po_line_no", "dispatch_status"], as_dict=True)
             if not pd:
                 errors.append({"po_dispatch": name, "error": "Not found"})
                 continue
 
+            old_status = old_values.get(name)
             new_ms1 = pic_status if status_field == "pic_status" else (pd.pic_status or "")
             new_ms2 = pic_status if status_field == "pic_status_ms2" else (pd.pic_status_ms2 or "")
             ms1_closed = (new_ms1 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
@@ -1112,12 +1248,32 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
                 payload[remark_field] = str(remark)[:8000]
             if applied_date:
                 payload[applied_date_field] = applied_date
+            # Manually bulk-flipping into Submitted/Closed here — as opposed
+            # to the normal Sales-Invoice-submit flow, which sets pic_status
+            # and ms1_invoiced together — would otherwise leave the invoiced
+            # amount at whatever it was before (commonly 0) while the status
+            # claims the milestone is done. Force it to match on a genuine
+            # transition; this path writes via raw set_value (bypasses
+            # doc.save()/_compute_ms_amounts()), so unbilled is set
+            # explicitly here too rather than left to recompute itself.
+            if pic_status in _PIC_MS_RESOLVED_FOR_CLOSE and (old_status or "").strip() != pic_status:
+                amount_field = "ms1_amount" if status_field == "pic_status" else "ms2_amount"
+                invoiced_field = "ms1_invoiced" if status_field == "pic_status" else "ms2_invoiced"
+                unbilled_field = "ms1_unbilled" if status_field == "pic_status" else "ms2_unbilled"
+                payload[invoiced_field] = flt(pd.get(amount_field) or 0)
+                payload[unbilled_field] = 0.0
             # A line canceled on either milestone cancels the whole dispatch
             # (takes priority); Closed requires both milestones resolved.
             if ms1_cancelled or ms2_cancelled:
                 payload["dispatch_status"] = "Cancelled"
             elif ms1_closed and (ms2_closed or ms2_zero):
                 payload["dispatch_status"] = "Closed"
+            elif (pd.dispatch_status or "").strip() == "Closed":
+                # Was Closed; this change means it no longer qualifies — PIC
+                # reopened the invoicing state on this milestone. The
+                # underlying work is still done, so land back on
+                # "Completed" rather than leaving a stale "Closed".
+                payload["dispatch_status"] = "Completed"
             frappe.db.set_value("PO Dispatch", name, payload, update_modified=True)
 
             # Same resolved condition drives the linked PO Intake Line.
@@ -1127,11 +1283,27 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
                 il_status = "Closed"
             else:
                 il_status = None
-            if il_status and pd.po_intake and pd.po_line_no:
+            if pd.po_intake and pd.po_line_no:
                 il = frappe.db.exists("PO Intake Line",
                     {"parent": pd.po_intake, "po_line_no": pd.po_line_no})
                 if il and isinstance(il, str):
-                    frappe.db.set_value("PO Intake Line", il, "po_line_status", il_status)
+                    if il_status:
+                        frappe.db.set_value("PO Intake Line", il, "po_line_status", il_status)
+                    else:
+                        # Neither closed nor cancelled after this change — if
+                        # the intake line was previously Closed, reopen it.
+                        current_il_status = frappe.db.get_value("PO Intake Line", il, "po_line_status")
+                        if current_il_status == "Closed":
+                            frappe.db.set_value("PO Intake Line", il, "po_line_status", "Completed")
+
+            # Reflect a NEW transition into I-BUY Rejected / ISDP Rejected
+            # onto the IM's own portal — see _reflect_pic_rejection. Gated
+            # on old != new so re-saving an already-rejected status doesn't
+            # re-notify every time.
+            if pic_status in _PIC_REJECTED_STATUSES and (old_status or "").strip() != pic_status:
+                closed_flag = "ms1_closed" if status_field == "pic_status" else "ms2_closed"
+                _reflect_pic_rejection(name, closed_flag)
+
             updated.append({"po_dispatch": name, status_field: pic_status})
         except Exception as e:
             errors.append({"po_dispatch": name, "error": frappe.utils.cstr(e)[:500]})
@@ -1166,6 +1338,142 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
             "error_count": len(errors),
             "field": status_field,
             "value": pic_status,
+        },
+    }
+
+
+@frappe.whitelist()
+def close_submitted_milestones(po_dispatches):
+    """Closed-page maintenance action: for rows already fully Closed
+    (dispatch_status='Closed'), flip whichever milestone(s) are still
+    sitting at "Commercial Invoice Submitted" over to "Commercial Invoice
+    Closed" — the final step once that milestone's payment actually clears.
+
+    Only ever touches a milestone that is literally Submitted right now — a
+    milestone that's blank/zero (no real MS2 to collect) or already Closed
+    is left untouched, so this can't manufacture a bogus "Closed" status on
+    a milestone that never applied. Per-row: MS1, MS2, or both get updated
+    depending on what's actually Submitted on that row — unlike
+    bulk_update_pic_status, this isn't a single milestone applied uniformly
+    across the whole selection.
+
+    Deliberately scoped to dispatch_status='Closed' rows — this is a Closed
+    page action, not a general status setter (use update_pic_row /
+    bulk_update_pic_status for anything else). A row not yet Closed is
+    reported as an error rather than silently promoted early.
+    """
+    _pic_role_or_throw()
+    if isinstance(po_dispatches, str):
+        try:
+            parsed = frappe.parse_json(po_dispatches)
+            if isinstance(parsed, (list, tuple)):
+                po_dispatches = parsed
+        except Exception:
+            po_dispatches = [po_dispatches]
+    if not isinstance(po_dispatches, (list, tuple)) or not po_dispatches:
+        frappe.throw("po_dispatches list is required")
+
+    submitted = "Commercial Invoice Submitted"
+    closed = "Commercial Invoice Closed"
+
+    ms1_updated = []
+    ms2_updated = []
+    old_values_ms1 = {}
+    old_values_ms2 = {}
+    no_change = []
+    errors = []
+
+    for name in po_dispatches:
+        name = str(name or "").strip()
+        if not name:
+            continue
+        if not frappe.db.exists("PO Dispatch", name):
+            errors.append({"po_dispatch": name, "error": "Not found"})
+            continue
+        if cint(frappe.db.get_value("PO Dispatch", name, "is_internal_work") or 0):
+            errors.append({"po_dispatch": name, "error": "Internal work — no PIC flow"})
+            continue
+
+        pd = frappe.db.get_value("PO Dispatch", name,
+            ["pic_status", "pic_status_ms2", "dispatch_status", "ms1_amount", "ms2_amount"], as_dict=True)
+        if (pd.dispatch_status or "").strip() != "Closed":
+            errors.append({"po_dispatch": name, "error": "Not on the Closed page — dispatch_status isn't Closed"})
+            continue
+
+        did_something = False
+        if (pd.pic_status or "").strip() == submitted:
+            old_values_ms1[name] = pd.pic_status
+            # Also self-heal ms1_invoiced/ms1_unbilled here — a row that
+            # reached Submitted through the manual bulk/row-edit path (rather
+            # than a real Sales Invoice) can still have invoiced=0 at this
+            # point; closing it should never leave that mismatch standing.
+            frappe.db.set_value("PO Dispatch", name, {
+                "pic_status": closed,
+                "ms1_invoiced": flt(pd.ms1_amount or 0),
+                "ms1_unbilled": 0.0,
+            }, update_modified=True)
+            ms1_updated.append({"po_dispatch": name, "pic_status": closed})
+            did_something = True
+        if (pd.pic_status_ms2 or "").strip() == submitted:
+            old_values_ms2[name] = pd.pic_status_ms2
+            frappe.db.set_value("PO Dispatch", name, {
+                "pic_status_ms2": closed,
+                "ms2_invoiced": flt(pd.ms2_amount or 0),
+                "ms2_unbilled": 0.0,
+            }, update_modified=True)
+            ms2_updated.append({"po_dispatch": name, "pic_status_ms2": closed})
+            did_something = True
+        if not did_something:
+            no_change.append(name)
+
+    updated_names = sorted({e["po_dispatch"] for e in ms1_updated + ms2_updated})
+    if updated_names:
+        wd_names = frappe.db.get_all("Work Done", {"system_id": ["in", updated_names]}, pluck="name")
+        for wd_name in wd_names:
+            frappe.db.set_value("Work Done", wd_name, "billing_status", "Closed")
+
+    # Same activity-log audit trail as bulk_update_pic_status, split by
+    # milestone since MS1 and MS2 can each have a different set of rows
+    # touched (and _write_pic_activity_log logs one milestone per call).
+    # "action" is a fixed Select on PIC Activity Log — "Bulk Status Update"
+    # is the closest existing option (same one bulk_update_pic_status uses);
+    # the remark spells out that this ran via the Closed-page action so it
+    # reads distinctly from an ordinary Bulk Set Status in the audit trail.
+    if ms1_updated:
+        _write_pic_activity_log(
+            action="Bulk Status Update", milestone="MS1",
+            field_changed="pic_status", new_value=closed,
+            updated=ms1_updated, old_values=old_values_ms1,
+            remark="Mark Closed (Submitted → Closed) — Closed page action",
+        )
+    if ms2_updated:
+        _write_pic_activity_log(
+            action="Bulk Status Update", milestone="MS2",
+            field_changed="pic_status_ms2", new_value=closed,
+            updated=ms2_updated, old_values=old_values_ms2,
+            remark="Mark Closed (Submitted → Closed) — Closed page action",
+        )
+
+    frappe.db.commit()
+
+    if updated_names:
+        _make_notification(
+            frappe.session.user,
+            f"[INFO] Marked {len(updated_names)} dispatch(es) fully Closed (Submitted milestone(s) → Closed)",
+            "PO Dispatch", None,
+        )
+
+    return {
+        "updated": updated_names,
+        "ms1_updated_count": len(ms1_updated),
+        "ms2_updated_count": len(ms2_updated),
+        "no_change": no_change,
+        "errors": errors,
+        "summary": {
+            "total": len(po_dispatches),
+            "updated_count": len(updated_names),
+            "no_change_count": len(no_change),
+            "error_count": len(errors),
         },
     }
 
@@ -1405,6 +1713,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
           COUNT(*) AS line_count,
           COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["pending"]} THEN 1 ELSE 0 END), 0) AS pending_count,
           COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["active"]} THEN 1 ELSE 0 END), 0) AS active_count,
+          COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["closed"]} THEN 1 ELSE 0 END), 0) AS closed_count,
           COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["cancelled"]} THEN 1 ELSE 0 END), 0) AS cancelled_count
         {_PIC_FROM_JOIN}
         WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
@@ -1425,6 +1734,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
             "line_count": cint(kpi.get("line_count") or 0),
             "pending_count": cint(kpi.get("pending_count") or 0),
             "active_count": cint(kpi.get("active_count") or 0),
+            "closed_count": cint(kpi.get("closed_count") or 0),
             "cancelled_count": cint(kpi.get("cancelled_count") or 0),
         },
         "buckets": bucket_rows,
@@ -1728,16 +2038,20 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
             frappe.throw(f"{dname} is internal work — it cannot be invoiced.")
         pds_raw.append(pd)
 
-    # Resolve the Ready milestone per row. When the caller already picked a
-    # milestone we still validate that the row is Ready for *that* milestone;
-    # when auto-detecting we let each row use whichever milestone is Ready.
+    # Resolve the Ready milestone(s) per row. When the caller already picked
+    # a milestone we still validate that the row is Ready for *that*
+    # milestone; when auto-detecting we let each row use whichever
+    # milestone(s) are Ready.
     pds = []          # (doc_dict, milestone, amount)
+    resolved = []     # (pd, dname, milestone, amount) — before the draft-conflict check
     for pd in pds_raw:
         dname = pd["name"]
         ms1_s = (pd.get("pic_status") or "").strip()
         ms2_s = (pd.get("pic_status_ms2") or "").strip()
         ms1_amt = flt(pd.get("ms1_amount") or 0)
         ms2_amt = flt(pd.get("ms2_amount") or 0)
+
+        row_entries = []  # [(milestone, amount), ...] — usually 1, can be 2
 
         if milestone:
             # Explicit milestone — validate that specific one
@@ -1754,34 +2068,24 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
             if cur in ("Commercial Invoice Submitted", "Commercial Invoice Closed"):
                 # Already invoiced for this milestone — try the other one
                 if row_milestone == "MS1" and ms2_s == "Ready for Invoice" and ms2_amt > 0:
-                    row_milestone = "MS2"
-                    row_amount = ms2_amt
+                    row_entries.append(("MS2", ms2_amt))
                 elif row_milestone == "MS2" and ms1_s == "Ready for Invoice" and ms1_amt > 0:
-                    row_milestone = "MS1"
-                    row_amount = ms1_amt
-                else:
-                    continue  # both already invoiced or other not ready — skip
-            elif not ready:
-                continue  # not ready for this milestone — skip
+                    row_entries.append(("MS1", ms1_amt))
+                # else: both already invoiced or the other isn't ready — nothing to add
+            elif ready:
+                row_entries.append((row_milestone, row_amount))
         else:
-            # Auto-detect: prefer MS1, fall back to MS2
-            row_amount = None
-            row_milestone = None
+            # Auto-detect: include EVERY milestone that's currently Ready for
+            # Invoice — normally just one, but if a row has both MS1 and MS2
+            # flagged Ready at the same time, both go onto the invoice as
+            # two separate lines rather than picking one and silently
+            # dropping the other.
             if ms1_s == "Ready for Invoice" and ms1_amt > 0:
-                row_milestone = "MS1"
-                row_amount = ms1_amt
-            elif ms2_s == "Ready for Invoice" and ms2_amt > 0:
-                row_milestone = "MS2"
-                row_amount = ms2_amt
-            # Also skip rows whose auto-picked milestone is already invoiced
-            if row_milestone == "MS1" and ms1_s in ("Commercial Invoice Submitted", "Commercial Invoice Closed"):
-                row_milestone = None
-            if row_milestone == "MS2" and ms2_s in ("Commercial Invoice Submitted", "Commercial Invoice Closed"):
-                row_milestone = None
-            if not row_milestone:
-                continue
+                row_entries.append(("MS1", ms1_amt))
+            if ms2_s == "Ready for Invoice" and ms2_amt > 0:
+                row_entries.append(("MS2", ms2_amt))
 
-        if row_amount <= 0:
+        if not row_entries:
             continue
 
         customer = pd.get("customer")
@@ -1796,10 +2100,32 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
                 f"'{dname}' has '{customer}', expected '{first_customer}'."
             )
 
-        pds.append((pd, row_milestone, row_amount))
+        for row_milestone, row_amount in row_entries:
+            if row_amount > 0:
+                resolved.append((pd, dname, row_milestone, row_amount))
 
-    if not pds:
+    if not resolved:
         frappe.throw("No valid lines to invoice after filtering.")
+
+    # Hard block: creating a Sales Invoice never changes pic_status (only
+    # submitting one does), so a row can sit at "Ready for Invoice"
+    # indefinitely even after a draft already exists for it — without this
+    # check, clicking Create again would silently spin up a duplicate draft
+    # for the same POID/milestone. One batched query for the whole
+    # selection, not one per row (see _batch_draft_invoices_by_milestone).
+    existing_drafts = _batch_draft_invoices_by_milestone([dname for _, dname, _, _ in resolved])
+    conflicts = []
+    for pd, dname, row_milestone, _ in resolved:
+        si_name = existing_drafts.get((dname, row_milestone))
+        if si_name:
+            conflicts.append(f"{pd.get('poid') or dname} ({row_milestone}) → draft {si_name}")
+    if conflicts:
+        frappe.throw(
+            "Can't create — a draft invoice already exists for: " + "; ".join(conflicts) +
+            ". Delete or cancel the existing draft first, then try again."
+        )
+
+    pds = [(pd, m, a) for pd, _, m, a in resolved]
 
     # If we auto-detected, the batch milestone is the first row's choice
     if not milestone:
@@ -2421,7 +2747,6 @@ def reject_pic_line(po_dispatches, milestone="MS1", remark=None, im=None, new_st
             "error_count": len(errors),
         },
     }
-    return {"status": "ok", "rejected_work_done": [wd.name for wd in wd_docs]}
 
 
 @frappe.whitelist()

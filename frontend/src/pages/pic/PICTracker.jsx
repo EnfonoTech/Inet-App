@@ -396,13 +396,35 @@ export default function PICTracker() {
     });
   }, [selectedRows]);
 
+  // Heads-up for the invoice modal: `linked_invoices_csv` (already fetched
+  // with every row, "SI-0001|Draft, SI-0002|Submitted") tells us if a POID
+  // already has an unsubmitted draft sitting around. Creating a Sales
+  // Invoice never changes pic_status, so a row stays "Ready for Invoice"
+  // even after a draft already exists for it — clicking Create again would
+  // silently spin up a second draft for the same milestone. Not blocked
+  // (a genuinely new invoice may be intended), just surfaced so it's not a
+  // surprise, with a direct link to the existing draft.
+  const draftInvoiceWarnings = useMemo(() => {
+    const out = [];
+    for (const r of selectedRows) {
+      const csv = r.linked_invoices_csv;
+      if (!csv) continue;
+      const drafts = csv.split(", ")
+        .map((entry) => entry.split("|"))
+        .filter(([, status]) => status === "Draft")
+        .map(([name]) => name);
+      if (drafts.length) out.push({ po_dispatch: r.po_dispatch, poid: r.poid || r.po_dispatch, drafts });
+    }
+    return out;
+  }, [selectedRows]);
+
   function openInvoiceModal() {
     setInvoiceResult(null);
     setShowInvoiceModal(true);
   }
 
   async function createInvoice() {
-    if (!canInvoice) return;
+    if (!canInvoice || draftInvoiceWarnings.length > 0) return;
     setInvoiceBusy(true);
     setInvoiceResult(null);
     try {
@@ -1059,6 +1081,26 @@ export default function PICTracker() {
               </>
             ) : (
               <>
+                {draftInvoiceWarnings.length > 0 && (
+                  <div className="notice error" style={{ marginBottom: 12, fontSize: "0.8rem" }}>
+                    <span>!</span> Can't create — already has a draft invoice. Delete or cancel it first:
+                    <div style={{ marginTop: 4 }}>
+                      {draftInvoiceWarnings.map((w) => (
+                        <div key={w.po_dispatch} style={{ padding: "2px 0" }}>
+                          {w.poid} —{" "}
+                          {w.drafts.map((name, i) => (
+                            <span key={name}>
+                              {i > 0 && ", "}
+                              <a href={`/app/sales-invoice/${name}`} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 700, textDecoration: "underline" }}>
+                                {name}
+                              </a>
+                            </span>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 12 }}>
                   <strong>{selectedRows.length} line(s)</strong> selected
                   <div style={{ maxHeight: 120, overflow: "auto", marginTop: 6 }}>
@@ -1071,7 +1113,8 @@ export default function PICTracker() {
                 </div>
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                   <button type="button" className="btn-secondary" disabled={invoiceBusy} onClick={() => setShowInvoiceModal(false)}>Cancel</button>
-                  <button type="button" className="btn-primary" disabled={invoiceBusy} onClick={createInvoice}>
+                  <button type="button" className="btn-primary" disabled={invoiceBusy || draftInvoiceWarnings.length > 0} onClick={createInvoice}
+                    title={draftInvoiceWarnings.length > 0 ? "Remove the row(s) with an existing draft, or delete/cancel that draft first" : undefined}>
                     {invoiceBusy ? "Creating…" : "Create Draft Invoice"}
                   </button>
                 </div>
