@@ -6966,7 +6966,14 @@ def list_work_done_rows(filters=None, limit=500):
     )
     rows.sort(key=lambda r: order_index.get(r.name, 10**9))
 
-    rel_cap = min(max(len(rows) * 4, 200), 8000)
+    # NOTE: `limit_page_length` below is deliberately `len(<names>) + 1`, not a
+    # fixed heuristic cap. Each query filters by `name in <names>` against a
+    # doctype's primary key, so it can never return more rows than the name
+    # list itself — the exact count is always a safe, correct bound. A fixed
+    # cap (there used to be one: `rel_cap`, capped at 8000) silently drops
+    # matches once the row set is large enough, which desyncs ex_map/rp_map/
+    # pd_map from `rows` with no error — seen once PO Dispatch alone passed
+    # 17k+ rows; Work Done/"All" will eventually reach the same scale.
     exec_names = [r.execution for r in rows if r.execution]
     ex_map = {}
     if exec_names:
@@ -6977,7 +6984,7 @@ def list_work_done_rows(filters=None, limit=500):
             "Daily Execution",
             filters={"name": ["in", exec_names]},
             fields=de_fields,
-            limit_page_length=rel_cap,
+            limit_page_length=len(exec_names) + 1,
         )
         ex_map = {e.name: e for e in ex_rows}
 
@@ -6993,7 +7000,7 @@ def list_work_done_rows(filters=None, limit=500):
             "Rollout Plan",
             filters={"name": ["in", plan_names]},
             fields=rp_fields_wd,
-            limit_page_length=rel_cap,
+            limit_page_length=len(plan_names) + 1,
         )
         rp_map = {r.name: r for r in rp_rows}
 
@@ -7033,7 +7040,7 @@ def list_work_done_rows(filters=None, limit=500):
             "PO Dispatch",
             filters={"name": ["in", all_dispatch_names]},
             fields=pd_fields_wd,
-            limit_page_length=rel_cap,
+            limit_page_length=len(all_dispatch_names) + 1,
         )
         pd_map = {p.name: p for p in pd_rows}
 
