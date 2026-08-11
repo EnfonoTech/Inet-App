@@ -4,6 +4,24 @@ from frappe.utils import flt, nowdate
 from inet_app.api.command_center import _sql_like_pattern
 
 
+def _expense_limit_suffix(limit):
+    """SQL LIMIT suffix for the 4 expense-claim list endpoints.
+
+    Only the frontend's "All" preset (rowLimit === 0) changes anything here —
+    it removes the LIMIT entirely. Any other value is ignored and the
+    endpoint keeps its existing hardcoded default cap. This is deliberate:
+    these endpoints feed both the displayed rows AND client-side tab-count
+    badges (Pending/Unpaid/Paid) computed from that same result set — actually
+    honoring a small rowLimit (e.g. the default 20) would silently undercount
+    those badges. Only "All" is unambiguous (0 truly means "no cap").
+    """
+    try:
+        lim = int(limit)
+    except (TypeError, ValueError):
+        return None
+    return "" if lim == 0 else None
+
+
 # Per-column "Manage Table" filters — see list_im_rollout_plans (in
 # command_center.py) for the rationale (each column matched independently
 # and ANDed). Shared by list_pending_expense_approvals / list_im_all_claims /
@@ -584,14 +602,18 @@ def create_project_expense_claim(date=None, remarks=None, inet_team=None, expens
 
 
 @frappe.whitelist()
-def list_my_expense_claims():
+def list_my_expense_claims(limit=None):
     """Return all project expense claims filed by the logged-in user."""
     employee = _get_employee_for_user()
     if not employee:
         return []
 
+    limit_clause = _expense_limit_suffix(limit)
+    if limit_clause is None:
+        limit_clause = "LIMIT 200"
+
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT
             ec.name,
             ec.posting_date,
@@ -610,7 +632,7 @@ def list_my_expense_claims():
         WHERE ec.employee = %s
           AND ec.is_project_claim = 1
         ORDER BY ec.posting_date DESC, ec.creation DESC
-        LIMIT 200
+        {limit_clause}
         """,
         (employee,),
         as_dict=True,
@@ -620,7 +642,7 @@ def list_my_expense_claims():
 
 
 @frappe.whitelist()
-def list_pending_expense_approvals(column_filters=None):
+def list_pending_expense_approvals(column_filters=None, limit=None):
     """Return project expense claims pending approval by the logged-in IM."""
     im_user = frappe.session.user
 
@@ -633,6 +655,10 @@ def list_pending_expense_approvals(column_filters=None):
     params = [im_user]
     _apply_expense_column_filters(column_filters, conditions, params)
 
+    limit_clause = _expense_limit_suffix(limit)
+    if limit_clause is None:
+        limit_clause = "LIMIT 200"
+
     rows = frappe.db.sql(
         f"""
         SELECT
@@ -654,7 +680,7 @@ def list_pending_expense_approvals(column_filters=None):
         LEFT JOIN `tabINET Team` it ON it.name = ec.inet_team
         WHERE {' AND '.join(conditions)}
         ORDER BY ec.posting_date DESC, ec.creation DESC
-        LIMIT 200
+        {limit_clause}
         """,
         tuple(params),
         as_dict=True,
@@ -664,7 +690,7 @@ def list_pending_expense_approvals(column_filters=None):
 
 
 @frappe.whitelist()
-def list_im_all_claims(column_filters=None):
+def list_im_all_claims(column_filters=None, limit=None):
     """Return all project expense claims where the session user is the expense_approver (IM view)."""
     im_user = frappe.session.user
 
@@ -672,6 +698,10 @@ def list_im_all_claims(column_filters=None):
     params = [im_user]
     _apply_expense_column_filters(column_filters, conditions, params)
 
+    limit_clause = _expense_limit_suffix(limit)
+    if limit_clause is None:
+        limit_clause = "LIMIT 500"
+
     rows = frappe.db.sql(
         f"""
         SELECT
@@ -693,7 +723,7 @@ def list_im_all_claims(column_filters=None):
         LEFT JOIN `tabINET Team` it ON it.name = ec.inet_team
         WHERE {' AND '.join(conditions)}
         ORDER BY ec.posting_date DESC, ec.creation DESC
-        LIMIT 500
+        {limit_clause}
         """,
         tuple(params),
         as_dict=True,
@@ -703,7 +733,7 @@ def list_im_all_claims(column_filters=None):
 
 
 @frappe.whitelist()
-def list_all_expense_claims(filters=None):
+def list_all_expense_claims(filters=None, limit=None):
     """Return all project expense claims (admin/PM view). Supports optional filters."""
     import json
 
@@ -734,6 +764,10 @@ def list_all_expense_claims(filters=None):
 
     where = " AND ".join(conditions)
 
+    limit_clause = _expense_limit_suffix(limit)
+    if limit_clause is None:
+        limit_clause = "LIMIT 500"
+
     rows = frappe.db.sql(
         f"""
         SELECT
@@ -758,7 +792,7 @@ def list_all_expense_claims(filters=None):
         LEFT JOIN `tabIM Master` im ON im.user = ec.expense_approver
         WHERE {where}
         ORDER BY ec.posting_date DESC, ec.creation DESC
-        LIMIT 500
+        {limit_clause}
         """,
         tuple(params),
         as_dict=True,

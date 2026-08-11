@@ -349,7 +349,7 @@ export default function IMExpense({ isAdmin = false }) {
         if (tab === "all" && statusFilter) {
           adminFilters.approval_status = statusFilter === "Pending" ? "Draft" : statusFilter;
         }
-        const all = await pmApi.listAllExpenseClaims(adminFilters);
+        const all = await pmApi.listAllExpenseClaims(adminFilters, rowLimit);
         const rows = all || [];
         setAllClaims(rows);
         setPending(rows.filter((c) => {
@@ -358,8 +358,8 @@ export default function IMExpense({ isAdmin = false }) {
         }));
       } else {
         const [pend, all] = await Promise.all([
-          pmApi.listPendingExpenseApprovals(colFilters),
-          pmApi.listImAllClaims(colFilters),
+          pmApi.listPendingExpenseApprovals(colFilters, rowLimit),
+          pmApi.listImAllClaims(colFilters, rowLimit),
         ]);
         setPending(pend || []);
         setAllClaims(all || []);
@@ -370,7 +370,9 @@ export default function IMExpense({ isAdmin = false }) {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, columnFiltersDebounced, tab, statusFilter, imFilter, teamFilter, dateFrom, dateTo]);
+    // rowLimit is only forwarded so selecting "All" (0) can lift each
+    // endpoint's hardcoded row cap and actually re-fetch — see api.js.
+  }, [isAdmin, columnFiltersDebounced, tab, statusFilter, imFilter, teamFilter, dateFrom, dateTo, rowLimit]);
 
   useEffect(() => { load(); }, [load]);
 

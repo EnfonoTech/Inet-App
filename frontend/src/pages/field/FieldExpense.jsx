@@ -577,7 +577,7 @@ export default function FieldExpense() {
     try {
       const [teamInfo, claimList] = await Promise.all([
         pmApi.getFieldUserTeam(),
-        pmApi.listMyExpenseClaims(),
+        pmApi.listMyExpenseClaims(rowLimit),
       ]);
       setTeam(teamInfo);
       setClaims(claimList || []);
@@ -586,7 +586,9 @@ export default function FieldExpense() {
     } finally {
       setLoading(false);
     }
-  }, []);
+    // rowLimit is only forwarded so selecting "All" (0) can lift the
+    // endpoint's hardcoded row cap and actually re-fetch — see api.js.
+  }, [rowLimit]);
 
   // Memoized deliberately — useProgressiveRows (below, via pagedClaims) does
   // a reference check during render to decide whether the row set actually

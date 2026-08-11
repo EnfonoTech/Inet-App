@@ -834,10 +834,16 @@ export const pmApi = {
     attachments: JSON.stringify(payload.attachments || []),
   }),
   getExpenseTaxInfo:       ()             => callCached("inet_app.api.expense.get_expense_tax_info", {}, 300_000),
-  listMyExpenseClaims:     ()             => call("inet_app.api.expense.list_my_expense_claims"),
-  listPendingExpenseApprovals: (columnFilters) => call("inet_app.api.expense.list_pending_expense_approvals", columnFilters && Object.keys(columnFilters).length ? { column_filters: columnFilters } : {}),
-  listImAllClaims:             (columnFilters) => call("inet_app.api.expense.list_im_all_claims", columnFilters && Object.keys(columnFilters).length ? { column_filters: columnFilters } : {}),
-  listAllExpenseClaims:    (filters)      => call("inet_app.api.expense.list_all_expense_claims", { filters: JSON.stringify(filters || {}) }),
+  // `limit` here is deliberately narrow: only 0 ("All") is ever passed
+  // through (see IMExpense.jsx/FieldExpense.jsx) — it removes each
+  // endpoint's hardcoded row cap. Any other value is ignored server-side, so
+  // don't wire the other row-limit presets here; see the "Row-limit filter"
+  // note in CLAUDE.md for why (tab-count badges are derived from this same
+  // fetch and would silently undercount).
+  listMyExpenseClaims:     (limit)        => call("inet_app.api.expense.list_my_expense_claims", limit === 0 ? { limit: 0 } : {}),
+  listPendingExpenseApprovals: (columnFilters, limit) => call("inet_app.api.expense.list_pending_expense_approvals", { ...(columnFilters && Object.keys(columnFilters).length ? { column_filters: columnFilters } : {}), ...(limit === 0 ? { limit: 0 } : {}) }),
+  listImAllClaims:             (columnFilters, limit) => call("inet_app.api.expense.list_im_all_claims", { ...(columnFilters && Object.keys(columnFilters).length ? { column_filters: columnFilters } : {}), ...(limit === 0 ? { limit: 0 } : {}) }),
+  listAllExpenseClaims:    (filters, limit) => call("inet_app.api.expense.list_all_expense_claims", { filters: JSON.stringify(filters || {}), ...(limit === 0 ? { limit: 0 } : {}) }),
   getExpenseClaimDetail:   (claim_name)   => call("inet_app.api.expense.get_expense_claim_detail", { claim_name }),
   approveExpenseClaim:     (claim_name)   => call("inet_app.api.expense.approve_expense_claim", { claim_name }),
   rejectExpenseClaim:      (claim_name, reason) => call("inet_app.api.expense.reject_expense_claim", { claim_name, reason: reason || "" }),
