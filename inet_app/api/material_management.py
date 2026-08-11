@@ -1262,9 +1262,14 @@ def create_material_request(payload):
     if not target_wh:
         frappe.throw("Team Warehouse not configured. Please set a Warehouse on the selected team in INET Team.")
 
-    # Block items that already have net-positive stock in the team warehouse for this DUID.
-    # A team requesting an item that's already sitting in their warehouse (same DUID)
-    # would result in a double transfer.
+    # Warn (don't block) when an item already has net-positive stock in the
+    # team warehouse for this DUID. This used to hard-block the whole
+    # request, but a team legitimately needing MORE than what's already
+    # on hand (e.g. have 5, need 10 for the job) would be blocked outright
+    # with no way through except cancelling/consuming the old stock first.
+    # Surface it as a heads-up instead and let the requester decide —
+    # they may well know they need the extra on top of what's already there.
+    stock_warning = None
     if duid and target_wh:
         item_codes = list({i["item_code"] for i in items if i.get("item_code")})
         if item_codes:
@@ -1294,11 +1299,10 @@ def create_material_request(payload):
                 as_dict=True,
             )
             if already_stocked:
-                dupes = ", ".join(r["item_code"] for r in already_stocked)
-                frappe.throw(
-                    f"The following items already have stock in the team warehouse for DUID {duid}: "
-                    f"{dupes}. Cancel or consume existing stock before requesting again.",
-                    title="Items Already in Stock",
+                dupes = ", ".join(f"{r['item_code']} ({flt(r['net_qty'])} already in stock)" for r in already_stocked)
+                stock_warning = (
+                    f"Note: the following already have unconsumed stock in the team warehouse for DUID {duid}: "
+                    f"{dupes}. Consume or cancel it first if this request wasn't meant to add more on top."
                 )
 
     doc = frappe.get_doc({
@@ -1329,7 +1333,7 @@ def create_material_request(payload):
     doc.insert(ignore_permissions=True)
     doc.submit()
     frappe.db.commit()
-    return {"name": doc.name, "status": "Pending Approval"}
+    return {"name": doc.name, "status": "Pending Approval", "stock_warning": stock_warning}
 
 
 def _check_team_lead_for_warehouse(warehouse):

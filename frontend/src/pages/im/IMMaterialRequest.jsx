@@ -255,7 +255,7 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
 
     setBusy(true);
     try {
-      await pmApi.createMaterialRequest({
+      const res = await pmApi.createMaterialRequest({
         poid: selectedPoid || undefined,
         duid: duid.trim(),
         im: imName || poidIm || undefined,  // admin: IM from POID; IM user: from auth
@@ -263,7 +263,14 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
         remark: remark.trim() || undefined,
         items: allItems,
       });
-      onDone("Material request submitted successfully.");
+      // Backend warns (doesn't block) when the DUID's team warehouse already
+      // has unconsumed stock of a requested item — surfaced here rather than
+      // preventing a legitimate "need more on top of what's there" request.
+      onDone(
+        res?.stock_warning
+          ? `Material request submitted successfully. ${res.stock_warning}`
+          : "Material request submitted successfully."
+      );
     } catch (e) {
       setErr(e.message || "Submission failed");
       setBusy(false);
