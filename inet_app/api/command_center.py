@@ -8504,16 +8504,28 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # — they have assigned work today so they should NOT count as idle.
     # We use plan_date = today (not <=) so old stale unexecuted plans from
     # past dates don't prevent a team from being counted as idle today.
+    # UNION in secondary teams from Rollout Plan Team (a plan split across
+    # 2+ teams only records the first/primary team on rp.team itself — see
+    # the same gap fixed in list_admin_teams/list_im_teams) so a secondary
+    # team with real work today isn't miscounted as idle below.
     planned_team_rows = frappe.db.sql(
         """
-        SELECT DISTINCT rp.team FROM `tabRollout Plan` rp
+        SELECT DISTINCT rp.team AS team FROM `tabRollout Plan` rp
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
         WHERE rp.plan_status IN ('Planned', 'In Execution')
         AND rp.plan_date = %s
         AND IFNULL(it.team_category, '') != 'Backend Team'
         AND IFNULL(it.status, 'Active') = 'Active'
+        UNION
+        SELECT DISTINCT rpt.team AS team FROM `tabRollout Plan Team` rpt
+        INNER JOIN `tabRollout Plan` rp2 ON rp2.name = rpt.parent
+        LEFT JOIN `tabINET Team` it2 ON it2.name = rpt.team
+        WHERE rp2.plan_status IN ('Planned', 'In Execution')
+        AND rp2.plan_date = %s
+        AND IFNULL(it2.team_category, '') != 'Backend Team'
+        AND IFNULL(it2.status, 'Active') = 'Active'
         """,
-        (today_str,),
+        (today_str, today_str),
         as_dict=True,
     )
     # Union of executing + planned teams — used only for idle calculation
@@ -8866,12 +8878,19 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Teams that have any Daily Execution today (started or completed work)
     in_progress_count = len(active_team_ids)
 
+    # Same secondary-team UNION as planned_team_rows above.
     planned_today = frappe.db.sql(
         """
-        SELECT COUNT(DISTINCT team) AS cnt FROM `tabRollout Plan`
-        WHERE plan_date = %s AND plan_status = 'Planned'
+        SELECT COUNT(DISTINCT team) AS cnt FROM (
+            SELECT rp.team AS team FROM `tabRollout Plan` rp
+            WHERE rp.plan_date = %s AND rp.plan_status = 'Planned'
+            UNION
+            SELECT rpt.team AS team FROM `tabRollout Plan Team` rpt
+            INNER JOIN `tabRollout Plan` rp2 ON rp2.name = rpt.parent
+            WHERE rp2.plan_date = %s AND rp2.plan_status = 'Planned'
+        ) combined
         """,
-        (today_str,),
+        (today_str, today_str),
         as_dict=True,
     )[0].cnt or 0
 
