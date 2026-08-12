@@ -1,0 +1,116 @@
+{
+ "actions": [],
+ "autoname": "field:certificate_name",
+ "creation": "2026-08-11 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "certificate_name",
+  "applies_to",
+  "is_active",
+  "column_break_1",
+  "validity_months",
+  "renewal_cost",
+  "issuing_authority"
+ ],
+ "fields": [
+  {
+   "fieldname": "certificate_name",
+   "fieldtype": "Data",
+   "label": "Certificate Name",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "default": "Both",
+   "fieldname": "applies_to",
+   "fieldtype": "Select",
+   "label": "Applies To",
+   "options": "Resource Team\nProtech (WL & MW)\nBoth",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Active",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "validity_months",
+   "fieldtype": "Int",
+   "label": "Validity (Months)",
+   "description": "Used to suggest an expiry date when a new certificate is issued. Leave blank if validity varies."
+  },
+  {
+   "default": "0",
+   "fieldname": "renewal_cost",
+   "fieldtype": "Currency",
+   "label": "Renewal Cost (SAR)",
+   "in_list_view": 1,
+   "description": "Cost to renew one certificate of this type. Set to 0 until Finance/HR confirms the real figure."
+  },
+  {
+   "fieldname": "issuing_authority",
+   "fieldtype": "Data",
+   "label": "Issuing Authority"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 0,
+ "links": [],
+ "modified": "2026-08-11 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Certificate Type",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET HR",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "certificate_name",
+ "sort_order": "ASC",
+ "track_changes": 1
+}

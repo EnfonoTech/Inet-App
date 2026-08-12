@@ -1,0 +1,2197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>INET HR — Certificate Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#0d1117;--surface:#161b22;--surface2:#1c2128;--surface3:#21262d;
+  --border:#30363d;--border2:#3d444d;
+  --blue:#388bfd;--blue-dim:rgba(56,139,253,.15);
+  --green:#3fb950;--green-dim:rgba(63,185,80,.15);
+  --yellow:#d29922;--yellow-dim:rgba(210,153,34,.15);
+  --red:#f85149;--red-dim:rgba(248,81,73,.15);
+  --purple:#bc8cff;--purple-dim:rgba(188,140,255,.15);
+  --text:#e6edf3;--text2:#8d96a0;--text3:#484f58;
+  --nav-w:230px;--hdr-h:56px;--radius:8px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+a{color:var(--blue);text-decoration:none}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+.hdr{height:var(--hdr-h);background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;padding:0 20px;position:fixed;top:0;left:0;right:0;z-index:100}
+.hdr-logo{font-weight:700;font-size:16px;color:var(--blue);display:flex;align-items:center;gap:8px;white-space:nowrap}
+.hdr-logo span{color:var(--text2);font-weight:400;font-size:12px;border-left:1px solid var(--border);padding-left:10px}
+.hdr-right{display:flex;gap:14px;margin-left:auto;align-items:center;font-size:12px;color:var(--text2)}
+.hdr-pills{display:flex;gap:8px}
+.hdr-pill{background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.hdr-pill.g{color:var(--green)}.hdr-pill.y{color:var(--yellow)}.hdr-pill.r{color:var(--red)}.hdr-pill.b{color:var(--blue)}
+.hdr-pill-label{color:var(--text2);font-weight:500}
+.hdr-date{font-size:12px;color:var(--text3);white-space:nowrap}
+
+.layout{display:flex;margin-top:var(--hdr-h);min-height:calc(100vh - var(--hdr-h))}
+.sidebar{width:var(--nav-w);background:var(--surface);border-right:1px solid var(--border);position:fixed;top:var(--hdr-h);left:0;bottom:0;overflow-y:auto;padding:12px 0}
+.nav-label{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.07em;padding:10px 16px 4px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text2);position:relative;user-select:none}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:var(--blue-dim);color:var(--blue)}
+.nav-item.active::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:16px;background:var(--blue)}
+.nav-sep{height:1px;background:var(--border);margin:8px 16px}
+.nav-badge{margin-left:auto;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;min-width:20px;text-align:center;flex-shrink:0}
+.nav-badge.b{background:var(--blue-dim);color:var(--blue)}
+.nav-badge.y{background:var(--yellow-dim);color:var(--yellow)}
+.nav-badge.r{background:var(--red-dim);color:var(--red)}
+.sidebar-footer{padding:14px 16px;border-top:1px solid var(--border);margin-top:8px;display:flex;flex-direction:column;gap:8px}
+.sidebar-btn{width:100%;justify-content:center;text-decoration:none}
+
+.main{margin-left:var(--nav-w);flex:1;padding:22px;min-width:0}
+.page{display:none}
+.page.active{display:block;animation:fadeIn .15s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+.ph{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.ph-left h1{font-size:19px;margin-bottom:2px}
+.ph-left p{font-size:12px;color:var(--text2)}
+.ph-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.tabs{display:flex;gap:4px;padding:4px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;width:fit-content;flex-wrap:wrap}
+.tab{padding:6px 14px;font-size:12px;font-weight:700;border-radius:6px;cursor:pointer;color:var(--text2)}
+.tab:hover{color:var(--text)}
+.tab.active{background:var(--blue);color:#fff}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.toolbar select{font:inherit;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:6px 11px}
+.pagination{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.pg-info{font-size:12px;color:var(--text2);margin-right:6px}
+td.mono{font-family:monospace;color:var(--text3);font-size:12px}
+
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:var(--radius);font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit}
+.btn:hover{border-color:var(--border2)}
+.btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-danger{background:var(--red);border-color:var(--red);color:#fff}
+
+.detail-info-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.detail-info-grid .di-item label{display:block;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.detail-info-grid .di-item span{font-size:13px}
+.detail-cert-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.detail-cert-grid .dcert{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px}
+.detail-cert-grid .dcert-name{font-size:12px;font-weight:700;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center}
+.detail-cert-grid .dcert-no{font-size:10px;color:var(--text3);font-family:monospace;margin-bottom:6px;word-break:break-all}
+.detail-cert-grid .dcert-dates{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--text2)}
+.detail-cert-grid .dcert-dates span{display:flex;justify-content:space-between}
+.detail-cert-grid .dcert-attach{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.detail-cert-grid .dcert-attach a{font-size:10px;color:var(--blue);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+
+.cert-form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.cert-form-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px}
+.cert-form-card .cfc-name{font-size:12px;font-weight:700;margin-bottom:8px}
+.cert-form-card .form-row{margin-bottom:6px}
+.cert-form-card .form-row label{font-size:10px}
+.cert-form-card input{padding:5px 8px;font-size:12px}
+
+input[type=search],input[type=text],input[type=date],textarea,select{font:inherit;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:6px 11px;transition:border-color .12s}
+input[type=search]{min-width:220px}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue)}
+select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:30px;
+  background-image:url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238d96a0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 8px center;background-size:16px}
+select option{background:var(--surface2);color:var(--text)}
+input::-webkit-calendar-picker-indicator{filter:invert(0.7);cursor:pointer}
+input[type=file]{font-size:12px;color:var(--text2);padding:6px 0;border:none;background:none}
+input[type=file]::file-selector-button{
+  font:inherit;font-size:12px;font-weight:600;color:var(--text);background:var(--surface3);
+  border:1px solid var(--border2);border-radius:var(--radius);padding:6px 14px;margin-right:10px;
+  cursor:pointer;transition:border-color .12s,background .12s}
+input[type=file]::file-selector-button:hover{border-color:var(--blue);background:var(--surface2)}
+
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;position:relative;overflow:hidden}
+.stat-card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.stat-card.blue::after{background:var(--blue)}.stat-card.green::after{background:var(--green)}
+.stat-card.yellow::after{background:var(--yellow)}.stat-card.red::after{background:var(--red)}.stat-card.purple::after{background:var(--purple)}
+.sc-num{font-size:25px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text);line-height:1}
+.stat-card.blue .sc-num{color:var(--blue)}.stat-card.green .sc-num{color:var(--green)}
+.stat-card.yellow .sc-num{color:var(--yellow)}.stat-card.red .sc-num{color:var(--red)}.stat-card.purple .sc-num{color:var(--purple)}
+.sc-label{font-size:11px;color:var(--text3);font-weight:500;margin-top:4px}
+.sc-icon{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:20px;opacity:.15}
+.stat-card.clickable{cursor:pointer;transition:transform .12s,box-shadow .12s,border-color .12s}
+.stat-card.clickable:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.35);border-color:var(--border2)}
+.sc-cta{font-size:9px;letter-spacing:.05em;color:var(--text3);margin-top:6px;font-weight:600}
+
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+@media (max-width:900px){.chart-grid{grid-template-columns:1fr}}
+.chart-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.chart-title{font-size:13px;font-weight:700;margin-bottom:2px}
+.chart-sub{font-size:11px;color:var(--text3);margin-bottom:12px}
+.chart-card .chart-box{height:300px}
+@media (max-width:900px){.grid-2{grid-template-columns:1fr}}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:20px}
+.panel h3{font-size:13px;margin-bottom:12px;color:var(--text2);font-weight:600}
+.panel .chart-box{position:relative;height:220px}
+.donut-panel{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+.donut-panel .chart-box{width:150px;height:150px}
+.donut-label{font-size:13px;color:var(--text2);font-weight:600}
+
+.quick-links{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.quick-link{text-align:left;padding:14px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:13px;font-weight:600;font-family:inherit}
+.quick-link:hover{border-color:var(--border2);background:var(--surface2)}
+
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.table-scroll{overflow:auto;max-height:calc(100vh - 230px)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{position:sticky;top:0;background:var(--surface2);padding:9px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);white-space:nowrap;z-index:1}
+tbody td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);white-space:nowrap}
+tbody tr:hover{background:var(--surface2)}
+tfoot td{padding:8px 12px;border-top:1px solid var(--border2);background:var(--surface2)}
+
+.dot-btn{background:none;border:none;cursor:pointer;font-size:14px;padding:3px 6px;border-radius:6px}
+.dot-btn:hover{background:var(--surface3)}
+.drill-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:2px 10px;cursor:pointer;font-family:inherit}
+.drill-btn:disabled{opacity:.35;cursor:default}
+.drill-btn:hover:not(:disabled){border-color:var(--blue)}
+
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap}
+.badge-g{background:var(--green-dim);color:var(--green)}
+.badge-y{background:var(--yellow-dim);color:var(--yellow)}
+.badge-r{background:var(--red-dim);color:var(--red)}
+.badge-n{background:var(--surface3);color:var(--text3)}
+
+.domain-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+
+.cohort-cert-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.cohort-cert-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer;transition:border-color .12s,transform .12s}
+.cohort-cert-card:hover{border-color:var(--border2);transform:translateY(-2px)}
+.cohort-cert-name{font-size:11px;font-weight:700;margin-bottom:8px;line-height:1.3}
+.cohort-cert-badges{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;min-height:18px}
+.cohort-cert-badges .badge{font-size:10px;padding:1px 7px}
+.cohort-cert-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-bottom:4px}
+.cohort-cert-bar div{height:100%;border-radius:2px;transition:width .3s}
+.cohort-cert-pct{font-size:10px;font-weight:600}
+.filter-note{display:none;align-items:center;gap:8px;background:var(--blue-dim);color:var(--blue);border-radius:8px;padding:6px 12px;font-size:12px;margin:0 0 12px;cursor:pointer;width:fit-content}
+
+.cert-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:20px}
+.cert-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;cursor:pointer;transition:border-color .12s}
+.cert-card:hover{border-color:var(--blue)}
+.cert-card-name{font-size:13px;font-weight:600;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.cert-mini-bars{display:flex;flex-direction:column;gap:5px}
+.cmb-row{display:flex;align-items:center;gap:7px;font-size:11px}
+.cmb-label{width:55px;color:var(--text3)}
+.cmb-track{flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.cmb-fill{height:100%;border-radius:2px}
+.cmb-num{width:20px;text-align:right;font-weight:600;font-size:10px}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface2);border:1px solid var(--border2);border-radius:10px;padding:12px 20px;font-size:13px;font-weight:600;color:var(--text);box-shadow:0 8px 30px rgba(0,0,0,.4);z-index:2000;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
+.toast.success{border-color:var(--green)}
+.toast.error{border-color:var(--red)}
+.toast.info{border-color:var(--blue)}
+.domain-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;transition:border-color .12s,transform .12s}
+.domain-card:hover{border-color:var(--border2);transform:translateY(-2px)}
+.domain-card-hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;font-size:13px}
+.domain-card-hdr span{font-size:11px;color:var(--text3)}
+.domain-card-counts{display:flex;gap:8px;margin-bottom:10px;font-size:11px;flex-wrap:wrap}
+
+.notice{padding:20px;color:var(--red);background:var(--red-dim);border-radius:var(--radius);margin:16px 0}
+.loading{padding:60px;text-align:center;color:var(--text3)}
+.empty-row td{text-align:center;color:var(--text3);padding:24px}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;width:520px;max-width:100%;max-height:calc(100vh - 32px);overflow:auto}
+.modal-wide .modal{width:900px}
+.modal-hdr{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-hdr h3{font-size:15px}
+.modal-close{background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;line-height:1}
+.modal-body{padding:18px 20px}
+.modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--border)}
+.form-row{margin-bottom:12px}
+.form-row label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px}
+.form-row input,.form-row textarea{width:100%}
+.form-row-2{display:flex;gap:10px}
+.form-row-2 .form-row{flex:1}
+</style>
+</head>
+<body>
+
+{% if access_denied %}
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d1117;color:#e6edf3;">
+  <div style="text-align:center;max-width:420px;padding:32px">
+    {% if is_guest %}
+    <div style="font-size:40px;margin-bottom:12px">🔑</div>
+    <h2 style="margin-bottom:8px">Please Log In</h2>
+    <p style="color:#8d96a0;font-size:14px;margin-bottom:20px;line-height:1.5">
+      Sign in with your INET account to view the Certificate Tracker.
+    </p>
+    <a href="/login?redirect-to=/hr-certificates" style="color:#388bfd">Log In →</a>
+    {% else %}
+    <div style="font-size:40px;margin-bottom:12px">🔒</div>
+    <h2 style="margin-bottom:8px">Access Restricted</h2>
+    <p style="color:#8d96a0;font-size:14px;margin-bottom:20px;line-height:1.5">
+      Signed in as <strong>{{ full_name }}</strong>, but this account doesn't have the
+      <strong>INET HR</strong> role needed to view the Certificate Tracker.
+      Ask an administrator to grant it.
+    </p>
+    <a href="/app" style="color:#388bfd">Go to Desk →</a>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+
+<div class="hdr">
+  <div class="hdr-logo">⚡ INET HR <span>Certificate Tracker</span></div>
+  <div class="hdr-right">
+    <div class="hdr-pills" id="hdr-pills"></div>
+    <span>{{ full_name }}</span>
+    <div class="hdr-date" id="hdr-date"></div>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="nav-label">Overview</div>
+    <div class="nav-item" data-page="dashboard" onclick="nav('dashboard')">📊 Dashboard</div>
+    <div class="nav-sep"></div>
+    <div class="nav-label">Trackers</div>
+    <div class="nav-item" data-page="resource" onclick="nav('resource')">👥 Resource Tracker<span class="nav-badge b" id="nb-resource">—</span></div>
+    <div class="nav-item" data-page="protech" onclick="nav('protech')">🔧 Protech (WL &amp; MW)<span class="nav-badge b" id="nb-protech">—</span></div>
+    <div class="nav-item" data-page="former" onclick="nav('former')">📁 Former Employees<span class="nav-badge b" id="nb-former">—</span></div>
+    <div class="nav-sep"></div>
+    <div class="nav-label">Certificates</div>
+    <div class="nav-item" data-page="cert-status-summary" onclick="nav('cert-status-summary')">📋 Certificate Status Summary</div>
+    <div class="nav-item" data-page="cert-overview" onclick="nav('cert-overview')">🏅 Certificate Overview</div>
+    <div class="nav-item" data-page="cert-expiring" onclick="nav('cert-expiring')">⏳ Expiring in 90 Days<span class="nav-badge y" id="nb-expiring">—</span></div>
+    <div class="nav-item" data-page="cert-cost" onclick="nav('cert-cost')">💰 Certificate Cost</div>
+    <div class="nav-sep"></div>
+    <div class="nav-label">Views</div>
+    <div class="nav-item" data-page="by-domain" onclick="nav('by-domain')">🌐 By Domain</div>
+    <div class="nav-item" data-page="search" onclick="nav('search')">🔍 Global Search</div>
+    <div class="nav-sep"></div>
+    <div class="nav-label">Actions</div>
+    <div class="nav-item" onclick="exportAllToExcel()">⬇️ Export All to Excel</div>
+    <div class="sidebar-footer">
+      <a href="/app" class="btn sidebar-btn">⊞ Switch to Desk</a>
+      <button type="button" class="btn sidebar-btn" onclick="logout()">↩ Log out</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="page" id="page-dashboard"></div>
+    <div class="page" id="page-resource"></div>
+    <div class="page" id="page-protech"></div>
+    <div class="page" id="page-former"></div>
+    <div class="page" id="page-cert-status-summary"></div>
+    <div class="page" id="page-cert-overview"></div>
+    <div class="page" id="page-cert-expiring"></div>
+    <div class="page" id="page-cert-cost"></div>
+    <div class="page" id="page-by-domain"></div>
+    <div class="page" id="page-search"></div>
+  </div>
+</div>
+
+<!-- CERT EDIT/ADD MODAL -->
+<div class="modal-overlay" id="edit-overlay">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3 id="edit-title">Edit Certificate</h3>
+      <button class="modal-close" onclick="closeModal('edit-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="notice" id="edit-error" style="display:none"></div>
+      <input type="hidden" id="edit-employee">
+      <input type="hidden" id="edit-cert-type">
+      <div class="form-row"><label>Certificate No</label><input type="text" id="edit-cert-no"></div>
+      <div class="form-row-2">
+        <div class="form-row"><label>Issue Date</label><input type="date" id="edit-issue-date"></div>
+        <div class="form-row"><label>Expiry Date</label><input type="date" id="edit-expiry-date"></div>
+      </div>
+      <div class="form-row"><label>Remarks</label><textarea id="edit-remarks" rows="2"></textarea></div>
+      <div class="form-row">
+        <label>Attachments</label>
+        <div id="edit-attachments" style="margin-bottom:8px"></div>
+        <input type="file" id="edit-cert-file" multiple>
+      </div>
+      <div id="edit-history-wrap" style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Renewal History</div>
+        <div id="edit-history"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('edit-overlay')">Cancel</button>
+      <button class="btn btn-primary" id="edit-save-btn" onclick="saveCertEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- DRILL-DOWN MODAL -->
+<div class="modal-overlay modal-wide" id="drill-overlay">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3 id="drill-title">Drill-down</h3>
+      <button class="modal-close" onclick="closeModal('drill-overlay')">✕</button>
+    </div>
+    <div class="modal-body" id="drill-body"></div>
+  </div>
+</div>
+
+<!-- BULK RENEW MODAL -->
+<div class="modal-overlay" id="bulk-overlay">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3>Bulk Renew Certificates</h3>
+      <button class="modal-close" onclick="closeModal('bulk-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5">
+        Upload a CSV/Excel file with columns: <strong>Employee</strong> (Employee ID, e.g. HR-EMP-00012)
+        or <strong>Iqama Number</strong>, <strong>Certificate Type</strong>, <strong>Certificate No</strong>,
+        <strong>Issue Date</strong>, <strong>Expiry Date</strong> (YYYY-MM-DD). One row per person per cert.
+      </p>
+      <input type="file" id="bulk-file" accept=".csv,.xlsx,.xls">
+      <div id="bulk-result" style="margin-top:14px;font-size:13px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('bulk-overlay')">Close</button>
+      <button class="btn btn-primary" id="bulk-run-btn" onclick="runBulkRenew()">Upload &amp; Renew</button>
+    </div>
+  </div>
+</div>
+
+<!-- EMPLOYEE DETAIL MODAL (read-only) -->
+<div class="modal-overlay modal-wide" id="detail-overlay">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3 id="detail-title">Employee</h3>
+      <button class="modal-close" onclick="closeModal('detail-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Personal Information</div>
+      <div class="detail-info-grid" id="detail-info"></div>
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 8px">Certificates</div>
+      <div class="detail-cert-grid" id="detail-certs"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('detail-overlay')">Close</button>
+      <button class="btn btn-primary" id="detail-edit-btn">✏️ Edit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD/EDIT EMPLOYEE MODAL -->
+<div class="modal-overlay modal-wide" id="add-emp-overlay">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3 id="add-emp-title">Add Employee</h3>
+      <button class="modal-close" onclick="closeModal('add-emp-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="notice" id="add-emp-error" style="display:none"></div>
+      <input type="hidden" id="ae-employee-name-key">
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Basic Information</div>
+      <div class="form-row-2">
+        <div class="form-row"><label>Full Name *</label><input type="text" id="ae-name"></div>
+        <div class="form-row"><label>Iqama / National ID</label><input type="text" id="ae-iqama"></div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-row"><label>Gender * <span style="color:var(--text3)">(mandatory in ERPNext)</span></label><select id="ae-gender"><option value="">Select…</option></select></div>
+        <div class="form-row"><label>Date of Birth * <span style="color:var(--text3)">(mandatory)</span></label><input type="date" id="ae-dob"></div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-row"><label>Status</label>
+          <select id="ae-status" onchange="document.getElementById('ae-relieving-wrap').style.display = this.value==='Left' ? '' : 'none'">
+            <option value="Active">Active</option><option value="Left">Left</option>
+          </select>
+        </div>
+        <div class="form-row"><label>Date of Joining * <span style="color:var(--text3)">(mandatory)</span></label><input type="date" id="ae-doj"></div>
+      </div>
+      <div class="form-row" id="ae-relieving-wrap" style="display:none">
+        <label>Relieving Date * <span style="color:var(--text3)">(mandatory when Status = Left)</span></label>
+        <input type="date" id="ae-relieving">
+      </div>
+      <div class="form-row-2">
+        <div class="form-row"><label>Mobile</label><input type="text" id="ae-mobile"></div>
+        <div class="form-row"><label>Nationality</label><input type="text" id="ae-nationality"></div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-row"><label>Email</label><input type="text" id="ae-email"></div>
+        <div class="form-row"><label>UniPortal ID</label><input type="text" id="ae-uniportal"></div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-row"><label>Certification Domain</label><select id="ae-domain"><option value="">Select…</option></select></div>
+        <div class="form-row"><label>Designation</label><select id="ae-designation"><option value="">Select…</option></select></div>
+      </div>
+      <div id="ae-certs-wrap" style="display:none">
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 8px">Certificates</div>
+        <div class="cert-form-grid" id="ae-certs"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="ae-delete-btn" style="margin-right:auto;display:none" onclick="deleteEmployeeFromForm()">🗑 Delete</button>
+      <button class="btn" onclick="closeModal('add-emp-overlay')">Cancel</button>
+      <button class="btn btn-primary" id="add-emp-save-btn" onclick="saveEmployeeForm()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF_TOKEN = "{{ csrf_token }}";
+const API = "/api/method/inet_app.api.hr_certificates.";
+const PROTECH_DOMAIN = "WL & MW";
+let CURRENT_PAGE = "dashboard";
+let CHARTS = {};
+
+/* ── API helpers ─────────────────────────────────────────── */
+async function apiGet(method, params) {
+  const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+  const res = await fetch(API + method + qs, { credentials: "include" });
+  const json = await res.json();
+  if (!res.ok || json.exc) throw new Error(json.message || "Request failed");
+  return json.message;
+}
+async function apiPost(method, params) {
+  const body = new URLSearchParams(params || {});
+  const res = await fetch(API + method, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Frappe-CSRF-Token": CSRF_TOKEN },
+    body: body.toString(),
+  });
+  const json = await res.json();
+  if (!res.ok || json.exc) throw new Error(json.message || "Request failed");
+  return json.message;
+}
+async function logout() {
+  await fetch("/api/method/logout", { method: "POST", credentials: "include", headers: { "X-Frappe-CSRF-Token": CSRF_TOKEN } }).catch(() => {});
+  window.location.href = "/login";
+}
+
+/* ── Formatting / status helpers ─────────────────────────── */
+const STATUS = {
+  "Valid":         { dot: "🟢", cls: "g" },
+  "Expiring Soon": { dot: "🟡", cls: "y" },
+  "Expired":       { dot: "🔴", cls: "r" },
+  "Not Issued":    { dot: "⚪", cls: "n" },
+};
+function statusBadge(s) { const st = STATUS[s] || STATUS["Not Issued"]; return `<span class="badge badge-${st.cls}">${st.dot} ${s}</span>`; }
+function statusDot(s) { const st = STATUS[s] || STATUS["Not Issued"]; return st.dot; }
+function fmtDate(s) { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return s; return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); }
+function fmtSAR(v) { return "SAR " + Math.round(v || 0).toLocaleString("en-US"); }
+function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+function exportToExcel(filename, rows) {
+  if (!rows || !rows.length) { toast("No rows to export", "error"); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  XLSX.writeFile(wb, filename + ".xlsx");
+  toast(`Exported ${rows.length} row${rows.length === 1 ? "" : "s"}`, "success");
+}
+/* Bundles several row-sets into one workbook, one sheet each — used by
+ * "Export All to Excel" to match the reference tool's single combined
+ * download (Resource + Protech + Former + Expiring/Expired in one file). */
+function exportToExcelMultiSheet(filename, sheets) {
+  const wb = XLSX.utils.book_new();
+  let total = 0;
+  sheets.forEach(([name, rows]) => {
+    const ws = rows && rows.length ? XLSX.utils.json_to_sheet(rows) : XLSX.utils.aoa_to_sheet([["No data"]]);
+    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31)); // Excel sheet-name limit
+    total += rows ? rows.length : 0;
+  });
+  XLSX.writeFile(wb, filename + ".xlsx");
+  toast(`Exported ${sheets.length} sheets, ${total} rows total`, "success");
+}
+function openModal(id) { document.getElementById(id).classList.add("open"); }
+function closeModal(id) { document.getElementById(id).classList.remove("open"); }
+
+let toastTimer;
+function toast(msg, type = "info") {
+  const el = document.getElementById("toast");
+  const icons = { success: "✅", error: "❌", info: "ℹ️" };
+  el.innerHTML = `${icons[type] || "ℹ️"} ${escapeHtml(msg)}`;
+  el.className = `toast ${type} show`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
+}
+
+/* ── Printable compliance report (light theme — print stylesheets
+ * fight dark backgrounds) — one section per Certification Domain,
+ * every active employee's certificate status, for site/audit handoff. */
+async function printComplianceReport() {
+  let employees;
+  try {
+    const res = await apiGet("list_employee_certificates", { cohort: "active" });
+    employees = res.employees || [];
+  } catch (e) { alert("Could not load report data: " + e.message); return; }
+
+  const byDomain = {};
+  employees.forEach((e) => {
+    const domain = e.certification_domain || "Unassigned";
+    (byDomain[domain] = byDomain[domain] || []).push(e);
+  });
+  const certTypes = [...new Set(employees.flatMap((e) => Object.keys(e.certs || {})))].sort();
+  const generated = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  const sections = Object.keys(byDomain).sort().map((domain) => `
+    <h2>${escapeHtml(domain)} <span class="muted">(${byDomain[domain].length} employee${byDomain[domain].length === 1 ? "" : "s"})</span></h2>
+    <table>
+      <thead><tr><th>Employee</th><th>Iqama / ID</th><th>Designation</th>${certTypes.map((c) => `<th>${c}</th>`).join("")}</tr></thead>
+      <tbody>${byDomain[domain].map((e) => `<tr><td>${escapeHtml(e.employee_name)}</td><td>${escapeHtml(e.iqama_number) || "—"}</td><td>${escapeHtml(e.designation) || "—"}</td>${certTypes.map((c) => {
+        const cert = (e.certs || {})[c];
+        const s = cert ? cert.status : "Not Issued";
+        const cls = s === "Valid" ? "ok" : s === "Not Issued" ? "muted" : "bad";
+        return `<td class="${cls}">${s === "Not Issued" ? "—" : s === "Valid" ? "OK" : s}${cert?.expiry_date ? " " + fmtDate(cert.expiry_date) : ""}</td>`;
+      }).join("")}</tr>`).join("")}</tbody>
+    </table>
+  `).join("");
+
+  const win = window.open("", "_blank");
+  win.document.write(`<!doctype html><html><head><title>INET Certification Compliance Report</title><style>
+    body{font-family:Arial,Helvetica,sans-serif;color:#111;padding:24px;font-size:12px}
+    h1{font-size:18px;margin-bottom:2px} .muted{color:#777;font-weight:400}
+    .meta{color:#555;margin-bottom:20px;font-size:11px}
+    h2{font-size:14px;margin:22px 0 8px;border-bottom:1px solid #ccc;padding-bottom:4px}
+    table{width:100%;border-collapse:collapse;margin-bottom:10px}
+    th,td{border:1px solid #ccc;padding:5px 8px;text-align:left;font-size:11px;white-space:nowrap}
+    th{background:#f0f0f0}
+    td.ok{color:#0a7a34} td.bad{color:#b3261e;font-weight:600} td.muted{color:#999}
+    @media print{body{padding:0}}
+  </style></head><body>
+    <h1>INET Certification Compliance Report</h1>
+    <div class="meta">Generated ${generated} — ${employees.length} active employees across ${Object.keys(byDomain).length} domain(s)</div>
+    ${sections}
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
+/* ── Charts (Chart.js) ────────────────────────────────────── */
+function mkBarChart(canvasId, labels, data, colors, onClickFn) {
+  if (CHARTS[canvasId]) CHARTS[canvasId].destroy();
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  if (onClickFn) ctx.style.cursor = "pointer";
+  CHARTS[canvasId] = new Chart(ctx, {
+    type: "bar",
+    data: { labels, datasets: [{ data, backgroundColor: colors }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { color: "#8d96a0" } }, x: { ticks: { color: "#8d96a0" } } },
+      onClick: onClickFn ? (evt, els) => { if (els.length) onClickFn(els[0].index); } : undefined,
+    },
+  });
+}
+const PIE_COLORS = ["#388bfd", "#3fb950", "#d29922", "#f85149", "#bc8cff", "#58a6ff", "#f78166", "#a5d6ff"];
+function mkPieChart(canvasId, labels, data, onClickFn) {
+  if (CHARTS[canvasId]) CHARTS[canvasId].destroy();
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  if (onClickFn) ctx.style.cursor = "pointer";
+  CHARTS[canvasId] = new Chart(ctx, {
+    type: "pie",
+    data: { labels, datasets: [{ data, backgroundColor: labels.map((_, i) => PIE_COLORS[i % PIE_COLORS.length]), borderWidth: 0 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: "right", labels: { color: "#8d96a0", font: { size: 10 }, boxWidth: 10 } } },
+      onClick: onClickFn ? (evt, els) => { if (els.length) onClickFn(els[0].index); } : undefined,
+    },
+  });
+}
+function mkDoughnut(canvasId, value) {
+  if (CHARTS[canvasId]) CHARTS[canvasId].destroy();
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  CHARTS[canvasId] = new Chart(ctx, {
+    type: "doughnut",
+    data: { labels: ["Covered", "Missing"], datasets: [{ data: [value, 100 - value], backgroundColor: ["#3fb950", "#30363d"], borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: "72%", plugins: { legend: { display: false } } },
+  });
+}
+function mkStatusDoughnut(canvasId, valid, expiring, expired, onClickFn) {
+  if (CHARTS[canvasId]) CHARTS[canvasId].destroy();
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  if (onClickFn) ctx.style.cursor = "pointer";
+  CHARTS[canvasId] = new Chart(ctx, {
+    type: "doughnut",
+    data: { labels: ["Valid", "Expiring Soon", "Expired"], datasets: [{ data: [valid, expiring, expired], backgroundColor: ["#3fb950", "#d29922", "#f85149"], borderWidth: 0, hoverOffset: 4 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "65%",
+      plugins: { legend: { position: "right", labels: { color: "#8d96a0", font: { size: 10 }, boxWidth: 10 } } },
+      onClick: onClickFn ? (evt, els) => { if (els.length) onClickFn(els[0].index); } : undefined,
+    },
+  });
+}
+function mkStackedCoverageChart(canvasId, certTypes, stats, onClickFn) {
+  if (CHARTS[canvasId]) CHARTS[canvasId].destroy();
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  if (onClickFn) ctx.style.cursor = "pointer";
+  const statusKeys = ["Valid", "Expiring Soon", "Expired"];
+  CHARTS[canvasId] = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: certTypes,
+      datasets: [
+        { label: "Valid", data: certTypes.map((c) => stats[c].valid), backgroundColor: "rgba(63,185,80,.8)", borderRadius: 3, stack: "s" },
+        { label: "Expiring", data: certTypes.map((c) => stats[c].expiring), backgroundColor: "rgba(210,153,34,.8)", borderRadius: 3, stack: "s" },
+        { label: "Expired", data: certTypes.map((c) => stats[c].expired), backgroundColor: "rgba(248,81,73,.8)", borderRadius: 3, stack: "s" },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: "#8d96a0", font: { size: 9 } } } },
+      scales: {
+        x: { stacked: true, ticks: { color: "#8d96a0", font: { size: 9 } } },
+        y: { stacked: true, beginAtZero: true, ticks: { color: "#8d96a0", font: { size: 9 } } },
+      },
+      onClick: onClickFn ? (evt, els) => { if (els.length) onClickFn(certTypes[els[0].index], statusKeys[els[0].datasetIndex]); } : undefined,
+    },
+  });
+}
+
+/* ── Navigation ───────────────────────────────────────────── */
+const RENDERERS = {
+  dashboard: renderDashboard,
+  resource: () => renderEmployeeList("resource"),
+  protech: () => renderEmployeeList("protech"),
+  former: () => renderEmployeeList("former"),
+  "cert-status-summary": renderCertStatusSummary,
+  "cert-overview": renderCertOverview,
+  "cert-expiring": renderCertExpiring,
+  "cert-cost": renderCertCost,
+  "by-domain": renderByDomain,
+  "search": renderGlobalSearch,
+};
+function nav(page) {
+  CURRENT_PAGE = page;
+  document.querySelectorAll(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.page === page));
+  document.querySelectorAll(".page").forEach((p) => p.classList.toggle("active", p.id === "page-" + page));
+  const fn = RENDERERS[page];
+  if (fn) fn();
+}
+
+/* ── Header pills ─────────────────────────────────────────── */
+async function loadHeaderPills() {
+  try {
+    const stats = await apiGet("get_certificate_dashboard_stats");
+    const sc = stats.status_counts || {};
+    document.getElementById("hdr-pills").innerHTML = `
+      <span class="hdr-pill b">👥 ${stats.total_employees} <span class="hdr-pill-label">Total</span></span>
+      <span class="hdr-pill g">🟢 ${sc.Valid || 0} <span class="hdr-pill-label">Valid</span></span>
+      <span class="hdr-pill y">🟡 ${sc["Expiring Soon"] || 0} <span class="hdr-pill-label">Exp. ≤90d</span></span>
+      <span class="hdr-pill r">🔴 ${sc.Expired || 0} <span class="hdr-pill-label">Expired</span></span>
+    `;
+  } catch (e) { /* non-fatal */ }
+}
+function updateHeaderDate() {
+  const el = document.getElementById("hdr-date");
+  if (el) el.textContent = new Date().toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "long", year: "numeric" });
+}
+async function loadNavBadges() {
+  try {
+    const c = await apiGet("get_nav_badge_counts");
+    document.getElementById("nb-resource").textContent = c.resource;
+    document.getElementById("nb-protech").textContent = c.protech;
+    document.getElementById("nb-former").textContent = c.former;
+    const expEl = document.getElementById("nb-expiring");
+    expEl.textContent = c.expiring_90;
+    expEl.className = "nav-badge " + (c.expiring_90 > 0 ? "y" : "b");
+  } catch (e) { /* non-fatal */ }
+}
+function refreshBadges() { loadHeaderPills(); loadNavBadges(); }
+
+/* ── Dashboard ────────────────────────────────────────────── */
+async function renderDashboard() {
+  const el = document.getElementById("page-dashboard");
+  el.innerHTML = `<div class="loading">Loading…</div>`;
+  try {
+    const [stats, summary, badges] = await Promise.all([
+      apiGet("get_certificate_dashboard_stats"),
+      apiGet("get_certificate_status_summary"),
+      apiGet("get_nav_badge_counts"),
+    ]);
+    const sc = stats.status_counts || {}, dc = stats.domain_counts || {};
+    const links = [
+      ["resource", "👥 Resource Tracker"], ["protech", "🔧 Protech (WL & MW)"], ["former", "📁 Former Employees"],
+      ["cert-status-summary", "📋 Certificate Status Summary"], ["cert-overview", "🏅 Certificate Overview"],
+      ["cert-expiring", "⏳ Expiring in 90 Days"], ["cert-cost", "💰 Certificate Cost"], ["by-domain", "🌐 By Domain"],
+    ];
+    el.innerHTML = `
+      <div class="ph">
+        <div class="ph-left"><h1>Certificate Tracker</h1><p>Employee certification status across all active staff</p></div>
+        <div class="ph-right">
+          <button class="btn" onclick="openBulkRenew()">⬆️ Bulk Renew</button>
+          <button class="btn" onclick="printComplianceReport()">🖨 Compliance Report</button>
+        </div>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card blue clickable" onclick="openDashEmpModal('all')" title="Click to view details"><div class="sc-icon">👥</div><div class="sc-num">${stats.total_employees}</div><div class="sc-label">Total Active Resources</div><div class="sc-cta">CLICK TO EXPLORE ›</div></div>
+        <div class="stat-card green clickable" onclick="openDashCertStatusModal('Valid')" title="Click to view details"><div class="sc-icon">✅</div><div class="sc-num">${sc.Valid || 0}</div><div class="sc-label">Valid Certificates</div><div class="sc-cta">CLICK TO EXPLORE ›</div></div>
+        <div class="stat-card yellow clickable" onclick="openDashCertStatusModal('Expiring Soon')" title="Click to view details"><div class="sc-icon">⏳</div><div class="sc-num">${sc["Expiring Soon"] || 0}</div><div class="sc-label">Expiring ≤90 Days</div><div class="sc-cta">CLICK TO EXPLORE ›</div></div>
+        <div class="stat-card red clickable" onclick="openDashCertStatusModal('Expired')" title="Click to view details"><div class="sc-icon">🔴</div><div class="sc-num">${sc.Expired || 0}</div><div class="sc-label">Expired Certificates</div><div class="sc-cta">CLICK TO EXPLORE ›</div></div>
+        <div class="stat-card purple clickable" onclick="openDashEmpModal('former')" title="Click to view details"><div class="sc-icon">📁</div><div class="sc-num">${badges.former}</div><div class="sc-label">Former Employees</div><div class="sc-cta">CLICK TO EXPLORE ›</div></div>
+        <div class="stat-card blue clickable" onclick="nav('cert-overview')" title="Click to explore"><div class="sc-icon">🏅</div><div class="sc-num">${summary.length}</div><div class="sc-label">Certificate Types</div><div class="sc-cta">CLICK TO EXPLORE ›</div></div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-title">Certificate Coverage by Type</div><div class="chart-sub">Number of holders per certificate — click a bar</div>
+          <div class="chart-box"><canvas id="ch-coverage"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Status Distribution</div><div class="chart-sub">Valid / Expiring / Expired across all certs — click a segment</div>
+          <div class="chart-box"><canvas id="ch-status"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Expiring in Next 90 Days</div><div class="chart-sub">By certificate type — click a bar</div>
+          <div class="chart-box"><canvas id="ch-90days"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Employees by Domain</div><div class="chart-sub">Resource distribution — click a bar</div>
+          <div class="chart-box"><canvas id="ch-domain"></canvas></div>
+        </div>
+      </div>
+      <div class="quick-links">${links.map(([p, l]) => `<button class="quick-link" onclick="nav('${p}')">${l}</button>`).join("")}</div>
+    `;
+    const certTypes = summary.map((r) => r.certificate_type);
+    const holders = summary.map((r) => r.eligible_total - (r.counts["Not Issued"] || 0));
+    const expiring90 = summary.map((r) => r.counts["Expiring Soon"] || 0);
+
+    mkBarChart("ch-coverage", certTypes, holders, "#1f6feb", (i) => openDashCertTypeModal(certTypes[i], null));
+    mkStatusDoughnut("ch-status", sc.Valid || 0, sc["Expiring Soon"] || 0, sc.Expired || 0, (i) => {
+      openDashCertStatusModal(["Valid", "Expiring Soon", "Expired"][i]);
+    });
+    mkBarChart("ch-90days", certTypes, expiring90, "#d29922", (i) => openDashCertTypeModal(certTypes[i], "Expiring Soon"));
+    mkPieChart("ch-domain", Object.keys(dc), Object.values(dc), (i) => openDashDomainModal(Object.keys(dc)[i]));
+  } catch (e) { el.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+
+/* ── Dashboard drill-down modals — matches the reference tool's behaviour:
+ * clicking a card/chart pops up a table right there, instead of navigating
+ * away. Reuses the same drill-overlay the Certificate Status Summary page
+ * uses for its own drills. */
+let DASH_MODAL_EMPLOYEES = [];
+async function openDashEmpModal(kind) {
+  const title = kind === "former" ? "📁 Former Employees" : "👥 All Active Employees";
+  const color = kind === "former" ? "var(--purple)" : "var(--blue)";
+  document.getElementById("drill-title").innerHTML = `<span style="color:${color}">${title}</span>`;
+  document.getElementById("drill-body").innerHTML = `<div class="loading">Loading…</div>`;
+  openModal("drill-overlay");
+  try {
+    const res = await apiGet("list_employee_certificates", { cohort: kind === "former" ? "former" : "active" });
+    renderDashEmpModalTable(title, color, res.employees || []);
+  } catch (e) { document.getElementById("drill-body").innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+async function openDashDomainModal(domain) {
+  const title = `🏢 Domain: ${domain}`;
+  document.getElementById("drill-title").innerHTML = `<span style="color:var(--blue)">${title}</span>`;
+  document.getElementById("drill-body").innerHTML = `<div class="loading">Loading…</div>`;
+  openModal("drill-overlay");
+  try {
+    const res = await apiGet("list_employee_certificates", { cohort: "active", domain });
+    renderDashEmpModalTable(title, "var(--blue)", res.employees || []);
+  } catch (e) { document.getElementById("drill-body").innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+function renderDashEmpModalTable(title, color, employees) {
+  DASH_MODAL_EMPLOYEES = employees;
+  document.getElementById("drill-title").innerHTML = `<span style="color:${color}">${title}</span> <span style="color:var(--text3);font-size:13px;font-weight:400">(${employees.length})</span>`;
+  document.getElementById("drill-body").innerHTML = `
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Click a row to view full details</div>
+    <table><thead><tr><th>#</th><th>Employee</th><th>Iqama</th><th>Domain</th><th>Designation</th><th>Mobile</th><th>Status</th></tr></thead>
+    <tbody>${employees.map((e, i) => `<tr style="cursor:pointer" onclick="openDashEmpDetail('${e.name}')">
+      <td class="mono">${i + 1}</td><td><strong>${escapeHtml(e.employee_name)}</strong></td><td>${escapeHtml(e.iqama_number) || "—"}</td>
+      <td>${escapeHtml(e.certification_domain) || "—"}</td><td>${escapeHtml(e.designation) || "—"}</td><td>${escapeHtml(e.cell_number) || "—"}</td>
+      <td>${e.status === "Left" ? '<span class="badge badge-n">Left</span>' : '<span class="badge badge-g">Active</span>'}</td>
+    </tr>`).join("") || `<tr class="empty-row"><td colspan="7">No employees</td></tr>`}</tbody></table>
+  `;
+}
+function openDashEmpDetail(name) { closeModal("drill-overlay"); openDetail(name, DASH_MODAL_EMPLOYEES); }
+
+const DASH_STATUS_META = {
+  "Valid": ["✅ Valid Certificates", "var(--green)"],
+  "Expiring Soon": ["🟡 Expiring ≤ 90 Days", "var(--yellow)"],
+  "Expired": ["🔴 Expired Certificates", "var(--red)"],
+};
+async function openDashCertStatusModal(status) {
+  const [title, color] = DASH_STATUS_META[status];
+  document.getElementById("drill-title").innerHTML = `<span style="color:${color}">${title}</span>`;
+  document.getElementById("drill-body").innerHTML = `<div class="loading">Loading…</div>`;
+  openModal("drill-overlay");
+  try {
+    const rows = await apiGet("get_certificates_by_status", { status });
+    renderDashCertModalTable(title, color, rows, status !== "Valid");
+  } catch (e) { document.getElementById("drill-body").innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+async function openDashCertTypeModal(certType, statusFilter) {
+  const title = statusFilter ? `🟡 ${certType} — Expiring ≤ 90 Days` : `🏅 ${certType} — All Holders`;
+  document.getElementById("drill-title").innerHTML = `<span style="color:var(--blue)">${escapeHtml(title)}</span>`;
+  document.getElementById("drill-body").innerHTML = `<div class="loading">Loading…</div>`;
+  openModal("drill-overlay");
+  try {
+    let rows = await apiGet("list_employees_for_certificate", { certificate_type: certType, status: statusFilter || "" });
+    if (!statusFilter) rows = rows.filter((r) => r.status !== "Not Issued");
+    rows = rows.map((r) => ({ ...r, certificate_type: certType }));
+    renderDashCertModalTable(title, "var(--blue)", rows, !!statusFilter);
+  } catch (e) { document.getElementById("drill-body").innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+function renderDashCertModalTable(title, color, rows, showDays) {
+  document.getElementById("drill-title").innerHTML = `<span style="color:${color}">${title}</span> <span style="color:var(--text3);font-size:13px;font-weight:400">(${rows.length})</span>`;
+  document.getElementById("drill-body").innerHTML = `
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Click a row to view full details</div>
+    <table><thead><tr><th>#</th><th>Employee</th><th>Domain</th><th>Certificate</th><th>Cert No</th><th>Expiry</th>${showDays ? "<th>Days</th>" : ""}</tr></thead>
+    <tbody>${rows.map((r, i) => `<tr style="cursor:pointer" onclick="openDashCertRowDetail('${r.employee}')">
+      <td class="mono">${i + 1}</td><td><strong>${escapeHtml(r.employee_name)}</strong></td><td>${escapeHtml(r.certification_domain) || "—"}</td>
+      <td><span class="badge badge-g" style="background:var(--blue-dim);color:var(--blue)">${r.certificate_type}</span></td>
+      <td>${escapeHtml(r.certificate_no) || "—"}</td><td>${fmtDate(r.expiry_date)}</td>
+      ${showDays ? `<td style="color:${r.days_to_expiry < 0 ? "var(--red)" : "var(--yellow)"};font-weight:700">${r.days_to_expiry ?? "—"}</td>` : ""}
+    </tr>`).join("") || `<tr class="empty-row"><td colspan="${showDays ? 7 : 6}">No matching certificates</td></tr>`}</tbody></table>
+  `;
+}
+async function openDashCertRowDetail(employeeName) {
+  closeModal("drill-overlay");
+  try {
+    const res = await apiGet("list_employee_certificates", {});
+    openDetail(employeeName, res.employees || []);
+  } catch (e) { /* non-fatal — user just clicked through, no need for an error toast */ }
+}
+
+/* Cross-page drill helpers: land on the target page pre-filtered. Since
+ * each target page's filter <select>s only exist after its own async
+ * render finishes, the target page's render function applies the pending
+ * filter itself right before painting (see renderCertExpiring/renderByDomain). */
+let pendingExpiringFilter = null;
+function drillToExpiring(cert, statusType) { pendingExpiringFilter = { cert: cert || "", type: statusType || "" }; nav("cert-expiring"); }
+let pendingDomainTab = null;
+function drillToDomain(domain) { pendingDomainTab = domain; nav("by-domain"); }
+
+/* ── Resource Tracker / Protech / Former Employees ───────────
+ * Same Employee data, filtered by cohort — no separate spreadsheets. */
+const COHORT_META = {
+  resource: { title: "Resource Tracker", subtitle: "Active field staff outside WL & MW" },
+  protech: { title: "Protech (WL & MW)", subtitle: "Active Wireless & Microwave staff" },
+  former: { title: "Former Employees", subtitle: "Historical certification records" },
+};
+const COHORT_PAGE_SIZE = 25;
+let cohortPage = {};
+let cohortCertFilter = {};
+
+async function renderEmployeeList(cohort) {
+  const el = document.getElementById("page-" + cohort);
+  el.innerHTML = `<div class="loading">Loading…</div>`;
+  try {
+    const res = await apiGet("list_employee_certificates", { cohort });
+    const employees = res.employees || [];
+    const certTypes = [...new Set(employees.flatMap((e) => Object.keys(e.certs || {})))].sort();
+    const domains = [...new Set(employees.map((e) => e.certification_domain).filter(Boolean))].sort();
+    const designations = [...new Set(employees.map((e) => e.designation).filter(Boolean))].sort();
+    const meta = COHORT_META[cohort];
+    cohortPage[cohort] = 1;
+    delete cohortCertFilter[cohort];
+    el.innerHTML = `
+      <div class="ph">
+        <div class="ph-left"><h1>${meta.title}</h1><p>${meta.subtitle} — ${employees.length} employee${employees.length === 1 ? "" : "s"}</p></div>
+        <div class="ph-right">
+          <button class="btn btn-primary" onclick="openAddEmployee('${cohort}')">➕ Add Employee</button>
+          <button class="btn" onclick="exportEmployeeTable('${cohort}')">⬇️ Export</button>
+        </div>
+      </div>
+      ${renderCohortDashHtml(cohort, employees, certTypes)}
+      <div class="toolbar">
+        <input type="search" id="search-${cohort}" placeholder="Search name, iqama, mobile…" oninput="renderEmployeeTableBody('${cohort}')">
+        <select id="filter-domain-${cohort}" onchange="renderEmployeeTableBody('${cohort}')"><option value="">All Domains</option>${domains.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join("")}</select>
+        <select id="filter-designation-${cohort}" onchange="renderEmployeeTableBody('${cohort}')"><option value="">All Designations</option>${designations.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join("")}</select>
+        <select id="filter-certstatus-${cohort}" onchange="renderEmployeeTableBody('${cohort}')">
+          <option value="">Any Cert Status</option><option value="valid">🟢 All Valid</option><option value="expiring">🟡 Has Expiring</option><option value="expired">🔴 Has Expired</option>
+        </select>
+      </div>
+      <div class="filter-note" id="filter-note-${cohort}" onclick="clearCertFilter('${cohort}')"></div>
+      <div class="table-wrap"><div class="table-scroll">
+        <div style="padding:8px 12px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border)">🟢 Valid &nbsp;🟡 ≤90d &nbsp;🔴 Expired &nbsp;⚪ Not Issued — click a cert cell to add/renew</div>
+        <table id="tbl-${cohort}">
+          <thead><tr><th>#</th><th>Employee</th><th>Iqama / ID</th><th>Domain</th><th>Designation</th><th>Mobile</th>
+            ${certTypes.map((c) => `<th style="text-align:center" title="${c}">${c}</th>`).join("")}<th>Actions</th></tr></thead>
+          <tbody id="tbody-${cohort}"></tbody>
+        </table>
+      </div></div>
+      <div class="pagination" id="pagination-${cohort}"></div>
+    `;
+    el.dataset.raw = JSON.stringify(employees);
+    el.dataset.certTypes = JSON.stringify(certTypes);
+    if (employees.length) {
+      const { stats, totalValid, totalExpiring, totalExpired } = computeCohortCertStats(employees, certTypes);
+      mkStatusDoughnut(`ch-${cohort}-status`, totalValid, totalExpiring, totalExpired);
+      mkStackedCoverageChart(`ch-${cohort}-coverage`, certTypes, stats);
+    }
+    paintEmployeeTableBody(cohort);
+  } catch (e) { el.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+
+/* Per-cohort mini-dashboard: coverage cards + status/coverage charts,
+ * computed client-side from the same payload the table below uses — one
+ * fetch, one source of truth, no risk of the dashboard and table drifting
+ * apart. */
+function computeCohortCertStats(employees, certTypes) {
+  const stats = {};
+  certTypes.forEach((c) => { stats[c] = { valid: 0, expiring: 0, expired: 0, notIssued: 0 }; });
+  let totalValid = 0, totalExpiring = 0, totalExpired = 0;
+  employees.forEach((e) => {
+    certTypes.forEach((c) => {
+      const cert = (e.certs || {})[c];
+      const s = cert ? cert.status : "Not Issued";
+      if (s === "Valid") { stats[c].valid++; totalValid++; }
+      else if (s === "Expiring Soon") { stats[c].expiring++; totalExpiring++; }
+      else if (s === "Expired") { stats[c].expired++; totalExpired++; }
+      else stats[c].notIssued++;
+    });
+  });
+  return { stats, totalValid, totalExpiring, totalExpired };
+}
+function renderCohortDashHtml(cohort, employees, certTypes) {
+  if (!employees.length || !certTypes.length) return "";
+  const { stats } = computeCohortCertStats(employees, certTypes);
+  const cards = certTypes.map((c) => {
+    const s = stats[c];
+    const total = s.valid + s.expiring + s.expired;
+    const cov = employees.length ? Math.round((total / employees.length) * 100) : 0;
+    const covColor = cov >= 80 ? "var(--green)" : cov >= 50 ? "var(--yellow)" : "var(--red)";
+    const cq = c.replace(/'/g, "\\'");
+    // Whole card drills into whichever status is worst (expired > expiring
+    // > valid priority, matching the reference tool); individual badges
+    // still drill into their own specific status via stopPropagation.
+    const dominant = s.expired ? "Expired" : s.expiring ? "Expiring Soon" : "Valid";
+    return `<div class="cohort-cert-card" onclick="applyCertFilter('${cohort}','${cq}','${dominant}')" title="Click to explore this certificate">
+      <div class="cohort-cert-name">${c}</div>
+      <div class="cohort-cert-badges">
+        ${s.valid ? `<span class="badge badge-g" onclick="event.stopPropagation();applyCertFilter('${cohort}','${cq}','Valid')">🟢 ${s.valid}</span>` : ""}
+        ${s.expiring ? `<span class="badge badge-y" onclick="event.stopPropagation();applyCertFilter('${cohort}','${cq}','Expiring Soon')">🟡 ${s.expiring}</span>` : ""}
+        ${s.expired ? `<span class="badge badge-r" onclick="event.stopPropagation();applyCertFilter('${cohort}','${cq}','Expired')">🔴 ${s.expired}</span>` : ""}
+        ${!s.valid && !s.expiring && !s.expired ? `<span class="badge badge-n">⚪ 0</span>` : ""}
+      </div>
+      <div class="cohort-cert-bar"><div style="width:${cov}%;background:${covColor}"></div></div>
+      <div class="cohort-cert-pct" style="color:${covColor}">${cov}% coverage</div>
+    </div>`;
+  }).join("");
+  return `
+    <div class="panel"><h3>Certificate Coverage — ${employees.length} employee${employees.length === 1 ? "" : "s"} × ${certTypes.length} certificate types</h3>
+      <div class="cohort-cert-grid">${cards}</div>
+    </div>
+    <div class="grid-2">
+      <div class="panel"><h3>Status Breakdown</h3><div class="chart-box"><canvas id="ch-${cohort}-status"></canvas></div></div>
+      <div class="panel"><h3>Coverage by Certificate Type</h3><div class="chart-box"><canvas id="ch-${cohort}-coverage"></canvas></div></div>
+    </div>
+  `;
+}
+const COHORT_STATUS_COLOR = { Valid: "var(--green)", "Expiring Soon": "var(--yellow)", Expired: "var(--red)" };
+function applyCertFilter(cohort, certType, status) {
+  // Pops up the same drill modal the main Dashboard uses, scoped to this
+  // cohort's already-loaded employee list — no extra fetch needed.
+  const el = document.getElementById("page-" + cohort);
+  const employees = JSON.parse(el.dataset.raw || "[]");
+  const rows = employees
+    .filter((e) => ((e.certs || {})[certType]?.status || "Not Issued") === status)
+    .map((e) => {
+      const cert = (e.certs || {})[certType] || {};
+      return {
+        employee: e.name, employee_name: e.employee_name, certification_domain: e.certification_domain,
+        certificate_type: certType, certificate_no: cert.certificate_no,
+        expiry_date: cert.expiry_date, days_to_expiry: cert.days_to_expiry,
+      };
+    });
+  renderDashCertModalTable(`${certType} — ${status}`, COHORT_STATUS_COLOR[status] || "var(--blue)", rows, status !== "Valid");
+  openModal("drill-overlay");
+}
+function clearCertFilter(cohort) {
+  delete cohortCertFilter[cohort];
+  const note = document.getElementById(`filter-note-${cohort}`);
+  if (note) note.style.display = "none";
+  cohortPage[cohort] = 1;
+  paintEmployeeTableBody(cohort);
+}
+function renderEmployeeTableBody(cohort) {
+  cohortPage[cohort] = 1;
+  paintEmployeeTableBody(cohort);
+}
+function filterEmployeesForCohort(cohort) {
+  const el = document.getElementById("page-" + cohort);
+  const employees = JSON.parse(el.dataset.raw || "[]");
+  const certTypes = JSON.parse(el.dataset.certTypes || "[]");
+  const q = (document.getElementById(`search-${cohort}`)?.value || "").toLowerCase();
+  const domainF = document.getElementById(`filter-domain-${cohort}`)?.value || "";
+  const desigF = document.getElementById(`filter-designation-${cohort}`)?.value || "";
+  const certstatusF = document.getElementById(`filter-certstatus-${cohort}`)?.value || "";
+  const cf = cohortCertFilter[cohort];
+
+  return employees.filter((e) => {
+    if (q && !JSON.stringify(e).toLowerCase().includes(q)) return false;
+    if (domainF && e.certification_domain !== domainF) return false;
+    if (desigF && e.designation !== desigF) return false;
+    if (certstatusF) {
+      const statuses = certTypes.map((c) => (e.certs || {})[c]?.status || "Not Issued");
+      if (certstatusF === "expired" && !statuses.includes("Expired")) return false;
+      if (certstatusF === "expiring" && !statuses.includes("Expiring Soon")) return false;
+      if (certstatusF === "valid" && !statuses.every((s) => s === "Valid" || s === "Not Issued")) return false;
+    }
+    if (cf) {
+      const cert = (e.certs || {})[cf.certType];
+      const st = cert ? cert.status : "Not Issued";
+      if (st !== cf.status) return false;
+    }
+    return true;
+  });
+}
+function paintEmployeeTableBody(cohort) {
+  const el = document.getElementById("page-" + cohort);
+  const certTypes = JSON.parse(el.dataset.certTypes || "[]");
+  const filtered = filterEmployeesForCohort(cohort);
+  const pg = cohortPage[cohort] || 1;
+  const start = (pg - 1) * COHORT_PAGE_SIZE;
+  const paged = filtered.slice(start, start + COHORT_PAGE_SIZE);
+  document.getElementById(`tbody-${cohort}`).innerHTML =
+    paged.map((e, i) => employeeRow(e, certTypes, cohort, start + i + 1)).join("")
+    || `<tr class="empty-row"><td colspan="${7 + certTypes.length}">No employees found</td></tr>`;
+  renderCohortPagination(cohort, filtered.length);
+}
+function renderCohortPagination(cohort, total) {
+  const el = document.getElementById(`pagination-${cohort}`);
+  if (!el) return;
+  const totalPages = Math.ceil(total / COHORT_PAGE_SIZE);
+  if (totalPages <= 1) { el.innerHTML = ""; return; }
+  const pg = cohortPage[cohort] || 1;
+  let html = `<span class="pg-info">Page ${pg} of ${totalPages} (${total} total)</span>`;
+  if (pg > 1) html += `<button class="btn" onclick="goToCohortPage('${cohort}',${pg - 1})">◀ Prev</button>`;
+  const s = Math.max(1, pg - 2), e2 = Math.min(totalPages, pg + 2);
+  for (let i = s; i <= e2; i++) html += `<button class="btn ${i === pg ? "btn-primary" : ""}" onclick="goToCohortPage('${cohort}',${i})">${i}</button>`;
+  if (pg < totalPages) html += `<button class="btn" onclick="goToCohortPage('${cohort}',${pg + 1})">Next ▶</button>`;
+  el.innerHTML = html;
+}
+function goToCohortPage(cohort, pg) { cohortPage[cohort] = pg; paintEmployeeTableBody(cohort); }
+
+function employeeRow(e, certTypes, cohort, rowNum) {
+  return `<tr>
+    <td class="mono">${rowNum}</td>
+    <td><strong style="cursor:pointer;color:var(--blue)" onclick="openDetail('${e.name}','${cohort}')" title="View details">${escapeHtml(e.employee_name)}</strong></td>
+    <td>${escapeHtml(e.iqama_number) || "—"}</td>
+    <td>${escapeHtml(e.certification_domain) || "—"}</td>
+    <td>${escapeHtml(e.designation) || "—"}</td>
+    <td>${escapeHtml(e.cell_number) || "—"}</td>
+    ${certTypes.map((c) => {
+      const cert = (e.certs || {})[c];
+      const status = cert ? cert.status : "Not Issued";
+      const title = cert ? `${c}: ${cert.status}${cert.expiry_date ? ` (expires ${fmtDate(cert.expiry_date)})` : ""} — click to edit` : `${c}: Not Issued — click to add`;
+      const color = status === "Expired" ? "var(--red)" : status === "Expiring Soon" ? "var(--yellow)" : status === "Valid" ? "var(--green)" : "var(--text3)";
+      return `<td style="text-align:center;cursor:pointer" data-cert="${escapeHtml(c)}" data-status="${escapeHtml(status)}" title="${escapeHtml(title)}" onclick='openCertEdit(${JSON.stringify(e.name)},${JSON.stringify(e.employee_name)},${JSON.stringify(c)},${JSON.stringify(cert || null)})'>
+        ${cert?.expiry_date ? `<div style="font-size:11px;font-weight:600;color:${color}">${statusDot(status)} ${fmtDate(cert.expiry_date)}</div>` : `<div style="font-size:13px">${statusDot(status)}</div>`}
+        ${cert?.certificate_no ? `<div style="font-size:9px;color:var(--text3);font-family:monospace;max-width:100px;overflow:hidden;text-overflow:ellipsis;margin:0 auto" title="${escapeHtml(cert.certificate_no)}">${escapeHtml(cert.certificate_no)}</div>` : ""}
+      </td>`;
+    }).join("")}
+    <td><div style="display:flex;gap:2px">
+      <button class="dot-btn" title="View" onclick="openDetail('${e.name}','${cohort}')">👁</button>
+      <button class="dot-btn" title="Edit" onclick="editEmployeeFromTable('${e.name}','${cohort}')">✏️</button>
+    </div></td>
+  </tr>`;
+}
+function editEmployeeFromTable(employeeName, cohort) {
+  const el = document.getElementById("page-" + cohort);
+  const employees = JSON.parse(el.dataset.raw || "[]");
+  const emp = employees.find((x) => x.name === employeeName);
+  if (emp) openEmployeeForm("edit", cohort, emp);
+}
+function exportEmployeeTable(cohort) {
+  const el = document.getElementById("page-" + cohort);
+  const employees = filterEmployeesForCohort(cohort);
+  const certTypes = JSON.parse(el.dataset.certTypes || "[]");
+  const rows = employees.map((e) => {
+    const row = { Employee: e.employee_name, "Iqama / ID": e.iqama_number || "", Domain: e.certification_domain || "", Designation: e.designation || "", Mobile: e.cell_number || "" };
+    certTypes.forEach((c) => { row[c] = (e.certs || {})[c]?.status || "Not Issued"; });
+    return row;
+  });
+  exportToExcel(`inet-hr-${cohort}`, rows);
+}
+
+/* ── Cert edit / renew modal ──────────────────────────────── */
+async function apiUpload(doctype, docname, file) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("doctype", doctype);
+  form.append("docname", docname);
+  form.append("is_private", "1");
+  const res = await fetch("/api/method/upload_file", {
+    method: "POST",
+    credentials: "include",
+    headers: { "X-Frappe-CSRF-Token": CSRF_TOKEN },
+    body: form,
+  });
+  const json = await res.json();
+  if (!res.ok || json.exc) throw new Error(json.message || "File upload failed");
+  return json.message;
+}
+
+/* Generic renderer for a certificate's attachment list — reused by both the
+   single-cert edit modal and the per-cert cards in the Add/Edit Employee form. */
+function renderAttachmentList(containerId, files, onDelete) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!files || !files.length) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--text3)">No attachments yet</div>`;
+    return;
+  }
+  el.innerHTML = files.map((f) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0">
+      <a href="${escapeHtml(f.file_url)}" target="_blank" style="color:var(--blue);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📎 ${escapeHtml(f.file_name)}</a>
+      <button type="button" class="attach-del-btn" data-file="${escapeHtml(f.name)}" title="Delete attachment" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:0 2px">🗑</button>
+    </div>
+  `).join("");
+  el.querySelectorAll(".attach-del-btn").forEach((btn) => {
+    btn.onclick = () => onDelete(btn.dataset.file);
+  });
+}
+
+async function loadCertAttachments(employee, certType) {
+  const el = document.getElementById("edit-attachments");
+  try {
+    const files = await apiGet("list_certificate_attachments", { employee, certificate_type: certType });
+    renderAttachmentList("edit-attachments", files, async (fileName) => {
+      if (!confirm("Delete this attachment?")) return;
+      await apiPost("delete_certificate_attachment", { file_name: fileName });
+      loadCertAttachments(employee, certType);
+    });
+  } catch (e) {
+    if (el) el.innerHTML = `<div style="font-size:12px;color:var(--red)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function openCertEdit(employee, employeeName, certType, cert) {
+  document.getElementById("edit-title").textContent = `${employeeName} — ${certType}`;
+  document.getElementById("edit-employee").value = employee;
+  document.getElementById("edit-cert-type").value = certType;
+  document.getElementById("edit-cert-no").value = cert?.certificate_no || "";
+  document.getElementById("edit-issue-date").value = cert?.issue_date || "";
+  document.getElementById("edit-expiry-date").value = cert?.expiry_date || "";
+  document.getElementById("edit-remarks").value = "";
+  document.getElementById("edit-cert-file").value = "";
+  document.getElementById("edit-error").style.display = "none";
+  document.getElementById("edit-attachments").innerHTML = `<div style="font-size:12px;color:var(--text3)">Loading…</div>`;
+  document.getElementById("edit-history").innerHTML = `<div style="font-size:12px;color:var(--text3)">Loading…</div>`;
+  openModal("edit-overlay");
+  loadCertHistory(employee, certType);
+  loadCertAttachments(employee, certType);
+}
+async function loadCertHistory(employee, certType) {
+  const el = document.getElementById("edit-history");
+  try {
+    const history = await apiGet("get_certificate_history", { employee, certificate_type: certType });
+    if (!history.length) { el.innerHTML = `<div style="font-size:12px;color:var(--text3)">No changes recorded yet</div>`; return; }
+    el.innerHTML = history.map((h) => `
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+        <div style="color:var(--text3);font-size:11px;margin-bottom:3px">${fmtDate(h.modified)} — ${escapeHtml(h.modified_by)}</div>
+        ${h.changes.map((c) => `<div>${c.field}: <span style="color:var(--text3)">${escapeHtml(c.old) || "—"}</span> → <span style="color:var(--text)">${escapeHtml(c.new) || "—"}</span></div>`).join("")}
+      </div>
+    `).join("");
+  } catch (e) { el.innerHTML = `<div style="font-size:12px;color:var(--red)">${escapeHtml(e.message)}</div>`; }
+}
+async function saveCertEdit() {
+  const btn = document.getElementById("edit-save-btn");
+  btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    const doc = await apiPost("upsert_employee_certificate", {
+      employee: document.getElementById("edit-employee").value,
+      certificate_type: document.getElementById("edit-cert-type").value,
+      certificate_no: document.getElementById("edit-cert-no").value,
+      issue_date: document.getElementById("edit-issue-date").value,
+      expiry_date: document.getElementById("edit-expiry-date").value,
+      remarks: document.getElementById("edit-remarks").value,
+    });
+    const files = Array.from(document.getElementById("edit-cert-file").files || []);
+    if (files.length) {
+      btn.textContent = "Uploading…";
+      for (const file of files) {
+        await apiUpload("Employee Certificate", doc.name, file);
+      }
+    }
+    closeModal("edit-overlay");
+    nav(CURRENT_PAGE);
+    refreshBadges();
+    toast("Certificate saved", "success");
+  } catch (e) {
+    const err = document.getElementById("edit-error");
+    err.textContent = e.message; err.style.display = "block";
+  } finally {
+    btn.disabled = false; btn.textContent = "Save";
+  }
+}
+
+/* ── Bulk renew (CSV/Excel) ──────────────────────────────────── */
+function openBulkRenew() {
+  document.getElementById("bulk-file").value = "";
+  document.getElementById("bulk-result").innerHTML = "";
+  openModal("bulk-overlay");
+}
+async function runBulkRenew() {
+  const fileInput = document.getElementById("bulk-file");
+  const file = fileInput.files[0];
+  const resultEl = document.getElementById("bulk-result");
+  if (!file) { resultEl.innerHTML = `<div class="notice">Choose a file first</div>`; return; }
+
+  const btn = document.getElementById("bulk-run-btn");
+  btn.disabled = true; btn.textContent = "Processing…";
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    const rows = raw.map((r) => ({
+      employee: String(r["Employee"] || r["employee"] || "").trim(),
+      iqama_number: String(r["Iqama Number"] || r["Iqama"] || r["iqama_number"] || "").trim(),
+      certificate_type: String(r["Certificate Type"] || r["certificate_type"] || "").trim(),
+      certificate_no: String(r["Certificate No"] || r["certificate_no"] || "").trim(),
+      issue_date: normalizeSheetDate(r["Issue Date"] || r["issue_date"]),
+      expiry_date: normalizeSheetDate(r["Expiry Date"] || r["expiry_date"]),
+    }));
+    const summary = await apiPost("bulk_upsert_employee_certificates", { rows: JSON.stringify(rows) });
+    resultEl.innerHTML = `
+      <div style="margin-bottom:8px"><strong style="color:var(--green)">${summary.created}</strong> created,
+        <strong style="color:var(--blue)">${summary.updated}</strong> updated,
+        <strong style="color:${summary.errors.length ? "var(--red)" : "var(--text3)"}">${summary.errors.length}</strong> error${summary.errors.length === 1 ? "" : "s"}</div>
+      ${summary.errors.length ? `<div style="max-height:160px;overflow:auto;font-size:12px;color:var(--red)">${summary.errors.map((e) => `Row ${e.row}: ${escapeHtml(e.error)}`).join("<br>")}</div>` : ""}
+    `;
+    if (summary.created || summary.updated) {
+      nav(CURRENT_PAGE); refreshBadges();
+      toast(`${summary.created} created, ${summary.updated} updated`, "success");
+    }
+  } catch (e) {
+    resultEl.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = "Upload & Renew";
+  }
+}
+function normalizeSheetDate(v) {
+  if (!v) return "";
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === "number") { const d = XLSX.SSF.parse_date_code(v); return d ? `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}` : ""; }
+  return String(v).trim();
+}
+
+/* ── Add / Edit Employee (shared form) ────────────────────────
+ * Frappe's Employee doctype genuinely requires gender / date of birth /
+ * date of joining / company — unlike the historical bulk import (which had
+ * no such data to give), a person filling this form in right now should
+ * provide them, so nothing here bypasses that validation. */
+let ADD_EMP_OPTIONS_LOADED = false;
+let ALL_CERT_TYPES_CACHE = null;
+async function loadAddEmployeeOptions() {
+  if (ADD_EMP_OPTIONS_LOADED) return;
+  try {
+    const [genders, domains, designations, certTypes] = await Promise.all([
+      apiGet("list_genders"), apiGet("list_certification_domains"), apiGet("list_designations"), apiGet("list_certificate_types"),
+    ]);
+    document.getElementById("ae-gender").innerHTML = `<option value="">Select…</option>` + genders.map((g) => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)}</option>`).join("");
+    document.getElementById("ae-domain").innerHTML = `<option value="">Select…</option>` + domains.map((d) => `<option value="${escapeHtml(d.name)}">${escapeHtml(d.domain_name)}</option>`).join("");
+    document.getElementById("ae-designation").innerHTML = `<option value="">Select…</option>` + designations.map((d) => `<option value="${escapeHtml(d.name)}">${escapeHtml(d.name)}</option>`).join("");
+    ALL_CERT_TYPES_CACHE = certTypes;
+    ADD_EMP_OPTIONS_LOADED = true;
+  } catch (e) { /* fields just stay as "Select…" — save will surface any real error */ }
+}
+function certTypesForCohort(cohort) {
+  if (!ALL_CERT_TYPES_CACHE) return [];
+  if (cohort === "protech") return ALL_CERT_TYPES_CACHE.filter((t) => t.applies_to !== "Resource Team").map((t) => t.certificate_name);
+  return ALL_CERT_TYPES_CACHE.map((t) => t.certificate_name);
+}
+
+let EMPLOYEE_FORM_MODE = "add";
+let EMPLOYEE_FORM_CURRENT = null;
+let EMPLOYEE_FORM_COHORT = null;
+
+async function openAddEmployee(cohort) { await openEmployeeForm("add", cohort, null); }
+
+async function openEmployeeForm(mode, cohort, emp) {
+  await loadAddEmployeeOptions();
+  EMPLOYEE_FORM_MODE = mode;
+  EMPLOYEE_FORM_CURRENT = emp ? emp.name : null;
+  EMPLOYEE_FORM_COHORT = cohort;
+
+  document.getElementById("add-emp-title").textContent = mode === "edit" ? `Edit: ${emp.employee_name}` : "Add Employee";
+  document.getElementById("ae-delete-btn").style.display = mode === "edit" ? "" : "none";
+  document.getElementById("ae-name").value = emp?.employee_name || "";
+  document.getElementById("ae-iqama").value = emp?.iqama_number || "";
+  document.getElementById("ae-mobile").value = emp?.cell_number || "";
+  document.getElementById("ae-nationality").value = emp?.nationality || "";
+  document.getElementById("ae-email").value = emp?.personal_email || "";
+  document.getElementById("ae-uniportal").value = emp?.uniportal_id || "";
+  document.getElementById("ae-gender").value = emp?.gender || "";
+  document.getElementById("ae-dob").value = emp?.date_of_birth || "";
+  document.getElementById("ae-doj").value = emp?.date_of_joining || new Date().toISOString().slice(0, 10);
+  document.getElementById("ae-relieving").value = emp?.relieving_date || "";
+  const status = emp?.status || (cohort === "former" ? "Left" : "Active");
+  document.getElementById("ae-status").value = status;
+  document.getElementById("ae-relieving-wrap").style.display = status === "Left" ? "" : "none";
+  document.getElementById("ae-domain").value = emp?.certification_domain || (cohort === "protech" ? PROTECH_DOMAIN : "");
+  document.getElementById("ae-designation").value = emp?.designation || "";
+  document.getElementById("add-emp-error").style.display = "none";
+
+  const certTypes = certTypesForCohort(cohort);
+  const certsWrap = document.getElementById("ae-certs-wrap");
+  if (certTypes.length) {
+    certsWrap.style.display = "";
+    document.getElementById("ae-certs").innerHTML = certTypes.map((c, idx) => {
+      const cert = emp?.certs?.[c] || {};
+      const cq = c.replace(/"/g, "&quot;");
+      return `<div class="cert-form-card">
+        <div class="cfc-name">${c}</div>
+        <div class="form-row"><label>Cert No</label><input type="text" data-cert="${cq}" data-field="no" value="${escapeHtml(cert.certificate_no) || ""}"></div>
+        <div class="form-row"><label>Issue Date</label><input type="date" data-cert="${cq}" data-field="issue" value="${cert.issue_date || ""}"></div>
+        <div class="form-row"><label>Expiry Date</label><input type="date" data-cert="${cq}" data-field="expiry" value="${cert.expiry_date || ""}"></div>
+        <div class="form-row">
+          <label>Attachments</label>
+          <div id="ae-attach-${idx}" style="margin-bottom:4px"></div>
+          <input type="file" data-cert="${cq}" data-field="file" multiple>
+        </div>
+      </div>`;
+    }).join("");
+    certTypes.forEach((c, idx) => loadFormCertAttachments(emp?.name || null, c, `ae-attach-${idx}`));
+  } else {
+    certsWrap.style.display = "none";
+    document.getElementById("ae-certs").innerHTML = "";
+  }
+  openModal("add-emp-overlay");
+}
+
+/* Attachment list for one cert-type card inside the Add/Edit Employee form.
+   `employee` is null for a brand-new employee (nothing to attach to yet). */
+async function loadFormCertAttachments(employee, certType, containerId) {
+  if (!employee) { renderAttachmentList(containerId, []); return; }
+  try {
+    const files = await apiGet("list_certificate_attachments", { employee, certificate_type: certType });
+    renderAttachmentList(containerId, files, async (fileName) => {
+      if (!confirm("Delete this attachment?")) return;
+      await apiPost("delete_certificate_attachment", { file_name: fileName });
+      loadFormCertAttachments(employee, certType, containerId);
+    });
+  } catch (e) {
+    renderAttachmentList(containerId, []);
+  }
+}
+
+async function saveEmployeeForm() {
+  const btn = document.getElementById("add-emp-save-btn");
+  const errEl = document.getElementById("add-emp-error");
+  errEl.style.display = "none";
+  btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    const payload = {
+      employee_name: document.getElementById("ae-name").value.trim(),
+      gender: document.getElementById("ae-gender").value,
+      date_of_birth: document.getElementById("ae-dob").value,
+      date_of_joining: document.getElementById("ae-doj").value,
+      status: document.getElementById("ae-status").value,
+      relieving_date: document.getElementById("ae-relieving").value,
+      iqama_number: document.getElementById("ae-iqama").value.trim(),
+      cell_number: document.getElementById("ae-mobile").value.trim(),
+      nationality: document.getElementById("ae-nationality").value.trim(),
+      personal_email: document.getElementById("ae-email").value.trim(),
+      uniportal_id: document.getElementById("ae-uniportal").value.trim(),
+      certification_domain: document.getElementById("ae-domain").value,
+      designation: document.getElementById("ae-designation").value,
+    };
+
+    let employeeName;
+    if (EMPLOYEE_FORM_MODE === "edit") {
+      await apiPost("update_employee", { name: EMPLOYEE_FORM_CURRENT, payload: JSON.stringify(payload) });
+      employeeName = EMPLOYEE_FORM_CURRENT;
+    } else {
+      const doc = await apiPost("create_employee", { payload: JSON.stringify(payload) });
+      employeeName = doc.name;
+    }
+
+    const byCert = {};
+    document.querySelectorAll("#ae-certs input[data-cert]").forEach((inp) => {
+      const bucket = byCert[inp.dataset.cert] = byCert[inp.dataset.cert] || {};
+      bucket[inp.dataset.field] = inp.type === "file" ? Array.from(inp.files || []) : inp.value;
+    });
+    for (const [certType, vals] of Object.entries(byCert)) {
+      const files = vals.file || [];
+      if (!(vals.no || vals.issue || vals.expiry || files.length)) continue;
+      const doc = await apiPost("upsert_employee_certificate", {
+        employee: employeeName, certificate_type: certType,
+        certificate_no: vals.no || "", issue_date: vals.issue || "", expiry_date: vals.expiry || "",
+      });
+      for (const file of files) {
+        await apiUpload("Employee Certificate", doc.name, file);
+      }
+    }
+
+    closeModal("add-emp-overlay");
+    nav(CURRENT_PAGE);
+    refreshBadges();
+    toast(EMPLOYEE_FORM_MODE === "edit" ? "Employee updated" : "Employee added", "success");
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.style.display = "block";
+  } finally {
+    btn.disabled = false; btn.textContent = "Save";
+  }
+}
+
+async function deleteEmployeeFromForm() {
+  if (!EMPLOYEE_FORM_CURRENT) return;
+  if (!confirm(`Delete ${document.getElementById("ae-name").value}? This cannot be undone.`)) return;
+  const btn = document.getElementById("ae-delete-btn");
+  btn.disabled = true;
+  try {
+    await apiPost("delete_employee", { name: EMPLOYEE_FORM_CURRENT });
+    closeModal("add-emp-overlay");
+    nav(CURRENT_PAGE);
+    refreshBadges();
+    toast("Employee deleted", "success");
+  } catch (e) {
+    const errEl = document.getElementById("add-emp-error");
+    errEl.textContent = e.message;
+    errEl.style.display = "block";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── Employee Detail (read-only) ──────────────────────────────── */
+function openDetail(employeeName, cohortOrEmployees) {
+  let employees, certTypesOverride;
+  if (Array.isArray(cohortOrEmployees)) {
+    employees = cohortOrEmployees;
+  } else {
+    const el = document.getElementById("page-" + cohortOrEmployees);
+    employees = JSON.parse(el?.dataset.raw || "[]");
+    certTypesOverride = JSON.parse(el?.dataset.certTypes || "[]");
+  }
+  const emp = employees.find((e) => e.name === employeeName);
+  if (!emp) return;
+  document.getElementById("detail-title").textContent = emp.employee_name;
+  const infoFields = [
+    ["Iqama / National ID", emp.iqama_number], ["Mobile", emp.cell_number], ["Nationality", emp.nationality],
+    ["Email", emp.personal_email], ["Domain", emp.certification_domain], ["Designation", emp.designation],
+    ["Status", emp.status], ["UniPortal ID", emp.uniportal_id],
+  ];
+  document.getElementById("detail-info").innerHTML = infoFields.map(([l, v]) => `<div class="di-item"><label>${l}</label><span>${escapeHtml(v) || "—"}</span></div>`).join("")
+    + `<div class="di-item"><label>Desk Record</label><span><a href="/app/employee/${emp.name}" target="_blank">Open in Desk ↗</a></span></div>`;
+  // Dashboard drill modals pass the employee's own cert keys since they
+  // don't have a page-wide certTypes list; ordinary pages keep using theirs.
+  const certTypes = certTypesOverride && certTypesOverride.length ? certTypesOverride : Object.keys(emp.certs || {}).sort();
+  document.getElementById("detail-certs").innerHTML = certTypes.map((c, idx) => {
+    const cert = (emp.certs || {})[c];
+    const status = cert ? cert.status : "Not Issued";
+    return `<div class="dcert">
+      <div class="dcert-name"><span>${c}</span><span>${statusDot(cert ? cert.status : null)}</span></div>
+      <div class="dcert-no">${cert?.certificate_no || "—"}</div>
+      <div class="dcert-dates">
+        <span><span>Issue</span><span>${fmtDate(cert?.issue_date)}</span></span>
+        <span><span>Expiry</span><span style="${status === "Expired" ? "color:var(--red)" : status === "Expiring Soon" ? "color:var(--yellow)" : ""}">${fmtDate(cert?.expiry_date)}</span></span>
+      </div>
+      <div class="dcert-attach" id="dcert-attach-${idx}"></div>
+    </div>`;
+  }).join("") || `<div style="color:var(--text3);font-size:12px">No certificate types tracked for this cohort</div>`;
+  loadDetailAttachments(emp.name, certTypes);
+  document.getElementById("detail-edit-btn").onclick = () => {
+    closeModal("detail-overlay");
+    // Array form (dashboard drill modals) has no page cohort to fall back on —
+    // derive one from the employee's own domain so the edit form shows the
+    // right certificate rows.
+    const cohortForEdit = Array.isArray(cohortOrEmployees)
+      ? (emp.certification_domain === PROTECH_DOMAIN ? "protech" : "resource")
+      : cohortOrEmployees;
+    openEmployeeForm("edit", cohortForEdit, emp);
+  };
+  openModal("detail-overlay");
+}
+/* Fills in each cert card's attachment links after the modal is already
+ * open — one bulk fetch for the whole employee, not one call per cert
+ * type. Non-fatal on failure: the rest of the detail view still works. */
+async function loadDetailAttachments(employee, certTypes) {
+  try {
+    const byType = await apiGet("list_employee_certificate_attachments", { employee });
+    certTypes.forEach((c, idx) => {
+      const el = document.getElementById(`dcert-attach-${idx}`);
+      if (!el) return;
+      const files = byType[c] || [];
+      el.innerHTML = files.map((f) => `<a href="${escapeHtml(f.file_url)}" target="_blank" title="${escapeHtml(f.file_name)}">📎 ${escapeHtml(f.file_name)}</a>`).join("");
+    });
+  } catch (e) { /* non-fatal — detail view still works without attachments */ }
+}
+
+/* ── Certificate Status Summary ──────────────────────────────
+ * (also the "Certificate Overview" coverage numbers below reuse
+ * this same payload — one source, two views). */
+let cssCohort = "";
+async function renderCertStatusSummary() {
+  const el = document.getElementById("page-cert-status-summary");
+  el.innerHTML = `<div class="loading">Loading…</div>`;
+  try {
+    const rows = await apiGet("get_certificate_status_summary", { cohort: cssCohort });
+    el.dataset.raw = JSON.stringify(rows);
+    el.innerHTML = `
+      <div class="ph">
+        <div class="ph-left"><h1>Certificate Status Summary</h1><p>Eligible, currently-active employees per certificate type and status — click a count to drill in</p></div>
+        <div class="ph-right">
+          <select id="css-cohort" style="min-width:180px">
+            <option value="" ${cssCohort === "" ? "selected" : ""}>All Employees</option>
+            <option value="resource" ${cssCohort === "resource" ? "selected" : ""}>Resource Tracker</option>
+            <option value="protech" ${cssCohort === "protech" ? "selected" : ""}>Protech (WL &amp; MW)</option>
+          </select>
+          <button class="btn" onclick="exportCertStatusSummary()">⬇️ Export</button>
+        </div>
+      </div>
+      <div class="table-wrap"><div class="table-scroll">
+        <table><thead><tr><th>Certificate Type</th><th>Applies To</th><th style="text-align:center">Eligible</th>
+          <th style="text-align:center">🟢 Valid</th><th style="text-align:center">🟡 Expiring</th><th style="text-align:center">🔴 Expired</th><th style="text-align:center">⚪ Not Issued</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr>
+          <td><strong>${r.certificate_type}</strong></td><td>${r.applies_to}</td><td style="text-align:center">${r.eligible_total}</td>
+          ${["Valid", "Expiring Soon", "Expired", "Not Issued"].map((s) => `<td style="text-align:center"><button class="drill-btn" ${!r.counts[s] ? "disabled" : ""} onclick="openDrill('${r.certificate_type}','${s}',${JSON.stringify(cssCohort)})">${r.counts[s] || 0}</button></td>`).join("")}
+        </tr>`).join("")}</tbody></table>
+      </div></div>
+      <div class="panel"><h3>Certificate Coverage Overview</h3><p style="font-size:11px;color:var(--text2);margin:-8px 0 12px">Valid vs Expiring vs Expired per type — click a segment to drill in</p><div class="chart-box"><canvas id="ch-css-bar"></canvas></div></div>
+    `;
+    document.getElementById("css-cohort").onchange = (e) => { cssCohort = e.target.value; renderCertStatusSummary(); };
+    const certTypes = rows.map((r) => r.certificate_type);
+    const stats = {};
+    rows.forEach((r) => { stats[r.certificate_type] = { valid: r.counts.Valid || 0, expiring: r.counts["Expiring Soon"] || 0, expired: r.counts.Expired || 0 }; });
+    mkStackedCoverageChart("ch-css-bar", certTypes, stats, (certType, statusKey) => openDrill(certType, statusKey, cssCohort));
+  } catch (e) { el.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+function exportCertStatusSummary() {
+  const rows = JSON.parse(document.getElementById("page-cert-status-summary").dataset.raw || "[]");
+  exportToExcel("inet-hr-cert-status-summary", rows.map((r) => ({
+    "Certificate Type": r.certificate_type, "Applies To": r.applies_to, Eligible: r.eligible_total,
+    Valid: r.counts.Valid, "Expiring Soon": r.counts["Expiring Soon"], Expired: r.counts.Expired, "Not Issued": r.counts["Not Issued"],
+  })));
+}
+async function openDrill(certType, status, cohort) {
+  document.getElementById("drill-title").textContent = `${certType} — ${status}`;
+  document.getElementById("drill-body").innerHTML = `<div class="loading">Loading…</div>`;
+  openModal("drill-overlay");
+  try {
+    const rows = await apiGet("list_employees_for_certificate", { certificate_type: certType, status, cohort: cohort || "" });
+    document.getElementById("drill-body").innerHTML = `
+      <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Click a name to open the full Employee record</div>
+      <table><thead><tr><th>Employee</th><th>Designation</th><th>Domain</th><th>Certificate No</th><th>Expiry</th><th>Status</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr><td><a href="/app/employee/${r.employee}" target="_blank">${escapeHtml(r.employee_name)}</a></td><td>${r.designation || "—"}</td><td>${r.certification_domain || "—"}</td><td>${r.certificate_no || "—"}</td><td>${fmtDate(r.expiry_date)}</td><td>${statusBadge(r.status)}</td></tr>`).join("") || `<tr class="empty-row"><td colspan="6">No employees</td></tr>`}</tbody></table>
+    `;
+  } catch (e) { document.getElementById("drill-body").innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+
+/* ── Certificate Overview ─────────────────────────────────────
+ * Matches the reference tool's actual Cert Overview page: one card per
+ * certificate type with Valid/Expiring/Expired mini-bars, each clickable
+ * (badge → its own status, whole card → whichever status is worst), plus
+ * a stacked "Holders & Status Detail" chart. Coverage % (a different
+ * metric, already shown on Certificate Status Summary) stays below as a
+ * secondary section rather than crowding out the primary drill-through view. */
+function certOverviewCardHtml(r) {
+  const v = r.counts.Valid || 0, e = r.counts["Expiring Soon"] || 0, x = r.counts.Expired || 0;
+  const total = v + e + x;
+  const pct = r.eligible_total > 0 ? Math.round((total / r.eligible_total) * 100) : 0;
+  const dominant = x ? "Expired" : e ? "Expiring Soon" : "Valid";
+  const cq = r.certificate_type.replace(/'/g, "\\'");
+  const row = (color, label, count, status) => `
+    <div class="cmb-row" onclick="event.stopPropagation();${count ? `openDrill('${cq}','${status}')` : ""}">
+      <span class="cmb-label" style="color:${color}">${label}</span>
+      <div class="cmb-track"><div class="cmb-fill" style="width:${total ? (count / total) * 100 : 0}%;background:${color}"></div></div>
+      <span class="cmb-num" style="color:${color};${count ? "text-decoration:underline;cursor:pointer" : ""}">${count}</span>
+    </div>`;
+  return `<div class="cert-card" onclick="openDrill('${cq}','${dominant}')" title="Click to view ${dominant.toLowerCase()} employees">
+    <div class="cert-card-name">${r.certificate_type}<span class="badge badge-blue">${total} holders</span></div>
+    <div class="cert-mini-bars">
+      ${row("var(--green)", "Valid", v, "Valid")}
+      ${row("var(--yellow)", "Expiring", e, "Expiring Soon")}
+      ${row("var(--red)", "Expired", x, "Expired")}
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-top:8px;display:flex;justify-content:space-between;align-items:center">
+      <span>${pct}% coverage of ${r.eligible_total} eligible</span>
+      <span style="color:var(--blue);font-size:9px;letter-spacing:.3px">CLICK TO EXPLORE ›</span>
+    </div>
+  </div>`;
+}
+async function renderCertOverview() {
+  const el = document.getElementById("page-cert-overview");
+  el.innerHTML = `<div class="loading">Loading…</div>`;
+  try {
+    const rows = await apiGet("get_certificate_status_summary");
+    const withCoverage = rows.map((r) => {
+      const holders = r.eligible_total - (r.counts["Not Issued"] || 0);
+      const pct = r.eligible_total > 0 ? Math.round((holders / r.eligible_total) * 100) : 0;
+      return { ...r, holders, pct };
+    });
+    const totalEligible = withCoverage.reduce((s, r) => s + r.eligible_total, 0);
+    const totalHolders = withCoverage.reduce((s, r) => s + r.holders, 0);
+    const overallPct = totalEligible > 0 ? Math.round((totalHolders / totalEligible) * 100) : 0;
+    el.innerHTML = `
+      <div class="ph"><div class="ph-left"><h1>Certificate Overview</h1><p>Classification and validity status of all certificate types — click a badge or card to view matching employees</p></div></div>
+      <div class="cert-grid">${rows.map(certOverviewCardHtml).join("")}</div>
+      <div class="panel"><h3>Certificate Holders &amp; Status Detail</h3><p style="font-size:11px;color:var(--text2);margin:-8px 0 12px">Per certificate: valid / expiring / expired holders — click a segment to drill in</p><div class="chart-box"><canvas id="ch-cert-detail"></canvas></div></div>
+      <div class="panel" style="margin-top:20px"><h3>Coverage %</h3><p style="font-size:11px;color:var(--text2);margin:-8px 0 12px">Eligible employees who hold each certificate (any status other than Not Issued)</p>
+        <div class="grid-2">
+          <div class="donut-panel"><div class="chart-box"><canvas id="ch-overall"></canvas></div><div class="donut-label">${overallPct}% Overall Coverage</div></div>
+          <div class="chart-box"><canvas id="ch-certov-coverage"></canvas></div>
+        </div>
+      </div>
+    `;
+    const certTypes = rows.map((r) => r.certificate_type);
+    const stats = {};
+    rows.forEach((r) => { stats[r.certificate_type] = { valid: r.counts.Valid || 0, expiring: r.counts["Expiring Soon"] || 0, expired: r.counts.Expired || 0 }; });
+    mkStackedCoverageChart("ch-cert-detail", certTypes, stats, (certType, statusKey) => openDrill(certType, statusKey));
+    mkDoughnut("ch-overall", overallPct);
+    mkBarChart("ch-certov-coverage", withCoverage.map((r) => r.certificate_type), withCoverage.map((r) => r.pct), withCoverage.map((r) => (r.pct >= 90 ? "#3fb950" : r.pct >= 60 ? "#d29922" : "#f85149")));
+  } catch (e) { el.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+
+/* ── Expiring in N Days ──────────────────────────────────────── */
+/* Merges the reference tool's two pages ("Expiry Alerts" — expired+expiring
+ * with a type/cohort filter, dashboard-drill-only — and "Expiring in 90
+ * Days" — 30/60/90 buckets + chart) into one richer page: clickable stat
+ * buckets double as the day-window filter, plus a type/cert/cohort filter
+ * row and a by-cert-type chart, all composable. */
+let expiringDayFilter = null; // null = no day cap, else {min,max}
+
+async function renderCertExpiring() {
+  const el = document.getElementById("page-cert-expiring");
+  el.innerHTML = `<div class="loading">Loading…</div>`;
+  expiringDayFilter = null;
+  try {
+    const rows = await apiGet("get_expiring_certificates", { days: 36500 });
+    el.dataset.raw = JSON.stringify(rows);
+    const certTypes = [...new Set(rows.map((r) => r.certificate_type))].sort();
+    el.innerHTML = `
+      <div class="ph">
+        <div class="ph-left"><h1>Expiring &amp; Expired Certificates</h1><p>Every certificate needing attention, across Resource Tracker and Protech — click a stat card to filter</p></div>
+        <div class="ph-right"><button class="btn" onclick="exportExpiring()">⬇️ Export</button></div>
+      </div>
+      <div class="stat-grid" id="expiring-stats"></div>
+      <div class="toolbar">
+        <input type="search" id="exp-search" placeholder="Search name, cert no…" oninput="paintExpiringTable()">
+        <select id="exp-cert" onchange="paintExpiringTable()"><option value="">All Certificate Types</option>${certTypes.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>
+        <select id="exp-cohort" onchange="paintExpiringTable()"><option value="">Resource + Protech</option><option value="resource">Resource Tracker</option><option value="protech">Protech</option></select>
+        <select id="exp-type" onchange="paintExpiringTable()"><option value="">Expired &amp; Expiring</option><option value="Expired">🔴 Expired Only</option><option value="Expiring Soon">🟡 Expiring Only</option></select>
+      </div>
+      <div class="filter-note" id="filter-note-expiring" onclick="setExpiringDayFilter(null,null)"></div>
+      <div class="panel"><h3>By Certificate Type</h3><div class="chart-box"><canvas id="ch-expiring-type"></canvas></div></div>
+      <div class="table-wrap"><div class="table-scroll">
+        <table id="tbl-expiring"><thead><tr><th>Employee</th><th>Domain</th><th>Designation</th><th>Certificate Type</th><th>Certificate No</th><th>Expiry Date</th><th style="text-align:center">Days</th><th>Status</th></tr></thead>
+        <tbody id="tbody-expiring"></tbody></table>
+      </div></div>
+    `;
+    if (pendingExpiringFilter) {
+      document.getElementById("exp-cert").value = pendingExpiringFilter.cert;
+      document.getElementById("exp-type").value = pendingExpiringFilter.type;
+      pendingExpiringFilter = null;
+    }
+    paintExpiringTable();
+  } catch (e) { el.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+function filterExpiringRows(applyDayFilter) {
+  const rows = JSON.parse(document.getElementById("page-cert-expiring").dataset.raw || "[]");
+  const q = (document.getElementById("exp-search")?.value || "").toLowerCase();
+  const certF = document.getElementById("exp-cert")?.value || "";
+  const cohortF = document.getElementById("exp-cohort")?.value || "";
+  const typeF = document.getElementById("exp-type")?.value || "";
+  return rows.filter((r) => {
+    if (q && !`${r.employee_name} ${r.certificate_no || ""}`.toLowerCase().includes(q)) return false;
+    if (certF && r.certificate_type !== certF) return false;
+    if (cohortF === "protech" && r.certification_domain !== PROTECH_DOMAIN) return false;
+    if (cohortF === "resource" && r.certification_domain === PROTECH_DOMAIN) return false;
+    if (typeF && r.status !== typeF) return false;
+    if (applyDayFilter && expiringDayFilter) {
+      if (expiringDayFilter.min != null && r.days_to_expiry < expiringDayFilter.min) return false;
+      if (expiringDayFilter.max != null && r.days_to_expiry > expiringDayFilter.max) return false;
+    }
+    return true;
+  });
+}
+function paintExpiringTable() {
+  const preDay = filterExpiringRows(false);
+  const filtered = filterExpiringRows(true);
+
+  const expiredCount = preDay.filter((r) => r.status === "Expired").length;
+  const d30 = preDay.filter((r) => r.days_to_expiry >= 0 && r.days_to_expiry <= 30).length;
+  const d60 = preDay.filter((r) => r.days_to_expiry > 30 && r.days_to_expiry <= 60).length;
+  const d90 = preDay.filter((r) => r.days_to_expiry > 60 && r.days_to_expiry <= 90).length;
+  const active = (a, b) => expiringDayFilter && expiringDayFilter.min === a && expiringDayFilter.max === b;
+
+  document.getElementById("expiring-stats").innerHTML = `
+    <div class="stat-card red clickable" style="${!expiringDayFilter && document.getElementById("exp-type").value === "Expired" ? "outline:2px solid var(--red)" : ""}" onclick='setExpiringExpiredOnly()' title="Click to filter"><div class="sc-num">${expiredCount}</div><div class="sc-label">🔴 Expired</div></div>
+    <div class="stat-card red clickable" style="${active(0, 30) ? "outline:2px solid var(--red)" : ""}" onclick='setExpiringDayFilter(0,30)' title="Click to filter"><div class="sc-num">${d30}</div><div class="sc-label">Expiring ≤ 30 Days</div></div>
+    <div class="stat-card yellow clickable" style="${active(31, 60) ? "outline:2px solid var(--yellow)" : ""}" onclick='setExpiringDayFilter(31,60)' title="Click to filter"><div class="sc-num">${d60}</div><div class="sc-label">31–60 Days</div></div>
+    <div class="stat-card green clickable" style="${active(61, 90) ? "outline:2px solid var(--green)" : ""}" onclick='setExpiringDayFilter(61,90)' title="Click to filter"><div class="sc-num">${d90}</div><div class="sc-label">61–90 Days</div></div>
+    <div class="stat-card blue clickable" onclick='setExpiringDayFilter(null,null)' title="Show all"><div class="sc-num">${preDay.length}</div><div class="sc-label">Total (this filter)</div></div>
+  `;
+
+  const note = document.getElementById("filter-note-expiring");
+  if (expiringDayFilter) {
+    note.style.display = "flex";
+    note.innerHTML = `Filtered: <strong>${expiringDayFilter.max === 30 ? "≤ 30 days" : expiringDayFilter.min === 31 ? "31–60 days" : "61–90 days"}</strong> · click to clear`;
+  } else {
+    note.style.display = "none";
+  }
+
+  document.getElementById("tbody-expiring").innerHTML = filtered.map((r) => `<tr>
+    <td><a href="/app/employee/${r.employee}" target="_blank"><strong>${escapeHtml(r.employee_name)}</strong></a></td>
+    <td>${r.certification_domain || "—"}</td><td>${r.designation || "—"}</td><td>${r.certificate_type}</td>
+    <td>${r.certificate_no || "—"}</td><td>${fmtDate(r.expiry_date)}</td>
+    <td style="text-align:center;font-weight:700;color:${r.days_to_expiry < 0 ? "var(--red)" : "var(--yellow)"}">${r.days_to_expiry}</td>
+    <td>${statusBadge(r.status)}</td>
+  </tr>`).join("") || `<tr class="empty-row"><td colspan="8">Nothing matches these filters 🎉</td></tr>`;
+
+  const certCounts = {};
+  filtered.forEach((r) => { certCounts[r.certificate_type] = (certCounts[r.certificate_type] || 0) + 1; });
+  mkBarChart("ch-expiring-type", Object.keys(certCounts), Object.values(certCounts), "#d29922");
+}
+function setExpiringDayFilter(min, max) {
+  document.getElementById("exp-type").value = min == null ? "" : "Expiring Soon";
+  expiringDayFilter = min == null ? null : { min, max };
+  paintExpiringTable();
+}
+function setExpiringExpiredOnly() {
+  expiringDayFilter = null;
+  document.getElementById("exp-type").value = "Expired";
+  paintExpiringTable();
+}
+function exportExpiring() {
+  const rows = filterExpiringRows(true);
+  exportToExcel("inet-hr-expiring-certificates", rows.map((r) => ({ Employee: r.employee_name, Domain: r.certification_domain || "", Designation: r.designation || "", "Certificate Type": r.certificate_type, "Certificate No": r.certificate_no || "", "Expiry Date": fmtDate(r.expiry_date), "Days To Expiry": r.days_to_expiry, Status: r.status })));
+}
+
+/* ── Certificate Cost ─────────────────────────────────────────── */
+const COST_SHEETS = [["", "All Employees"], ["resource", "Resource Tracker"], ["protech", "Protech (WL & MW)"], ["former", "Former Employees"]];
+let costCohort = "";
+let costView = "overview"; // "overview" | "forecast"
+
+async function renderCertCost() { return renderCertCostView(); }
+
+async function renderCertCostView() {
+  const el = document.getElementById("page-cert-cost");
+  el.innerHTML = `<div class="loading">Loading…</div>`;
+  if (costView === "forecast") return renderCertCostForecast(el);
+  try {
+    const data = await apiGet("get_cost_page_data", { cohort: costCohort });
+    el.dataset.raw = JSON.stringify(data);
+    const typeRows = data.type_rows || [];
+    const renewalCount = typeRows.reduce((s, r) => s + r.renewal_needed, 0);
+    const expiredCost = typeRows.reduce((s, r) => s + r.expired_cost, 0);
+    const expiringCost = typeRows.reduce((s, r) => s + r.expiring_cost, 0);
+
+    el.innerHTML = `
+      <div class="ph">
+        <div class="ph-left"><h1>Certificate Cost Summary</h1><p>Renewal cost estimates · Sheet-scoped like the reference tracker</p></div>
+        <div class="ph-right">
+          <select id="cost-sheet">${COST_SHEETS.map(([id, l]) => `<option value="${id}" ${id === costCohort ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <button class="btn ${costView === "overview" ? "btn-primary" : ""}" onclick="setCostView('overview')">Overview</button>
+          <button class="btn ${costView === "forecast" ? "btn-primary" : ""}" onclick="setCostView('forecast')">12-Month Forecast</button>
+          <button class="btn" onclick="exportCertCost()">⬇️ Export</button>
+        </div>
+      </div>
+
+      <div class="panel" style="background:linear-gradient(135deg,var(--purple-dim),transparent);border-color:var(--purple)">
+        <div style="font-size:12px;color:var(--text2)">Total Renewal Cost — ${data.employees_count} employee${data.employees_count === 1 ? "" : "s"} in scope</div>
+        <div style="font-size:28px;font-weight:800;font-family:monospace;color:var(--purple)">${fmtSAR(data.grand_total)}</div>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card purple"><div class="sc-num">${fmtSAR(data.grand_total)}</div><div class="sc-label">Total Cost</div></div>
+        <div class="stat-card red"><div class="sc-num">${fmtSAR(expiredCost)}</div><div class="sc-label">Overdue (Expired)</div></div>
+        <div class="stat-card yellow"><div class="sc-num">${fmtSAR(expiringCost)}</div><div class="sc-label">At Risk (≤90d)</div></div>
+        <div class="stat-card blue"><div class="sc-num">${renewalCount}</div><div class="sc-label">Renewals Needed</div></div>
+        <div class="stat-card green"><div class="sc-num">${data.employee_rows.length}</div><div class="sc-label">Employees Affected</div></div>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom:20px"><div class="table-scroll">
+        <table><thead><tr>
+          <th>Certificate Type</th><th style="text-align:center">Unit Cost</th><th style="text-align:center">Holders</th>
+          <th style="text-align:center">🟢 Valid</th><th style="text-align:center">🟡 Expiring</th><th style="text-align:center">🔴 Expired</th>
+          <th style="text-align:center">Renewal Needed</th><th style="text-align:right">Total Cost</th>
+        </tr></thead>
+        <tbody>${typeRows.map((r) => `<tr>
+          <td><strong>${r.certificate_type}</strong></td><td style="text-align:center">${fmtSAR(r.unit_cost)}</td><td style="text-align:center">${r.holders}</td>
+          <td style="text-align:center">${r.valid}</td><td style="text-align:center">${r.expiring}</td><td style="text-align:center">${r.expired}</td>
+          <td style="text-align:center">${r.renewal_needed}</td><td style="text-align:right;font-weight:700;color:${r.total_cost ? "var(--blue)" : "var(--text3)"}">${fmtSAR(r.total_cost)}</td>
+        </tr>`).join("")}</tbody>
+        <tfoot><tr><td colspan="6"></td><td style="text-align:center"><strong>${renewalCount}</strong></td><td style="text-align:right"><strong>${fmtSAR(data.grand_total)}</strong></td></tr></tfoot>
+        </table>
+      </div></div>
+
+      <div class="chart-grid">
+        <div class="chart-card"><div class="chart-title">Total Cost by Certificate Type</div><div class="chart-sub">Overall renewal cost (expired + expiring)</div><div class="chart-box"><canvas id="ch-cost-by-cert"></canvas></div></div>
+        <div class="chart-card"><div class="chart-title">Cost by Cohort</div><div class="chart-sub">Resource vs Protech vs Former</div><div class="chart-box"><canvas id="ch-cost-by-cohort"></canvas></div></div>
+        <div class="chart-card"><div class="chart-title">Cost at Risk (≤90 days)</div><div class="chart-sub">Certificates expiring soon, by type</div><div class="chart-box"><canvas id="ch-cost-at-risk"></canvas></div></div>
+        <div class="chart-card"><div class="chart-title">Overdue Cost</div><div class="chart-sub">Certificates already expired, by type</div><div class="chart-box"><canvas id="ch-cost-expired"></canvas></div></div>
+      </div>
+
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--text2)">👤 Per-Employee Cost Detail</div>
+      <div class="toolbar">
+        <input type="search" id="cost-emp-search" placeholder="Search employee…" oninput="renderCostEmpTable()">
+        <select id="cost-emp-filter" onchange="renderCostEmpTable()">
+          <option value="">All Employees</option>
+          <option value="expired">Has Expired Cert</option>
+          <option value="expiring">Has Expiring ≤90d</option>
+          <option value="renewal">Has Any Renewal Due</option>
+          <option value="clear">No Renewal Needed</option>
+        </select>
+      </div>
+      <div class="table-wrap"><div class="table-scroll">
+        <table id="tbl-cost-emp">
+          <thead><tr><th>#</th><th>Employee</th><th>Domain</th>
+            ${(data.priced_cert_types || []).map((c) => `<th style="text-align:center" title="${c}">${c}</th>`).join("")}
+            <th style="text-align:right;background:var(--surface3)">Total Cost</th></tr></thead>
+          <tbody id="tbody-cost-emp"></tbody>
+          <tfoot id="tfoot-cost-emp"></tfoot>
+        </table>
+      </div></div>
+      <div class="pagination" id="pagination-cost-emp"></div>
+    `;
+    document.getElementById("cost-sheet").onchange = (e) => { costCohort = e.target.value; renderCertCostView(); };
+    costEmpPage = 1;
+    paintCostEmpTable();
+
+    mkBarChart("ch-cost-by-cert", typeRows.map((r) => r.certificate_type), typeRows.map((r) => r.total_cost), "#f85149", (i) => drillToExpiring(typeRows[i].certificate_type, ""));
+    mkBarChart("ch-cost-by-cohort", Object.keys(data.cost_by_cohort), Object.values(data.cost_by_cohort), ["#388bfd", "#bc8cff", "#8d96a0"]);
+    mkBarChart("ch-cost-at-risk", typeRows.map((r) => r.certificate_type), typeRows.map((r) => r.expiring_cost), "#d29922", (i) => drillToExpiring(typeRows[i].certificate_type, "Expiring Soon"));
+    mkBarChart("ch-cost-expired", typeRows.map((r) => r.certificate_type), typeRows.map((r) => r.expired_cost), "#f85149", (i) => drillToExpiring(typeRows[i].certificate_type, "Expired"));
+  } catch (e) { el.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+function setCostView(view) { costView = view; renderCertCostView(); }
+
+/* Per-employee cost table: search + status filter + pagination, matching
+ * the reference tool's per-cert-type column layout (one column per
+ * currently-priced certificate type, status badge + expiry date per cell). */
+let costEmpPage = 1;
+const COST_EMP_PAGE_SIZE = 30;
+function filterCostEmployees() {
+  const data = JSON.parse(document.getElementById("page-cert-cost").dataset.raw || "{}");
+  const q = (document.getElementById("cost-emp-search")?.value || "").toLowerCase();
+  const statusF = document.getElementById("cost-emp-filter")?.value || "";
+  return (data.employee_rows || []).filter((r) => {
+    if (q && !`${r.employee_name} ${r.employee}`.toLowerCase().includes(q)) return false;
+    const certVals = Object.values(r.certs || {});
+    if (statusF === "expired") return certVals.some((c) => c.status === "Expired");
+    if (statusF === "expiring") return certVals.some((c) => c.status === "Expiring Soon");
+    if (statusF === "renewal") return r.cost > 0;
+    if (statusF === "clear") return r.cost === 0;
+    return true;
+  });
+}
+function renderCostEmpTable() { costEmpPage = 1; paintCostEmpTable(); }
+function paintCostEmpTable() {
+  const data = JSON.parse(document.getElementById("page-cert-cost").dataset.raw || "{}");
+  const pricedTypes = data.priced_cert_types || [];
+  const filtered = filterCostEmployees();
+  const start = (costEmpPage - 1) * COST_EMP_PAGE_SIZE;
+  const paged = filtered.slice(start, start + COST_EMP_PAGE_SIZE);
+
+  document.getElementById("tbody-cost-emp").innerHTML = paged.map((r, i) => {
+    const cells = pricedTypes.map((c) => {
+      const cert = (r.certs || {})[c];
+      if (!cert || cert.status === "Not Issued") return `<td style="text-align:center"><span style="color:var(--text3);font-size:11px">—</span></td>`;
+      const color = cert.status === "Expired" ? "var(--red)" : cert.status === "Expiring Soon" ? "var(--yellow)" : "var(--green)";
+      const dot = cert.status === "Expired" ? "🔴" : cert.status === "Expiring Soon" ? "🟡" : "✅";
+      const label = cert.cost ? `${dot} ${fmtSAR(cert.cost)}` : `${dot} ${cert.status}`;
+      return `<td style="text-align:center"><span class="badge" style="font-size:10px;color:${color};background:${color}22">${label}</span><div style="font-size:10px;color:var(--text3);margin-top:2px">${fmtDate(cert.expiry_date)}</div></td>`;
+    }).join("");
+    const tcol = r.cost >= 800 ? "var(--red)" : r.cost >= 400 ? "var(--yellow)" : r.cost > 0 ? "var(--text)" : "var(--green)";
+    return `<tr>
+      <td class="mono">${start + i + 1}</td>
+      <td><a href="/app/employee/${r.employee}" target="_blank"><strong>${escapeHtml(r.employee_name)}</strong></a></td>
+      <td>${escapeHtml(r.certification_domain) || "—"}</td>
+      ${cells}
+      <td style="text-align:right;font-weight:700;color:${tcol};background:var(--surface3)">${r.cost > 0 ? fmtSAR(r.cost) : "✅ 0"}</td>
+    </tr>`;
+  }).join("") || `<tr class="empty-row"><td colspan="${4 + pricedTypes.length}">No employees match this filter</td></tr>`;
+
+  const tfoot = document.getElementById("tfoot-cost-emp");
+  if (filtered.length) {
+    const colTotals = pricedTypes.map((c) => filtered.reduce((s, r) => s + ((r.certs || {})[c]?.cost || 0), 0));
+    const grand = colTotals.reduce((s, v) => s + v, 0);
+    tfoot.innerHTML = `<tr style="background:var(--surface2);font-weight:700;border-top:2px solid var(--border2)">
+      <td colspan="3" style="text-align:right;color:var(--text3);font-size:11px">TOTAL (${filtered.length} employees)</td>
+      ${colTotals.map((v) => `<td style="text-align:center;color:${v ? "var(--blue)" : "var(--text3)"}">${v ? fmtSAR(v) : "—"}</td>`).join("")}
+      <td style="text-align:right;background:var(--surface3);color:var(--blue)">${fmtSAR(grand)}</td>
+    </tr>`;
+  } else { tfoot.innerHTML = ""; }
+
+  const pel = document.getElementById("pagination-cost-emp");
+  const totalPages = Math.ceil(filtered.length / COST_EMP_PAGE_SIZE);
+  if (totalPages <= 1) { pel.innerHTML = ""; return; }
+  let html = `<span class="pg-info">Page ${costEmpPage} of ${totalPages} (${filtered.length} total)</span>`;
+  if (costEmpPage > 1) html += `<button class="btn" onclick="goToCostEmpPage(${costEmpPage - 1})">◀ Prev</button>`;
+  const s = Math.max(1, costEmpPage - 2), e2 = Math.min(totalPages, costEmpPage + 2);
+  for (let i = s; i <= e2; i++) html += `<button class="btn ${i === costEmpPage ? "btn-primary" : ""}" onclick="goToCostEmpPage(${i})">${i}</button>`;
+  if (costEmpPage < totalPages) html += `<button class="btn" onclick="goToCostEmpPage(${costEmpPage + 1})">Next ▶</button>`;
+  pel.innerHTML = html;
+}
+function goToCostEmpPage(pg) { costEmpPage = pg; paintCostEmpTable(); }
+
+async function renderCertCostForecast(el) {
+  try {
+    const rows = await apiGet("get_certificate_renewal_forecast");
+    el.dataset.raw = JSON.stringify(rows);
+    const grandTotal = rows.reduce((s, r) => s + r.cost, 0);
+    el.innerHTML = `
+      <div class="ph">
+        <div class="ph-left"><h1>Certificate Cost Summary</h1><p>Renewal calendar for the next 12 months — <strong style="color:var(--purple)">${fmtSAR(grandTotal)}</strong> projected, regardless of today's status</p></div>
+        <div class="ph-right">
+          <button class="btn" onclick="setCostView('overview')">Overview</button>
+          <button class="btn btn-primary" onclick="setCostView('forecast')">12-Month Forecast</button>
+          <button class="btn" onclick="exportCertCost()">⬇️ Export</button>
+        </div>
+      </div>
+      <div class="panel"><div class="chart-box"><canvas id="ch-forecast"></canvas></div></div>
+      <div class="table-wrap"><div class="table-scroll">
+        <table><thead><tr><th>Month</th><th style="text-align:center">Certificates Due</th><th style="text-align:right">Cost (SAR)</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr><td><strong>${r.month}</strong></td><td style="text-align:center">${r.count}</td><td style="text-align:right">${fmtSAR(r.cost)}</td></tr>`).join("") || `<tr class="empty-row"><td colspan="3">Nothing due in the next 12 months</td></tr>`}</tbody>
+      </table></div></div>
+    `;
+    mkBarChart("ch-forecast", rows.map((r) => r.month), rows.map((r) => r.cost), "#bc8cff");
+  } catch (e) { el.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+function exportCertCost() {
+  const el = document.getElementById("page-cert-cost");
+  if (costView === "forecast") {
+    const rows = JSON.parse(el.dataset.raw || "[]");
+    exportToExcel("inet-hr-cert-cost-forecast", rows.map((r) => ({ Month: r.month, "Certificates Due": r.count, "Cost (SAR)": r.cost })));
+  } else {
+    const data = JSON.parse(el.dataset.raw || "{}");
+    exportToExcel("inet-hr-cert-cost", (data.type_rows || []).map((r) => ({
+      "Certificate Type": r.certificate_type, "Unit Cost": r.unit_cost, Holders: r.holders,
+      Valid: r.valid, Expiring: r.expiring, Expired: r.expired, "Renewal Needed": r.renewal_needed, "Total Cost": r.total_cost,
+    })));
+  }
+}
+
+/* ── By Domain ────────────────────────────────────────────────── */
+let currentDomainTab = null;
+let domainPage = 1;
+
+async function renderByDomain() {
+  const el = document.getElementById("page-by-domain");
+  el.innerHTML = `<div class="loading">Loading…</div>`;
+  try {
+    const [summaryRows, listRes] = await Promise.all([
+      apiGet("get_certificate_domain_summary"),
+      apiGet("list_employee_certificates", { cohort: "active" }),
+    ]);
+    const employees = listRes.employees || [];
+    const certTypes = [...new Set(employees.flatMap((e) => Object.keys(e.certs || {})))].sort();
+    const domains = summaryRows.map((r) => r.domain);
+    const wanted = pendingDomainTab || currentDomainTab;
+    currentDomainTab = domains.includes(wanted) ? wanted : domains[0];
+    pendingDomainTab = null;
+    domainPage = 1;
+
+    el.innerHTML = `
+      <div class="ph"><div class="ph-left"><h1>By Domain</h1><p>Certificate status rolled up by certification domain</p></div>
+        <div class="ph-right"><button class="btn" onclick="exportDomainTable()">⬇️ Export</button></div>
+      </div>
+      <div class="domain-grid" id="domain-cards">${summaryRows.map((r) => `
+        <div class="domain-card" style="cursor:pointer;${r.domain === currentDomainTab ? "border-color:var(--blue)" : ""}" onclick="setDomainTab('${r.domain.replace(/'/g, "\\'")}')">
+          <div class="domain-card-hdr"><strong>${r.domain}</strong><span>${r.employees} employee${r.employees === 1 ? "" : "s"}</span></div>
+          <div class="domain-card-counts">
+            <span style="color:var(--green)">🟢 ${r.counts.Valid}</span>
+            <span style="color:var(--yellow)">🟡 ${r.counts["Expiring Soon"]}</span>
+            <span style="color:var(--red)">🔴 ${r.counts.Expired}</span>
+            <span style="color:var(--text3)">⚪ ${r.counts["Not Issued"]}</span>
+          </div>
+        </div>
+      `).join("")}</div>
+      <div class="toolbar">
+        <input type="search" id="domain-search" placeholder="Search…" oninput="renderDomainTableBody()">
+        <select id="domain-certstatus" onchange="renderDomainTableBody()">
+          <option value="">Any Cert Status</option><option value="expired">🔴 Has Expired</option><option value="expiring">🟡 Has Expiring</option><option value="valid">🟢 All Valid</option>
+        </select>
+      </div>
+      <div class="table-wrap"><div class="table-scroll">
+        <table id="tbl-domain">
+          <thead><tr><th>#</th><th>Employee</th><th>Designation</th>${certTypes.map((c) => `<th style="text-align:center" title="${c}">${c}</th>`).join("")}<th>Actions</th></tr></thead>
+          <tbody id="tbody-domain"></tbody>
+        </table>
+      </div></div>
+      <div class="pagination" id="pagination-domain"></div>
+    `;
+    el.dataset.raw = JSON.stringify(employees);
+    el.dataset.certTypes = JSON.stringify(certTypes);
+    paintDomainTableBody();
+  } catch (e) { el.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+function setDomainTab(domain) {
+  currentDomainTab = domain;
+  domainPage = 1;
+  document.querySelectorAll("#domain-cards .domain-card").forEach((c) => { c.style.borderColor = c.querySelector("strong").textContent === domain ? "var(--blue)" : "var(--border)"; });
+  paintDomainTableBody();
+}
+function filterDomainEmployees() {
+  const el = document.getElementById("page-by-domain");
+  const employees = JSON.parse(el.dataset.raw || "[]");
+  const certTypes = JSON.parse(el.dataset.certTypes || "[]");
+  const q = (document.getElementById("domain-search")?.value || "").toLowerCase();
+  const certstatusF = document.getElementById("domain-certstatus")?.value || "";
+  return employees.filter((e) => {
+    if (e.certification_domain !== currentDomainTab) return false;
+    if (q && !JSON.stringify(e).toLowerCase().includes(q)) return false;
+    if (certstatusF) {
+      const statuses = certTypes.map((c) => (e.certs || {})[c]?.status || "Not Issued");
+      if (certstatusF === "expired" && !statuses.includes("Expired")) return false;
+      if (certstatusF === "expiring" && !statuses.includes("Expiring Soon")) return false;
+      if (certstatusF === "valid" && !statuses.every((s) => s === "Valid" || s === "Not Issued")) return false;
+    }
+    return true;
+  });
+}
+function renderDomainTableBody() { domainPage = 1; paintDomainTableBody(); }
+function paintDomainTableBody() {
+  const certTypes = JSON.parse(document.getElementById("page-by-domain").dataset.certTypes || "[]");
+  const filtered = filterDomainEmployees();
+  const start = (domainPage - 1) * COHORT_PAGE_SIZE;
+  const paged = filtered.slice(start, start + COHORT_PAGE_SIZE);
+  document.getElementById("tbody-domain").innerHTML =
+    paged.map((e, i) => `<tr>
+      <td class="mono">${start + i + 1}</td>
+      <td><strong style="cursor:pointer;color:var(--blue)" onclick="openDetail('${e.name}','by-domain')">${escapeHtml(e.employee_name)}</strong></td>
+      <td>${escapeHtml(e.designation) || "—"}</td>
+      ${certTypes.map((c) => {
+        const cert = (e.certs || {})[c];
+        return `<td style="text-align:center" title="${c}: ${cert ? cert.status : "Not Issued"}">${statusDot(cert ? cert.status : null)}</td>`;
+      }).join("")}
+      <td><button class="dot-btn" title="View" onclick="openDetail('${e.name}','by-domain')">👁</button></td>
+    </tr>`).join("") || `<tr class="empty-row"><td colspan="${3 + certTypes.length}">No employees found</td></tr>`;
+  const pel = document.getElementById("pagination-domain");
+  const totalPages = Math.ceil(filtered.length / COHORT_PAGE_SIZE);
+  if (totalPages <= 1) { pel.innerHTML = ""; return; }
+  let html = `<span class="pg-info">Page ${domainPage} of ${totalPages} (${filtered.length} total)</span>`;
+  if (domainPage > 1) html += `<button class="btn" onclick="goToDomainPage(${domainPage - 1})">◀ Prev</button>`;
+  const s = Math.max(1, domainPage - 2), e2 = Math.min(totalPages, domainPage + 2);
+  for (let i = s; i <= e2; i++) html += `<button class="btn ${i === domainPage ? "btn-primary" : ""}" onclick="goToDomainPage(${i})">${i}</button>`;
+  if (domainPage < totalPages) html += `<button class="btn" onclick="goToDomainPage(${domainPage + 1})">Next ▶</button>`;
+  pel.innerHTML = html;
+}
+function goToDomainPage(pg) { domainPage = pg; paintDomainTableBody(); }
+function exportDomainTable() {
+  const certTypes = JSON.parse(document.getElementById("page-by-domain").dataset.certTypes || "[]");
+  const rows = filterDomainEmployees().map((e) => {
+    const row = { Employee: e.employee_name, Domain: e.certification_domain || "", Designation: e.designation || "" };
+    certTypes.forEach((c) => { row[c] = (e.certs || {})[c]?.status || "Not Issued"; });
+    return row;
+  });
+  exportToExcel(`inet-hr-domain-${currentDomainTab}`, rows);
+}
+
+/* ── Export All (Actions sidebar) ────────────────────────────────
+ * One-click download of everything, mirroring the reference tool's sidebar
+ * "Export to Excel" action: Resource + Protech + Former in one workbook,
+ * plus an Expiring/Expired sheet, instead of exporting page by page. */
+async function exportAllToExcel() {
+  toast("Preparing full export…", "info");
+  try {
+    const cohortRows = (res) => {
+      const employees = res.employees || [];
+      const certTypes = [...new Set(employees.flatMap((e) => Object.keys(e.certs || {})))].sort();
+      return employees.map((e) => {
+        const row = { Employee: e.employee_name, "Iqama / ID": e.iqama_number || "", Domain: e.certification_domain || "", Designation: e.designation || "", Mobile: e.cell_number || "" };
+        certTypes.forEach((c) => {
+          const cert = (e.certs || {})[c];
+          row[`${c} Status`] = cert ? cert.status : "Not Issued";
+          row[`${c} Cert No`] = cert?.certificate_no || "";
+          row[`${c} Expiry`] = cert?.expiry_date || "";
+        });
+        return row;
+      });
+    };
+    const [rt, pt, fe, expiring] = await Promise.all([
+      apiGet("list_employee_certificates", { cohort: "resource" }),
+      apiGet("list_employee_certificates", { cohort: "protech" }),
+      apiGet("list_employee_certificates", { cohort: "former" }),
+      apiGet("get_expiring_certificates", { days: 36500 }),
+    ]);
+    const expiringRows = expiring.map((r) => ({
+      Employee: r.employee_name, Domain: r.certification_domain || "", "Certificate Type": r.certificate_type,
+      "Cert No": r.certificate_no || "", "Expiry Date": r.expiry_date || "", Status: r.status, "Days To Expiry": r.days_to_expiry,
+    }));
+    exportToExcelMultiSheet(`INET_Certificate_Tracker_${new Date().toISOString().slice(0, 10)}`, [
+      ["Resource Tracker", cohortRows(rt)],
+      ["Protech (WL & MW)", cohortRows(pt)],
+      ["Former Employees", cohortRows(fe)],
+      ["Expiring & Expired", expiringRows],
+    ]);
+  } catch (e) { toast(e.message, "error"); }
+}
+
+/* ── Global Search ────────────────────────────────────────────
+ * Searches across ALL cohorts (Resource + Protech + Former) at once — this
+ * is a standalone page, not Desk, so there's no Ctrl+G to fall back on. */
+let globalSearchTimer;
+function renderGlobalSearch() {
+  const el = document.getElementById("page-search");
+  el.innerHTML = `
+    <div class="ph"><div class="ph-left"><h1>Global Search</h1><p>Search every employee across all cohorts at once</p></div></div>
+    <div class="toolbar">
+      <input type="search" id="gs-input" placeholder="Search name, iqama, mobile…" oninput="debouncedGlobalSearch()" autofocus>
+      <select id="gs-cohort" onchange="runGlobalSearch()">
+        <option value="">All Cohorts</option><option value="resource">Resource Tracker</option><option value="protech">Protech</option><option value="former">Former Employees</option>
+      </select>
+      <select id="gs-status" onchange="runGlobalSearch()">
+        <option value="">Any Overall Status</option><option value="Valid">🟢 All Valid</option><option value="Expiring Soon">🟡 Has Expiring</option><option value="Expired">🔴 Has Expired</option><option value="Not Issued">⚪ No Certificates</option>
+      </select>
+    </div>
+    <div id="gs-results"><div style="text-align:center;padding:40px;color:var(--text3)">Start typing, or pick a filter, to search…</div></div>
+  `;
+}
+function debouncedGlobalSearch() {
+  clearTimeout(globalSearchTimer);
+  globalSearchTimer = setTimeout(runGlobalSearch, 300);
+}
+async function runGlobalSearch() {
+  const q = document.getElementById("gs-input").value.trim();
+  const cohort = document.getElementById("gs-cohort").value;
+  const status = document.getElementById("gs-status").value;
+  const resultsEl = document.getElementById("gs-results");
+  if (!q && !cohort && !status) {
+    resultsEl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text3)">Start typing, or pick a filter, to search…</div>`;
+    return;
+  }
+  resultsEl.innerHTML = `<div class="loading">Searching…</div>`;
+  try {
+    const res = await apiGet("global_search_employees", { query: q, cohort, status_filter: status });
+    const employees = res.employees || [];
+    if (!employees.length) { resultsEl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text3)">No results found</div>`; return; }
+    resultsEl.innerHTML = `
+      <div class="table-wrap"><div class="table-scroll">
+        <table><thead><tr><th>Employee</th><th>Iqama / ID</th><th>Domain</th><th>Designation</th><th>Status</th><th>Overall Cert Status</th><th>Actions</th></tr></thead>
+        <tbody>${employees.map((e) => `<tr>
+          <td><strong style="cursor:pointer;color:var(--blue)" onclick="openGlobalSearchDetail('${e.name}')">${escapeHtml(e.employee_name)}</strong></td>
+          <td>${escapeHtml(e.iqama_number) || "—"}</td>
+          <td>${escapeHtml(e.certification_domain) || "—"}</td>
+          <td>${escapeHtml(e.designation) || "—"}</td>
+          <td>${e.status === "Left" ? '<span class="badge badge-n">Left</span>' : '<span class="badge badge-g">Active</span>'}</td>
+          <td>${statusBadge(e.overall_status)}</td>
+          <td><button class="dot-btn" title="View" onclick="openGlobalSearchDetail('${e.name}')">👁</button></td>
+        </tr>`).join("")}</tbody></table>
+      </div></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">${employees.length} result${employees.length === 1 ? "" : "s"}${employees.length === 200 ? " (showing first 200)" : ""}</div>
+    `;
+    document.getElementById("page-search").dataset.raw = JSON.stringify(employees);
+    document.getElementById("page-search").dataset.certTypes = JSON.stringify([...new Set(employees.flatMap((e) => Object.keys(e.certs || {})))].sort());
+  } catch (e) { resultsEl.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
+}
+function openGlobalSearchDetail(employeeName) { openDetail(employeeName, "search"); }
+
+/* ── Init ─────────────────────────────────────────────────────── */
+document.addEventListener("DOMContentLoaded", () => {
+  updateHeaderDate();
+  refreshBadges();
+  nav("dashboard");
+  // Click the dimmed backdrop (not the modal itself) to close — every
+  // modal-overlay in the page gets this for free.
+  document.querySelectorAll(".modal-overlay").forEach((o) => {
+    o.addEventListener("click", (e) => { if (e.target === o) o.classList.remove("open"); });
+  });
+});
+</script>
+
+<div class="toast" id="toast"></div>
+
+{% endif %}
+</body>
+</html>

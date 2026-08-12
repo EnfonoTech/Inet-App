@@ -28,6 +28,10 @@ def after_migrate():
     _ensure_material_return_field()
     _ensure_material_confirmation_fields()
     _declutter_stock_entry_list_view()
+    _ensure_certificate_tracker_setup()
+    _ensure_certificate_expiry_notifications()
+    _ensure_hr_workspace_shortcut()
+    _backfill_certificate_validity_months()
 
 
 def _resync_pms_workspace():
@@ -247,7 +251,7 @@ def _ensure_inet_roles():
     Frappe stores roles in the ``Role`` doctype. Re-running ``bench migrate``
     should be idempotent — we only insert when missing.
     """
-    inet_roles = ["INET Admin", "INET IM", "INET Field Team", "INET PIC"]
+    inet_roles = ["INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR"]
     for role_name in inet_roles:
         if frappe.db.exists("Role", role_name):
             continue
@@ -684,5 +688,240 @@ def _add_field(dt, cf_name, definition):
         create_custom_field(dt, definition)
     except Exception:
         frappe.log_error(frappe.get_traceback(), f"Custom field {cf_name} setup failed")
+
+
+def _ensure_certificate_tracker_setup():
+    """INET Certificate Tracker (INET HR): Employee custom fields, the
+    Certification Domain / Certificate Type masters, and the field-ops
+    Designations the reference tracker used. Idempotent — safe on every
+    migrate. The one-off import of the ~90 real employees/certificates is a
+    separate script, deliberately NOT run from here (see
+    inet_app/scripts/import_certificate_tracker_data.py)."""
+    _add_field("Employee", "Employee-certificate_tracker_section", {
+        "fieldname": "certificate_tracker_section",
+        "label": "INET Certificate Tracker",
+        "fieldtype": "Section Break",
+        "insert_after": "cell_number",
+        "collapsible": 1,
+        "module": "Inet App",
+    })
+    _add_field("Employee", "Employee-iqama_number", {
+        "fieldname": "iqama_number",
+        "label": "Iqama / National ID",
+        "fieldtype": "Data",
+        "insert_after": "certificate_tracker_section",
+        "module": "Inet App",
+    })
+    _add_field("Employee", "Employee-nationality", {
+        "fieldname": "nationality",
+        "label": "Nationality",
+        "fieldtype": "Data",
+        "insert_after": "iqama_number",
+        "module": "Inet App",
+    })
+    _add_field("Employee", "Employee-uniportal_id", {
+        "fieldname": "uniportal_id",
+        "label": "Huawei UniPortal ID",
+        "fieldtype": "Data",
+        "insert_after": "nationality",
+        "module": "Inet App",
+    })
+    _add_field("Employee", "Employee-certification_domain", {
+        "fieldname": "certification_domain",
+        "label": "Certification Domain",
+        "fieldtype": "Link",
+        "options": "Certification Domain",
+        "insert_after": "uniportal_id",
+        "in_standard_filter": 1,
+        "module": "Inet App",
+    })
+    _ensure_certification_domains()
+    _ensure_certificate_types()
+    _ensure_certificate_tracker_designations()
+
+
+def _ensure_certification_domains():
+    if not frappe.db.exists("DocType", "Certification Domain"):
+        return
+    for domain_name in ["Fixed Network", "WL & MW", "Core Network", "EBU Team", "Management"]:
+        if frappe.db.exists("Certification Domain", domain_name):
+            continue
+        try:
+            frappe.get_doc({
+                "doctype": "Certification Domain",
+                "domain_name": domain_name,
+            }).insert(ignore_permissions=True)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"Certification Domain {domain_name} setup failed")
+    frappe.db.commit()
+
+
+def _ensure_certificate_types():
+    """Seed the 11 certificate types the reference tracker used. Renewal cost
+    is only known for 4 of them today (from the tracker's hardcoded
+    COST_CERTS) — the rest seed at 0 and HR fills them in from the Desk."""
+    if not frappe.db.exists("DocType", "Certificate Type"):
+        return
+    resource_only = {"Access TL", "Optical TL"}
+    known_costs = {
+        "Defensive Driving": 207,
+        "Electrical": 207,
+        "First Aid": 230,
+        "WAH": 402.50,
+    }
+    cert_names = [
+        "EHS", "First Aid", "Electrical", "Defensive Driving", "WAH",
+        "Cyber Security", "Access TL", "Optical TL", "Wireless TL",
+        "Microwave TL", "DL",
+    ]
+    for cert_name in cert_names:
+        if frappe.db.exists("Certificate Type", cert_name):
+            continue
+        try:
+            frappe.get_doc({
+                "doctype": "Certificate Type",
+                "certificate_name": cert_name,
+                "applies_to": "Resource Team" if cert_name in resource_only else "Both",
+                "renewal_cost": known_costs.get(cert_name, 0),
+            }).insert(ignore_permissions=True)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"Certificate Type {cert_name} setup failed")
+    frappe.db.commit()
+
+
+def _ensure_certificate_expiry_notifications():
+	"""4 Setup > Notification alerts on Employee Certificate.expiry_date (90 /
+	30 / 7 / 0 days before) — core Frappe's own "Days Before" trigger and
+	System Notification channel, per the build plan, instead of bespoke
+	alert-sending code. Idempotent; once created HR can retune
+	thresholds/recipients from the Desk without a code change."""
+	if not frappe.db.exists("DocType", "Notification") or not frappe.db.exists("DocType", "Employee Certificate"):
+		return
+
+	for days in (90, 30, 7, 0):
+		name = f"INET Certificate Expiry - {days} Days"
+		if frappe.db.exists("Notification", name):
+			continue
+		when = "expires today" if days == 0 else f"expires in {days} day(s)"
+		try:
+			frappe.get_doc({
+				"doctype": "Notification",
+				"name": name,
+				"subject": f"Certificate {when}: {{{{ doc.certificate_type }}}} — {{{{ doc.employee_name }}}}",
+				"document_type": "Employee Certificate",
+				"event": "Days Before",
+				"date_changed": "expiry_date",
+				"days_in_advance": days,
+				"condition": "doc.certificate_type",
+				"channel": "Email",
+				"send_system_notification": 1,
+				"message": (
+					"<p>{{ doc.employee_name }}'s <strong>{{ doc.certificate_type }}</strong> certificate "
+					f"{when} (expiry date: " "{{ doc.expiry_date }}).</p>"
+					"<p>Certificate No: {{ doc.certificate_no or '—' }}<br>"
+					"Employee: {{ doc.employee }}</p>"
+				),
+				"recipients": [
+					{"receiver_by_role": "INET HR"},
+					{"receiver_by_document_field": "employee_user"},
+				],
+			}).insert(ignore_permissions=True)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"Notification {name} setup failed")
+	frappe.db.commit()
+
+
+def _ensure_hr_workspace_shortcut():
+	"""Add a link from ERPNext HRMS's own "HR" workspace to the standalone
+	INET Certificate Tracker page (/hr-certificates — NOT under /pms; it's
+	deliberately separate from the PMS portal in login/UI/UX), so the HR
+	Manager can jump into it directly from where they already work in Desk.
+
+	ADDITIVE ONLY — this workspace belongs to the hrms app, not inet_app, so
+	this only appends/updates one shortcut + one content block; it never
+	rebuilds or replaces the workspace wholesale (unlike
+	_resync_warehouse_workspace(), which owns that workspace outright)."""
+	import json
+
+	workspace_name = "HR"
+	shortcut_label = "INET Certificate Tracker"
+	shortcut_url = "/hr-certificates"
+
+	if not frappe.db.exists("Workspace", workspace_name):
+		return  # hrms not installed / HR workspace not present on this site
+
+	try:
+		doc = frappe.get_doc("Workspace", workspace_name)
+		existing = next((s for s in doc.shortcuts if s.label == shortcut_label), None)
+		if existing:
+			if existing.url == shortcut_url:
+				return  # already correct from a previous migrate
+			existing.url = shortcut_url  # self-heal a stale URL (e.g. old /pms/* route)
+		else:
+			doc.append("shortcuts", {
+				"type": "URL",
+				"url": shortcut_url,
+				"label": shortcut_label,
+				"color": "Blue",
+			})
+
+		try:
+			content = json.loads(doc.content or "[]")
+		except Exception:
+			content = []
+		if not any(b.get("data", {}).get("shortcut_name") == shortcut_label for b in content):
+			content.append({"id": "inet-cert-tracker", "type": "shortcut", "data": {"shortcut_name": shortcut_label, "col": 4}})
+		doc.content = json.dumps(content)
+
+		doc.save(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "HR workspace shortcut setup failed")
+
+
+def _backfill_certificate_validity_months():
+	"""Derive Certificate Type.validity_months from the actual imported
+	issue/expiry date pairs (average, rounded to the nearest month) rather
+	than asking anyone to type in a number nobody had handy. Used to
+	auto-suggest an expiry date when a new certificate is issued. Safe to
+	re-run — recomputes from whatever data exists at the time."""
+	if not frappe.db.exists("DocType", "Employee Certificate"):
+		return
+	rows = frappe.db.sql(
+		"""
+		SELECT certificate_type, AVG(DATEDIFF(expiry_date, issue_date)) AS avg_days
+		FROM `tabEmployee Certificate`
+		WHERE issue_date IS NOT NULL AND expiry_date IS NOT NULL
+		GROUP BY certificate_type
+		""",
+		as_dict=True,
+	)
+	for row in rows:
+		months = round((row.avg_days or 0) / 30.44)
+		if months > 0:
+			frappe.db.set_value("Certificate Type", row.certificate_type, "validity_months", months)
+	frappe.db.commit()
+
+
+def _ensure_certificate_tracker_designations():
+    """Field-ops designations used by the reference tracker's `position`
+    values that don't already exist in the (generic ERPNext seed) Designation
+    list. "Project Manager" already exists, so it's not listed here."""
+    designations = [
+        "Technician", "Team Leader", "Driver", "Rigger",
+        "Rigger / Driver", "Technician / Driver", "EHS Manager",
+        "Admin", "Document Controller",
+    ]
+    for designation_name in designations:
+        if frappe.db.exists("Designation", designation_name):
+            continue
+        try:
+            frappe.get_doc({
+                "doctype": "Designation",
+                "designation_name": designation_name,
+            }).insert(ignore_permissions=True)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"Designation {designation_name} setup failed")
+    frappe.db.commit()
 
 

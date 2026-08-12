@@ -24,9 +24,13 @@ fixtures = [
 	},
 	{
 		"dt": "Role",
-		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team", "INET PIC"]]],
+		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR"]]],
 	},
 	{"dt": "Report", "filters": [["name", "=", "Huawei Outbound Analytics"]]},
+	{
+		"dt": "Notification",
+		"filters": [["name", "like", "INET Certificate%"]],
+	},
 ]
 
 after_migrate = "inet_app.setup.after_migrate"
@@ -97,6 +101,10 @@ role_home_page = {
 	"INET IM": "pms/im-dashboard",
 	"INET Admin": "pms/dashboard",
 	"INET PIC": "pms/pic-dashboard",
+	# Standalone page, deliberately NOT under /pms — separate from the PMS
+	# portal in login flow, UI, and UX. Any user holding INET HR lands here
+	# straight from Frappe's own /login, no PMS involved.
+	"INET HR": "hr-certificates",
 }
 
 # Generators
@@ -229,6 +237,7 @@ has_permission = {
 scheduler_events = {
 	"daily": [
 		"inet_app.api.command_center.auto_mark_overdue_plans",
+		"inet_app.api.hr_certificates.daily_certificate_status_refresh",
 	],
 	"cron": {
 		"0 8 * * *": ["inet_app.api.notifications.send_dummy_po_reminder"],

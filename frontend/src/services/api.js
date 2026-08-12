@@ -858,3 +858,8 @@ export const pmApi = {
   markAllNotificationsRead: () =>
     call("inet_app.api.notifications.mark_all_notifications_read", {}),
 };
+
+// NOTE: the INET HR Certificate Tracker is a standalone page
+// (inet_app/inet_app/www/hr-certificates.html), separate from this PMS
+// portal in UI/UX and access control — it calls inet_app.api.hr_certificates
+// directly with its own fetch() helper, not through pmApi/this file.
