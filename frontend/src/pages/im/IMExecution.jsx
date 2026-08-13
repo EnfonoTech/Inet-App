@@ -1872,7 +1872,15 @@ export default function IMExecution() {
                   if (!extendNewDate) { setExtendError("Please pick a new end date."); return; }
                   setExtendBusy(true); setExtendError(null);
                   try {
-                    await Promise.all(extendableExecs.map((e) => pmApi.extendPlanEndDate(e.rollout_plan, extendNewDate, extendNote)));
+                    // Sequential, not Promise.all — firing all N updates at once
+                    // had several concurrent transactions writing to Rollout Plan
+                    // (plus its reschedule_log child row) at the same instant,
+                    // which MySQL/MariaDB could resolve as a deadlock ("Deadlock
+                    // found when trying to get lock"). See the same sequential
+                    // loop in IMPlanning.jsx's own Extend End Date handler.
+                    for (const e of extendableExecs) {
+                      await pmApi.extendPlanEndDate(e.rollout_plan, extendNewDate, extendNote);
+                    }
                     setExtendOpen(false); setExtendNote(""); setExtendNewDate("");
                     loadExecutions();
                   } catch (err) {

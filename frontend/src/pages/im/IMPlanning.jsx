@@ -50,7 +50,7 @@ function DetailItem({ label, value }) {
 
 function canImExecuteFromPlan(status) {
   const s = (status || "").trim();
-  return ["Planned", "In Execution", "Planning with Issue", "Ready for Execution", "Overdue", "Not Attended"].includes(s);
+  return ["Planned", "In Execution", "Planning with Issue", "Ready for Execution", "Overdue", "Not Attended", "Extended"].includes(s);
 }
 
 /** All selected plans that are in an executable status. */
@@ -64,7 +64,7 @@ export default function IMPlanning() {
   const { rowLimit } = useTableRowLimit();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState(["Planned", "Overdue", "Not Attended"]);
+  const [statusFilter, setStatusFilter] = useState(["Planned", "Overdue", "Not Attended", "Extended"]);
   const [visitFilter, setVisitFilter] = useState([]);
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState([]);
@@ -305,7 +305,7 @@ export default function IMPlanning() {
   }
 
   function canCancelPlan(p) {
-    return ["Planned", "In Execution", "Planning with Issue"].includes(p.plan_status || "")
+    return ["Planned", "In Execution", "Planning with Issue", "Extended"].includes(p.plan_status || "")
       && (!p.cancel_request_status || p.cancel_request_status === "None" || p.cancel_request_status === "Rejected");
   }
 
@@ -416,7 +416,7 @@ export default function IMPlanning() {
               border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 260,
             }}
           />
-          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={["Planned", "Planning with Issue", "In Execution", "Overdue", "Not Attended", "Completed", "Cancelled"]} placeholder="All Statuses" minWidth={150} />
+          <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={["Planned", "Planning with Issue", "In Execution", "Overdue", "Not Attended", "Extended", "Completed", "Cancelled"]} placeholder="All Statuses" minWidth={150} />
           <SearchableSelect multi value={visitFilter} onChange={setVisitFilter} options={visitTypes} placeholder="All Visit Types" minWidth={160} />
           <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
           <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />

@@ -602,6 +602,12 @@
   border: 1px solid #e9d5ff;
 }
 
+.status-badge.extended {
+  background: #ecfeff;
+  color: #0e7490;
+  border: 1px solid #a5f3fc;
+}
+
 .status-badge.cancelled {
   background: #f1f5f9;
   color: #94a3b8;

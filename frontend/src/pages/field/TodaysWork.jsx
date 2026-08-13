@@ -16,6 +16,7 @@ function statusBadgeClass(status) {
   if (!status) return "new";
   const s = status.toLowerCase().replace(/\s+/g, "-");
   if (s === "planned") return "planned";
+  if (s === "extended") return "extended";
   if (s === "in-execution" || s === "in-progress") return "in-progress";
   if (s === "completed") return "completed";
   if (s === "cancelled") return "cancelled";
@@ -67,7 +68,10 @@ function SummaryChips({ plans }) {
     return s === "in-execution" || s === "in-progress";
   }).length;
   const done = plans.filter(p => (p.plan_status || "").toLowerCase() === "completed").length;
-  const planned = plans.filter(p => (p.plan_status || "").toLowerCase() === "planned" || !p.plan_status).length;
+  const planned = plans.filter(p => {
+    const s = (p.plan_status || "").toLowerCase();
+    return s === "planned" || s === "extended" || !p.plan_status;
+  }).length;
 
   return (
     <div className="today-summary-bar">

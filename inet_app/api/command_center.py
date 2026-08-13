@@ -4504,7 +4504,11 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
     updates = {}
     if effective in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE:
         cur = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
-        if cur == "Planned":
+        # "Extended" is the other valid starting point for this same flip —
+        # see extend_plan_end_date. The TL logging any activity on it is
+        # exactly the re-engagement that moves it back to a normal In
+        # Execution plan (and off Rollout Execution's attention list).
+        if cur in ("Planned", "Extended"):
             updates["plan_status"] = "In Execution"
     elif effective == "Completed":
         # OR-aggregation for QC: any Fail = plan Fail (safety-first).
@@ -5247,6 +5251,15 @@ def update_execution(payload):
     ]:
         if field in payload and hasattr(doc, field):
             setattr(doc, field, payload[field])
+
+    # Server-stamped, not client-supplied — distinct from execution_date
+    # (the original planned/logged day, which a multi-day plan's single
+    # reused Daily Execution record never updates again after creation).
+    # This is what lets extend_plan_end_date tell "TL touched this today"
+    # from "TL hasn't touched this since an earlier day" without losing
+    # that original date.
+    if hasattr(doc, "last_progress_date"):
+        doc.last_progress_date = frappe.utils.nowdate()
 
     # material_usage child table — replace rows with what the field team submitted
     if "material_usage" in payload and hasattr(doc, "material_usage"):
@@ -8512,7 +8525,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         """
         SELECT DISTINCT rp.team AS team FROM `tabRollout Plan` rp
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
-        WHERE rp.plan_status IN ('Planned', 'In Execution')
+        WHERE rp.plan_status IN ('Planned', 'In Execution', 'Extended')
         AND rp.plan_date = %s
         AND IFNULL(it.team_category, '') != 'Backend Team'
         AND IFNULL(it.status, 'Active') = 'Active'
@@ -8520,7 +8533,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         SELECT DISTINCT rpt.team AS team FROM `tabRollout Plan Team` rpt
         INNER JOIN `tabRollout Plan` rp2 ON rp2.name = rpt.parent
         LEFT JOIN `tabINET Team` it2 ON it2.name = rpt.team
-        WHERE rp2.plan_status IN ('Planned', 'In Execution')
+        WHERE rp2.plan_status IN ('Planned', 'In Execution', 'Extended')
         AND rp2.plan_date = %s
         AND IFNULL(it2.team_category, '') != 'Backend Team'
         AND IFNULL(it2.status, 'Active') = 'Active'
@@ -8539,7 +8552,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     planned_activities = frappe.db.sql(
         """
         SELECT COUNT(*) AS cnt FROM `tabRollout Plan` rp
-        WHERE rp.plan_status = 'Planned'
+        WHERE rp.plan_status IN ('Planned', 'Extended')
         AND NOT EXISTS (
           SELECT 1 FROM `tabRollout Plan` rp_later
           WHERE rp_later.po_dispatch = rp.po_dispatch
@@ -8551,7 +8564,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     planned_amount = frappe.db.sql(
         """
         SELECT COALESCE(SUM(rp.target_amount), 0) AS amt FROM `tabRollout Plan` rp
-        WHERE rp.plan_status = 'Planned'
+        WHERE rp.plan_status IN ('Planned', 'Extended')
         AND NOT EXISTS (
           SELECT 1 FROM `tabRollout Plan` rp_later
           WHERE rp_later.po_dispatch = rp.po_dispatch
@@ -8883,11 +8896,11 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         """
         SELECT COUNT(DISTINCT team) AS cnt FROM (
             SELECT rp.team AS team FROM `tabRollout Plan` rp
-            WHERE rp.plan_date = %s AND rp.plan_status = 'Planned'
+            WHERE rp.plan_date = %s AND rp.plan_status IN ('Planned', 'Extended')
             UNION
             SELECT rpt.team AS team FROM `tabRollout Plan Team` rpt
             INNER JOIN `tabRollout Plan` rp2 ON rp2.name = rpt.parent
-            WHERE rp2.plan_date = %s AND rp2.plan_status = 'Planned'
+            WHERE rp2.plan_date = %s AND rp2.plan_status IN ('Planned', 'Extended')
         ) combined
         """,
         (today_str, today_str),
@@ -9104,7 +9117,7 @@ def im_action_counts(im_identifiers):
         f"""
         SELECT COUNT(*) AS c FROM `tabRollout Plan` rp
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        WHERE pd.im IN ({ph}) AND rp.plan_status = 'Planned'
+        WHERE pd.im IN ({ph}) AND rp.plan_status IN ('Planned', 'Extended')
         """,
         params,
         as_dict=True,
@@ -10315,6 +10328,13 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
         WHERE pd.im IN ({ph}){status_clause}{portal_clause}
         AND NOT (rp.plan_status = 'Planned' AND rp.plan_date > CURDATE())
+        -- Extended: IM pushed the deadline on a stalled plan but the TL
+        -- hasn't re-engaged yet — belongs on Rollout Execution (needs the
+        -- TL to start/restart it), not here, even though an old Daily
+        -- Execution from before it stalled may still exist. The moment the
+        -- TL logs activity, the sync logic flips this to In Execution and
+        -- it reappears here normally.
+        AND rp.plan_status != 'Extended'
         AND NOT EXISTS (
             SELECT 1 FROM `tabRollout Plan` rp_later
             WHERE rp_later.po_dispatch = rp.po_dispatch
@@ -10762,7 +10782,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         SELECT COUNT(*) AS cnt
         FROM `tabRollout Plan` rp
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        WHERE rp.plan_status = 'Planned'
+        WHERE rp.plan_status IN ('Planned', 'Extended')
         AND (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
         """,
         tuple(im_identifiers) + tuple(rp_im_params),
@@ -12074,7 +12094,7 @@ def start_execution_timer(rollout_plan):
     log.is_running = 1
     log.insert(ignore_permissions=True)
 
-    if plan_status in ("Planned", "Planning with Issue"):
+    if plan_status in ("Planned", "Planning with Issue", "Extended"):
         frappe.db.set_value("Rollout Plan", rollout_plan, "plan_status", "In Execution", update_modified=False)
 
     # Auto-create a Daily Execution so IM/PM monitors can track progress immediately.
@@ -16362,7 +16382,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                         SELECT 1 FROM `tabRollout Plan Team` rpt_dom
                         WHERE rpt_dom.parent = rp.name AND rpt_dom.team = it.name
                       ))
-                  AND rp.plan_status IN ('Planned','In Execution','Completed')
+                  AND rp.plan_status IN ('Planned','In Execution','Extended','Completed')
                   AND rp.plan_date = {date_expr}
                   AND IFNULL(pcc.project_domain,'') != ''
             ) AS current_domains,
@@ -16374,7 +16394,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                         SELECT 1 FROM `tabRollout Plan Team` rpt_proj
                         WHERE rpt_proj.parent = rp2.name AND rpt_proj.team = it.name
                       ))
-                  AND rp2.plan_status IN ('Planned','In Execution','Completed')
+                  AND rp2.plan_status IN ('Planned','In Execution','Extended','Completed')
                   AND rp2.plan_date = {date_expr}
                   AND IFNULL(pd2.project_code,'') != ''
             ) AS current_projects,
@@ -16385,7 +16405,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                         SELECT 1 FROM `tabRollout Plan Team` rpt_act
                         WHERE rpt_act.parent = rpa.name AND rpt_act.team = it.name
                       ))
-                  AND rpa.plan_status IN ('Planned','In Execution')
+                  AND rpa.plan_status IN ('Planned','In Execution','Extended')
                   AND rpa.plan_date = {date_expr}
             ) AS active_plan_count,
             (
@@ -16403,7 +16423,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                                 SELECT 1 FROM `tabRollout Plan Team` rpt_stat
                                 WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
                               ))
-                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Completed')
+                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Extended', 'Completed')
                           AND rp_s.plan_date = {date_expr}
                     ) THEN 'Planned'
                     ELSE 'Idle'
@@ -16513,7 +16533,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                         SELECT 1 FROM `tabRollout Plan Team` rpt_dom
                         WHERE rpt_dom.parent = rp.name AND rpt_dom.team = it.name
                       ))
-                  AND rp.plan_status IN ('Planned','In Execution','Completed')
+                  AND rp.plan_status IN ('Planned','In Execution','Extended','Completed')
                   AND rp.plan_date = {date_expr}
                   AND IFNULL(pcc.project_domain,'') != ''
             ) AS current_domains,
@@ -16525,7 +16545,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                         SELECT 1 FROM `tabRollout Plan Team` rpt_proj
                         WHERE rpt_proj.parent = rp2.name AND rpt_proj.team = it.name
                       ))
-                  AND rp2.plan_status IN ('Planned','In Execution','Completed')
+                  AND rp2.plan_status IN ('Planned','In Execution','Extended','Completed')
                   AND rp2.plan_date = {date_expr}
                   AND IFNULL(pd2.project_code,'') != ''
             ) AS current_projects,
@@ -16536,7 +16556,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                         SELECT 1 FROM `tabRollout Plan Team` rpt_act
                         WHERE rpt_act.parent = rpa.name AND rpt_act.team = it.name
                       ))
-                  AND rpa.plan_status IN ('Planned','In Execution')
+                  AND rpa.plan_status IN ('Planned','In Execution','Extended')
                   AND rpa.plan_date = {date_expr}
             ) AS active_plan_count,
             (
@@ -16554,7 +16574,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                                 SELECT 1 FROM `tabRollout Plan Team` rpt_stat
                                 WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
                               ))
-                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Completed')
+                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Extended', 'Completed')
                           AND rp_s.plan_date = {date_expr}
                     ) THEN 'Planned'
                     ELSE 'Idle'
@@ -16613,7 +16633,7 @@ def admin_get_team_detail(name):
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
         WHERE rp.team = %s
-          AND rp.plan_status IN ('Planned','In Execution')
+          AND rp.plan_status IN ('Planned','In Execution','Extended')
         ORDER BY rp.plan_date DESC
         LIMIT 20
         """,
@@ -16743,8 +16763,9 @@ def mark_plan_not_attended(rollout_plan, reason=None):
 def extend_plan_end_date(rollout_plan, new_end_date, im_note=None):
     """
     IM extends the end date of a multi-day plan that couldn't be completed in time.
-    Updates plan_end_date, resets Overdue → In Execution if applicable, and logs the
-    extension in the reschedule_log child table for full audit history.
+    Updates plan_end_date and logs the extension in the reschedule_log child table
+    for full audit history. Only ever changes plan_status for one specific case —
+    see the "Extended" handling below.
     """
     if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
         frappe.throw("Invalid Rollout Plan")
@@ -16756,6 +16777,11 @@ def extend_plan_end_date(rollout_plan, new_end_date, im_note=None):
         frappe.throw(f"Cannot extend: plan is already {doc.plan_status}.")
 
     old_end_date = doc.plan_end_date or doc.plan_date
+    if getdate(new_end_date) <= getdate(old_end_date):
+        frappe.throw(
+            f"New end date ({new_end_date}) must be after the current end date "
+            f"({old_end_date}) — pick a later date, or use Reschedule instead."
+        )
 
     # Log extension in reschedule_log (same child table used for reschedules).
     tl_snap = frappe.db.get_value(
@@ -16777,9 +16803,30 @@ def extend_plan_end_date(rollout_plan, new_end_date, im_note=None):
     doc.reschedule_count = cint(doc.reschedule_count or 0) + 1
     doc.plan_end_date = new_end_date
 
-    # If plan went Overdue because end date passed, bring it back to In Execution.
-    if doc.plan_status == "Overdue":
-        doc.plan_status = "In Execution"
+    # Overdue / Not Attended: leave status untouched. Both already show on
+    # Rollout Execution by default, and both are normally handled via
+    # Reschedule rather than Extend anyway — no status change needed here,
+    # extending one just pushes the deadline.
+    #
+    # In Execution: this is the one case that actually needs a status
+    # change, and only conditionally. A multi-day plan being extended
+    # because the TL genuinely needs one more day (already logged progress
+    # TODAY) should stay "In Execution" untouched — Work Done still shows
+    # it, nothing disrupted. But if the TL hasn't touched it TODAY at all
+    # (last_progress_date is stale or missing — the plan's gone quiet
+    # mid-stream and the IM is extending because of that), it moves to
+    # "Extended": shows on Rollout Execution (needs the TL to re-engage)
+    # and drops off Rollout Work Done immediately. The moment the TL logs
+    # new activity, the execution-sync logic flips it back to "In
+    # Execution" and it returns to Rollout Work Done.
+    if doc.plan_status == "In Execution":
+        today_str = frappe.utils.nowdate()
+        progress_today = frappe.db.exists("Daily Execution", {
+            "rollout_plan": rollout_plan,
+            "last_progress_date": today_str,
+        })
+        if not progress_today:
+            doc.plan_status = "Extended"
 
     doc.save(ignore_permissions=True)
     frappe.db.commit()

@@ -18,6 +18,7 @@ function badgeTone(value) {
   if (s === "backend team") return { bg: "#fff7ed", fg: "#c2410c", dot: "#f97316" };
   if (s === "in execution") return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
   if (s === "planned") return { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" };
+  if (s === "extended") return { bg: "#ecfeff", fg: "#0e7490", dot: "#22d3ee" };
   if (s === "idle") return { bg: "#f1f5f9", fg: "#64748b", dot: "#94a3b8" };
   return { bg: "#f1f5f9", fg: "#334155", dot: "#94a3b8" };
 }

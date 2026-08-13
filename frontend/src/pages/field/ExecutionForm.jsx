@@ -728,7 +728,8 @@ export default function ExecutionForm() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {inExecPlans.map((p) => {
                   const isInExec = p.plan_status === "In Execution";
-                  const accent = isInExec ? "#f59e0b" : "#3b82f6";
+                  const isExtended = p.plan_status === "Extended";
+                  const accent = isInExec ? "#f59e0b" : isExtended ? "#0e7490" : "#3b82f6";
                   return (
                     <button
                       key={p.name}

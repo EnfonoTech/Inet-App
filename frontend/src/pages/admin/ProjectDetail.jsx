@@ -21,6 +21,7 @@ const STATUS_COLORS = {
   Dispatched: { bg: "#ecfdf5", color: "#065f46", border: "#a7f3d0" },
   Pending: { bg: "#fffbeb", color: "#92400e", border: "#fde68a" },
   Planned: { bg: "#eff6ff", color: "#1e40af", border: "#bfdbfe" },
+  Extended: { bg: "#ecfeff", color: "#0e7490", border: "#a5f3fc" },
   Executed: { bg: "#ecfdf5", color: "#065f46", border: "#a7f3d0" },
   Billed: { bg: "#f0fdf4", color: "#166534", border: "#86efac" },
   Unbilled: { bg: "#fef2f2", color: "#991b1b", border: "#fecaca" },

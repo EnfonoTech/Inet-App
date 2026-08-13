@@ -155,7 +155,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Planned\nPlanning with Issue\nIn Execution\nOverdue\nNot Attended\nCompleted\nCancelled"
+   "options": "Planned\nPlanning with Issue\nIn Execution\nOverdue\nNot Attended\nExtended\nCompleted\nCancelled"
   },
   {
    "fieldname": "issue_status",

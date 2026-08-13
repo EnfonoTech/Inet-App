@@ -11,6 +11,7 @@
   "region_type",
   "team",
   "execution_date",
+  "last_progress_date",
   "tl_status",
   "execution_status",
   "issue_category",
@@ -72,6 +73,13 @@
    "in_list_view": 1,
    "label": "Execution Date",
    "reqd": 1
+  },
+  {
+   "fieldname": "last_progress_date",
+   "fieldtype": "Date",
+   "label": "Last Progress Date",
+   "read_only": 1,
+   "description": "Server-stamped date of the last real update_execution call for this record — distinct from Execution Date (the original planned/logged day, never overwritten). Used to detect a multi-day plan that's gone quiet on the current day, without losing the original date."
   },
   {
    "default": "In Progress",

@@ -74,6 +74,7 @@ function statusBadgeClass(status) {
   if (!status) return "";
   const s = status.toLowerCase().replace(/\s+/g, "-");
   if (s === "planned") return "planned";
+  if (s === "extended") return "extended";
   if (s === "in-execution" || s === "in-progress") return "in-progress";
   if (s === "completed") return "completed";
   if (s === "cancelled") return "cancelled";

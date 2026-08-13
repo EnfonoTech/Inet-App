@@ -99,6 +99,7 @@ function planStatusColor(status) {
   if (s === "completed") return { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" };
   if (s === "in execution") return { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" };
   if (s === "planned") return { bg: "#f0f9ff", fg: "#0369a1", bd: "#bae6fd" };
+  if (s === "extended") return { bg: "#ecfeff", fg: "#0e7490", bd: "#a5f3fc" };
   if (s === "cancelled") return { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" };
   return { bg: "#fefce8", fg: "#92400e", bd: "#fde68a" };
 }
