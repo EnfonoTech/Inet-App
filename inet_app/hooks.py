@@ -31,6 +31,13 @@ fixtures = [
 		"dt": "Notification",
 		"filters": [["name", "like", "INET Certificate%"]],
 	},
+	{
+		# Sales Invoice: allow manual rename of the auto-generated ID before
+		# submit (Desk menu -> Rename). Core ERPNext doctype, so this is a
+		# Property Setter rather than an inet_app-owned Custom Field.
+		"dt": "Property Setter",
+		"filters": [["name", "=", "Sales Invoice-main-allow_rename"]],
+	},
 ]
 
 after_migrate = "inet_app.setup.after_migrate"
