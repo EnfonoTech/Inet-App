@@ -229,12 +229,13 @@ export const pmApi = {
       issue_category: issueCategory || "",
       issue_remarks: issueRemarks || "",
     }),
-  rescheduleRolloutPlan: (rolloutPlan, newDate, reason, imNote) =>
+  rescheduleRolloutPlan: (rolloutPlan, newDate, reason, imNote, newEndDate) =>
     call("inet_app.api.command_center.reschedule_rollout_plan", {
       rollout_plan: rolloutPlan,
       new_date: newDate,
       reason,
       im_note: imNote || "",
+      new_end_date: newEndDate || undefined,
     }),
   getRescheduleLogs: (rolloutPlan) =>
     call("inet_app.api.command_center.get_reschedule_logs", { rollout_plan: rolloutPlan }),

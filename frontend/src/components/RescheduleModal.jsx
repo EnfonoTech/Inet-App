@@ -26,20 +26,31 @@ export default function RescheduleModal({ rolloutPlans, defaultReason = "", onSu
   const plans = Array.isArray(rolloutPlans) ? rolloutPlans : [rolloutPlans].filter(Boolean);
   const minDate = tomorrowStr();
   const [newDate, setNewDate] = useState(minDate);
+  // Defaults to New Date (single-day reschedule, the common case) and keeps
+  // following it as long as the IM hasn't explicitly touched End Date. Once
+  // touched, it stops auto-following so a deliberate multi-day span sticks.
+  const [newEndDate, setNewEndDate] = useState(minDate);
+  const [endDateTouched, setEndDateTouched] = useState(false);
   const [reason, setReason] = useState(defaultReason || "");
   const [imNote, setImNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
+  function handleNewDateChange(v) {
+    setNewDate(v);
+    if (!endDateTouched) setNewEndDate(v);
+  }
+
   async function submit() {
     if (!newDate) { setErr("Please select a new date."); return; }
+    if (newEndDate && newEndDate < newDate) { setErr("New end date cannot be before the new date."); return; }
     if (!reason) { setErr("Please select a reason."); return; }
     setBusy(true);
     setErr(null);
     const results = [];
     for (const plan of plans) {
       try {
-        const res = await pmApi.rescheduleRolloutPlan(plan, newDate, reason, imNote);
+        const res = await pmApi.rescheduleRolloutPlan(plan, newDate, reason, imNote, newEndDate || newDate);
         results.push({ plan, ok: true, reschedule_count: res?.reschedule_count });
       } catch (e) {
         results.push({ plan, ok: false, error: e.message || "Failed" });
@@ -78,7 +89,18 @@ export default function RescheduleModal({ rolloutPlans, defaultReason = "", onSu
             type="date"
             value={newDate}
             min={minDate}
-            onChange={(e) => setNewDate(e.target.value)}
+            onChange={(e) => handleNewDateChange(e.target.value)}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", boxSizing: "border-box" }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>New End Date</label>
+          <input
+            type="date"
+            value={newEndDate}
+            min={newDate || minDate}
+            onChange={(e) => { setEndDateTouched(true); setNewEndDate(e.target.value); }}
             style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", boxSizing: "border-box" }}
           />
         </div>

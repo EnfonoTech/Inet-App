@@ -10484,16 +10484,25 @@ def reopen_rollout_for_revisit(rollout_plan, issue_category=None, planning_route
 
 
 @frappe.whitelist()
-def reschedule_rollout_plan(rollout_plan, new_date, reason, im_note=None):
+def reschedule_rollout_plan(rollout_plan, new_date, reason, im_note=None, new_end_date=None):
     """
     Reschedule a plan that did not execute (Not Attended / Cancelled / Overdue / Hold).
     Does NOT create a new plan and does NOT increment visit_number.
     Resets plan_date and plan_status to 'Planned', logs the event in reschedule_log.
+
+    new_end_date: optional — lets the IM pick a genuinely new multi-day span on the
+    same reschedule (e.g. a 2-day job that never started, moved to next week and
+    still needs 2 days). Defaults to new_date (single day) when omitted, same as the
+    frontend's default. Without this, a plan that used to be multi-day would either
+    keep a stale old end date (if still >= new_date) or silently collapse to a single
+    day (if not) — neither reflects a deliberate choice by the IM.
     """
     if not rollout_plan or not frappe.db.exists("Rollout Plan", rollout_plan):
         frappe.throw("Invalid Rollout Plan")
     if not new_date:
         frappe.throw("New date is required")
+    if new_end_date and getdate(new_end_date) < getdate(new_date):
+        frappe.throw("New end date cannot be before the new date.")
 
     doc = frappe.get_doc("Rollout Plan", rollout_plan)
     if doc.plan_status == "Completed":
@@ -10525,8 +10534,11 @@ def reschedule_rollout_plan(rollout_plan, new_date, reason, im_note=None):
     })
     doc.reschedule_count = cint(doc.reschedule_count or 0) + 1
     doc.plan_date = new_date
-    # Advance plan_end_date if it would be before the new plan_date
-    if doc.plan_end_date and getdate(doc.plan_end_date) < getdate(new_date):
+    if new_end_date:
+        doc.plan_end_date = new_end_date
+    elif doc.plan_end_date and getdate(doc.plan_end_date) < getdate(new_date):
+        # No explicit new_end_date given — fall back to the old clamp-forward
+        # behavior so a stale end date can never end up before the new start.
         doc.plan_end_date = new_date
     doc.plan_status = "Planned"
     doc.save(ignore_permissions=True)
