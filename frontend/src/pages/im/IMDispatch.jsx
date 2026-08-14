@@ -175,7 +175,7 @@ export default function IMDispatch() {
   // what limit + filters + planScope. Shrinking the row limit (e.g. All ->
   // 20) on the SAME scope never needs another round-trip. See
   // PICTracker.jsx for the reference implementation.
-  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [], refreshKey: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [modeFilter, setModeFilter] = useState("all");
@@ -346,7 +346,11 @@ export default function IMDispatch() {
         const signature = JSON.stringify([listFilters, portal]);
 
         const prev = lastFetchRef.current;
-        const alreadyHaveEnough = prev.signature === signature && (
+        // refreshKey must match too — a post-action reload bumps refreshKey
+        // with filters unchanged, so a signature-only check would wrongly
+        // treat that as "same filters, already have enough" and skip the
+        // refetch, leaving the table showing stale data until a reload.
+        const alreadyHaveEnough = prev.signature === signature && prev.refreshKey === refreshKey && (
           prev.limit === TABLE_ROW_LIMIT_ALL
           || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
         );
@@ -368,7 +372,7 @@ export default function IMDispatch() {
         if (cancelled) return;
         const fetchedRows = Array.isArray(res) ? res : [];
         setRows(fetchedRows);
-        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
+        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows, refreshKey };
         if (agg && typeof agg === "object") {
           setStats({
             total: Number(agg.total) || 0,

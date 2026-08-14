@@ -303,7 +303,7 @@ export default function PODispatch() {
   // needs another round-trip — the rows are already in memory; just show
   // fewer of them. Signature includes everything the fetch depends on
   // except the row limit, so a limit-only shrink is the only thing skipped.
-  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [], refreshKey: null });
   const [error, setError] = useState(null);
   const [imList, setImList] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -422,7 +422,11 @@ export default function PODispatch() {
         const signature = JSON.stringify([portal]);
 
         const prev = lastFetchRef.current;
-        const alreadyHaveEnough = prev.signature === signature && (
+        // refreshKey must match too — a post-action reload bumps refreshKey
+        // with filters unchanged, so a signature-only check would wrongly
+        // treat that as "same filters, already have enough" and skip the
+        // refetch, leaving the table showing stale data until a reload.
+        const alreadyHaveEnough = prev.signature === signature && prev.refreshKey === refreshKey && (
           prev.limit === TABLE_ROW_LIMIT_ALL
           || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
         );
@@ -440,7 +444,7 @@ export default function PODispatch() {
         ]);
         const fetchedRows = Array.isArray(poLines) ? poLines : [];
         if (!cancelled) setRows(fetchedRows);
-        if (!cancelled) lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
+        if (!cancelled) lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows, refreshKey };
         if (!cancelled) setImList(Array.isArray(ims) ? ims : []);
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load data");

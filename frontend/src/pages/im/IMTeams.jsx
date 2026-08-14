@@ -15,6 +15,7 @@ function badgeTone(value) {
   if (s === "backend team") return { bg: "#fff7ed", fg: "#c2410c", dot: "#f97316" };
   if (s === "in execution") return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
   if (s === "planned") return { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" };
+  if (s === "extended") return { bg: "#ecfeff", fg: "#0e7490", dot: "#22d3ee" };
   if (s === "idle") return { bg: "#f1f5f9", fg: "#64748b", dot: "#94a3b8" };
   return { bg: "#f1f5f9", fg: "#334155", dot: "#94a3b8" };
 }
@@ -120,6 +121,7 @@ export default function IMTeams() {
   const [statusFilter, setStatusFilter] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState([]);
   const [statFilter, setStatFilter] = useState(null);
+  const [dateFilter, setDateFilter] = useState(() => new Date().toISOString().slice(0, 10));
 
   const [detailRow, setDetailRow] = useState(null);
   const [detailData, setDetailData] = useState(null);
@@ -152,10 +154,9 @@ export default function IMTeams() {
       const myFilters = imCandidates.length > 1
         ? { im: ["in", imCandidates] }
         : { im: imCandidates[0] || "__none__" };
-      const today = new Date().toISOString().slice(0, 10);
       const [my, all, ims, reqs] = await Promise.all([
         // My teams: use enriched API (today_status, projects, active_plan_count, member_count)
-        pmApi.listImTeams({ im: imCandidates[0] || "__none__", for_date: today }).catch(() => []),
+        pmApi.listImTeams({ im: imCandidates[0] || "__none__", for_date: dateFilter }).catch(() => []),
         // All teams: basic list (no enriched data needed for the All tab)
         pmApi.listINETTeams({}).catch(() => []),
         pmApi.genericList("IM Master", ["name", "full_name"], 500).catch(() => []),
@@ -176,7 +177,7 @@ export default function IMTeams() {
     if (myIm) loadAll();
     else setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myIm]);
+  }, [myIm, dateFilter]);
 
   useEffect(() => {
     if (!detailRow?.name) { setDetailData(null); setDetailStock([]); return; }
@@ -332,7 +333,7 @@ export default function IMTeams() {
     });
   }, [sourceList, typeFilter, statusFilter, categoryFilter, statFilter, searchDebounced, imLabels]);
 
-  const hasFilters = !!(search || typeFilter.length || statusFilter.length || categoryFilter.length || statFilter);
+  const hasFilters = !!(search || typeFilter.length || statusFilter.length || categoryFilter.length || statFilter || dateFilter !== today);
 
   const isMine = (t) => tab === "my" || t.im === myIm || t.im_name === myIm;
 
@@ -395,9 +396,20 @@ export default function IMTeams() {
             options={[{ id: "Field Team", label: "Field Team" }, { id: "Backend Team", label: "Backend Team" }]} placeholder="All Categories" minWidth={150} />
           <SearchableSelect multi value={statusFilter} onChange={setStatusFilter}
             options={[{ id: "Active", label: "Active" }, { id: "Inactive", label: "Inactive" }]} placeholder="All Status" minWidth={130} />
+          {tab === "my" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600, whiteSpace: "nowrap" }}>Date</span>
+              <input
+                type="date"
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", color: dateFilter !== today ? "#1d4ed8" : undefined, fontWeight: dateFilter !== today ? 600 : undefined }}
+              />
+            </div>
+          )}
           {hasFilters && (
             <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-              onClick={() => { setSearch(""); setTypeFilter([]); setStatusFilter([]); setCategoryFilter([]); setStatFilter(null); }}>
+              onClick={() => { setSearch(""); setTypeFilter([]); setStatusFilter([]); setCategoryFilter([]); setStatFilter(null); setDateFilter(today); }}>
               Clear
             </button>
           )}
@@ -860,6 +872,47 @@ export default function IMTeams() {
                       </div>
                     )}
                   </div>
+
+                  {/* Active Plans */}
+                  {(detailData.active_plans || []).length > 0 && (
+                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                      <div style={{ padding: "10px 16px", borderBottom: "1px solid #f1f5f9", fontWeight: 700, fontSize: 13, color: "#475569", background: "#f8fafc" }}>
+                        Active Plans ({detailData.active_plans.length})
+                      </div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ background: "#f8fafc" }}>
+                              <th style={{ padding: "6px 12px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Plan</th>
+                              <th style={{ padding: "6px 12px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>POID</th>
+                              <th style={{ padding: "6px 12px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Project</th>
+                              <th style={{ padding: "6px 12px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Domain</th>
+                              <th style={{ padding: "6px 12px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>DUID</th>
+                              <th style={{ padding: "6px 12px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Plan Date</th>
+                              <th style={{ padding: "6px 12px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {detailData.active_plans.map((p, i) => (
+                              <tr key={i} style={{ borderTop: "1px solid #f1f5f9" }}>
+                                <td style={{ padding: "7px 12px", fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#64748b" }}>{p.plan_name}</td>
+                                <td style={{ padding: "7px 12px", fontFamily: "ui-monospace, monospace", fontSize: 11, fontWeight: 600, color: "#0f172a" }}>{p.poid || "—"}</td>
+                                <td style={{ padding: "7px 12px", color: "#475569" }}>{p.project_code || "—"}</td>
+                                <td style={{ padding: "7px 12px" }}>
+                                  {p.project_domain
+                                    ? <span style={{ color: "#7c3aed", fontWeight: 600, fontSize: 11 }}>{p.project_domain}</span>
+                                    : "—"}
+                                </td>
+                                <td style={{ padding: "7px 12px", fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#64748b" }}>{p.site_code || "—"}</td>
+                                <td style={{ padding: "7px 12px", color: "#475569" }}>{p.plan_date || "—"}</td>
+                                <td style={{ padding: "7px 12px" }}><StatusPill value={p.plan_status} /></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
                 </div>
               ) : (

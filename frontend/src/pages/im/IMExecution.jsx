@@ -175,7 +175,7 @@ export default function IMExecution() {
   // what limit + filters + tab. Shrinking the row limit (e.g. All -> 20) on
   // the SAME tab never needs another round-trip. See PICTracker.jsx for the
   // reference implementation.
-  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [], refreshKey: null });
   const [internalSearch, setInternalSearch] = useState("");
   const [internalTeamFilter, setInternalTeamFilter] = useState([]);
   const [internalDomainFilter, setInternalDomainFilter] = useState([]);
@@ -312,7 +312,12 @@ export default function IMExecution() {
         const signature = JSON.stringify([portal, statusFilter]);
 
         const prev = lastFetchRef.current;
-        const alreadyHaveEnough = prev.signature === signature && (
+        // refreshKey must match too — loadExecutions() (called after every
+        // write action: QC/CIAG update, extend, etc.) bumps refreshKey with
+        // filters unchanged, so a signature-only check would wrongly treat
+        // that as "same filters, already have enough" and skip the refetch,
+        // leaving the table showing stale data until a manual page reload.
+        const alreadyHaveEnough = prev.signature === signature && prev.refreshKey === refreshKey && (
           prev.limit === TABLE_ROW_LIMIT_ALL
           || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
         );
@@ -328,7 +333,7 @@ export default function IMExecution() {
         if (cancelled) return;
         const fetchedRows = Array.isArray(res) ? res : [];
         setExecutions(fetchedRows);
-        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
+        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows, refreshKey };
       } catch {
         if (!cancelled) setExecutions([]);
       } finally {

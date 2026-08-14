@@ -8498,16 +8498,20 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Legacy key: same as total open line amount (SAR)
     total_open_po = total_open_po_line_value
 
-    # Teams with at least one execution today
+    # Teams with at least one execution today. Checks last_progress_date too,
+    # not just execution_date — a multi-day plan's single reused Daily
+    # Execution row never updates execution_date past its first day, so
+    # last_progress_date is what actually reflects "touched today" from
+    # day 2 onward (see the same fix in list_admin_teams/list_im_teams).
     active_team_rows = frappe.db.sql(
         """
         SELECT DISTINCT de.team FROM `tabDaily Execution` de
         LEFT JOIN `tabINET Team` it ON it.name = de.team
-        WHERE de.execution_date = %s
+        WHERE (de.execution_date = %s OR de.last_progress_date = %s)
         AND de.execution_status NOT IN ('Cancelled')
         AND IFNULL(it.team_category, '') != 'Backend Team'
         """,
-        (today_str,),
+        (today_str, today_str),
         as_dict=True,
     )
     active_team_ids = {r.team for r in active_team_rows}
@@ -8515,8 +8519,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
 
     # Teams with a Rollout Plan for TODAY in Planned/In Execution status
     # — they have assigned work today so they should NOT count as idle.
-    # We use plan_date = today (not <=) so old stale unexecuted plans from
-    # past dates don't prevent a team from being counted as idle today.
+    # We use a bounded range against plan_end_date (falling back to
+    # plan_date when never extended), not plan_date alone, so a multi-day
+    # plan extended past its original plan_date still counts on day 2+ —
+    # plan_date is stamped once at creation and never moves. This stays
+    # bounded (not an open-ended <=), so old stale unexecuted plans from
+    # past dates still don't prevent a team from being counted as idle
+    # today — only plans genuinely extended to cover today do.
     # UNION in secondary teams from Rollout Plan Team (a plan split across
     # 2+ teams only records the first/primary team on rp.team itself — see
     # the same gap fixed in list_admin_teams/list_im_teams) so a secondary
@@ -8526,7 +8535,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         SELECT DISTINCT rp.team AS team FROM `tabRollout Plan` rp
         LEFT JOIN `tabINET Team` it ON it.name = rp.team
         WHERE rp.plan_status IN ('Planned', 'In Execution', 'Extended')
-        AND rp.plan_date = %s
+        AND %s BETWEEN rp.plan_date AND IFNULL(rp.plan_end_date, rp.plan_date)
         AND IFNULL(it.team_category, '') != 'Backend Team'
         AND IFNULL(it.status, 'Active') = 'Active'
         UNION
@@ -8534,7 +8543,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         INNER JOIN `tabRollout Plan` rp2 ON rp2.name = rpt.parent
         LEFT JOIN `tabINET Team` it2 ON it2.name = rpt.team
         WHERE rp2.plan_status IN ('Planned', 'In Execution', 'Extended')
-        AND rp2.plan_date = %s
+        AND %s BETWEEN rp2.plan_date AND IFNULL(rp2.plan_end_date, rp2.plan_date)
         AND IFNULL(it2.team_category, '') != 'Backend Team'
         AND IFNULL(it2.status, 'Active') = 'Active'
         """,
@@ -8891,16 +8900,19 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Teams that have any Daily Execution today (started or completed work)
     in_progress_count = len(active_team_ids)
 
-    # Same secondary-team UNION as planned_team_rows above.
+    # Same secondary-team UNION as planned_team_rows above — and same
+    # plan_end_date-bounded range fix, for the same day-2+ reason.
     planned_today = frappe.db.sql(
         """
         SELECT COUNT(DISTINCT team) AS cnt FROM (
             SELECT rp.team AS team FROM `tabRollout Plan` rp
-            WHERE rp.plan_date = %s AND rp.plan_status IN ('Planned', 'Extended')
+            WHERE %s BETWEEN rp.plan_date AND IFNULL(rp.plan_end_date, rp.plan_date)
+            AND rp.plan_status IN ('Planned', 'Extended')
             UNION
             SELECT rpt.team AS team FROM `tabRollout Plan Team` rpt
             INNER JOIN `tabRollout Plan` rp2 ON rp2.name = rpt.parent
-            WHERE rp2.plan_date = %s AND rp2.plan_status IN ('Planned', 'Extended')
+            WHERE %s BETWEEN rp2.plan_date AND IFNULL(rp2.plan_end_date, rp2.plan_date)
+            AND rp2.plan_status IN ('Planned', 'Extended')
         ) combined
         """,
         (today_str, today_str),
@@ -12855,6 +12867,35 @@ def get_im_team_detail(name):
             "designation": m.get("designation") or "",
             "is_team_lead": 1 if m.get("is_team_lead") else 0,
         })
+
+    # Same query as admin_get_team_detail — this popup was missing it
+    # entirely (IM's view never showed active plans, unlike the admin one).
+    active_plans = frappe.db.sql(
+        """
+        SELECT
+            rp.name AS plan_name,
+            rp.plan_date,
+            rp.plan_status,
+            pd.project_code,
+            IFNULL(pcc.project_domain,'') AS project_domain,
+            IFNULL(pcc.project_name,'') AS project_name,
+            COALESCE(NULLIF(pd.poid,''), pd.name) AS poid,
+            pd.site_code
+        FROM `tabRollout Plan` rp
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+        WHERE (rp.team = %s OR EXISTS (
+                SELECT 1 FROM `tabRollout Plan Team` rpt
+                WHERE rpt.parent = rp.name AND rpt.team = %s
+              ))
+          AND rp.plan_status IN ('Planned','In Execution','Extended')
+        ORDER BY rp.plan_date DESC
+        LIMIT 20
+        """,
+        (name, name),
+        as_dict=True,
+    )
+
     return {
         "name": doc.get("name"),
         "team_id": doc.get("team_id"),
@@ -12869,6 +12910,7 @@ def get_im_team_detail(name):
         "daily_cost_applies": doc.get("daily_cost_applies"),
         "note": doc.get("note"),
         "team_members": members,
+        "active_plans": [dict(r) for r in (active_plans or [])],
     }
 
 
@@ -16344,8 +16386,13 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
     # Date placeholder: use the supplied date literal or fall back to CURDATE()
     date_expr = "%s" if date_val else "CURDATE()"
     if date_val:
-        # Inject 5 copies of date_val (domains, projects, today_status ×2, active_plan_count date)
-        params_date = [date_val] * 5
+        # Inject 6 copies of date_val (domains, projects, active_plan_count,
+        # today_status ×3 — the Daily Execution check now tests both
+        # execution_date and last_progress_date, since a multi-day plan's
+        # single reused Daily Execution row never updates execution_date
+        # past its first day; last_progress_date is what actually reflects
+        # "touched today" from day 2 onward).
+        params_date = [date_val] * 6
     else:
         params_date = []
 
@@ -16383,7 +16430,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                         WHERE rpt_dom.parent = rp.name AND rpt_dom.team = it.name
                       ))
                   AND rp.plan_status IN ('Planned','In Execution','Extended','Completed')
-                  AND rp.plan_date = {date_expr}
+                  AND {date_expr} BETWEEN rp.plan_date AND IFNULL(rp.plan_end_date, rp.plan_date)
                   AND IFNULL(pcc.project_domain,'') != ''
             ) AS current_domains,
             (
@@ -16395,7 +16442,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                         WHERE rpt_proj.parent = rp2.name AND rpt_proj.team = it.name
                       ))
                   AND rp2.plan_status IN ('Planned','In Execution','Extended','Completed')
-                  AND rp2.plan_date = {date_expr}
+                  AND {date_expr} BETWEEN rp2.plan_date AND IFNULL(rp2.plan_end_date, rp2.plan_date)
                   AND IFNULL(pd2.project_code,'') != ''
             ) AS current_projects,
             (
@@ -16406,7 +16453,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                         WHERE rpt_act.parent = rpa.name AND rpt_act.team = it.name
                       ))
                   AND rpa.plan_status IN ('Planned','In Execution','Extended')
-                  AND rpa.plan_date = {date_expr}
+                  AND {date_expr} BETWEEN rpa.plan_date AND IFNULL(rpa.plan_end_date, rpa.plan_date)
             ) AS active_plan_count,
             (
                 CASE
@@ -16414,7 +16461,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                     WHEN EXISTS (
                         SELECT 1 FROM `tabDaily Execution` de_s
                         WHERE de_s.team = it.name
-                          AND de_s.execution_date = {date_expr}
+                          AND (de_s.execution_date = {date_expr} OR de_s.last_progress_date = {date_expr})
                           AND de_s.execution_status NOT IN ('Cancelled')
                     ) THEN 'In Execution'
                     WHEN EXISTS (
@@ -16424,7 +16471,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                                 WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
                               ))
                           AND rp_s.plan_status IN ('Planned', 'In Execution', 'Extended', 'Completed')
-                          AND rp_s.plan_date = {date_expr}
+                          AND {date_expr} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)
                     ) THEN 'Planned'
                     ELSE 'Idle'
                 END
@@ -16503,7 +16550,8 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
 
     where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
     date_expr = "%s" if date_val else "CURDATE()"
-    params_date = [date_val] * 5 if date_val else []
+    # 6 copies — see list_admin_teams' comment on this same count.
+    params_date = [date_val] * 6 if date_val else []
     full_params = params_date + params
 
     rows = frappe.db.sql(
@@ -16534,7 +16582,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                         WHERE rpt_dom.parent = rp.name AND rpt_dom.team = it.name
                       ))
                   AND rp.plan_status IN ('Planned','In Execution','Extended','Completed')
-                  AND rp.plan_date = {date_expr}
+                  AND {date_expr} BETWEEN rp.plan_date AND IFNULL(rp.plan_end_date, rp.plan_date)
                   AND IFNULL(pcc.project_domain,'') != ''
             ) AS current_domains,
             (
@@ -16546,7 +16594,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                         WHERE rpt_proj.parent = rp2.name AND rpt_proj.team = it.name
                       ))
                   AND rp2.plan_status IN ('Planned','In Execution','Extended','Completed')
-                  AND rp2.plan_date = {date_expr}
+                  AND {date_expr} BETWEEN rp2.plan_date AND IFNULL(rp2.plan_end_date, rp2.plan_date)
                   AND IFNULL(pd2.project_code,'') != ''
             ) AS current_projects,
             (
@@ -16557,7 +16605,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                         WHERE rpt_act.parent = rpa.name AND rpt_act.team = it.name
                       ))
                   AND rpa.plan_status IN ('Planned','In Execution','Extended')
-                  AND rpa.plan_date = {date_expr}
+                  AND {date_expr} BETWEEN rpa.plan_date AND IFNULL(rpa.plan_end_date, rpa.plan_date)
             ) AS active_plan_count,
             (
                 CASE
@@ -16565,7 +16613,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                     WHEN EXISTS (
                         SELECT 1 FROM `tabDaily Execution` de_s
                         WHERE de_s.team = it.name
-                          AND de_s.execution_date = {date_expr}
+                          AND (de_s.execution_date = {date_expr} OR de_s.last_progress_date = {date_expr})
                           AND de_s.execution_status NOT IN ('Cancelled')
                     ) THEN 'In Execution'
                     WHEN EXISTS (
@@ -16575,7 +16623,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                                 WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
                               ))
                           AND rp_s.plan_status IN ('Planned', 'In Execution', 'Extended', 'Completed')
-                          AND rp_s.plan_date = {date_expr}
+                          AND {date_expr} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)
                     ) THEN 'Planned'
                     ELSE 'Idle'
                 END
@@ -16632,12 +16680,15 @@ def admin_get_team_detail(name):
         FROM `tabRollout Plan` rp
         INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
-        WHERE rp.team = %s
+        WHERE (rp.team = %s OR EXISTS (
+                SELECT 1 FROM `tabRollout Plan Team` rpt
+                WHERE rpt.parent = rp.name AND rpt.team = %s
+              ))
           AND rp.plan_status IN ('Planned','In Execution','Extended')
         ORDER BY rp.plan_date DESC
         LIMIT 20
         """,
-        (name,),
+        (name, name),
         as_dict=True,
     )
 
@@ -16913,111 +16964,231 @@ def get_team_report(report_type="planning", from_date=None, to_date=None):
     return {"columns": cols, "data": rows}
 
 
+
+# Statuses where plan_end_date reflects real, IM-committed continuing work —
+# a plan genuinely scheduled/executing/completed across multiple days should
+# show the team busy on every one of those days in the report. Overdue / Not
+# Attended / Planning with Issue / anything else are deliberately excluded:
+# those mean the plan never got worked past its original plan_date (or has
+# an unresolved problem), so they must only ever show on that one day —
+# extending them would fabricate days of work that never happened. A plan
+# only re-enters the active set once it's actually Rescheduled (which stamps
+# a fresh plan_date and resets status to Planned).
+_PLAN_REPORT_RANGE_STATUSES = ("Planned", "In Execution", "Extended", "Completed")
+
+
 def _team_planning_rows(fd, td, single_day):
-    sql = """
+    from frappe.utils import getdate, add_days
+
+    fd_d, td_d = getdate(fd), getdate(td)
+    raw = frappe.db.sql(
+        """
         SELECT
-            %s AS supplier_name,
-            DATE(rp.plan_date) AS `date`,
-            it.team_id AS team_no,
+            rp.plan_date, rp.plan_end_date, rp.plan_status,
+            it.name AS team_key, it.team_id, it.tl_id, it.team_skills, it.status AS team_active_status,
             e.employee_name AS tl_name,
-            it.tl_id AS tl_id,
             e.employee_number AS tl_iqama,
             e.cell_number AS tl_mobile,
-            it.team_skills AS team_skills,
-            CASE it.status WHEN 'Inactive' THEN 'On Vacation' ELSE 'Available' END AS team_status,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.site_code,'')   ORDER BY pd.site_code   SEPARATOR ', ') AS site_duid,
-            GROUP_CONCAT(DISTINCT IFNULL(imm.full_name,'')  ORDER BY imm.full_name  SEPARATOR ', ') AS huawei_im,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.project_code,'') ORDER BY pd.project_code SEPARATOR ', ') AS project_name,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.project_domain,'') ORDER BY pd.project_domain SEPARATOR ', ') AS domain
+            IFNULL(pd.site_code,'') AS site_code,
+            IFNULL(imm.full_name,'') AS huawei_im,
+            IFNULL(pd.project_code,'') AS project_code,
+            IFNULL(pd.project_domain,'') AS project_domain
         FROM `tabRollout Plan` rp
         INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
         LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
-        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
-          AND IFNULL(rp.plan_status,'') NOT IN ('Cancelled')
-        GROUP BY DATE(rp.plan_date), it.name
-        ORDER BY it.team_id, DATE(rp.plan_date)
-    """
-    rows = [dict(r) for r in frappe.db.sql(sql, (_SUPPLIER_NAME, fd, td), as_dict=True)]
+        WHERE IFNULL(rp.plan_status,'') NOT IN ('Cancelled')
+          AND rp.plan_date <= %s
+          AND IFNULL(rp.plan_end_date, rp.plan_date) >= %s
+        """,
+        (td, fd),
+        as_dict=True,
+    )
+
+    # Expand each plan into one bucket per calendar day it actually covers
+    # (clipped to the requested [fd, td] window), then aggregate same-team/
+    # same-day plans together exactly like the old GROUP_CONCAT did.
+    buckets = {}
+    order = []
+    for r in raw:
+        plan_date = getdate(r["plan_date"])
+        end_date = plan_date
+        if r["plan_status"] in _PLAN_REPORT_RANGE_STATUSES and r.get("plan_end_date"):
+            end_date = getdate(r["plan_end_date"])
+            if end_date < plan_date:
+                end_date = plan_date
+        span_start = max(plan_date, fd_d)
+        span_end = min(end_date, td_d)
+        if span_start > span_end:
+            continue
+        d = span_start
+        while d <= span_end:
+            key = (d, r["team_key"])
+            b = buckets.get(key)
+            if not b:
+                b = {
+                    "date": d,
+                    "team_no": r["team_id"],
+                    "tl_name": r["tl_name"],
+                    "tl_id": r["tl_id"],
+                    "tl_iqama": r["tl_iqama"],
+                    "tl_mobile": r["tl_mobile"],
+                    "team_skills": r["team_skills"],
+                    "team_status": "On Vacation" if r["team_active_status"] == "Inactive" else "Available",
+                    "site_duid": set(), "huawei_im": set(), "project_name": set(), "domain": set(),
+                }
+                buckets[key] = b
+                order.append(key)
+            if r["site_code"]: b["site_duid"].add(r["site_code"])
+            if r["huawei_im"]: b["huawei_im"].add(r["huawei_im"])
+            if r["project_code"]: b["project_name"].add(r["project_code"])
+            if r["project_domain"]: b["domain"].add(r["project_domain"])
+            d = add_days(d, 1)
+
+    rows = []
+    for key in order:
+        b = buckets[key]
+        rows.append({
+            "supplier_name": _SUPPLIER_NAME,
+            "date": b["date"],
+            "team_no": b["team_no"],
+            "tl_name": b["tl_name"],
+            "tl_id": b["tl_id"],
+            "tl_iqama": b["tl_iqama"],
+            "tl_mobile": b["tl_mobile"],
+            "team_skills": b["team_skills"],
+            "team_status": b["team_status"],
+            "site_duid": ", ".join(sorted(b["site_duid"])),
+            "huawei_im": ", ".join(sorted(b["huawei_im"])),
+            "project_name": ", ".join(sorted(b["project_name"])),
+            "domain": ", ".join(sorted(b["domain"])),
+        })
+
     if single_day:
         busy = {r["team_no"] for r in rows}
         rows = rows + _idle_rows(fd, _SUPPLIER_NAME, busy)
         rows.sort(key=lambda r: r["team_no"] or "")
+    else:
+        rows.sort(key=lambda r: (r["team_no"] or "", str(r["date"])))
+    return rows
+
+
+# Daily Execution's execution_date is stamped once at creation and never
+# moves; last_progress_date is the server-stamped day of its most recent
+# real update_execution call. For a job the TL is still actively on days
+# after it started, those are the only two days we have real evidence for —
+# unlike a Rollout Plan's plan_end_date (an explicit IM commitment covering
+# every day in between), we don't know the TL touched it on the days
+# between execution_date and last_progress_date, only that they touched it
+# on those two. So this attributes the record to both those days rather
+# than fabricating a full range like _team_planning_rows does.
+def _daily_execution_report_rows(fd, td, single_day, with_activity_status):
+    from frappe.utils import getdate
+
+    fd_d, td_d = getdate(fd), getdate(td)
+    activity_sql = ""
+    if with_activity_status:
+        activity_sql = """,
+            TRIM(BOTH ' | ' FROM CONCAT_WS(' | ',
+                IF(IFNULL(de.qc_status,'')   != '', CONCAT('QC: ',   de.qc_status),   NULL),
+                IF(IFNULL(de.ciag_status,'') != '', CONCAT('CIAG: ', de.ciag_status), NULL),
+                IF(IFNULL(de.remarks,'')     != '', de.remarks,                        NULL)
+            )) AS activity_status"""
+    raw = frappe.db.sql(
+        f"""
+        SELECT
+            de.execution_date, de.last_progress_date,
+            it.name AS team_key, it.team_id, it.tl_id, it.team_skills, it.status AS team_active_status,
+            e.employee_name AS tl_name,
+            e.employee_number AS tl_iqama,
+            e.cell_number AS tl_mobile,
+            IFNULL(pd.site_code,'') AS site_code,
+            IFNULL(imm.full_name,'') AS huawei_im,
+            IFNULL(pd.project_code,'') AS project_code,
+            IFNULL(pd.project_domain,'') AS project_domain
+            {activity_sql}
+        FROM `tabDaily Execution` de
+        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
+        LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+           OR DATE(de.last_progress_date) BETWEEN %s AND %s
+        ORDER BY it.team_id, de.execution_date
+        """,
+        (fd, td, fd, td),
+        as_dict=True,
+    )
+
+    buckets = {}
+    order = []
+    for r in raw:
+        days = {getdate(r["execution_date"])}
+        if r.get("last_progress_date"):
+            days.add(getdate(r["last_progress_date"]))
+        for d in days:
+            if d < fd_d or d > td_d:
+                continue
+            key = (d, r["team_key"])
+            b = buckets.get(key)
+            if not b:
+                b = {
+                    "date": d,
+                    "team_no": r["team_id"],
+                    "tl_name": r["tl_name"],
+                    "tl_id": r["tl_id"],
+                    "tl_iqama": r["tl_iqama"],
+                    "tl_mobile": r["tl_mobile"],
+                    "team_skills": r["team_skills"],
+                    "team_status": "On Vacation" if r["team_active_status"] == "Inactive" else "Available",
+                    "site_duid": set(), "huawei_im": set(), "project_name": set(), "domain": set(),
+                    "activity_status": [],
+                }
+                buckets[key] = b
+                order.append(key)
+            if r["site_code"]: b["site_duid"].add(r["site_code"])
+            if r["huawei_im"]: b["huawei_im"].add(r["huawei_im"])
+            if r["project_code"]: b["project_name"].add(r["project_code"])
+            if r["project_domain"]: b["domain"].add(r["project_domain"])
+            if with_activity_status and r.get("activity_status"):
+                b["activity_status"].append(r["activity_status"])
+
+    rows = []
+    for key in order:
+        b = buckets[key]
+        row = {
+            "supplier_name": _SUPPLIER_NAME,
+            "date": b["date"],
+            "team_no": b["team_no"],
+            "tl_name": b["tl_name"],
+            "tl_id": b["tl_id"],
+            "tl_iqama": b["tl_iqama"],
+            "tl_mobile": b["tl_mobile"],
+            "team_skills": b["team_skills"],
+            "team_status": b["team_status"],
+            "site_duid": ", ".join(sorted(b["site_duid"])),
+            "huawei_im": ", ".join(sorted(b["huawei_im"])),
+            "project_name": ", ".join(sorted(b["project_name"])),
+            "domain": ", ".join(sorted(b["domain"])),
+        }
+        if with_activity_status:
+            row["activity_status"] = " | ".join(b["activity_status"])
+        rows.append(row)
+
+    if single_day:
+        busy = {r["team_no"] for r in rows}
+        rows = rows + _idle_rows(fd, _SUPPLIER_NAME, busy, extra_col="activity_status" if with_activity_status else None)
+        rows.sort(key=lambda r: r["team_no"] or "")
+    else:
+        rows.sort(key=lambda r: (r["team_no"] or "", str(r["date"])))
     return rows
 
 
 def _team_utilisation_rows(fd, td, single_day):
-    sql = """
-        SELECT
-            %s AS supplier_name,
-            DATE(de.execution_date) AS `date`,
-            it.team_id AS team_no,
-            e.employee_name AS tl_name,
-            it.tl_id AS tl_id,
-            e.employee_number AS tl_iqama,
-            e.cell_number AS tl_mobile,
-            it.team_skills AS team_skills,
-            CASE it.status WHEN 'Inactive' THEN 'On Vacation' ELSE 'Available' END AS team_status,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.site_code,'')    ORDER BY pd.site_code    SEPARATOR ', ') AS site_duid,
-            GROUP_CONCAT(DISTINCT IFNULL(imm.full_name,'')   ORDER BY imm.full_name   SEPARATOR ', ') AS huawei_im,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.project_code,'') ORDER BY pd.project_code SEPARATOR ', ') AS project_name,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.project_domain,'') ORDER BY pd.project_domain SEPARATOR ', ') AS domain
-        FROM `tabDaily Execution` de
-        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-        INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
-        LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
-        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
-        WHERE DATE(de.execution_date) BETWEEN %s AND %s
-        GROUP BY DATE(de.execution_date), it.name
-        ORDER BY it.team_id, DATE(de.execution_date)
-    """
-    rows = [dict(r) for r in frappe.db.sql(sql, (_SUPPLIER_NAME, fd, td), as_dict=True)]
-    if single_day:
-        busy = {r["team_no"] for r in rows}
-        rows = rows + _idle_rows(fd, _SUPPLIER_NAME, busy)
-        rows.sort(key=lambda r: r["team_no"] or "")
-    return rows
+    return _daily_execution_report_rows(fd, td, single_day, with_activity_status=False)
 
 
 def _team_implementation_rows(fd, td, single_day):
-    sql = """
-        SELECT
-            %s AS supplier_name,
-            DATE(de.execution_date) AS `date`,
-            it.team_id AS team_no,
-            e.employee_name AS tl_name,
-            it.tl_id AS tl_id,
-            e.employee_number AS tl_iqama,
-            e.cell_number AS tl_mobile,
-            it.team_skills AS team_skills,
-            CASE it.status WHEN 'Inactive' THEN 'On Vacation' ELSE 'Available' END AS team_status,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.site_code,'')    ORDER BY pd.site_code    SEPARATOR ', ') AS site_duid,
-            GROUP_CONCAT(DISTINCT IFNULL(imm.full_name,'')   ORDER BY imm.full_name   SEPARATOR ', ') AS huawei_im,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.project_code,'') ORDER BY pd.project_code SEPARATOR ', ') AS project_name,
-            GROUP_CONCAT(DISTINCT IFNULL(pd.project_domain,'') ORDER BY pd.project_domain SEPARATOR ', ') AS domain,
-            GROUP_CONCAT(
-                TRIM(BOTH ' | ' FROM CONCAT_WS(' | ',
-                    IF(IFNULL(de.qc_status,'')   != '', CONCAT('QC: ',   de.qc_status),   NULL),
-                    IF(IFNULL(de.ciag_status,'') != '', CONCAT('CIAG: ', de.ciag_status), NULL),
-                    IF(IFNULL(de.remarks,'')     != '', de.remarks,                        NULL)
-                ))
-                ORDER BY de.execution_date SEPARATOR ' | '
-            ) AS activity_status
-        FROM `tabDaily Execution` de
-        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-        INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
-        LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
-        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
-        WHERE DATE(de.execution_date) BETWEEN %s AND %s
-        GROUP BY DATE(de.execution_date), it.name
-        ORDER BY it.team_id, DATE(de.execution_date)
-    """
-    rows = [dict(r) for r in frappe.db.sql(sql, (_SUPPLIER_NAME, fd, td), as_dict=True)]
-    if single_day:
-        busy = {r["team_no"] for r in rows}
-        rows = rows + _idle_rows(fd, _SUPPLIER_NAME, busy, extra_col="activity_status")
-        rows.sort(key=lambda r: r["team_no"] or "")
-    return rows
+    return _daily_execution_report_rows(fd, td, single_day, with_activity_status=True)

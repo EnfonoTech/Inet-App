@@ -177,7 +177,7 @@ export default function ExecutionMonitor() {
   // what limit + filters + tab. Shrinking the row limit (e.g. All -> 20) on
   // the SAME tab never needs another round-trip. See PICTracker.jsx for the
   // reference implementation.
-  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [], refreshKey: null });
   const [internalSearch, setInternalSearch] = useState("");
   const [internalImFilter, setInternalImFilter] = useState([]);
   const [internalTeamFilter, setInternalTeamFilter] = useState([]);
@@ -292,7 +292,11 @@ export default function ExecutionMonitor() {
         const signature = JSON.stringify([filters]);
 
         const prev = lastFetchRef.current;
-        const alreadyHaveEnough = prev.signature === signature && (
+        // refreshKey must match too — a post-action reload bumps refreshKey
+        // with filters unchanged, so a signature-only check would wrongly
+        // treat that as "same filters, already have enough" and skip the
+        // refetch, leaving the table showing stale data until a reload.
+        const alreadyHaveEnough = prev.signature === signature && prev.refreshKey === refreshKey && (
           prev.limit === TABLE_ROW_LIMIT_ALL
           || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
         );
@@ -308,7 +312,7 @@ export default function ExecutionMonitor() {
         if (cancelled) return;
         const fetchedRows = Array.isArray(list) ? list : [];
         setRows(fetchedRows);
-        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
+        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows, refreshKey };
         setLastRefresh(new Date());
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load execution data");

@@ -360,7 +360,7 @@ export default function IMWorkDone() {
   // includes `tab` (via filters.tab below) so switching tabs still always
   // refetches — only a limit-only shrink on the SAME tab is skipped. See
   // PICTracker.jsx for the reference implementation.
-  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [], refreshKey: null });
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [billingFilter, setBillingFilter] = useState([]);
@@ -804,7 +804,11 @@ export default function IMWorkDone() {
         const signature = JSON.stringify([filters]);
 
         const prev = lastFetchRef.current;
-        const alreadyHaveEnough = prev.signature === signature && (
+        // refreshKey must match too — a post-action reload bumps refreshKey
+        // with filters unchanged, so a signature-only check would wrongly
+        // treat that as "same filters, already have enough" and skip the
+        // refetch, leaving the table showing stale data until a reload.
+        const alreadyHaveEnough = prev.signature === signature && prev.refreshKey === refreshKey && (
           prev.limit === TABLE_ROW_LIMIT_ALL
           || (effectiveRowLimit !== TABLE_ROW_LIMIT_ALL && effectiveRowLimit <= prev.limit)
         );
@@ -820,7 +824,7 @@ export default function IMWorkDone() {
         if (cancelled) return;
         const fetchedRows = Array.isArray(list) ? list : [];
         setRows(fetchedRows);
-        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows };
+        lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows, refreshKey };
       } catch {
         if (!cancelled) setRows([]);
       } finally {

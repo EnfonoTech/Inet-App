@@ -190,7 +190,7 @@ export default function IMPOIntake() {
   // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
   // needs another round-trip. See PICTracker.jsx for the reference
   // implementation.
-  const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
+  const lastFetchRef = useRef({ signature: null, limit: null, rows: [], refreshKey: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(new Set());
@@ -391,7 +391,11 @@ export default function IMPOIntake() {
         const signature = JSON.stringify([filters, portal]);
 
         const prev = lastFetchRef.current;
-        const alreadyHaveEnough = prev.signature === signature && (
+        // refreshKey must match too — a post-action reload bumps refreshKey
+        // with filters unchanged, so a signature-only check would wrongly
+        // treat that as "same filters, already have enough" and skip the
+        // refetch, leaving the table showing stale data until a reload.
+        const alreadyHaveEnough = prev.signature === signature && prev.refreshKey === refreshKey && (
           prev.limit === TABLE_ROW_LIMIT_ALL
           || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
         );
@@ -409,7 +413,7 @@ export default function IMPOIntake() {
         const TERMINAL = new Set(TERMINAL_STATUSES);
         const fetchedRows = arr.filter((r) => !TERMINAL.has(r.dispatch_status || ""));
         setRows(fetchedRows);
-        lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
+        lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows, refreshKey };
         setSelected(new Set());
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load PO intake");
