@@ -38,6 +38,7 @@ function endOfYear(d) { return new Date(d.getFullYear(), 11, 31); }
 
 export const DATE_PRESETS = {
   today:             { label: "Today",             range: (now) => ({ from: now, to: now }) },
+  tomorrow:          { label: "Tomorrow",           range: (now) => { const t = addDays(now, 1); return { from: t, to: t }; } },
   yesterday:         { label: "Yesterday",         range: (now) => { const y = addDays(now, -1); return { from: y, to: y }; } },
   this_week:         { label: "This Week",         range: (now) => ({ from: startOfWeek(now), to: addDays(startOfWeek(now), 6) }) },
   previous_week:     { label: "Previous Week",     range: (now) => { const s = addDays(startOfWeek(now), -7); return { from: s, to: addDays(s, 6) }; } },
@@ -54,7 +55,7 @@ export const DATE_PRESETS = {
 };
 
 const DEFAULT_ORDER = [
-  "today", "yesterday",
+  "today", "tomorrow", "yesterday",
   "this_week", "previous_week",
   "this_month", "previous_month",
   "this_quarter", "previous_quarter",
