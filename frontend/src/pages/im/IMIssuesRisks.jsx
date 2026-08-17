@@ -286,7 +286,7 @@ export default function IMIssuesRisks() {
   async function createPlansFromIssues() {
     if (selected.size === 0 || !planTeam || !planDate || !planEndDate) return;
     const selectedRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
-    const blocked = selectedRows.filter((r) => ["Closed", "Completed"].includes(r.dispatch_status));
+    const blocked = selectedRows.filter((r) => ["Closed", "Partially Closed", "Submitted", "Partially Submitted", "Completed"].includes(r.dispatch_status));
     if (blocked.length > 0) {
       const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
       setCreateError(`Cannot plan: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);

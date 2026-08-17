@@ -478,6 +478,7 @@ export default function Teams() {
             <table className="data-table" data-table-key="admin-teams-v1">
               <thead>
                 <tr>
+                  <th style={{ minWidth: 50, width: 50, whiteSpace: "nowrap" }} data-default-width="50">S/N</th>
                   <th>Team ID</th>
                   <th>Name</th>
                   <th>Category</th>
@@ -494,7 +495,7 @@ export default function Teams() {
               <tbody>
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={11} style={{ padding: 0 }}>
+                    <td colSpan={12} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading teams…</div>
                       ) : (
@@ -502,12 +503,13 @@ export default function Teams() {
                       )}
                     </td>
                   </tr>
-                ) : filteredRows.map((r) => (
+                ) : filteredRows.map((r, i) => (
                   <tr
                     key={r.name}
                     style={{ cursor: "pointer" }}
                     onClick={() => setSelected(r)}
                   >
+                    <td style={{ width: 40, color: "#94a3b8", fontSize: 12 }}>{i + 1}</td>
                     <td>
                       <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: "#475569", fontWeight: 600 }}>
                         {r.team_id}

@@ -700,12 +700,6 @@ export const pmApi = {
     remark: remark || "",
     applied_date: applied_date || "",
   }),
-  // Closed-page-only action: flips whichever milestone(s) — MS1, MS2, or
-  // both, auto-detected per row — are still "Commercial Invoice Submitted"
-  // over to "Commercial Invoice Closed". See close_submitted_milestones.
-  closePicSubmittedMilestones: (po_dispatches) => call("inet_app.api.pic.close_submitted_milestones", {
-    po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
-  }),
   getPicDashboard: (from_date, to_date, etag) => call("inet_app.api.pic.get_pic_dashboard", {
     from_date: from_date || "",
     to_date: to_date || "",

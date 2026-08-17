@@ -12,3 +12,5 @@ inet_app.patches.v1_0.add_po_dispatch_intake_line_index
 inet_app.patches.v1_0.fix_po_dispatch_legacy_data
 inet_app.patches.fix_daily_execution_achieved_amount
 inet_app.patches.fix_work_done_revenue_sar
+inet_app.patches.sync_dispatch_status_from_pic
+inet_app.patches.sync_po_intake_line_status_from_dispatch

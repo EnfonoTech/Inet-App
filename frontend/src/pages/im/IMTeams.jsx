@@ -449,9 +449,10 @@ export default function IMTeams() {
       <div className="page-content">
         <DataTableWrapper loadedCount={loading ? null : sourceList.length} filteredCount={filtered.length} filterActive={hasFilters}>
           {(tab === "my" || tab === "all") ? (
-              <table className="data-table">
+              <table className="data-table" data-table-key="im-teams-list-v1">
                 <thead>
                   <tr>
+                    <th style={{ minWidth: 50, width: 50, whiteSpace: "nowrap" }} data-default-width="50">S/N</th>
                     <th>Team ID</th>
                     <th>Team</th>
                     <th>Category</th>
@@ -469,7 +470,7 @@ export default function IMTeams() {
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={tab === "all" ? 8 : 11} style={{ padding: 0 }}>
+                      <td colSpan={tab === "all" ? 9 : 12} style={{ padding: 0 }}>
                         {loading ? (
                           <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
                         ) : (
@@ -481,11 +482,12 @@ export default function IMTeams() {
                         )}
                       </td>
                     </tr>
-                  ) : filtered.map((t) => {
+                  ) : filtered.map((t, i) => {
                     const mine = isMine(t);
                     const openReq = openRequestByTeam[t.name];
                     return (
                       <tr key={t.name}>
+                        <td style={{ width: 40, color: "#94a3b8", fontSize: 12 }}>{i + 1}</td>
                         <td><span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: "#475569", fontWeight: 600 }}>{t.team_id || "—"}</span></td>
                         <td style={{ fontWeight: 600, color: "#0f172a" }}>{t.team_name || "—"}</td>
                         <td><StatusPill value={t.team_category} /></td>
@@ -539,7 +541,7 @@ export default function IMTeams() {
                 {filtered.length > 0 && (
                   <tfoot>
                     <tr>
-                      <td colSpan={tab === "all" ? 8 : 11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                      <td colSpan={tab === "all" ? 9 : 12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                         {filtered.length}{hasFilters && ` of ${sourceList.length}`} teams
                       </td>
                     </tr>
@@ -550,7 +552,7 @@ export default function IMTeams() {
             (() => {
               const list = tab === "outgoing" ? outgoing : incoming;
               return (
-                <table className="data-table">
+                <table className="data-table" data-table-key="im-teams-requests-v1">
                   <thead>
                     <tr>
                       <th>Team</th>

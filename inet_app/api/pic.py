@@ -206,6 +206,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     ``_PIC_STAGE_SQL``.
     ``portal_filters`` (JSON dict): ``search``, ``project_code``, ``site_code``,
     ``im``, ``pic_status`` (multi), ``pic_status_ms2`` (multi),
+    ``dispatch_status`` (multi), ``im_status`` (multi, "__NONE__" for blank),
     ``from_date`` / ``to_date`` (against ``ms1_applied_date``). These narrow
     further *within* ``stage`` — they no longer determine the default set.
     ``with_team_type``: when truthy, include the heavy Rollout Plan
@@ -289,6 +290,25 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         ph = ", ".join(["%s"] * len(ds_vals))
         where.append(f"IFNULL(pd.dispatch_status,'') IN ({ph})")
         params.extend(ds_vals)
+
+    # im_status: the IM-side submission state (Ready for Confirmation /
+    # Confirmation Done / PIC Rejected) computed in wd_sub above — distinct
+    # from pic_status/dispatch_status, which are PIC's own fields.
+    # "__NONE__" is the sentinel this app already uses elsewhere for "blank" —
+    # here that means no Work Done has ever been submitted for this line yet.
+    im_status_vals = _ensure_list(pf.get("im_status"))
+    if im_status_vals:
+        wants_none = "__NONE__" in im_status_vals
+        real_vals = [v for v in im_status_vals if v != "__NONE__"]
+        parts = []
+        if wants_none:
+            parts.append("IFNULL(wd_sub.im_submission_status,'') = ''")
+        if real_vals:
+            ph = ", ".join(["%s"] * len(real_vals))
+            parts.append(f"wd_sub.im_submission_status IN ({ph})")
+            params.extend(real_vals)
+        if parts:
+            where.append("(" + " OR ".join(parts) + ")")
 
     isdp_vals = _ensure_list(pf.get("isdp_owner"))
     if isdp_vals:
@@ -933,6 +953,66 @@ _PIC_MS_RESOLVED_FOR_CLOSE = {"Commercial Invoice Closed", "Commercial Invoice S
 
 _PIC_REJECTED_STATUSES = {"I-BUY Rejected", "ISDP Rejected"}
 
+# dispatch_status values this module auto-manages once a line reaches
+# Completed and enters the PIC/invoicing flow — see
+# _compute_dispatch_status_from_pic. Anything outside this set (Pending,
+# Dispatched, Planned, Backend Assigned, Completed itself, Cancelled) is
+# either an earlier stage this module doesn't touch, or Cancelled which is
+# handled as its own priority branch.
+_PIC_AUTO_MANAGED_DISPATCH_STATUSES = {
+    "Partially Submitted", "Submitted", "Partially Closed", "Closed",
+}
+
+
+def _compute_dispatch_status_from_pic(ms1_status, ms2_status, ms2_amount, current_dispatch_status):
+    """Auto-derive dispatch_status from MS1/MS2 pic_status, for a line that's
+    already Completed and progressing through PIC's invoicing pipeline.
+
+    Priority (first match wins) — deliberately stricter than
+    _PIC_MS_RESOLVED_FOR_CLOSE (that set is for a different purpose: whether
+    a milestone counts as "locked"/terminal elsewhere, e.g. the Data
+    Integrity report). Here, "Submitted" is never good enough to call
+    anything "Closed" — only a literal "Commercial Invoice Closed" is:
+
+      1. Either milestone "PO Line Canceled"           -> Cancelled
+      2. MS1 Closed AND (MS2 Closed OR MS2 doesn't exist) -> Closed
+      3. Exactly one of MS1/MS2 Closed, the other in ANY
+         other stage (including Submitted), MS2 exists  -> Partially Closed
+      4. Both Submitted, OR MS1 Submitted with no MS2    -> Submitted
+      5. Exactly one of MS1/MS2 Submitted (not caught by
+         #2/#3 above)                                    -> Partially Submitted
+      6. None of the above: if currently sitting in one of THIS function's
+         own auto-managed statuses (PIC reopened something that used to
+         qualify), fall back to Completed rather than leaving it stale.
+         Otherwise leave dispatch_status untouched (returns None).
+
+    Returns the new dispatch_status string, or None if no change is needed.
+    """
+    ms1 = (ms1_status or "").strip()
+    ms2 = (ms2_status or "").strip()
+    ms2_exists = flt(ms2_amount or 0) > 0
+
+    if ms1 == "PO Line Canceled" or ms2 == "PO Line Canceled":
+        return "Cancelled"
+
+    ms1_closed = ms1 == "Commercial Invoice Closed"
+    ms2_closed = ms2 == "Commercial Invoice Closed"
+    ms1_submitted = ms1 == "Commercial Invoice Submitted"
+    ms2_submitted = ms2 == "Commercial Invoice Submitted"
+
+    if ms1_closed and (ms2_closed or not ms2_exists):
+        return "Closed"
+    if (ms1_closed or ms2_closed) and ms2_exists:
+        return "Partially Closed"
+    if (ms1_submitted and ms2_submitted) or (ms1_submitted and not ms2_exists):
+        return "Submitted"
+    if ms1_submitted or ms2_submitted:
+        return "Partially Submitted"
+
+    if (current_dispatch_status or "").strip() in _PIC_AUTO_MANAGED_DISPATCH_STATUSES:
+        return "Completed"
+    return None
+
 
 def _reflect_pic_rejection(po_dispatch_name, closed_flag):
     """Mirror a milestone landing on I-BUY Rejected / ISDP Rejected onto the
@@ -1021,29 +1101,19 @@ def update_pic_row(po_dispatch, fields):
     new_ms2 = (fields.get("pic_status_ms2") or "").strip()
     ms1_touched = "pic_status" in fields
     ms2_touched = "pic_status_ms2" in fields
-    # "resolved" means either actually closed or the invoice has been
-    # submitted (see _PIC_MS_RESOLVED_FOR_CLOSE). Only recompute when this
-    # call actually touches a milestone status — eff_ms1/eff_ms2 fall back
-    # to the stored value for whichever one this call didn't touch, so a
-    # single-milestone update still sees the OTHER milestone's real state.
+    # Only recompute when this call actually touches a milestone status —
+    # eff_ms1/eff_ms2 fall back to the stored value for whichever one this
+    # call didn't touch, so a single-milestone update still sees the OTHER
+    # milestone's real state. See _compute_dispatch_status_from_pic for the
+    # full Closed/Partially Closed/Submitted/Partially Submitted rules.
     if ms1_touched or ms2_touched:
         eff_ms1 = new_ms1 if ms1_touched else old_ms1
         eff_ms2 = new_ms2 if ms2_touched else old_ms2
-        ms1_resolved = eff_ms1 in _PIC_MS_RESOLVED_FOR_CLOSE
-        ms2_resolved = eff_ms2 in _PIC_MS_RESOLVED_FOR_CLOSE
-        ms2_zero = flt(doc.ms2_amount or 0) == 0
-        if ms1_resolved and (ms2_resolved or ms2_zero):
-            doc.dispatch_status = "Closed"
-        elif (doc.dispatch_status or "").strip() == "Closed":
-            # Was Closed; this change means it no longer qualifies — PIC
-            # reopened the invoicing state on one of the milestones. The
-            # underlying work is still done, so land back on "Completed"
-            # (not further back) rather than leaving a stale "Closed".
-            doc.dispatch_status = "Completed"
-    # A line canceled on either milestone cancels the whole dispatch —
-    # takes priority over the closed/revert check above.
-    if new_ms1 == cancelled or new_ms2 == cancelled:
-        doc.dispatch_status = "Cancelled"
+        new_dispatch_status = _compute_dispatch_status_from_pic(
+            eff_ms1, eff_ms2, doc.ms2_amount, doc.dispatch_status
+        )
+        if new_dispatch_status:
+            doc.dispatch_status = new_dispatch_status
 
     # Manually flipping a milestone to Submitted/Closed here (as opposed to
     # the normal Sales-Invoice-submit flow, which sets pic_status and
@@ -1081,18 +1151,20 @@ def update_pic_row(po_dispatch, fields):
     if ms2_touched and new_ms2 in _PIC_REJECTED_STATUSES and old_ms2 != new_ms2:
         _reflect_pic_rejection(doc.name, "ms2_closed")
 
-    # Close the PO Intake Line only when both milestones are done:
-    # MS1 closed AND (MS2 closed OR MS2 amount is zero / doesn't exist).
-    # A line-canceled milestone cancels it immediately, with its own
-    # distinct "Cancelled" status (not merged into "Closed").
-    ms1_closed = (doc.pic_status or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
-    ms2_closed = (doc.pic_status_ms2 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
-    ms2_zero = flt(doc.ms2_amount or 0) == 0
-    ms1_cancelled = (doc.pic_status or "").strip() == cancelled
-    ms2_cancelled = (doc.pic_status_ms2 or "").strip() == cancelled
-    if ms1_cancelled or ms2_cancelled:
+    # Derive PO Intake Line's status straight from doc.dispatch_status,
+    # already correctly (re)computed above via _compute_dispatch_status_from_pic
+    # — this used to run its OWN separate, looser check here (MS1 closed AND
+    # (MS2 closed OR *submitted* OR zero)), the exact old rule that made
+    # dispatch_status jump straight to Closed on a submitted-not-closed MS2.
+    # That meant PO Intake Line could say "Closed" while PO Dispatch
+    # correctly said "Partially Closed" — e.g. the PO Dump page's Closed
+    # count (which reads po_line_status) silently disagreeing with the
+    # actual count of dispatch_status='Closed' lines. po_line_status has no
+    # Partially Closed/Submitted/Partially Submitted values of its own, so
+    # anything short of the real, literal "Closed" stays unset (None) here.
+    if doc.dispatch_status == "Cancelled":
         il_status = "Cancelled"
-    elif ms1_closed and (ms2_closed or ms2_zero):
+    elif doc.dispatch_status == "Closed":
         il_status = "Closed"
     else:
         il_status = None
@@ -1237,11 +1309,6 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
             old_status = old_values.get(name)
             new_ms1 = pic_status if status_field == "pic_status" else (pd.pic_status or "")
             new_ms2 = pic_status if status_field == "pic_status_ms2" else (pd.pic_status_ms2 or "")
-            ms1_closed = (new_ms1 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
-            ms2_closed = (new_ms2 or "").strip() in _PIC_MS_RESOLVED_FOR_CLOSE
-            ms2_zero = flt(pd.ms2_amount or 0) == 0
-            ms1_cancelled = (new_ms1 or "").strip() == "PO Line Canceled"
-            ms2_cancelled = (new_ms2 or "").strip() == "PO Line Canceled"
 
             payload = {status_field: pic_status}
             if remark:
@@ -1262,24 +1329,26 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
                 unbilled_field = "ms1_unbilled" if status_field == "pic_status" else "ms2_unbilled"
                 payload[invoiced_field] = flt(pd.get(amount_field) or 0)
                 payload[unbilled_field] = 0.0
-            # A line canceled on either milestone cancels the whole dispatch
-            # (takes priority); Closed requires both milestones resolved.
-            if ms1_cancelled or ms2_cancelled:
-                payload["dispatch_status"] = "Cancelled"
-            elif ms1_closed and (ms2_closed or ms2_zero):
-                payload["dispatch_status"] = "Closed"
-            elif (pd.dispatch_status or "").strip() == "Closed":
-                # Was Closed; this change means it no longer qualifies — PIC
-                # reopened the invoicing state on this milestone. The
-                # underlying work is still done, so land back on
-                # "Completed" rather than leaving a stale "Closed".
-                payload["dispatch_status"] = "Completed"
+            # See _compute_dispatch_status_from_pic for the full Closed/
+            # Partially Closed/Submitted/Partially Submitted priority rules.
+            new_dispatch_status = _compute_dispatch_status_from_pic(
+                new_ms1, new_ms2, pd.ms2_amount, pd.dispatch_status
+            )
+            if new_dispatch_status:
+                payload["dispatch_status"] = new_dispatch_status
             frappe.db.set_value("PO Dispatch", name, payload, update_modified=True)
 
-            # Same resolved condition drives the linked PO Intake Line.
-            if ms1_cancelled or ms2_cancelled:
+            # Derived straight from the effective dispatch_status above (see
+            # update_pic_row's identical fix) instead of a separate, looser
+            # "MS1 closed AND (MS2 closed OR *submitted* OR zero)" check —
+            # that old check let po_line_status say "Closed" while the real
+            # dispatch_status correctly said "Partially Closed", which is
+            # exactly why PO Dump's Closed count (reads po_line_status)
+            # could disagree with the actual dispatch_status='Closed' count.
+            effective_dispatch_status = new_dispatch_status or pd.dispatch_status
+            if effective_dispatch_status == "Cancelled":
                 il_status = "Cancelled"
-            elif ms1_closed and (ms2_closed or ms2_zero):
+            elif effective_dispatch_status == "Closed":
                 il_status = "Closed"
             else:
                 il_status = None
@@ -1338,142 +1407,6 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
             "error_count": len(errors),
             "field": status_field,
             "value": pic_status,
-        },
-    }
-
-
-@frappe.whitelist()
-def close_submitted_milestones(po_dispatches):
-    """Closed-page maintenance action: for rows already fully Closed
-    (dispatch_status='Closed'), flip whichever milestone(s) are still
-    sitting at "Commercial Invoice Submitted" over to "Commercial Invoice
-    Closed" — the final step once that milestone's payment actually clears.
-
-    Only ever touches a milestone that is literally Submitted right now — a
-    milestone that's blank/zero (no real MS2 to collect) or already Closed
-    is left untouched, so this can't manufacture a bogus "Closed" status on
-    a milestone that never applied. Per-row: MS1, MS2, or both get updated
-    depending on what's actually Submitted on that row — unlike
-    bulk_update_pic_status, this isn't a single milestone applied uniformly
-    across the whole selection.
-
-    Deliberately scoped to dispatch_status='Closed' rows — this is a Closed
-    page action, not a general status setter (use update_pic_row /
-    bulk_update_pic_status for anything else). A row not yet Closed is
-    reported as an error rather than silently promoted early.
-    """
-    _pic_role_or_throw()
-    if isinstance(po_dispatches, str):
-        try:
-            parsed = frappe.parse_json(po_dispatches)
-            if isinstance(parsed, (list, tuple)):
-                po_dispatches = parsed
-        except Exception:
-            po_dispatches = [po_dispatches]
-    if not isinstance(po_dispatches, (list, tuple)) or not po_dispatches:
-        frappe.throw("po_dispatches list is required")
-
-    submitted = "Commercial Invoice Submitted"
-    closed = "Commercial Invoice Closed"
-
-    ms1_updated = []
-    ms2_updated = []
-    old_values_ms1 = {}
-    old_values_ms2 = {}
-    no_change = []
-    errors = []
-
-    for name in po_dispatches:
-        name = str(name or "").strip()
-        if not name:
-            continue
-        if not frappe.db.exists("PO Dispatch", name):
-            errors.append({"po_dispatch": name, "error": "Not found"})
-            continue
-        if cint(frappe.db.get_value("PO Dispatch", name, "is_internal_work") or 0):
-            errors.append({"po_dispatch": name, "error": "Internal work — no PIC flow"})
-            continue
-
-        pd = frappe.db.get_value("PO Dispatch", name,
-            ["pic_status", "pic_status_ms2", "dispatch_status", "ms1_amount", "ms2_amount"], as_dict=True)
-        if (pd.dispatch_status or "").strip() != "Closed":
-            errors.append({"po_dispatch": name, "error": "Not on the Closed page — dispatch_status isn't Closed"})
-            continue
-
-        did_something = False
-        if (pd.pic_status or "").strip() == submitted:
-            old_values_ms1[name] = pd.pic_status
-            # Also self-heal ms1_invoiced/ms1_unbilled here — a row that
-            # reached Submitted through the manual bulk/row-edit path (rather
-            # than a real Sales Invoice) can still have invoiced=0 at this
-            # point; closing it should never leave that mismatch standing.
-            frappe.db.set_value("PO Dispatch", name, {
-                "pic_status": closed,
-                "ms1_invoiced": flt(pd.ms1_amount or 0),
-                "ms1_unbilled": 0.0,
-            }, update_modified=True)
-            ms1_updated.append({"po_dispatch": name, "pic_status": closed})
-            did_something = True
-        if (pd.pic_status_ms2 or "").strip() == submitted:
-            old_values_ms2[name] = pd.pic_status_ms2
-            frappe.db.set_value("PO Dispatch", name, {
-                "pic_status_ms2": closed,
-                "ms2_invoiced": flt(pd.ms2_amount or 0),
-                "ms2_unbilled": 0.0,
-            }, update_modified=True)
-            ms2_updated.append({"po_dispatch": name, "pic_status_ms2": closed})
-            did_something = True
-        if not did_something:
-            no_change.append(name)
-
-    updated_names = sorted({e["po_dispatch"] for e in ms1_updated + ms2_updated})
-    if updated_names:
-        wd_names = frappe.db.get_all("Work Done", {"system_id": ["in", updated_names]}, pluck="name")
-        for wd_name in wd_names:
-            frappe.db.set_value("Work Done", wd_name, "billing_status", "Closed")
-
-    # Same activity-log audit trail as bulk_update_pic_status, split by
-    # milestone since MS1 and MS2 can each have a different set of rows
-    # touched (and _write_pic_activity_log logs one milestone per call).
-    # "action" is a fixed Select on PIC Activity Log — "Bulk Status Update"
-    # is the closest existing option (same one bulk_update_pic_status uses);
-    # the remark spells out that this ran via the Closed-page action so it
-    # reads distinctly from an ordinary Bulk Set Status in the audit trail.
-    if ms1_updated:
-        _write_pic_activity_log(
-            action="Bulk Status Update", milestone="MS1",
-            field_changed="pic_status", new_value=closed,
-            updated=ms1_updated, old_values=old_values_ms1,
-            remark="Mark Closed (Submitted → Closed) — Closed page action",
-        )
-    if ms2_updated:
-        _write_pic_activity_log(
-            action="Bulk Status Update", milestone="MS2",
-            field_changed="pic_status_ms2", new_value=closed,
-            updated=ms2_updated, old_values=old_values_ms2,
-            remark="Mark Closed (Submitted → Closed) — Closed page action",
-        )
-
-    frappe.db.commit()
-
-    if updated_names:
-        _make_notification(
-            frappe.session.user,
-            f"[INFO] Marked {len(updated_names)} dispatch(es) fully Closed (Submitted milestone(s) → Closed)",
-            "PO Dispatch", None,
-        )
-
-    return {
-        "updated": updated_names,
-        "ms1_updated_count": len(ms1_updated),
-        "ms2_updated_count": len(ms2_updated),
-        "no_change": no_change,
-        "errors": errors,
-        "summary": {
-            "total": len(po_dispatches),
-            "updated_count": len(updated_names),
-            "no_change_count": len(no_change),
-            "error_count": len(errors),
         },
     }
 

@@ -212,7 +212,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Pending\nDispatched\nPlanned\nBackend Assigned\nCompleted\nClosed\nCancelled"
+   "options": "Pending\nDispatched\nPlanned\nBackend Assigned\nCompleted\nPartially Submitted\nSubmitted\nPartially Closed\nClosed\nCancelled"
   },
   {
    "default": "Manual",

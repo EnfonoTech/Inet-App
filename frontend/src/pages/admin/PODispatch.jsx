@@ -37,9 +37,19 @@ function DispatchModeBadge({ mode }) {
 
 function statusTone(value) {
   const s = String(value || "").toLowerCase();
+  // Exact matches for PO Dispatch's own dispatch_status range (Completed ->
+  // Closed) ahead of the generic substring buckets below — these are
+  // dispatch_status-specific values, not a general "status" concept, so they
+  // need their own distinct colors rather than falling into "complete"/
+  // "progress"'s broad grouping.
+  if (s === "submitted") return { bg: "#eef2ff", fg: "#4338ca" };
+  if (s === "partially closed") return { bg: "#ecfeff", fg: "#0e7490" };
+  if (s === "closed") return { bg: "#f1f5f9", fg: "#475569" };
   if (s.includes("complete") || s.includes("approved") || s.includes("dispatched")) return { bg: "#ecfdf5", fg: "#047857" };
   if (s.includes("cancel") || s.includes("reject") || s.includes("fail")) return { bg: "#fef2f2", fg: "#b91c1c" };
   if (s.includes("progress") || s.includes("planned") || s.includes("auto")) return { bg: "#eff6ff", fg: "#1d4ed8" };
+  // "partially submitted" also lands here (amber) — consistent with this
+  // function's own "not yet resolved" bucket, same as its existing default.
   return { bg: "#fffbeb", fg: "#b45309" };
 }
 

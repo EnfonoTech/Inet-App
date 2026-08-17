@@ -87,6 +87,9 @@ function dispatchStatusColor(status) {
     "in-execution": { bg: "#f0fdf4", fg: "#15803d", bd: "#bbf7d0" },
     "backend-assigned": { bg: "#faf5ff", fg: "#7c3aed", bd: "#ddd6fe" },
     "completed": { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" },
+    "partially-submitted": { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" },
+    "submitted": { bg: "#eef2ff", fg: "#4338ca", bd: "#c7d2fe" },
+    "partially-closed": { bg: "#ecfeff", fg: "#0e7490", bd: "#a5f3fc" },
     "closed": { bg: "#f8fafc", fg: "#94a3b8", bd: "#e2e8f0" },
     "cancelled": { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" },
     "cancelled-(in-system)": { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" },
@@ -379,7 +382,7 @@ export default function IMPOIntake() {
     setError(null);
     (async () => {
       try {
-        const TERMINAL_STATUSES = ["Backend Assigned", "Closed", "Cancelled", "Cancelled (in System)", "Completed"];
+        const TERMINAL_STATUSES = ["Backend Assigned", "Closed", "Cancelled", "Cancelled (in System)", "Completed", "Partially Submitted", "Submitted", "Partially Closed"];
         const filters = [["im", "=", imName], ["dispatch_status", "not in", TERMINAL_STATUSES]];
         const portal = { has_target_month: "no" };
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
@@ -794,7 +797,7 @@ export default function IMPOIntake() {
   async function submitBackend() {
     if (selected.size < 1 || !backendTeamId) return;
     const ids = Array.from(selected);
-    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Completed"].includes(r.dispatch_status));
+    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Partially Closed", "Submitted", "Partially Submitted", "Completed"].includes(r.dispatch_status));
     if (blocked.length > 0) {
       setBackendError(`Cannot assign: ${blocked.length} POID(s) have status ${[...new Set(blocked.map((r) => r.dispatch_status))].join(", ")}. Deselect to continue.`);
       return;
@@ -1453,7 +1456,7 @@ export default function IMPOIntake() {
                     const ps = ovPlanSummaries[row.name];
                     const sc = dispatchStatusColor(row.dispatch_status);
                     const isDummy = !!Number(row.is_dummy_po);
-                    const isClosed = ["Closed", "Cancelled", "Cancelled (in System)"].includes(row.dispatch_status || "");
+                    const isClosed = ["Closed", "Partially Closed", "Submitted", "Partially Submitted", "Cancelled", "Cancelled (in System)"].includes(row.dispatch_status || "");
                     const billing = billingStatusFromPicStatus(row.pic_status);
                     const bsc = billing ? billingStatusColor(billing) : null;
                     const iflag = ps?.issue_flag || "";

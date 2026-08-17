@@ -1013,7 +1013,7 @@ export default function IMWorkDone() {
             multi
             value={legacyPoStatusFilter}
             onChange={setLegacyPoStatusFilter}
-            options={["Completed", "Closed"]}
+            options={["Completed", "Partially Submitted", "Submitted", "Partially Closed", "Closed"]}
             placeholder="All PO Status"
             minWidth={140}
           />
@@ -1217,7 +1217,7 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.dispatch_seq != null ? r.dispatch_seq : "—"}</td>
                     <td>{r.plan_date || "—"}</td>
                     <td>{r.team_name || r.team || "—"}</td>
-                    <td><StatusPill value={r.dispatch_status} /></td>
+                    <td><PoStatusBadge value={r.dispatch_status} /></td>
                     <td>{r.execution_date || "—"}</td>
                     <td><StatusPill value={r.execution_status} /></td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{r.visit_number != null ? r.visit_number : "—"}</td>

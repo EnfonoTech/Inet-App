@@ -246,11 +246,25 @@ export default function DataTablePro() {
         // an older release), wipe the set so the table doesn't look broken.
         const visibleCount = restoredOrder.length - filteredHidden.length;
         const safeHidden = visibleCount <= 0 ? [] : filteredHidden;
+        const initialWidths = { ...(saved.widths || {}) };
+        // A column with no saved width yet (brand new, or first visit ever)
+        // otherwise falls straight through to TABLEPRO_DEFAULT_COL_MIN_PX
+        // (120px) regardless of how narrow it actually needs to be — that
+        // floor is only ever consulted on resize-drag-start or Manage
+        // Table's Reset button, not on a normal initial render. Honor
+        // data-default-width here too so a narrow column (e.g. "S/N") looks
+        // right immediately, not just after the user touches a resize handle.
+        headers.forEach((h) => {
+          const k = h.dataset.colKey;
+          if (k && initialWidths[k] == null && h.dataset.defaultWidth) {
+            initialWidths[k] = Number(h.dataset.defaultWidth);
+          }
+        });
         const state = {
           order: restoredOrder.length ? restoredOrder : baseOrder,
           hidden: new Set(safeHidden),
           frozen: new Set(Array.isArray(saved.frozen) ? saved.frozen : []),
-          widths: { ...(saved.widths || {}) },
+          widths: initialWidths,
           filters: { ...(saved.filters || {}) },
           show_filters: !!saved.show_filters,
           // Row sort: { key: <colKey> | null, dir: "asc" | "desc" }. Sorting

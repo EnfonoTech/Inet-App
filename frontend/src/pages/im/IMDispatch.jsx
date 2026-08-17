@@ -783,7 +783,7 @@ export default function IMDispatch() {
   async function submitBackend() {
     if (selected.size < 1 || !backendTeamId) return;
     const ids = Array.from(selected);
-    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Completed"].includes(r.dispatch_status));
+    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Partially Closed", "Submitted", "Partially Submitted", "Completed"].includes(r.dispatch_status));
     if (blocked.length > 0) {
       const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
       setBackendError(`Cannot assign: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
@@ -842,7 +842,7 @@ export default function IMDispatch() {
       setCreateError("Planned end date cannot be before start date.");
       return;
     }
-    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Completed"].includes(r.dispatch_status));
+    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Partially Closed", "Submitted", "Partially Submitted", "Completed"].includes(r.dispatch_status));
     if (blocked.length > 0) {
       const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
       setCreateError(`Cannot plan: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);

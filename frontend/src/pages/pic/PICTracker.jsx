@@ -65,6 +65,9 @@ const PO_STATUSES = [
   "Planned",
   "Backend Assigned",
   "Completed",
+  "Partially Submitted",
+  "Submitted",
+  "Partially Closed",
   "Closed",
   "Cancelled",
 ];

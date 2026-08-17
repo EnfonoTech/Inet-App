@@ -322,6 +322,22 @@ export default function WorkDone() {
   const [issueFlagFilter, setIssueFlagFilter] = useState([]);
   const [workTypeFilter, setWorkTypeFilter] = useState([]);
   const [tab, setTab] = useState("list");
+
+  // The single <DataTableWrapper> below is always mounted — List and
+  // Summary both render as its children, switched by tab, so its inner
+  // .data-table-scroll (the thing that actually scrolls on desktop; see
+  // pages.css's .content-outlet:has(...) lock) never unmounts between
+  // tabs and just carries its scroll position over unchanged. Reset that
+  // directly, plus window/.content-outlet as a fallback for narrower
+  // viewports where that CSS lock doesn't apply and the window itself
+  // scrolls instead (same fallback PullToRefresh.jsx already uses).
+  useEffect(() => {
+    document.querySelector(".page-content > .data-table-wrapper > .data-table-scroll")?.scrollTo(0, 0);
+    document.querySelector(".content-outlet")?.scrollTo(0, 0);
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+  }, [tab]);
+
   const [summary, setSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
@@ -536,7 +552,15 @@ export default function WorkDone() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const filters = {};
+      // list_work_done_rows defaults an unset "tab" to "active", which
+      // excludes Confirmation-Done / PIC-Rejected rows — a default built for
+      // IMWorkDone.jsx's 3-tab UI (Active/Confirmed/PIC Rejected). This page
+      // has no such tabs and is meant to show the complete Work Done list,
+      // so it was silently inheriting that exclusion (e.g. a summary tile
+      // showing the true all-time total while this list quietly dropped
+      // some of those same rows). "all" matches none of that function's
+      // tab branches, so no exclusion is applied.
+      const filters = { tab: "all" };
       if (billingFilter.length) filters.billing_status = billingFilter;
       if (imFilter.length) filters.im = imFilter;
       if (teamFilter.length) filters.team = teamFilter;
@@ -588,6 +612,27 @@ export default function WorkDone() {
     })();
     return () => { cancelled = true; };
   }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, workTypeFilter, issueFlagFilter]);
+
+  // Drill down from a Work Done Summary tile/card into the List tab. The
+  // summary is a full-dataset, unfiltered aggregate (see get_work_done_summary)
+  // — any OTHER filter left active on the list (date range, project, billing,
+  // etc.) would make the resulting row count not match the number the user
+  // just clicked, which is exactly the confusing-looking mismatch this is
+  // meant to avoid. So this clears every other filter before applying just
+  // the one that corresponds to what was clicked.
+  function goToWorkDoneList(issueFlagValues) {
+    setSearch("");
+    setBillingFilter([]);
+    setImFilter([]);
+    setTeamFilter([]);
+    setProjectFilter([]);
+    setDuidFilter([]);
+    setFromDate("");
+    setToDate("");
+    setWorkTypeFilter([]);
+    setIssueFlagFilter(issueFlagValues || []);
+    setTab("list");
+  }
 
   const filteredRows = useMemo(() => {
     let r = rows;
@@ -885,7 +930,17 @@ export default function WorkDone() {
               const TotalsRow = ({ tiles }) => (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
                   {tiles.map((s) => (
-                    <div key={s.label} style={{ border: `1px solid ${s.bd}`, background: s.bg, borderRadius: 8, padding: "10px 18px", display: "flex", flexDirection: "column", gap: 2, minWidth: 140, flex: "1 1 140px", maxWidth: 240 }}>
+                    <div
+                      key={s.label}
+                      onClick={s.onClick}
+                      title={s.onClick ? `View ${s.label} in Work Done` : undefined}
+                      style={{
+                        border: `1px solid ${s.bd}`, background: s.bg, borderRadius: 8, padding: "10px 18px", display: "flex", flexDirection: "column", gap: 2, minWidth: 140, flex: "1 1 140px", maxWidth: 240,
+                        cursor: s.onClick ? "pointer" : "default", transition: "box-shadow 0.15s, transform 0.15s",
+                      }}
+                      onMouseEnter={(e) => { if (s.onClick) { e.currentTarget.style.boxShadow = "0 4px 10px rgba(0,0,0,0.12)"; e.currentTarget.style.transform = "translateY(-1px)"; } }}
+                      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}
+                    >
                       <span style={{ fontSize: "0.64rem", fontWeight: 700, color: s.fg, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</span>
                       <span style={{ fontSize: "1.35rem", fontWeight: 800, color: s.fg, lineHeight: 1.1 }}>{fmt.format(s.lines)}</span>
                       <span style={{ fontSize: "0.72rem", color: s.fg, opacity: 0.75, fontWeight: 500 }}>SAR {fmt.format(s.revenue)}</span>
@@ -894,11 +949,20 @@ export default function WorkDone() {
                 </div>
               );
 
-              const StatCard = ({ label, count, revenue, accentColor, bdColor, bgColor, barColor, totalLines, totalRev }) => {
+              const StatCard = ({ label, count, revenue, accentColor, bdColor, bgColor, barColor, totalLines, totalRev, onClick }) => {
                 const pct    = totalLines > 0 ? Math.round((count / totalLines) * 100) : 0;
                 const revPct = totalRev   > 0 ? Math.round((revenue / totalRev)   * 100) : 0;
                 return (
-                  <div style={{ border: `1px solid ${bdColor}`, borderRadius: 8, overflow: "hidden", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.07)" }}>
+                  <div
+                    onClick={onClick}
+                    title={onClick ? `View ${label} in Work Done` : undefined}
+                    style={{
+                      border: `1px solid ${bdColor}`, borderRadius: 8, overflow: "hidden", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
+                      cursor: onClick ? "pointer" : "default", transition: "box-shadow 0.15s, transform 0.15s",
+                    }}
+                    onMouseEnter={(e) => { if (onClick) { e.currentTarget.style.boxShadow = "0 4px 10px rgba(0,0,0,0.12)"; e.currentTarget.style.transform = "translateY(-1px)"; } }}
+                    onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.07)"; e.currentTarget.style.transform = "none"; }}
+                  >
                     <div style={{ background: bgColor, padding: "8px 12px", borderBottom: `1px solid ${bdColor}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 4 }}>
                       <span style={{ fontSize: "0.74rem", fontWeight: 700, color: accentColor, lineHeight: 1.3 }}>{label}</span>
                       <span style={{ fontSize: "0.65rem", fontWeight: 800, color: accentColor, background: "#fff", borderRadius: 999, padding: "2px 7px", border: `1px solid ${bdColor}`, flexShrink: 0 }}>{pct}%</span>
@@ -962,9 +1026,9 @@ export default function WorkDone() {
                   <div style={{ marginBottom: 0 }}>
                     <SectionHeader accent="#047857" title="Operational Work Done Categories" sub="by Issue Flag" />
                     <TotalsRow tiles={[
-                      { label: "Total Work Done", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0" },
-                      { label: "Flagged Lines",   lines: flaggedLines,  revenue: flaggedRev,        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
-                      { label: "Not Flagged",     lines: nonFlagged.count, revenue: nonFlagged.revenue || 0, bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0" },
+                      { label: "Total Work Done", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0", onClick: () => goToWorkDoneList([]) },
+                      { label: "Flagged Lines",   lines: flaggedLines,  revenue: flaggedRev,        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa", onClick: () => goToWorkDoneList(opKeys) },
+                      { label: "Not Flagged",     lines: nonFlagged.count, revenue: nonFlagged.revenue || 0, bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0", onClick: () => goToWorkDoneList(["__NONE__"]) },
                     ]} />
                     <ProportionBar segments={[
                       { value: flaggedLines, color: "#f97316", label: `Flagged ${totalOpLines > 0 ? Math.round(flaggedLines/totalOpLines*100) : 0}%` },
@@ -974,7 +1038,21 @@ export default function WorkDone() {
                       {opKeys.map((key) => {
                         const { count = 0, revenue = 0 } = opMap[key] || {};
                         const p = ISSUE_FLAG_PALETTE[key] || { bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0" };
-                        return <StatCard key={key} label={key || "No Flag"} count={count} revenue={revenue} accentColor={p.fg} bdColor={p.bd} bgColor={p.bg} barColor={p.fg} totalLines={flaggedLines} totalRev={flaggedRev} />;
+                        return (
+                          <StatCard
+                            key={key}
+                            label={key || "No Flag"}
+                            count={count}
+                            revenue={revenue}
+                            accentColor={p.fg}
+                            bdColor={p.bd}
+                            bgColor={p.bg}
+                            barColor={p.fg}
+                            totalLines={flaggedLines}
+                            totalRev={flaggedRev}
+                            onClick={() => goToWorkDoneList([key || "__NONE__"])}
+                          />
+                        );
                       })}
                     </div>
                   </div>

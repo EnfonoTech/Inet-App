@@ -99,16 +99,19 @@ function DetailModal({ row, onClose }) {
   );
 }
 
-// A row lands here once both milestones are resolved (MS1 closed/submitted,
-// and MS2 either also resolved or zero — see _PIC_EFFECTIVELY_CLOSED_SQL in
-// pic.py, which reuses the same dispatch_status='Closed' signal
-// update_pic_row/bulk_update_pic_status already compute). Kept as its own
-// module — mirroring Cancelled — rather than left mixed into Active, so
-// PIC's day-to-day Tracker view only ever shows lines that still need
-// attention. The one action here: revert a line back to Active with a
-// specific milestone status, for when PIC needs to reopen something that
-// was closed too early (e.g. an invoice gets disputed after being marked
-// Submitted).
+// A row lands here once it's FULLY closed — MS1 "Commercial Invoice Closed"
+// AND (MS2 also "Commercial Invoice Closed" OR MS2 doesn't exist). Submitted
+// is no longer good enough on either milestone (see
+// _compute_dispatch_status_from_pic in pic.py) — a line with one milestone
+// Closed and the other only Submitted (or earlier) is "Partially Closed"
+// instead, and stays on the Tracker. dispatch_status is entirely
+// auto-derived now, so this page is read-only w.r.t. closing — there's no
+// "Mark Closed" action here anymore. Kept as its own module — mirroring
+// Cancelled — rather than left mixed into Active, so PIC's day-to-day
+// Tracker view only ever shows lines that still need attention. The one
+// action here: revert a line back to Active with a specific milestone
+// status, for when PIC needs to reopen something that was closed too early
+// (e.g. an invoice gets disputed after being marked Closed).
 export default function PICClosed() {
   const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
@@ -140,10 +143,6 @@ export default function PICClosed() {
   const [revertRemark, setRevertRemark] = useState("");
   const [revertBusy, setRevertBusy] = useState(false);
   const [revertErr, setRevertErr] = useState(null);
-
-  const [showMarkClosed, setShowMarkClosed] = useState(false);
-  const [markClosedBusy, setMarkClosedBusy] = useState(false);
-  const [markClosedErr, setMarkClosedErr] = useState(null);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const load = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -254,49 +253,6 @@ export default function PICClosed() {
     }
   }
 
-  // How many of the current selection actually have a milestone sitting at
-  // "Commercial Invoice Submitted" — shown in the Mark Closed confirmation
-  // so PIC knows upfront how many rows the action will actually touch vs.
-  // leave untouched (e.g. rows already fully Closed on both milestones).
-  const markClosedEligible = useMemo(() => {
-    const byName = new Map(rows.map((r) => [r.po_dispatch, r]));
-    let count = 0;
-    for (const name of selected) {
-      const r = byName.get(name);
-      if (!r) continue;
-      if (r.pic_status_effective === "Commercial Invoice Submitted" || r.pic_status_ms2 === "Commercial Invoice Submitted") count++;
-    }
-    return count;
-  }, [rows, selected]);
-
-  async function submitMarkClosed() {
-    if (!selected.size) return;
-    setMarkClosedBusy(true);
-    setMarkClosedErr(null);
-    try {
-      const res = await pmApi.closePicSubmittedMilestones(Array.from(selected));
-      const ok = res?.summary?.updated_count ?? 0;
-      const noChange = res?.summary?.no_change_count ?? 0;
-      const errN = res?.summary?.error_count ?? 0;
-      if (errN === 0) {
-        setShowMarkClosed(false);
-        setToastMsg(
-          `Marked ${ok} POID${ok !== 1 ? "s" : ""} fully Closed (Submitted → Closed)`
-          + (noChange ? ` — ${noChange} already had nothing to close.` : ".")
-        );
-        setTimeout(() => setToastMsg(null), 5500);
-        setSelected(new Set());
-        await load();
-      } else {
-        setMarkClosedErr(`${ok} updated, ${noChange} unchanged, ${errN} failed`);
-      }
-    } catch (err) {
-      setMarkClosedErr(err.message || "Mark Closed failed");
-    } finally {
-      setMarkClosedBusy(false);
-    }
-  }
-
   async function submitRevert() {
     if (!selected.size) return;
     setRevertBusy(true);
@@ -374,14 +330,6 @@ export default function PICClosed() {
               {selected.size} selected
             </span>
           )}
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={selected.size === 0}
-            onClick={() => { setMarkClosedErr(null); setShowMarkClosed(true); }}
-          >
-            Mark Closed ({selected.size})
-          </button>
           <button
             type="button"
             className="btn-secondary"
@@ -568,29 +516,6 @@ export default function PICClosed() {
           filterActive={!!hasFilters}
         />
       </div>
-
-      {showMarkClosed && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-             onClick={markClosedBusy ? undefined : () => setShowMarkClosed(false)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(440px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
-               onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: "1rem" }}>Mark Closed <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size}</span></h3>
-              <button type="button" onClick={() => setShowMarkClosed(false)} disabled={markClosedBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
-            </div>
-            <div style={{ fontSize: "0.82rem", fontWeight: 600, color: markClosedEligible ? "#047857" : "#b45309", marginBottom: 12, padding: "8px 10px", background: markClosedEligible ? "#ecfdf5" : "#fffbeb", border: `1px solid ${markClosedEligible ? "#a7f3d0" : "#fde68a"}`, borderRadius: 8 }}>
-              {markClosedEligible} of {selected.size} have a Submitted milestone to close.
-            </div>
-            {markClosedErr && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {markClosedErr}</div>}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button type="button" className="btn-secondary" onClick={() => setShowMarkClosed(false)} disabled={markClosedBusy}>Cancel</button>
-              <button type="button" className="btn-primary" onClick={submitMarkClosed} disabled={markClosedBusy}>
-                {markClosedBusy ? "Updating…" : `Mark Closed (${selected.size})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showRevert && (
         <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}

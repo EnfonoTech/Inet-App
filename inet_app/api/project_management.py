@@ -236,7 +236,11 @@ def dashboard_charts():
         SELECT
             pd.project_code,
             COUNT(*) AS total,
-            SUM(CASE WHEN pd.dispatch_status IN ('Completed', 'Closed') THEN 1 ELSE 0 END) AS completed
+            -- "Completed" and later (Partially Submitted/Submitted/Partially
+            -- Closed/Closed) are all operationally done — PIC progressing a
+            -- line through its own invoicing pipeline shouldn't make this
+            -- completion % regress. See inet_app.api.pic._compute_dispatch_status_from_pic.
+            SUM(CASE WHEN pd.dispatch_status IN ('Completed', 'Partially Submitted', 'Submitted', 'Partially Closed', 'Closed') THEN 1 ELSE 0 END) AS completed
         FROM `tabPO Dispatch` pd
         WHERE pd.project_code IS NOT NULL AND pd.project_code != ''
         GROUP BY pd.project_code

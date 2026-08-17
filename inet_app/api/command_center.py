@@ -2982,9 +2982,15 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
     htm = (pf.get("has_target_month") or "").strip().lower()
     if htm == "yes" and "target_month" in fields:
         wheres.append("`target_month` IS NOT NULL AND `target_month` != ''")
-        # IM Rollout Planning view: never show Closed/Cancelled dispatches
+        # IM Rollout Planning view: never show dispatches that are already
+        # done operationally and beyond — once PIC has taken over the
+        # commercial side (Partially Submitted/Submitted/Partially Closed/
+        # Closed), there's no more rollout planning to be done on it either.
         if "dispatch_status" in fields:
-            wheres.append("IFNULL(`dispatch_status`, 'Pending') NOT IN ('Closed', 'Cancelled')")
+            wheres.append(
+                "IFNULL(`dispatch_status`, 'Pending') NOT IN "
+                "('Partially Submitted', 'Submitted', 'Partially Closed', 'Closed', 'Cancelled')"
+            )
     elif htm == "no" and "target_month" in fields:
         wheres.append("(`target_month` IS NULL OR `target_month` = '')")
 
@@ -6589,29 +6595,41 @@ def get_work_done_summary():
     has_pic_ms2 = frappe.db.has_column("PO Dispatch", "pic_status_ms2")
     has_flag    = frappe.db.has_column("Work Done", "issue_flag")
 
-    if has_flag:
-        op_rows = frappe.db.sql("""
-            SELECT IFNULL(issue_flag, '') AS flag,
+    # Operational Work Done = PO Dispatch lines that are operationally
+    # finished but not yet commercially wrapped up: dispatch_status =
+    # 'Completed' specifically, NOT 'Closed' — Closed only happens once PIC
+    # has resolved both commercial milestones (see update_pic_row), so a
+    # line drops out of this count the moment it's fully invoiced. This is
+    # a "what's done but still needs attention" view, not a running
+    # historical total.
+    #
+    # Based on PO Dispatch directly (not the Work Done doctype) specifically
+    # so this also includes lines with no Work Done record at all — both the
+    # narrow subcon-flow gap (see _mark_backend_done_one) AND the much
+    # larger set of archive-imported legacy lines, whose work (and often its
+    # original PIC submission) already happened historically outside this
+    # system by design (see list_legacy_milestones_needing_resubmission).
+    # issue_flag/revenue still come from the real Work Done record via the
+    # LEFT JOIN where one exists; lines with none fall into the "" (No Flag)
+    # bucket and use the PO line amount as their revenue instead.
+    def _completed_po_rows(group_expr):
+        return frappe.db.sql(f"""
+            SELECT IFNULL({group_expr}, '') AS grp,
                    COUNT(*) AS cnt,
-                   SUM(IFNULL(revenue_sar, 0)) AS revenue
-            FROM `tabWork Done`
-            GROUP BY flag
+                   SUM(COALESCE(wd.revenue_sar, pd.line_amount, 0)) AS revenue
+            FROM `tabPO Dispatch` pd
+            LEFT JOIN `tabWork Done` wd ON wd.system_id = pd.name
+            WHERE pd.dispatch_status = 'Completed'
+              AND IFNULL(pd.is_internal_work, 0) = 0
+              AND IFNULL(pd.is_dummy_po, 0) = 0
+            GROUP BY grp
         """, as_dict=True)
-    else:
-        op_rows = []
 
-    def _pic_query(field):
-        return frappe.db.sql("""
-            SELECT IFNULL(pd.{field}, '') AS status,
-                   COUNT(*) AS cnt,
-                   SUM(IFNULL(wd.revenue_sar, 0)) AS revenue
-            FROM `tabWork Done` wd
-            LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
-            GROUP BY pd.{field}
-        """.format(field=field), as_dict=True)
-
-    ms1_rows = _pic_query("pic_status")     if has_pic     else []
-    ms2_rows = _pic_query("pic_status_ms2") if has_pic_ms2 else []
+    # to_serial() below reads r.cnt/r.revenue via attribute access — frappe._dict
+    # supports that (plain dict subscripting wouldn't).
+    op_rows = [frappe._dict(flag=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _completed_po_rows("wd.issue_flag")] if has_flag else []
+    ms1_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _completed_po_rows("pd.pic_status")] if has_pic else []
+    ms2_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _completed_po_rows("pd.pic_status_ms2")] if has_pic_ms2 else []
 
     PIC_STATUS_ORDER = [
         "Under Process to Apply",
@@ -7764,7 +7782,15 @@ def list_legacy_milestones_needing_resubmission(filters=None, limit=500):
         "pd.im = %s",
         "IFNULL(pd.is_internal_work, 0) = 0",
         "IFNULL(pd.is_dummy_po, 0) = 0",
-        "pd.dispatch_status IN ('Completed', 'Closed')",
+        # A legacy line with no Work Done record can still have its own
+        # pic_status/pic_status_ms2 actively worked by PIC right now (those
+        # live on PO Dispatch independent of any Work Done record) — so it
+        # can progress through Partially Submitted/Submitted/Partially
+        # Closed same as any other line, well before (or even without ever)
+        # reaching literal Closed. Excluding those would drop a line that
+        # still has one milestone genuinely needing resubmission — see
+        # inet_app.api.pic._compute_dispatch_status_from_pic.
+        "pd.dispatch_status IN ('Completed', 'Partially Submitted', 'Submitted', 'Partially Closed', 'Closed')",
         "NOT EXISTS (SELECT 1 FROM `tabWork Done` wd WHERE wd.system_id = pd.name)",
     ]
     params = [caller_im]
@@ -8753,7 +8779,11 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     backend_pending_value = flt(_backend_pending_rows[0].val if _backend_pending_rows else 0)
 
     _backend_done_rows = frappe.db.sql(
-        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status = 'Completed' AND subcon_completed_on BETWEEN %s AND %s AND IFNULL(is_internal_work, 0) = 0",
+        # dispatch_status IN (...): PIC progressing the line into its own
+        # invoicing pipeline in the same month shouldn't retroactively drop
+        # it out of "backend completed this month" — see
+        # inet_app.api.pic._compute_dispatch_status_from_pic.
+        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status IN ('Completed', 'Partially Submitted', 'Submitted', 'Partially Closed', 'Closed') AND subcon_completed_on BETWEEN %s AND %s AND IFNULL(is_internal_work, 0) = 0",
         (first_day, last_day),
         as_dict=True,
     )
@@ -14306,6 +14336,54 @@ def _stamp_archive_pic_fields(dispatch_name, src_line):
         frappe.db.set_value("PO Dispatch", dispatch_name, updates)
 
 
+def _sync_archive_dispatch_status(dispatch_name, target_status):
+    """After stamping PIC fields from an archive row, re-derive the correct
+    dispatch_status from that row's own MS1/MS2 status — the archive's raw
+    "CLOSED" classification only reflects the source file's own status
+    column, not whether both milestones are ACTUALLY closed under the
+    stricter Closed/Partially Closed/Submitted/Partially Submitted rules
+    (see inet_app.api.pic._compute_dispatch_status_from_pic). Without this,
+    an archive line whose MS2 only shows "submitted" (not "closed") would
+    import as fully Closed instead of Partially Closed — the exact stale
+    classification the one-time backfill patch (sync_dispatch_status_from_pic)
+    corrected for existing data; new imports need the same correction going
+    forward, not just the one-time fix.
+
+    Only applies when the archive classified this row as "Closed" — that's
+    the one case that can actually be wrong under the new rules. "Pending"/
+    "Cancelled" reflect the archive file's own explicit classification and
+    are left untouched (a local, deferred import to avoid a circular import
+    with inet_app.api.pic, which itself imports from this module).
+
+    Also corrects the linked PO Intake Line's po_line_status the same way —
+    it was stamped "Closed" earlier from this same raw target_status (see
+    _archive_line_status_for), independent of PIC data, so it has the exact
+    same gap. po_line_status has no Partially Closed/Submitted/Partially
+    Submitted values of its own; anything short of a real "Closed" becomes
+    "Completed" there instead (matching how an "OPEN" archive row already
+    imports — operationally done, not yet fully commercially wrapped up).
+    """
+    if target_status != "Closed":
+        return
+    from inet_app.api.pic import _compute_dispatch_status_from_pic
+    row = frappe.db.get_value(
+        "PO Dispatch", dispatch_name,
+        ["pic_status", "pic_status_ms2", "ms2_amount", "po_intake", "po_line_no"], as_dict=True,
+    )
+    if not row:
+        return
+    new_status = _compute_dispatch_status_from_pic(
+        row.pic_status, row.pic_status_ms2, row.ms2_amount, "Closed"
+    )
+    if not new_status or new_status == "Closed":
+        return
+    frappe.db.set_value("PO Dispatch", dispatch_name, "dispatch_status", new_status)
+    if row.po_intake and row.po_line_no:
+        il = frappe.db.exists("PO Intake Line", {"parent": row.po_intake, "po_line_no": row.po_line_no})
+        if il and isinstance(il, str):
+            frappe.db.set_value("PO Intake Line", il, "po_line_status", "Completed")
+
+
 def _archive_date_keys():
     """All archive-row keys whose source values are Excel date serials in xlsb."""
     return (
@@ -14995,6 +15073,7 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                         )
                         if dispatch_name and src_line:
                             _stamp_archive_pic_fields(dispatch_name, src_line)
+                            _sync_archive_dispatch_status(dispatch_name, target_status)
                     except Exception as e:
                         per_po.append({
                             "po_no": po_no, "intake_name": doc.name,
@@ -15060,6 +15139,7 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                                     "PO Dispatch", dispatch_name, dispatch_updates,
                                 )
                             _stamp_archive_pic_fields(dispatch_name, src_line)
+                            _sync_archive_dispatch_status(dispatch_name, target_status)
                     except Exception as _ov_exc:
                         frappe.log_error(
                             title="Archive override error",

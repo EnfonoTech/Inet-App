@@ -193,6 +193,14 @@ export default function Reports() {
       setError(err?.message || "Failed to load report.");
     } finally {
       setLoading(false);
+      // The one <table> here is reused across every report with a totally
+      // different column set each time — React replaces every <th> (they're
+      // keyed by fieldname/label), so DataTablePro's resize handles/colKey
+      // mapping on the old headers are gone. Its own tbody MutationObserver
+      // doesn't cover thead-only changes, so nothing else tells it to
+      // re-scan. See switchTab() in IMMaterialRequest.jsx for the same
+      // pattern; the delay lets React commit the new headers first.
+      setTimeout(() => document.dispatchEvent(new CustomEvent("tablepro:check")), 60);
     }
   }
 
@@ -203,6 +211,14 @@ export default function Reports() {
     setDateRange(DEFAULT_RANGE);
     setSelectedMonth(DEFAULT_MONTH);
     setTeamDate({ from: DEFAULT_DATE, to: DEFAULT_DATE });
+    // Clear the previous report's columns immediately (not just when the new
+    // report's fetch resolves) — the <table> below only mounts once columns
+    // is non-empty, specifically so DataTablePro never gets a chance to
+    // initialize against a table showing the wrong (stale or empty) headers
+    // for the report we're switching to. See the <table> comment for why
+    // that first scan matters — it can only ever happen once per mount.
+    setColumns([]);
+    setData([]);
   }, [activeKey]);
 
   // Auto-reload when active report or filters change
@@ -336,7 +352,39 @@ export default function Reports() {
         )}
 
         <DataTableWrapper>
-          <table className="data-table">
+          {/* The <table> itself only mounts once columns for the CURRENT
+              report have actually arrived — not gated on data.length (rows),
+              which DataTablePro genuinely needs to stay mounted through zero-
+              result states; gated on columns.length (do we even have the
+              right schema loaded yet). Without this, on a cold page load —
+              or right after switching reports, once the previous report's
+              columns are cleared above — DataTablePro's own scan runs almost
+              instantly (it only checks the table exists, not that it has
+              real headers) and marks the table "initialized" against zero
+              or stale <th>s. That flag is permanent for as long as the DOM
+              node lives, so the real headers that show up moments later,
+              once the report actually loads, never get scanned or get
+              resize handles. Keeping the table entirely absent until the
+              real columns exist means DataTablePro's very first look at it
+              is always the right one. */}
+          {columns.length === 0 ? (
+            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+              {loading ? "Loading report…" : (
+                <div className="empty-state">
+                  <div className="empty-icon">📈</div>
+                  <h3>No data available</h3>
+                  <p>No report data was returned from the server.</p>
+                </div>
+              )}
+            </div>
+          ) : (
+          /* Keyed per report — this one table is reused across 10 report
+              types with completely different column sets. Without a distinct
+              key per report, DataTablePro falls back to one shared
+              positional key and every report's saved column widths/order
+              collide with each other (and it scales automatically to any
+              report added to REPORTS in the future — no extra wiring). */
+          <table key={activeKey} className="data-table" data-table-key={`admin-report-${activeKey}`}>
             <thead>
               <tr>
                 {columns.map((col) => (
@@ -345,24 +393,12 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {columns.length === 0 || data.length === 0 ? (
+              {data.length === 0 ? (
                 <tr>
                   <td colSpan={Math.max(columns.length, 1)} style={{ padding: 0 }}>
-                    {loading ? (
-                      <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-                        Loading report…
-                      </div>
-                    ) : columns.length === 0 ? (
-                      <div className="empty-state">
-                        <div className="empty-icon">📈</div>
-                        <h3>No data available</h3>
-                        <p>No report data was returned from the server.</p>
-                      </div>
-                    ) : (
-                      <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "32px" }}>
-                        No records found for the selected period.
-                      </div>
-                    )}
+                    <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "32px" }}>
+                      No records found for the selected period.
+                    </div>
                   </td>
                 </tr>
               ) : data.map((row, idx) => (
@@ -385,6 +421,7 @@ export default function Reports() {
               ))}
             </tbody>
           </table>
+          )}
         </DataTableWrapper>
       </div>
     </div>

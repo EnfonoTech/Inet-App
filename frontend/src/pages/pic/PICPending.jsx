@@ -28,8 +28,21 @@ const PO_STATUSES = [
   "Planned",
   "Backend Assigned",
   "Completed",
+  "Partially Submitted",
+  "Submitted",
+  "Partially Closed",
   "Closed",
   "Cancelled",
+];
+
+// IM's own submission-side status (distinct from PIC's pic_status) — see
+// IMStatusBadge / im_submission_status. "__NONE__" covers a line the IM
+// hasn't submitted anything for yet (no Work Done record at all).
+const IM_STATUSES = [
+  { id: "__NONE__", label: "No Status" },
+  { id: "Ready for Confirmation", label: "Ready for Confirmation" },
+  { id: "Confirmation Done", label: "Confirmation Done" },
+  { id: "PIC Rejected", label: "PIC Rejected" },
 ];
 
 function DetailModal({ row, onClose }) {
@@ -96,6 +109,7 @@ export default function PICPending() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [poStatusFilter, setPoStatusFilter] = useState([]);
+  const [imStatusFilter, setImStatusFilter] = useState([]);
   const [subconFilter, setSubconFilter] = useState([]);
 
   const [showBulk, setShowBulk] = useState(false);
@@ -126,6 +140,7 @@ export default function PICPending() {
       if (projectFilter.length) portal.project_code = projectFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
       if (poStatusFilter.length) portal.dispatch_status = poStatusFilter;
+      if (imStatusFilter.length) portal.im_status = imStatusFilter;
       if (subconFilter.length) portal.subcontractor = subconFilter;
       const signature = JSON.stringify([portal, refreshKey]);
 
@@ -163,14 +178,14 @@ export default function PICPending() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, projectFilter, duidFilter, poStatusFilter, subconFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, projectFilter, duidFilter, poStatusFilter, imStatusFilter, subconFilter, rowLimit, refreshKey]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
   const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
 
-  const hasFilters = !!(search || projectFilter.length || duidFilter.length || poStatusFilter.length || subconFilter.length);
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || poStatusFilter.length || imStatusFilter.length || subconFilter.length);
 
   const totals = useMemo(() => {
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
@@ -262,9 +277,10 @@ export default function PICPending() {
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <SearchableSelect multi value={poStatusFilter} onChange={setPoStatusFilter} options={PO_STATUSES} placeholder="PO Status" minWidth={150} />
+        <SearchableSelect multi value={imStatusFilter} onChange={setImStatusFilter} options={IM_STATUSES} placeholder="IM Status" minWidth={160} />
         <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setPoStatusFilter([]); setSubconFilter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setPoStatusFilter([]); setImStatusFilter([]); setSubconFilter([]); }}>
             Clear
           </button>
         )}

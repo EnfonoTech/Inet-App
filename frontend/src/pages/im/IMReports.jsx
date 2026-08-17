@@ -100,7 +100,15 @@ export default function IMReports() {
                 key={t.key}
                 type="button"
                 className={`tab ${activeTab === t.key ? "active" : ""}`}
-                onClick={() => setActiveTab(t.key)}
+                onClick={() => {
+                  setActiveTab(t.key);
+                  // Each tab's MiniTable only exists while that tab is active
+                  // (the others aren't just hidden, they're unmounted), so
+                  // React swaps the whole .data-table-wrapper subtree in one
+                  // go — DataTablePro's own tbody observer never sees that.
+                  // Same pattern as switchTab() in IMMaterialRequest.jsx.
+                  setTimeout(() => document.dispatchEvent(new CustomEvent("tablepro:check")), 60);
+                }}
               >
                 {t.label}
               </button>
@@ -174,6 +182,8 @@ export default function IMReports() {
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
                 <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Plans by status (all dates)</h3>
                 <MiniTable
+                  resizable
+                  tableKey="im-reports-rollout-status"
                   columns={[
                     { label: "Status", key: "status_key" },
                     { label: "Count", key: "cnt", align: "right" },
@@ -185,6 +195,8 @@ export default function IMReports() {
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
                 <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Recent plans (latest 80)</h3>
                 <MiniTable
+                  resizable
+                  tableKey="im-reports-recent-plans"
                   columns={[
                     { label: "Plan", key: "name" },
                     { label: "Date", key: "plan_date" },
@@ -206,6 +218,8 @@ export default function IMReports() {
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
                 <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Executions by status (MTD)</h3>
                 <MiniTable
+                  resizable
+                  tableKey="im-reports-execution-status"
                   columns={[
                     { label: "Status", key: "status_key" },
                     { label: "Count", key: "cnt", align: "right" },
@@ -217,6 +231,8 @@ export default function IMReports() {
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
                 <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Recent executions (MTD, latest 60)</h3>
                 <MiniTable
+                  resizable
+                  tableKey="im-reports-recent-executions"
                   columns={[
                     { label: "Execution", key: "name" },
                     { label: "Date", key: "execution_date" },
@@ -247,6 +263,8 @@ export default function IMReports() {
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
                 <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By billing status</h3>
                 <MiniTable
+                  resizable
+                  tableKey="im-reports-billing-status"
                   columns={[
                     { label: "Billing", key: "billing" },
                     { label: "Rows", key: "count", align: "right" },
@@ -267,6 +285,8 @@ export default function IMReports() {
             <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
               <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Projects (IM on PCC)</h3>
               <MiniTable
+                resizable
+                tableKey="im-reports-projects"
                 columns={[
                   { label: "Code", key: "project_code" },
                   { label: "Name", key: "project_name" },
