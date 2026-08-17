@@ -5694,12 +5694,48 @@ def generate_work_done(execution_name, issue_flag=None):
     # Trace back chain: execution → rollout_plan → po_dispatch
     rp_name = exec_doc.rollout_plan
     rp = frappe.db.get_value(
-        "Rollout Plan", rp_name, ["po_dispatch", "visit_multiplier", "team"], as_dict=True
+        "Rollout Plan", rp_name,
+        ["po_dispatch", "visit_multiplier", "team", "issue_status", "plan_status", "issue_category"],
+        as_dict=True,
     )
     if not rp:
         frappe.throw(f"Rollout Plan {rp_name} not found.")
 
     dispatch_name = rp.po_dispatch
+
+    # Hard guarantee: at most ONE Work Done can ever exist per PO Dispatch
+    # (POID), no matter how many Rollout Plans/visits it has had. The
+    # rollout_plan-scoped check above only catches a retry on the SAME
+    # plan — a genuinely different (later) visit for the SAME po_dispatch
+    # sails straight past it, and each Work Done carries the FULL
+    # dispatch.line_amount as revenue, so a second one silently double-
+    # counts revenue for one PO line. Same idempotent no-op shape as above.
+    if dispatch_name:
+        existing_for_dispatch = frappe.db.get_value(
+            "Work Done", {"system_id": dispatch_name}, "name"
+        )
+        if existing_for_dispatch:
+            return {"name": existing_for_dispatch, "already_exists": True}
+
+    # Never allow Work Done while this plan carries an open Issue & Risk
+    # flag — same "open issue" definition as list_issue_risk_rows. A plan
+    # that's been reported/re-planned needs its Re-Visit to actually
+    # complete (a fresh plan with no issue_status) before revenue can be
+    # recognized; letting the flagged plan itself slip through to Work
+    # Done is exactly how a POID ends up with two Work Done records (one
+    # for the flagged visit, one for its Re-Visit).
+    issue_status = (rp.issue_status or "").strip()
+    is_open_issue = issue_status not in ("", "Resolved") or (
+        not issue_status and (
+            rp.plan_status == "Planning with Issue" or bool((rp.issue_category or "").strip())
+        )
+    )
+    if is_open_issue:
+        frappe.throw(
+            "This line has an open Issue & Risk flag — complete the Re-Visit "
+            "(or resolve the issue) before creating Work Done."
+        )
+
     dispatch = frappe.db.get_value(
         "PO Dispatch",
         dispatch_name,
