@@ -28,6 +28,14 @@ class RecordsErrorBoundary extends React.Component {
   }
 }
 
+// Stable reference for "no rows yet" so it never triggers useProgressiveRows's
+// render-time reset logic more than once. `records || []` would build a BRAND
+// NEW array literal every render while `records` is still null (the whole
+// loading phase before the fetch resolves) — useProgressiveRows compares its
+// `rows` input by reference, so a fresh [] every render made it call setState
+// on every render, forever: React error #301 ("Too many re-renders").
+const EMPTY_RECORDS = [];
+
 /** Force-stringify a Frappe field value so React never sees an object. */
 function cellText(v) {
   if (v == null) return "–";
@@ -369,7 +377,7 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleRecords = useProgressiveRows(records || [], { paused: loading });
+  const visibleRecords = useProgressiveRows(records || EMPTY_RECORDS, { paused: loading });
   // How many of `visibleRecords` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `records`
   // (see the skip-fetch logic above: shrinking the limit after "All" already
