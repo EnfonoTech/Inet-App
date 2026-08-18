@@ -216,7 +216,6 @@ function RolloutDuidModal({ group, onClose, onOpenDetail }) {
     { key: "total_cost_sar", label: "Total cost", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
     { key: "margin_sar", label: "Margin", align: "right", render: (v) =>
       v != null ? <span style={{ color: v >= 0 ? "#065f46" : "#991b1b", fontWeight: 600 }}>{fmt.format(v)}</span> : "\u2014" },
-    { key: "billing_status", label: "Billing", render: (v) => <Badge value={v} /> },
     { key: "region_type", label: "Region" },
     { key: "_open", label: "Details", render: (_, row) => viewBtn("Work done details", row) },
   ];
@@ -632,7 +631,6 @@ export default function ProjectDetail() {
     { key: "revenue_sar", label: "Revenue", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "total_cost_sar", label: "Cost", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "margin_sar", label: "Margin", align: "right", render: (v) => v != null ? <span style={{ color: v >= 0 ? "#065f46" : "#991b1b", fontWeight: 600 }}>{fmt.format(v)}</span> : "\u2014" },
-    { key: "billing_status", label: "Billing", render: v => <Badge value={v} /> },
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Work Done Details", row })}>View</button> },
   ];
 

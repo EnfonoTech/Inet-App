@@ -363,7 +363,6 @@ export default function IMWorkDone() {
   const lastFetchRef = useRef({ signature: null, limit: null, rows: [], refreshKey: null });
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [billingFilter, setBillingFilter] = useState([]);
   const [submissionFilter, setSubmissionFilter] = useState([]);
   const [execStatusFilter, setExecStatusFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
@@ -792,7 +791,6 @@ export default function IMWorkDone() {
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) filters.column_filters = colFilters;
-        if (billingFilter.length) filters.billing_status = billingFilter;
         if (projectFilter.length) filters.project_code = projectFilter;
         if (duidFilter.length) filters.site_code = duidFilter;
         if (fromDate) filters.from_date = fromDate;
@@ -832,7 +830,7 @@ export default function IMWorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, effectiveRowLimit, searchDebounced, billingFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
+  }, [imName, effectiveRowLimit, searchDebounced, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
 
   // PIC Rejected tab badge — fetched independently of `tab`/`rows` because
   // the backend now scopes list_work_done_rows to whichever tab is active
@@ -909,7 +907,7 @@ export default function IMWorkDone() {
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = !!(search || billingFilter.length || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate || legacyPoStatusFilter.length);
+  const hasFilters = !!(search || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate || legacyPoStatusFilter.length);
 
   const totals = filteredRows.slice(0, displayedCount).reduce(
     (acc, r) => ({
@@ -989,16 +987,6 @@ export default function IMWorkDone() {
         {tab !== "legacy" && (
         <SearchableSelect
           multi
-          value={billingFilter}
-          onChange={setBillingFilter}
-          options={["Pending", "Invoiced", "Closed"]}
-          placeholder="All Billing"
-          minWidth={130}
-        />
-        )}
-        {tab !== "legacy" && (
-        <SearchableSelect
-          multi
           value={execStatusFilter}
           onChange={setExecStatusFilter}
           options={EXECUTION_STATUS_OPTIONS}
@@ -1039,7 +1027,7 @@ export default function IMWorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); setLegacyPoStatusFilter([]); }}
+            onClick={() => { setSearch(""); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); setLegacyPoStatusFilter([]); }}
           >
             Clear
           </button>
@@ -1175,7 +1163,6 @@ export default function IMWorkDone() {
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
-                  <th>Billing Status</th>
                   <th>Submission Status</th>
                   <th>PIC Rejection Reason</th>
                   <th>Source</th>
@@ -1228,7 +1215,6 @@ export default function IMWorkDone() {
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.manager_remark} tone="manager" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.manager_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.team_lead_remark} tone="team_lead" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.team_lead_remark = v; }} /></td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.revenue_sar || 0)}</td>
-                    <td title={r.pic_status ? `PIC status: ${r.pic_status}` : ""}><StatusPill value={r.billing_status} /></td>
                     <td><StatusPill value={r.submission_status} /></td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: r.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={r.pic_rejection_remark || ""}>{r.pic_rejection_remark || "—"}</td>
                     <td>
@@ -1293,7 +1279,7 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
                       {fmt.format(totals.revenue)}
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td />
                   </tr>
                 </tfoot>
               )}

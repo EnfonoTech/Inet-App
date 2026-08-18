@@ -16,10 +16,23 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { PoStatusBadge } from "../pic/picShared";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-const BILLING_STATUSES = ["", "Pending", "Invoiced", "Closed"];
+// Full PO Dispatch.dispatch_status vocabulary (matches the doctype's actual
+// Select options exactly) — a Work Done row's underlying PO Dispatch can
+// still show an earlier status than Completed (e.g. legacy/imported rows,
+// or a dispatch_status that was changed independently afterward), so the
+// filter needs every value the column can actually render, not just the
+// "operationally done" subset.
+const PO_STATUSES = ["Pending", "Dispatched", "Planned", "Backend Assigned", "Completed", "Partially Submitted", "Submitted", "Partially Closed", "Closed", "Cancelled"];
+
+// Must match get_work_done_summary()'s _OPERATIONAL_STATUSES exactly — the
+// population behind "Operational Work Done Categories". Used so the tile
+// drill-downs actually land on the same rows the tile counted, instead of
+// clearing the PO Status filter and showing the whole unfiltered list.
+const OPERATIONAL_STATUSES = ["Pending", "Dispatched", "Planned", "Backend Assigned", "Completed"];
 
 const DOC_REQUIREMENTS = {
   "installation":    { doc1Label: "Confirmation Mail", doc2: null },
@@ -310,7 +323,7 @@ export default function WorkDone() {
 
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [billingFilter, setBillingFilter] = useState([]);
+  const [poStatusFilter, setPoStatusFilter] = useState([]);
   const [imFilter, setImFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
@@ -561,7 +574,7 @@ export default function WorkDone() {
       // some of those same rows). "all" matches none of that function's
       // tab branches, so no exclusion is applied.
       const filters = { tab: "all" };
-      if (billingFilter.length) filters.billing_status = billingFilter;
+      if (poStatusFilter.length) filters.dispatch_status = poStatusFilter;
       if (imFilter.length) filters.im = imFilter;
       if (teamFilter.length) filters.team = teamFilter;
       if (projectFilter.length) filters.project_code = projectFilter;
@@ -611,7 +624,7 @@ export default function WorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, billingFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, workTypeFilter, issueFlagFilter]);
+  }, [rowLimit, searchDebounced, poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, workTypeFilter, issueFlagFilter]);
 
   // Drill down from a Work Done Summary tile/card into the List tab. The
   // summary is a full-dataset, unfiltered aggregate (see get_work_done_summary)
@@ -620,9 +633,9 @@ export default function WorkDone() {
   // just clicked, which is exactly the confusing-looking mismatch this is
   // meant to avoid. So this clears every other filter before applying just
   // the one that corresponds to what was clicked.
-  function goToWorkDoneList(issueFlagValues) {
+  function goToWorkDoneList(issueFlagValues, poStatusValues) {
     setSearch("");
-    setBillingFilter([]);
+    setPoStatusFilter(poStatusValues || []);
     setImFilter([]);
     setTeamFilter([]);
     setProjectFilter([]);
@@ -664,7 +677,7 @@ export default function WorkDone() {
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
 
-  const hasFilters = !!(searchDebounced || billingFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || issueFlagFilter.length || workTypeFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || issueFlagFilter.length || workTypeFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const [teams, setTeams] = useState([]);
   useEffect(() => {
@@ -764,11 +777,11 @@ export default function WorkDone() {
         />
         <SearchableSelect
           multi
-          value={billingFilter}
-          onChange={setBillingFilter}
-          options={BILLING_STATUSES.filter(Boolean)}
-          placeholder="All Billing Status"
-          minWidth={170}
+          value={poStatusFilter}
+          onChange={setPoStatusFilter}
+          options={PO_STATUSES}
+          placeholder="All PO Status"
+          minWidth={160}
         />
         <SearchableSelect
           multi
@@ -846,7 +859,7 @@ export default function WorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setBillingFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setIssueFlagFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setIssueFlagFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -1008,13 +1021,23 @@ export default function WorkDone() {
               /* ─────────────── COMMERCIAL ─────────────── */
               const doneStatuses = new Set(summary.pic_done_statuses || ["Commercial Invoice Submitted", "Commercial Invoice Closed"]);
               const activeKeys   = (summary.pic_status_order || summary.commercial_order || []);
-              const ms1Data      = summary.commercial_ms1 || summary.commercial || [];
-              const comGrandTotal = ms1Data.reduce((s, r) => s + (r.count || 0), 0);
-              const comGrandRev   = ms1Data.reduce((s, r) => s + (r.revenue || 0), 0);
-              const comDoneLines  = ms1Data.filter(r => doneStatuses.has(r.key)).reduce((s, r) => s + (r.count || 0), 0);
-              const comDoneRev    = ms1Data.filter(r => doneStatuses.has(r.key)).reduce((s, r) => s + (r.revenue || 0), 0);
-              const comActiveLines = comGrandTotal - comDoneLines;
-              const comActiveRev   = comGrandRev   - comDoneRev;
+              // "Done"/"Active" headline reuses PIC's own Pending/Active/Closed/
+              // Cancelled stage classification (same logic PIC's own pages use
+              // to route rows) instead of an MS1-only rule — a line's real
+              // commercial state depends on BOTH milestones together.
+              // Population here matches PIC Tracker's own page exactly: NOT
+              // Pending AND NOT Cancelled — i.e. Closed + Active only. Pending
+              // (hasn't reached PIC yet — includes POs with no operational
+              // work done at all) and Cancelled are both excluded entirely,
+              // not folded into "Still Active".
+              const stageData    = summary.commercial_stage || [];
+              const stageMap     = Object.fromEntries(stageData.map((r) => [r.key || "", r]));
+              const comDoneLines  = stageMap["Closed"]?.count || 0;
+              const comDoneRev    = stageMap["Closed"]?.revenue || 0;
+              const comActiveLines = stageMap["Active"]?.count || 0;
+              const comActiveRev   = stageMap["Active"]?.revenue || 0;
+              const comGrandTotal = comDoneLines + comActiveLines;
+              const comGrandRev   = comDoneRev + comActiveRev;
               const msList = [
                 { ms: "MS1", label: "PIC Status (MS1)", data: summary.commercial_ms1 || summary.commercial || [], color: "#0369a1", bd: "#bae6fd", bg: "#f0f9ff", bar: "#0369a1" },
                 { ms: "MS2", label: "PIC Status (MS2)", data: summary.commercial_ms2 || [],                       color: "#7c3aed", bd: "#ddd6fe", bg: "#f5f3ff", bar: "#7c3aed" },
@@ -1026,9 +1049,9 @@ export default function WorkDone() {
                   <div style={{ marginBottom: 0 }}>
                     <SectionHeader accent="#047857" title="Operational Work Done Categories" sub="by Issue Flag" />
                     <TotalsRow tiles={[
-                      { label: "Total Work Done", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0", onClick: () => goToWorkDoneList([]) },
-                      { label: "Flagged Lines",   lines: flaggedLines,  revenue: flaggedRev,        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa", onClick: () => goToWorkDoneList(opKeys) },
-                      { label: "Not Flagged",     lines: nonFlagged.count, revenue: nonFlagged.revenue || 0, bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0", onClick: () => goToWorkDoneList(["__NONE__"]) },
+                      { label: "Total Work Done", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0", onClick: () => goToWorkDoneList([], OPERATIONAL_STATUSES) },
+                      { label: "Flagged Lines",   lines: flaggedLines,  revenue: flaggedRev,        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa", onClick: () => goToWorkDoneList(opKeys, OPERATIONAL_STATUSES) },
+                      { label: "Not Flagged",     lines: nonFlagged.count, revenue: nonFlagged.revenue || 0, bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0", onClick: () => goToWorkDoneList(["__NONE__"], OPERATIONAL_STATUSES) },
                     ]} />
                     <ProportionBar segments={[
                       { value: flaggedLines, color: "#f97316", label: `Flagged ${totalOpLines > 0 ? Math.round(flaggedLines/totalOpLines*100) : 0}%` },
@@ -1050,7 +1073,7 @@ export default function WorkDone() {
                             barColor={p.fg}
                             totalLines={flaggedLines}
                             totalRev={flaggedRev}
-                            onClick={() => goToWorkDoneList([key || "__NONE__"])}
+                            onClick={() => goToWorkDoneList([key || "__NONE__"], OPERATIONAL_STATUSES)}
                           />
                         );
                       })}
@@ -1140,6 +1163,7 @@ export default function WorkDone() {
                   <th>Domain</th>
                   <th>Huawei IM</th>
                   <th>Site</th>
+                  <th>PO Status</th>
                   <th>Center area</th>
                   <th>Region</th>
                   <th>Team</th>
@@ -1153,7 +1177,6 @@ export default function WorkDone() {
                   <th>Work Type</th>
                   <th title="Which milestones are closed for this Work Done">Milestone</th>
                   <th>Issue Flag</th>
-                  <th>Billing Status</th>
                   <th title="Remark set by PM">General</th>
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
@@ -1190,6 +1213,7 @@ export default function WorkDone() {
                       <td>{row.project_domain || "—"}</td>
                       <td>{row.huawei_im || "—"}</td>
                       <td>{row.site_name || "—"}</td>
+                      <td><PoStatusBadge value={row.dispatch_status} /></td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>
                         {row.center_area || "—"}
                       </td>
@@ -1235,7 +1259,6 @@ export default function WorkDone() {
                       <td onClick={(e) => e.stopPropagation()}>
                         <IssueFlagCell flag={row.issue_flag} onClick={() => openIssueFlagModal(row)} />
                       </td>
-                      <td title={row.pic_status ? `PIC status: ${row.pic_status}` : ""}><StatusPill value={row.billing_status} /></td>
                       <td><RemarksCell value={row.general_remark} tone="general" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.general_remark = v; }} /></td>
                       <td><RemarksCell value={row.manager_remark} tone="manager" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.manager_remark = v; }} /></td>
                       <td><RemarksCell value={row.team_lead_remark} tone="team_lead" poDispatch={row.po_dispatch || row.poid} poid={row.poid || row.po_dispatch} onSaved={(v) => { row.team_lead_remark = v; }} /></td>
@@ -1259,12 +1282,12 @@ export default function WorkDone() {
                     <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
                       {displayedCount} rows
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
                     <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                       {fmt.format(totals.revenue)}
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td />
                   </tr>
                 </tfoot>
               )}

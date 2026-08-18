@@ -223,10 +223,26 @@ export default function DataTablePro() {
         const restoredOrder = Array.isArray(saved.order)
           ? saved.order.filter((k) => columns.some((c) => c.key === k))
           : baseOrder;
-        // Append any current column keys missing from restoredOrder so newly
-        // added columns become visible the first time after a release.
+        // Splice any current column keys missing from restoredOrder (a page
+        // added a new column since the user's saved order/an earlier visit)
+        // in at their NATURAL position — right after whichever already-known
+        // column precedes them in baseOrder — instead of dumping them all at
+        // the end. Walk baseOrder in its real DOM order, tracking the index
+        // of the last key we've already placed in restoredOrder; every key
+        // not yet in restoredOrder gets inserted right after that index, so
+        // e.g. a brand-new "PO Status" column added right after "POID" in
+        // the JSX lands right after POID here too, not appended past every
+        // other saved column.
+        let lastPlacedIdx = -1;
         baseOrder.forEach((k) => {
-          if (!restoredOrder.includes(k)) restoredOrder.push(k);
+          const idx = restoredOrder.indexOf(k);
+          if (idx !== -1) {
+            lastPlacedIdx = idx;
+          } else {
+            const insertAt = lastPlacedIdx + 1;
+            restoredOrder.splice(insertAt, 0, k);
+            lastPlacedIdx = insertAt;
+          }
         });
         const validKeys = new Set(restoredOrder);
         // Keys with data-tablepro-default-hidden="true" on the <th> are hidden

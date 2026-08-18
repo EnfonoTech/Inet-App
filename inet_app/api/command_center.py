@@ -6631,41 +6631,165 @@ def get_work_done_summary():
     has_pic_ms2 = frappe.db.has_column("PO Dispatch", "pic_status_ms2")
     has_flag    = frappe.db.has_column("Work Done", "issue_flag")
 
-    # Operational Work Done = PO Dispatch lines that are operationally
-    # finished but not yet commercially wrapped up: dispatch_status =
-    # 'Completed' specifically, NOT 'Closed' — Closed only happens once PIC
-    # has resolved both commercial milestones (see update_pic_row), so a
-    # line drops out of this count the moment it's fully invoiced. This is
-    # a "what's done but still needs attention" view, not a running
-    # historical total.
+    # Operational Work Done = the IM-facing category: Work Done rows (real
+    # records + synthesized subcon placeholders — exactly what the List tab
+    # itself shows, see list_work_done_rows/_synthesize_subcon_workdone_rows)
+    # whose underlying PO Dispatch hasn't yet entered PIC's commercial range.
+    # Verified directly against the List tab: filtering it to these 5
+    # statuses returns the exact same count this produces.
     #
-    # Based on PO Dispatch directly (not the Work Done doctype) specifically
-    # so this also includes lines with no Work Done record at all — both the
-    # narrow subcon-flow gap (see _mark_backend_done_one) AND the much
-    # larger set of archive-imported legacy lines, whose work (and often its
-    # original PIC submission) already happened historically outside this
-    # system by design (see list_legacy_milestones_needing_resubmission).
-    # issue_flag/revenue still come from the real Work Done record via the
-    # LEFT JOIN where one exists; lines with none fall into the "" (No Flag)
-    # bucket and use the PO line amount as their revenue instead.
-    def _completed_po_rows(group_expr):
+    # This used to scan PO Dispatch directly at dispatch_status='Completed'
+    # only. Two bugs with that: (1) it counted PO Dispatch lines with ZERO
+    # Work Done trail (no real record, no subcon flag) — legacy rows that
+    # can never actually be found by clicking through to the List tab; (2) it
+    # missed real Work Done rows sitting at Pending/Dispatched/Planned/
+    # Backend Assigned — anything operationally-scoped before Completed.
+    _OPERATIONAL_STATUSES = ["Pending", "Dispatched", "Planned", "Backend Assigned", "Completed"]
+
+    def _operational_rows(group_expr):
+        # No is_internal_work/is_dummy_po exclusion here, deliberately —
+        # list_work_done_rows (the List tab) doesn't apply either (internal
+        # work structurally never gets a Work Done record at all, so that
+        # exclusion would be a no-op; dummy POs DO show up there, badge and
+        # all). Excluding dummy POs here made this undercount the List tab
+        # by exactly the dummy-PO rows it was hiding — verified live.
+        # PO Dispatch resolution mirrors list_work_done_rows' own priority
+        # exactly: via the execution -> rollout_plan chain FIRST, falling
+        # back to wd.system_id only when there's no rollout plan. A few real
+        # Work Done rows have a blank system_id but a working rollout-plan
+        # chain — a plain `wd.system_id = pd.name` join silently drops them.
+        ph = ", ".join(["%s"] * len(_OPERATIONAL_STATUSES))
+        real = frappe.db.sql(f"""
+            SELECT IFNULL({group_expr}, '') AS grp,
+                   COUNT(*) AS cnt,
+                   SUM(COALESCE(wd.revenue_sar, 0)) AS revenue
+            FROM `tabWork Done` wd
+            LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
+            LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+            JOIN `tabPO Dispatch` pd ON pd.name = COALESCE(rp.po_dispatch, wd.system_id)
+            WHERE pd.dispatch_status IN ({ph})
+            GROUP BY grp
+        """, tuple(_OPERATIONAL_STATUSES), as_dict=True)
+        # Synthesized subcon placeholders never carry an issue_flag (see
+        # _synthesize_subcon_workdone_rows), so they only ever add to the ""
+        # (No Flag) bucket — but they DO belong in the total, matching the
+        # List tab's own population exactly.
+        subcon = _synthesize_subcon_workdone_rows({"tab": "all", "dispatch_status": _OPERATIONAL_STATUSES}) or []
+        if subcon:
+            merged = {r["grp"]: dict(r) for r in real}
+            blank = merged.setdefault("", {"grp": "", "cnt": 0, "revenue": 0})
+            blank["cnt"] += len(subcon)
+            blank["revenue"] = flt(blank["revenue"]) + sum(flt(s.get("revenue_sar")) for s in subcon)
+            real = list(merged.values())
+        return real
+
+    def _po_rows(group_expr, status_clause):
+        # wd_sub: same correlated subquery pic.py's _PIC_FROM_JOIN_LEAN uses —
+        # _PIC_INITIAL_RULE_SQL (pulled in via _PIC_STAGE_SQL's "pending"
+        # branch) reads wd_sub.confirmed for legacy rows with no pic_status
+        # set yet but already TL-confirmed. One row per po_dispatch, so this
+        # LEFT JOIN can't fan out the outer COUNT/SUM.
+        # wd: aggregated to ONE row per system_id before joining — a plain
+        # `LEFT JOIN tabWork Done ON wd.system_id = pd.name` fans out (and
+        # inflates the outer COUNT(*)) whenever a PO Dispatch has more than
+        # one Work Done record, which — pre-existing duplicate-WD bug,
+        # mostly fixed going forward but legacy dupes still exist on this
+        # site — it sometimes does. MAX() picks one consistent value rather
+        # than double-counting revenue too.
         return frappe.db.sql(f"""
             SELECT IFNULL({group_expr}, '') AS grp,
                    COUNT(*) AS cnt,
                    SUM(COALESCE(wd.revenue_sar, pd.line_amount, 0)) AS revenue
             FROM `tabPO Dispatch` pd
-            LEFT JOIN `tabWork Done` wd ON wd.system_id = pd.name
-            WHERE pd.dispatch_status = 'Completed'
+            LEFT JOIN (
+                SELECT system_id, MAX(revenue_sar) AS revenue_sar, MAX(issue_flag) AS issue_flag
+                FROM `tabWork Done`
+                GROUP BY system_id
+            ) wd ON wd.system_id = pd.name
+            LEFT JOIN (
+                SELECT rp.po_dispatch AS po_dispatch,
+                       MAX(IF(wd2.submission_status = 'Confirmation Done', 1, 0)) AS confirmed
+                FROM `tabRollout Plan` rp
+                INNER JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
+                INNER JOIN `tabWork Done` wd2 ON wd2.execution = de.name
+                GROUP BY rp.po_dispatch
+            ) wd_sub ON wd_sub.po_dispatch = pd.name
+            WHERE {status_clause}
               AND IFNULL(pd.is_internal_work, 0) = 0
               AND IFNULL(pd.is_dummy_po, 0) = 0
             GROUP BY grp
         """, as_dict=True)
 
+    # Commercial = PIC's own scope, exactly — no dispatch_status pre-filter.
+    # A dispatch_status-range gate (e.g. "must have reached Completed") is
+    # the wrong test for whether PIC has engaged with a line: pic_status/
+    # pic_status_ms2 can (and, per real data, sometimes does) show genuine
+    # progress — including a milestone fully closed — while dispatch_status
+    # is still stuck at an early operational stage like Planned or Backend
+    # Assigned, because dispatch_status only auto-advances from specific
+    # triggers and doesn't always keep pace. Gating on it here excluded real
+    # PIC activity (confirmed against list_pic_rows: it cost 4,570 lines in
+    # the Pending bucket alone, plus 6 more misclassified out of Active,
+    # entirely because operations hadn't "caught up" yet on lines PIC had
+    # already touched). Matching list_pic_rows' scope precisely — just
+    # is_internal_work/is_dummy_po — keeps this section permanently in sync
+    # with PIC's own numbers instead of silently drifting again later.
+    def _commercial_po_rows(group_expr, extra_clause="1=1"):
+        return _po_rows(group_expr, extra_clause)
+
+    # Local import: pic.py imports FROM this module, so importing it back at
+    # module level here would be circular — deferring to call time avoids
+    # that.
+    from inet_app.api.pic import _PIC_STAGE_SQL, _PIC_INITIAL_RULE_SQL
+
+    # Work Done Summary-specific "done enough" rule — NOT used by PIC's own
+    # pages (PIC Tracker etc. still require a literal 'Commercial Invoice
+    # Closed' on both milestones, unchanged). Here, a line inside the
+    # "Active" stage additionally counts as Commercially Done once each
+    # APPLICABLE milestone has at least reached submission: MS1 must be
+    # Submitted-or-Closed; MS2 must be Submitted-or-Closed too, UNLESS MS2
+    # is blank — a genuinely single-milestone line — in which case MS1 alone
+    # deciding is correct (same "no MS2 required" pattern already used for
+    # full closure elsewhere).
+    _MS1_SUBMITTED_SQL = f"(({_PIC_INITIAL_RULE_SQL.strip()}) IN ('Commercial Invoice Submitted','Commercial Invoice Closed'))"
+    _MS2_SUBMITTED_OR_NA_SQL = (
+        "(IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Submitted','Commercial Invoice Closed') "
+        "OR IFNULL(pd.pic_status_ms2,'') = '')"
+    )
+    _SUMMARY_DONE_ENOUGH_SQL = f"({_MS1_SUBMITTED_SQL} AND {_MS2_SUBMITTED_OR_NA_SQL})"
+    # The Active stage minus whatever just got promoted to "done enough" —
+    # this is what the MS1/MS2 detail below and the "Still Active" tile both
+    # need to agree on, so a line can't show up as done in one place and
+    # still-open in the other.
+    _SUMMARY_ACTIVE_SQL = f"({_PIC_STAGE_SQL['active']} AND NOT {_SUMMARY_DONE_ENOUGH_SQL})"
+    _stage_case_sql = (
+        "CASE "
+        f"WHEN {_PIC_STAGE_SQL['pending']} THEN 'Pending' "
+        f"WHEN {_PIC_STAGE_SQL['cancelled']} THEN 'Cancelled' "
+        f"WHEN {_PIC_STAGE_SQL['closed']} THEN 'Closed' "
+        f"WHEN {_PIC_STAGE_SQL['active']} AND {_SUMMARY_DONE_ENOUGH_SQL} THEN 'Closed' "
+        "ELSE 'Active' END"
+    )
+
     # to_serial() below reads r.cnt/r.revenue via attribute access — frappe._dict
     # supports that (plain dict subscripting wouldn't).
-    op_rows = [frappe._dict(flag=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _completed_po_rows("wd.issue_flag")] if has_flag else []
-    ms1_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _completed_po_rows("pd.pic_status")] if has_pic else []
-    ms2_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _completed_po_rows("pd.pic_status_ms2")] if has_pic_ms2 else []
+    op_rows = [frappe._dict(flag=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _operational_rows("wd.issue_flag")] if has_flag else []
+    # MS1/MS2 status detail is scoped to the SAME (narrowed) "Active" set the
+    # headline "Still Active" tile shows, not the full 17,434-line PIC
+    # universe and not the lines just promoted into "Commercially Done"
+    # above — a line can't be done-enough in the headline yet still show up
+    # here as still-open. Closed lines would trivially all read "Commercial
+    # Invoice Closed" on both milestones anyway (not informative).
+    ms1_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _commercial_po_rows("pd.pic_status", _SUMMARY_ACTIVE_SQL)] if has_pic else []
+    ms2_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _commercial_po_rows("pd.pic_status_ms2", _SUMMARY_ACTIVE_SQL)] if has_pic_ms2 else []
+
+    # Commercial "done vs active" headline: reuse PIC's own Pending/Active/
+    # Closed/Cancelled stage classification (same logic PIC's own pages route
+    # on) instead of a bespoke MS1-only "done" rule — a line's real
+    # commercial state depends on BOTH milestones together. Full universe
+    # here (not stage-scoped) since this is what CLASSIFIES every line into
+    # its stage in the first place.
+    stage_rows = [frappe._dict(stage=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _commercial_po_rows(_stage_case_sql)]
 
     PIC_STATUS_ORDER = [
         "Under Process to Apply",
@@ -6679,6 +6803,7 @@ def get_work_done_summary():
         "Work Not Done",
     ]
     PIC_DONE_STATUSES = ["Commercial Invoice Submitted", "Commercial Invoice Closed"]
+    PIC_STAGE_ORDER = ["Pending", "Active", "Closed", "Cancelled"]
     OPERATIONAL_FLAGS = [
         "POD/PPT required",
         "TFM Check list",
@@ -6693,15 +6818,17 @@ def get_work_done_summary():
                 for r in rows]
 
     return {
-        "operational":        to_serial(op_rows,  "flag"),
-        "commercial_ms1":     to_serial(ms1_rows, "status"),
-        "commercial_ms2":     to_serial(ms2_rows, "status"),
-        "operational_order":  OPERATIONAL_FLAGS,
-        "pic_status_order":   PIC_STATUS_ORDER,
-        "pic_done_statuses":  PIC_DONE_STATUSES,
+        "operational":         to_serial(op_rows,  "flag"),
+        "commercial_ms1":      to_serial(ms1_rows, "status"),
+        "commercial_ms2":      to_serial(ms2_rows, "status"),
+        "commercial_stage":    to_serial(stage_rows, "stage"),
+        "operational_order":   OPERATIONAL_FLAGS,
+        "pic_status_order":    PIC_STATUS_ORDER,
+        "pic_done_statuses":   PIC_DONE_STATUSES,
+        "pic_stage_order":     PIC_STAGE_ORDER,
         # backward-compat alias
-        "commercial":         to_serial(ms1_rows, "status"),
-        "commercial_order":   PIC_STATUS_ORDER,
+        "commercial":          to_serial(ms1_rows, "status"),
+        "commercial_order":    PIC_STATUS_ORDER,
     }
 
 
@@ -6767,6 +6894,7 @@ def list_work_done_rows(filters=None, limit=500):
     else:
         billing_expr = "IFNULL(wd.billing_status, 'Pending')"
     for col, key in ((billing_expr, "billing_status"),
+                     ("COALESCE(pd.dispatch_status, pd_sys.dispatch_status, '')", "dispatch_status"),
                      ("IFNULL(rp.team, de.team)", "team"),
                      ("COALESCE(pd.project_code, pd_sys.project_code, '')", "project_code"),
                      ("COALESCE(pd.site_code, pd_sys.site_code, '')", "site_code")):
@@ -7256,7 +7384,8 @@ def _synthesize_subcon_workdone_rows(filters):
     """Build Work-Done-shaped rows from PO Dispatches with subcon_status='Work Done'.
 
     Honors the same filters as ``list_work_done_rows``:
-        billing_status, from_date / to_date, team, project_code, site_code, im, search.
+        billing_status, dispatch_status, from_date / to_date, team, project_code,
+        site_code, im, search.
     Subcon dispatches don't carry a billing_status; if the caller filtered to a
     specific real billing_status (Confirmed/Submitted/etc.), they're excluded.
     The ``team`` filter is matched against ``pd.backend_team`` (not the rollout team).
@@ -7303,6 +7432,7 @@ def _synthesize_subcon_workdone_rows(filters):
         ("pd.project_code", "project_code"),
         ("pd.site_code", "site_code"),
         ("pd.backend_team", "team"),
+        ("pd.dispatch_status", "dispatch_status"),
     ):
         c, p = _sql_in_or_eq(col, f.get(key))
         if c:

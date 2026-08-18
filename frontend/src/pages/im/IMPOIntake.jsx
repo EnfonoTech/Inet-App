@@ -1412,7 +1412,6 @@ export default function IMPOIntake() {
                     <th>POID</th>
                     <th>Dispatch Status</th>
                     <th>Closed Via</th>
-                    <th>Billing Status</th>
                     <th>Mode</th>
                     <th>PO No</th>
                     <th>Project</th>
@@ -1440,7 +1439,7 @@ export default function IMPOIntake() {
                 <tbody>
                   {ovFilteredRows.length === 0 ? (
                     <tr>
-                      <td colSpan={26} style={{ padding: 0 }}>
+                      <td colSpan={25} style={{ padding: 0 }}>
                         {ovLoading ? (
                           <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                         ) : (
@@ -1457,8 +1456,6 @@ export default function IMPOIntake() {
                     const sc = dispatchStatusColor(row.dispatch_status);
                     const isDummy = !!Number(row.is_dummy_po);
                     const isClosed = ["Closed", "Partially Closed", "Submitted", "Partially Submitted", "Cancelled", "Cancelled (in System)"].includes(row.dispatch_status || "");
-                    const billing = billingStatusFromPicStatus(row.pic_status);
-                    const bsc = billing ? billingStatusColor(billing) : null;
                     const iflag = ps?.issue_flag || "";
                     const ifsc = iflag ? issueFlagColor(iflag) : null;
                     return (
@@ -1473,11 +1470,6 @@ export default function IMPOIntake() {
                         <td>
                           {row.direct_close_by
                             ? <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0369a1", border: "1px solid #93c5fd", whiteSpace: "nowrap" }}>Direct Close</span>
-                            : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
-                        </td>
-                        <td>
-                          {bsc
-                            ? <StatusBadge value={billing} bg={bsc.bg} fg={bsc.fg} bd={bsc.bd} />
                             : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
                         </td>
                         <td>
@@ -1521,11 +1513,11 @@ export default function IMPOIntake() {
                 </tbody>
                 {ovFilteredRows.length > 0 && (
                   <tfoot>
-                    {/* POID·Dispatch Status·Closed Via·Billing Status·Mode·PO No·Project·Domain·DUID·
-                        Center Area·Region·Item Code·Description·Activity Type = 14 columns, then Qty·Line Amount (SAR),
+                    {/* POID·Dispatch Status·Closed Via·Mode·PO No·Project·Domain·DUID·
+                        Center Area·Region·Item Code·Description·Activity Type = 13 columns, then Qty·Line Amount (SAR),
                         then Target Month..Actions = 10 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                      <td colSpan={14} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      <td colSpan={13} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                         {ovDisplayedCount} row{ovDisplayedCount !== 1 ? "s" : ""}
                       </td>
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
