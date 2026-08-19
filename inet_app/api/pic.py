@@ -9,6 +9,7 @@ the Cash Flow Summary dashboard.
 import frappe
 from frappe.utils import cint, flt, getdate, nowdate
 from inet_app.api.notifications import _make_notification, _notify_role
+from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
 from inet_app.api.command_center import (
     _batch_item_activity_types,
@@ -2069,6 +2070,23 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
 
     tax_template = frappe.db.get_single_value("INET Settings", "sales_tax_template")
 
+    # DUID and project ride along as accounting dimensions so revenue can be
+    # filtered by site and project in the General Ledger, the same way the
+    # subcontractor side already does it (see create_purchase_order_from_pic).
+    # Both are Link fields, but PO Dispatch stores site_code / project_code as
+    # plain text — a value with no master record would fail Link validation and
+    # take the whole invoice down, so only values that really exist are set.
+    real_duids = set(frappe.db.get_all(
+        "DUID Master",
+        filters={"name": ["in", sorted({(pd.get("site_code") or "") for pd, _m, _a in pds} - {""}) or [""]]},
+        pluck="name",
+    ))
+    real_projects = set(frappe.db.get_all(
+        "Project Control Center",
+        filters={"name": ["in", sorted({(pd.get("project_code") or "") for pd, _m, _a in pds} - {""}) or [""]]},
+        pluck="name",
+    ))
+
     total_amount = 0
     try:
         si = frappe.new_doc("Sales Invoice")
@@ -2092,6 +2110,8 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
             full_qty = flt(pd.get("qty") or 1)
             full_rate = flt(pd.get("rate") or amount)
             scaled_qty = round(full_qty * ms_pct / 100.0, 4) if ms_pct > 0 else full_qty
+            duid = (pd.get("site_code") or "").strip()
+            project = (pd.get("project_code") or "").strip()
             si.append("items", {
                 "item_code": item_code,
                 "qty": scaled_qty,
@@ -2099,6 +2119,8 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
                 "amount": amount,
                 "poid": dname,
                 "milestone": row_milestone,
+                ACCOUNTING_DUID_FIELDNAME: duid if duid in real_duids else None,
+                "project_control_center": project if project in real_projects else None,
             })
             total_amount += amount
         si.save(ignore_permissions=True)
