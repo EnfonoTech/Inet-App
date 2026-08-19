@@ -720,6 +720,68 @@ export const pmApi = {
     milestone: milestone || null,
   }),
 
+  // Subcon PO — the supplier side of PIC (subcon_po.py). Mirrors the PIC
+  // endpoints above: same shapes, purchase documents instead of sales.
+  // stage: "to_order" | "ordered" | "invoiced" | "closed" | "cancelled" | "all"
+  // — the tabs of the Subcon PO page. Unlike listPicRows the stages OVERLAP:
+  // a line with MS1 paid and MS2 unordered is in both "closed" and
+  // "to_order", so use row.can_order_ms1 / can_order_ms2 to know which
+  // milestone an action applies to rather than assuming MS1.
+  listSubconPoRows: (stage, portalFilters, limit) => call("inet_app.api.subcon_po.list_subcon_po_rows", {
+    stage: stage || "to_order",
+    portal_filters: JSON.stringify(portalFilters || {}),
+    // 0 = "All" (no LIMIT). Anything else is a positive cap.
+    limit: Number.isFinite(Number(limit)) ? Number(limit) : 500,
+  }),
+  getSubconPoFilterOptions: () => call("inet_app.api.subcon_po.get_subcon_po_filter_options"),
+  getSubconPoCapability: () => call("inet_app.api.subcon_po.get_subcon_po_capability"),
+  // One draft Purchase Order per supplier. milestone null → every unordered
+  // milestone with an amount. Status advances to "PO Submitted" only when the
+  // PO is actually submitted (server hook), never here.
+  createPurchaseOrderFromPic: (poDispatch, milestone) => call("inet_app.api.subcon_po.create_purchase_order_from_pic", {
+    po_dispatch: JSON.stringify(Array.isArray(poDispatch) ? poDispatch : [poDispatch]),
+    milestone: milestone || null,
+  }),
+  // POs + PIs behind one PIC line, with the supplier bill reference and the
+  // invoice attachments — the list CSV can't carry those.
+  getSubconLineDocuments: (poDispatch) => call("inet_app.api.subcon_po.get_subcon_line_documents", {
+    po_dispatch: poDispatch,
+  }),
+  // Header + lines of one supplier PO, read from the document (so it carries
+  // VAT, which the list rows don't) for the Receive Invoice screen.
+  getPurchaseOrderSummary: (purchaseOrder) => call("inet_app.api.subcon_po.get_purchase_order_summary", {
+    purchase_order: purchaseOrder,
+  }),
+  // Records the sub's bill: creates the draft Purchase Invoice AND moves the
+  // covered milestones to "Invoice Received". Returns attach_to_doctype /
+  // attach_to_name so the caller can upload the invoice file onto the PI.
+  // poDispatches limits the invoice to those PIC lines of the PO — the sub
+  // bills a PO in instalments, so this is the normal case. Legs already on a
+  // live invoice are dropped server-side, so it can't double-bill.
+  receiveSupplierInvoice: (purchaseOrder, poDispatches, billNo, billDate) => call("inet_app.api.subcon_po.receive_supplier_invoice", {
+    purchase_order: purchaseOrder,
+    ...(poDispatches && poDispatches.length
+      ? { po_dispatches: JSON.stringify(poDispatches) } : {}),
+    bill_no: billNo || "",
+    bill_date: billDate || "",
+  }),
+  // milestone: "MS1" | "MS2" | "BOTH" (every milestone with an amount) |
+  // "AUTO" (every milestone whose current status is in fromStatuses — what the
+  // tab-specific actions use, so PIC never picks a leg by hand).
+  // fromStatuses also guards the explicit modes; omit for a free-form fix.
+  // "" as status resets a milestone to Not Ordered, making it orderable again.
+  bulkUpdateSubconPoStatus: (poDispatches, status, milestone, date, remark, fromStatuses) => call("inet_app.api.subcon_po.bulk_update_subcon_po_status", {
+    po_dispatches: JSON.stringify(Array.isArray(poDispatches) ? poDispatches : [poDispatches]),
+    status: status ?? "",
+    milestone: milestone || "MS1",
+    date: date || "",
+    remark: remark || "",
+    ...(fromStatuses ? { from_statuses: JSON.stringify(fromStatuses) } : {}),
+  }),
+  subconPayoutSummary: (portalFilters) => call("inet_app.api.subcon_po.subcon_payout_summary", {
+    portal_filters: JSON.stringify(portalFilters || {}),
+  }),
+
   // Backend-team assignment flow — IM-driven, lives outside the rollout chain
   getMyBackendCapability: (im) => call("inet_app.api.command_center.get_my_backend_capability", im ? { im } : {}),
   getMyDirectCloseCapability: () => call("inet_app.api.command_center.get_my_direct_close_capability", {}),

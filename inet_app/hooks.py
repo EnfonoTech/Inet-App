@@ -193,9 +193,43 @@ doc_events = {
 		"on_submit": "inet_app.api.pic.on_sales_invoice_submit",
 		"on_cancel": "inet_app.api.pic.on_sales_invoice_cancel"
 	},
+	# Supplier side (Subcon PO). PIC raises these; the Purchase Invoice is
+	# submitted by Accounts, so the status has to follow the document rather
+	# than a button click — see inet_app/api/subcon_po.py.
+	"Purchase Order": {
+		"on_submit": "inet_app.api.subcon_po.on_purchase_order_submit",
+		"on_cancel": "inet_app.api.subcon_po.on_purchase_order_cancel",
+		# Without on_trash a deleted draft PO would leave its PIC line stuck
+		# at "PO Created" — never orderable again, never on the To Order tab.
+		"on_trash": "inet_app.api.subcon_po.on_purchase_order_trash",
+	},
+	"Purchase Invoice": {
+		"on_submit": "inet_app.api.subcon_po.on_purchase_invoice_submit",
+		"on_cancel": "inet_app.api.subcon_po.on_purchase_invoice_cancel",
+		# A draft invoice is deleted, not cancelled, so on_cancel never fires —
+		# without this the line stays at "Invoice Received" for a bill that no
+		# longer exists.
+		"on_trash": "inet_app.api.subcon_po.on_purchase_invoice_trash",
+	},
+	# One Payment Entry can settle either side, so both handlers run: the pic
+	# one walks Sales Invoice references (customer receipts), the subcon_po one
+	# walks Purchase Invoice references (supplier payments). Each ignores the
+	# other's reference type.
 	"Payment Entry": {
-		"on_submit": "inet_app.api.pic.on_payment_entry_submit",
-		"on_cancel": "inet_app.api.pic.on_payment_entry_cancel",
+		"on_submit": [
+			"inet_app.api.pic.on_payment_entry_submit",
+			"inet_app.api.subcon_po.on_payment_entry_submit",
+		],
+		"on_cancel": [
+			"inet_app.api.pic.on_payment_entry_cancel",
+			"inet_app.api.subcon_po.on_payment_entry_cancel",
+		],
+	},
+	# Keeps the stored Subcon PO rollup correct even for a hand edit in Desk
+	# that never goes through inet_app.api.subcon_po. Mirrors how pic_status
+	# rolls up into dispatch_status.
+	"PO Dispatch": {
+		"validate": "inet_app.api.subcon_po.set_overall_status",
 	},
 	"Stock Entry": {
 		"before_insert": "inet_app.api.material_management.before_stock_entry_insert",

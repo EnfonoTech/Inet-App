@@ -57,6 +57,8 @@ const PICClosed           = lazy(() => import("./pages/pic/PICClosed"));
 const PICCancelled        = lazy(() => import("./pages/pic/PICCancelled"));
 const PICReports          = lazy(() => import("./pages/pic/PICReports"));
 const PICInvoicingSummary = lazy(() => import("./pages/pic/PICInvoicingSummary"));
+const SubconPO            = lazy(() => import("./pages/pic/SubconPO"));
+const SubconPayout        = lazy(() => import("./pages/pic/SubconPayout"));
 
 /* -- Field pages ------------------------------------------------ */
 const TodaysWork          = lazy(() => import("./pages/field/TodaysWork"));
@@ -191,6 +193,8 @@ function AppContent() {
               <Route path="/pic-closed" element={<PICClosed />} />
               <Route path="/pic-cancelled" element={<PICCancelled />} />
               <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
+              <Route path="/pic-subcon-po" element={<SubconPO />} />
+              <Route path="/pic-subcon-payout" element={<SubconPayout />} />
               <Route path="/pic-reports" element={<PICReports />} />
               <Route path="/po-dump" element={<PODump />} />
             </>
@@ -204,6 +208,8 @@ function AppContent() {
               <Route path="/pic-closed" element={<PICClosed />} />
               <Route path="/pic-cancelled" element={<PICCancelled />} />
               <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
+              <Route path="/pic-subcon-po" element={<SubconPO />} />
+              <Route path="/pic-subcon-payout" element={<SubconPayout />} />
               <Route path="/pic-reports" element={<PICReports />} />
             </>
           )}

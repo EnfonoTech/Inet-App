@@ -2,6 +2,7 @@
 import frappe
 from frappe.utils import flt, nowdate
 from inet_app.api.command_center import _sql_like_pattern
+from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
 
 def _expense_limit_suffix(limit):
@@ -139,7 +140,7 @@ def _enrich_lines_with_duid(rows, parent_field="parent"):
         f"""
         SELECT
             ecd.parent,
-            ecd.duid,
+            ecd.{ACCOUNTING_DUID_FIELDNAME} AS duid,
             COALESCE(pd.poid, ecd.poid, '') AS poid_display,
             ecd.project_control_center AS project,
             COALESCE(pcc.project_code, ecd.project_control_center, '') AS project_display,
@@ -544,10 +545,13 @@ def create_project_expense_claim(date=None, remarks=None, inet_team=None, expens
             row.sanctioned_amount = row_amount
             if default_cost_center and hasattr(row, "cost_center"):
                 row.cost_center = default_cost_center
-            # duid field is auto-created by the DUID accounting dimension (Links to DUID Master)
-            if not hasattr(row, "duid"):
+            # Field is auto-created by the DUID accounting dimension (Links to DUID
+            # Master). Its fieldname is `duid_acc`, NOT `duid` — the inventory DUID
+            # dimension owns the bare `duid` name on stock doctypes, so the accounting
+            # one was moved aside. See _separate_duid_dimensions in setup.py.
+            if not hasattr(row, ACCOUNTING_DUID_FIELDNAME):
                 frappe.throw("DUID accounting dimension is not set up yet. Run bench migrate.")
-            row.duid = duid
+            setattr(row, ACCOUNTING_DUID_FIELDNAME, duid)
             # poid field still exists (POID accounting dimension) — set it too when known
             if e["poid"] and hasattr(row, "poid"):
                 row.poid = e["poid"]
@@ -820,7 +824,7 @@ def get_expense_claim_detail(claim_name):
             "description": row.description,
             "amount": row.amount,
             "sanctioned_amount": row.sanctioned_amount,
-            "duid": getattr(row, "duid", None),
+            "duid": getattr(row, ACCOUNTING_DUID_FIELDNAME, None),
             "poid": (frappe.db.get_value("PO Dispatch", raw_poid, "poid") or raw_poid) if raw_poid else None,
             "project": project_display,  # set for general (project-level) expenses
             "expense_date": str(row.expense_date) if row.expense_date else None,

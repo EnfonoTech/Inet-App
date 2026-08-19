@@ -2,6 +2,7 @@
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
 inet_app.patches.migrate_inet_team_member_employee
+inet_app.patches.rename_subcon_status_fields
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
@@ -14,3 +15,5 @@ inet_app.patches.fix_daily_execution_achieved_amount
 inet_app.patches.fix_work_done_revenue_sar
 inet_app.patches.sync_dispatch_status_from_pic
 inet_app.patches.sync_po_intake_line_status_from_dispatch
+inet_app.patches.backfill_subcon_overall_status
+inet_app.patches.repair_duid_field_split

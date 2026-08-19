@@ -89,7 +89,24 @@
   "inet_pct_ms1",
   "subcon_pct_ms2",
   "inet_pct_ms2",
-  "direct_close_by"
+  "direct_close_by",
+  "section_subcon_po",
+  "sub_po_supplier",
+  "column_break_subpo1",
+  "sub_po_status",
+  "sub_po_status_ms1",
+  "sub_po_pct_ms1",
+  "sub_po_amount_ms1",
+  "sub_po_date_ms1",
+  "sub_paid_date_ms1",
+  "sub_po_remark_ms1",
+  "column_break_subpo2",
+  "sub_po_status_ms2",
+  "sub_po_pct_ms2",
+  "sub_po_amount_ms2",
+  "sub_po_date_ms2",
+  "sub_paid_date_ms2",
+  "sub_po_remark_ms2"
  ],
  "fields": [
   {
@@ -599,11 +616,107 @@
    "label": "Direct Closed By",
    "options": "IM Master",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_subcon_po",
+   "fieldtype": "Section Break",
+   "label": "Subcon PO (Supplier Side)"
+  },
+  {
+   "fieldname": "sub_po_supplier",
+   "fieldtype": "Link",
+   "label": "Subcon PO Supplier",
+   "options": "Supplier",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_subpo1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sub_po_status_ms1",
+   "fieldtype": "Select",
+   "label": "Subcon PO Status (MS1)",
+   "options": "\nReady to Order\nPO Created\nPO Submitted\nInvoice Received\nPurchase Invoice Submitted\nClosed"
+  },
+  {
+   "fieldname": "sub_po_pct_ms1",
+   "fieldtype": "Percent",
+   "label": "Subcon Payout % (MS1)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sub_po_amount_ms1",
+   "fieldtype": "Currency",
+   "label": "Subcon PO Amount (MS1)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sub_po_date_ms1",
+   "fieldtype": "Date",
+   "label": "Subcon PO Date (MS1)"
+  },
+  {
+   "fieldname": "sub_paid_date_ms1",
+   "fieldtype": "Date",
+   "label": "Subcon Payment Closed Date (MS1)"
+  },
+  {
+   "fieldname": "sub_po_remark_ms1",
+   "fieldtype": "Small Text",
+   "label": "Subcon PO Remark (MS1)"
+  },
+  {
+   "fieldname": "column_break_subpo2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sub_po_status_ms2",
+   "fieldtype": "Select",
+   "label": "Subcon PO Status (MS2)",
+   "options": "\nReady to Order\nPO Created\nPO Submitted\nInvoice Received\nPurchase Invoice Submitted\nClosed"
+  },
+  {
+   "fieldname": "sub_po_pct_ms2",
+   "fieldtype": "Percent",
+   "label": "Subcon Payout % (MS2)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sub_po_amount_ms2",
+   "fieldtype": "Currency",
+   "label": "Subcon PO Amount (MS2)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sub_po_date_ms2",
+   "fieldtype": "Date",
+   "label": "Subcon PO Date (MS2)"
+  },
+  {
+   "fieldname": "sub_paid_date_ms2",
+   "fieldtype": "Date",
+   "label": "Subcon Payment Closed Date (MS2)"
+  },
+  {
+   "fieldname": "sub_po_remark_ms2",
+   "fieldtype": "Small Text",
+   "label": "Subcon PO Remark (MS2)"
+  },
+  {
+   "fieldname": "sub_po_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Subcon PO Status",
+   "options": "\nNot Ordered\nPartially Ready\nReady to Order\nPartially Created\nPO Created\nPartially Ordered\nPO Submitted\nPartially Invoiced\nInvoice Received\nPurchase Invoice Submitted\nPartially Closed\nClosed",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-02 15:25:32.857119",
+ "modified": "2026-08-18 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "PO Dispatch",

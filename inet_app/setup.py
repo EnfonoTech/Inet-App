@@ -24,6 +24,8 @@ def after_migrate():
     _ensure_poid_accounting_dimension()
     _ensure_project_accounting_dimension()
     _ensure_duid_accounting_dimension()
+    _ensure_subcon_po_fields()
+    _separate_duid_dimensions()
     _ensure_material_permissions()
     _ensure_material_return_field()
     _ensure_material_confirmation_fields()
@@ -297,6 +299,20 @@ def _ensure_pic_permissions():
         ("Sales Taxes and Charges Template", {"read": 1}),
         ("Customer",                       {"read": 1}),
         ("Item",                           {"read": 1}),
+        # Subcon PO (supplier side). The Purchase Order is PIC's own outbound
+        # document — it gets printed and emailed to the subcontractor, and a
+        # draft can't be sent, so PIC needs submit here.
+        ("Purchase Order",                 {"read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1}),
+        ("Purchase Order Item",            {"read": 1, "write": 1, "create": 1}),
+        # Purchase Invoice deliberately has NO submit: submitting posts a
+        # supplier payable to the GL, which is Accounts' call. PIC creates the
+        # draft (same split as Sales Invoice above) and the status advances by
+        # itself via on_purchase_invoice_submit once Accounts submits it.
+        ("Purchase Invoice",               {"read": 1, "write": 1, "create": 1, "delete": 1, "cancel": 1}),
+        ("Purchase Invoice Item",          {"read": 1, "write": 1, "create": 1}),
+        ("Purchase Taxes and Charges",     {"read": 1}),
+        ("Purchase Taxes and Charges Template", {"read": 1}),
+        ("Supplier",                       {"read": 1}),
     ]
 
     for dt_name, perm_map in doctypes:
@@ -524,7 +540,9 @@ def _ensure_duid_accounting_dimension():
     several POIDs over time and the client wants expenses tracked per site.
     The POID dimension is left untouched; other doctypes/reports still use it.
     Fields are created synchronously — after_insert only enqueues them, and the
-    expense API needs the `duid` column right after migrate.
+    expense API needs the column right after migrate. The fieldname is
+    ACCOUNTING_DUID_FIELDNAME (`duid_acc`), not `duid` — the inventory DUID
+    dimension owns the bare name. See _separate_duid_dimensions.
     """
     if not frappe.db.exists("DocType", "Accounting Dimension"):
         return
@@ -538,7 +556,7 @@ def _ensure_duid_accounting_dimension():
             "name": "DUID",
             "document_type": "DUID Master",
             "label": "DUID",
-            "fieldname": "duid",
+            "fieldname": ACCOUNTING_DUID_FIELDNAME,
             "disabled": 0,
         })
         dim.insert(ignore_permissions=True)
@@ -678,6 +696,280 @@ def _ensure_material_confirmation_fields():
         "hidden": 1,
     })
     frappe.db.commit()
+
+
+def _ensure_subcon_po_fields():
+    """Subcon PO: line-level tagging on Purchase Order Item / Purchase Invoice Item.
+
+    ``poid`` already exists on both (the POID Accounting Dimension adds it to
+    every financial document — see _ensure_poid_accounting_dimension). These
+    three add the milestone plus the commercial terms the PO was priced from,
+    so a Desk user can reconcile a supplier PO line back to the PIC line
+    without a join.
+
+    All three are ``print_hide = 1`` on purpose. The supplier PO is printed
+    and emailed to the subcontractor, and ``payout_pct`` next to a net rate
+    would let them back out INET's own customer rate. They must also stay
+    ``no_copy = 0`` — that's what lets Frappe's mapper carry them from the
+    Purchase Order to the Purchase Invoice for free (frappe/model/mapper.py
+    copies same-named target fields), so make_purchase_invoice needs no
+    custom field_map.
+    """
+    for dt, after in (
+        ("Purchase Order Item", "poid"),
+        ("Purchase Invoice Item", "poid"),
+    ):
+        if not frappe.db.exists("DocType", dt):
+            continue
+        _add_field(dt, f"{dt}-milestone", {
+            "fieldname": "milestone",
+            "label": "Milestone",
+            "fieldtype": "Select",
+            "options": "\nMS1\nMS2",
+            "insert_after": after,
+            "print_hide": 1,
+            "no_copy": 0,
+            "module": "Inet App",
+        })
+        _add_field(dt, f"{dt}-subcontract", {
+            "fieldname": "subcontract",
+            "label": "Subcontract",
+            "fieldtype": "Link",
+            "options": "Subcontract Master",
+            "insert_after": "milestone",
+            "print_hide": 1,
+            "no_copy": 0,
+            "module": "Inet App",
+        })
+        _add_field(dt, f"{dt}-payout_pct", {
+            "fieldname": "payout_pct",
+            "label": "Subcon Payout %",
+            "fieldtype": "Percent",
+            "insert_after": "subcontract",
+            "print_hide": 1,
+            "no_copy": 0,
+            "module": "Inet App",
+        })
+
+    # Retrofit print_hide/no_copy on sites where these already exist from an
+    # earlier migrate — _add_field only applies its definition on creation.
+    for dt in ("Purchase Order Item", "Purchase Invoice Item"):
+        for fn in ("milestone", "subcontract", "payout_pct"):
+            cf = f"{dt}-{fn}"
+            if frappe.db.exists("Custom Field", cf):
+                frappe.db.set_value("Custom Field", cf, {"print_hide": 1, "no_copy": 0})
+
+    frappe.db.commit()
+
+
+# The accounting DUID dimension deliberately does NOT use the fieldname `duid`.
+# See _separate_duid_dimensions for why.
+ACCOUNTING_DUID_FIELDNAME = "duid_acc"
+
+
+def _separate_duid_dimensions():
+    """Give the accounting and inventory DUID dimensions their own fieldnames.
+
+    DUID is registered twice — as an Accounting Dimension and as an Inventory
+    Dimension (apply_to_all_doctypes) — and both derive the same fieldname
+    ``duid`` from the name. A doctype can only carry one field with that name,
+    and ERPNext's accounting-dimension creator skips any doctype where the
+    fieldname already exists:
+
+        if df["fieldname"] not in fieldnames:      # accounting_dimension.py
+            create_custom_field(doctype, df, ...)
+
+    So on the 16 stock-bearing child doctypes the inventory dimension won and
+    the accounting dimension silently got nothing. That left one field serving
+    two purposes, which is no good: the accounting dimension is what gives you a
+    DUID column and filter in the **General Ledger**, and the inventory
+    dimension is what gives you one in the **Stock Ledger**. They need to be
+    separate to both work.
+
+    The inventory side cannot be renamed — ``do_not_update_document`` throws
+    DoNotChangeError once stock transactions exist against it, and 34 Stock
+    Ledger Entries already reference its ``duid_master`` target field. So the
+    accounting side moves instead, to ``duid_acc``. Its label stays "DUID", so
+    the GL report still shows and filters on "DUID".
+
+    Renamed in place rather than deleted and recreated on purpose:
+    ``delete_accounting_dimension`` runs a blanket
+    ``DELETE FROM tabCustom Field WHERE fieldname='duid' AND dt IN (...)``,
+    which would take the inventory dimension's fields with it.
+    """
+    if not frappe.db.exists("Accounting Dimension", "DUID"):
+        return
+
+    dim = frappe.get_doc("Accounting Dimension", "DUID")
+    if dim.fieldname != ACCOUNTING_DUID_FIELDNAME:
+        dim.fieldname = ACCOUNTING_DUID_FIELDNAME
+        dim.label = "DUID"
+        # on_update -> make_dimension_in_accounting_doctypes creates the new
+        # field across every accounting doctype. Nothing is deleted here.
+        dim.save(ignore_permissions=True)
+        frappe.db.commit()
+
+    # Put the inventory dimension's field back in its own section. An earlier
+    # pass had moved it into Accounting Dimensions as a stand-in for the missing
+    # accounting field; now that a real one exists, leaving it there would show
+    # two DUID fields side by side.
+    if frappe.db.exists("Custom Field", "Purchase Invoice Item-duid"):
+        frappe.db.set_value("Custom Field", "Purchase Invoice Item-duid", {
+            "insert_after": "inventory_dimension",
+            "label": "Target DUID",
+        })
+    if frappe.db.exists("Custom Field", "Purchase Invoice Item-rejected_duid"):
+        frappe.db.set_value("Custom Field", "Purchase Invoice Item-rejected_duid",
+                            "insert_after", "duid")
+
+    # Drop the `duid` fields the accounting dimension had created, but ONLY on
+    # doctypes the inventory dimension does not own — a doctype carrying an
+    # `inventory_dimension` section break is inventory territory and its `duid`
+    # must stay. (Frappe does not drop the underlying column, so no data is
+    # lost either way.)
+    # Two independent sources for "the inventory dimension owns this doctype",
+    # unioned. The Custom Field section-break heuristic alone is not enough: it
+    # only holds for doctypes ERPNext actually gave an `inventory_dimension`
+    # section to, and a site missing one of those would have its live inventory
+    # field swept. get_inventory_documents() is ERPNext's own definition of the
+    # set (children with a Batch/Serial DocField, plus Putaway Rule).
+    inventory_dts = set(frappe.db.get_all(
+        "Custom Field", filters={"fieldname": "inventory_dimension"}, pluck="dt"))
+    try:
+        from erpnext.stock.doctype.inventory_dimension.inventory_dimension import (
+            get_inventory_documents,
+        )
+        inventory_dts |= {r[0] for r in get_inventory_documents()}
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "DUID sweep: inventory doctype list failed")
+
+    # Scoped hard, on three axes, because an earlier unscoped version of this
+    # ("every Custom Field named duid on a doctype without an inventory_dimension
+    # section") also deleted `Material Request.duid` — a plain Data field this app
+    # creates itself in _ensure_outbound_custom_fields, nothing to do with any
+    # dimension. Only a Link-to-DUID-Master field that no app owns can be a
+    # leftover from the accounting dimension.
+    orphans = [
+        r.name for r in frappe.db.get_all(
+            "Custom Field",
+            filters={
+                "fieldname": "duid",
+                "fieldtype": "Link",
+                "options": "DUID Master",
+                "module": ["not in", ["Inet App"]],
+            },
+            fields=["name", "dt"])
+        if r.dt not in inventory_dts
+    ]
+    for name in orphans:
+        frappe.db.delete("Custom Field", {"name": name})
+    if orphans:
+        frappe.db.commit()
+        frappe.clear_cache()
+
+    frappe.db.commit()
+
+    # Must run AFTER the sweep above, in the same pass. Deleting a Custom Field
+    # does not drop its column, so every value the accounting dimension had
+    # written under the old fieldname is now stranded where nothing reads it.
+    # This deliberately does not live in a patch: post_model_sync patches run
+    # before after_migrate hooks, so on a site whose rename happens during this
+    # very migrate a patch would run first, find nothing to do, and be marked
+    # executed forever — leaving the data stranded permanently.
+    _migrate_stranded_duid_values(inventory_dts)
+    _dedupe_budget_against_options()
+
+
+def _dedupe_budget_against_options():
+    """Drop duplicate entries from Budget's "Budget Against" dropdown.
+
+    make_dimension_in_accounting_doctypes appends the dimension's document_type
+    to that Select unconditionally, with no dedupe:
+
+        property_setter_doc.value = property_setter_doc.value + "\n" + doc.document_type
+
+    so every save of an existing dimension adds another copy of its name.
+    Renaming the DUID dimension is a save, hence a second "DUID Master".
+    Purely cosmetic, but it shows in a user-facing dropdown.
+
+    Order is preserved, including the leading blank + Cost Center + Project —
+    ERPNext's delete_accounting_dimension does ``value.split("\n")[3:]`` and
+    would mangle the list if that prefix moved.
+    """
+    if not frappe.db.exists("Property Setter", "Budget-budget_against-options"):
+        return
+    value = frappe.db.get_value("Property Setter", "Budget-budget_against-options", "value") or ""
+    seen, kept = set(), []
+    for entry in value.split("\n"):
+        key = entry.strip()
+        if key and key in seen:
+            continue
+        seen.add(key)
+        kept.append(entry)
+    deduped = "\n".join(kept)
+    if deduped != value:
+        frappe.db.set_value("Property Setter", "Budget-budget_against-options", "value", deduped)
+        frappe.clear_cache(doctype="Budget")
+        frappe.db.commit()
+        print(f"  DUID repair: deduped Budget Against options ({len(value.split(chr(10)))} -> {len(kept)})")
+
+
+def _migrate_stranded_duid_values(protected_dts=None):
+    """Move values left in an orphaned `duid` column into ACCOUNTING_DUID_FIELDNAME.
+
+    Scoped to doctypes that (a) still have a `duid` column, (b) have a
+    `duid_acc` field, and (c) no longer have a `duid` Custom Field. That last
+    condition keeps the inventory dimension out of it: on Stock Entry Detail,
+    Purchase Invoice Item and friends `duid` is a live field holding a
+    different value (the target DUID), so copying it into the accounting column
+    would be corruption, not repair.
+
+    Idempotent — only fills a `duid_acc` that is still empty, so it never
+    overwrites a value written after the split.
+    """
+    acc = ACCOUNTING_DUID_FIELDNAME
+    if acc == "duid":
+        return 0
+
+    owned_duid = set(frappe.db.get_all("Custom Field", filters={"fieldname": "duid"}, pluck="dt"))
+    owned_duid |= set(protected_dts or [])
+    has_acc = set(frappe.db.get_all("Custom Field", filters={"fieldname": acc}, pluck="dt"))
+    if not has_acc:
+        return 0
+
+    # information_schema, not frappe.db.has_column — that reads a cached column
+    # list and is unreliable right after a migrate has reshaped tables.
+    columns = {}
+    for c in frappe.db.sql(
+        """
+        SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME IN ('duid', %s)
+        """,
+        (acc,),
+        as_dict=True,
+    ):
+        columns.setdefault(c.TABLE_NAME[3:], set()).add(c.COLUMN_NAME)
+
+    total = 0
+    for dt in sorted(has_acc):
+        present = columns.get(dt, set())
+        if "duid" not in present or acc not in present or dt in owned_duid:
+            continue
+        pending = frappe.db.sql(
+            f"SELECT COUNT(*) FROM `tab{dt}` WHERE IFNULL(`duid`, '') <> '' AND IFNULL(`{acc}`, '') = ''"
+        )[0][0]
+        if not pending:
+            continue
+        frappe.db.sql(
+            f"UPDATE `tab{dt}` SET `{acc}` = `duid` "
+            f"WHERE IFNULL(`duid`, '') <> '' AND IFNULL(`{acc}`, '') = ''"
+        )
+        total += pending
+        print(f"  DUID repair: {dt} — moved {pending} value(s) to {acc}")
+
+    if total:
+        frappe.db.commit()
+    return total
 
 
 def _add_field(dt, cf_name, definition):

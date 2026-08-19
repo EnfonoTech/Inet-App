@@ -61,6 +61,46 @@ export function PicStatusBadge({ value }) {
   return <StatusBadge value={value || "Work Not Done"} bg={c.bg} fg={c.fg} bd={c.bd} />;
 }
 
+// Subcon PO (supplier side) — PO Dispatch.sub_po_status_ms1 / sub_po_status_ms2,
+// see SUB_PO_STATUSES in inet_app/api/subcon_po.py. Colors deliberately reuse
+// the same hues picStatusColor above already assigns to the equivalent stage
+// of the customer flow, so "submitted" and "closed" read the same on both
+// sides of a POID instead of two unrelated palettes.
+// Also covers the derived line-level rollup (SUB_PO_OVERALL_STATUSES) — the
+// "Partially …" values share the hue of the stage they've partially reached,
+// at the lighter amber/teal end, so a half-done line is visibly distinct from
+// a finished one without being a whole new color.
+export function subPoStatusColor(value) {
+  const v = String(value || "");
+  if (!v || /^Not Ordered$/i.test(v)) return { bg: "#f1f5f9", fg: "#94a3b8", bd: "#e2e8f0" };
+  if (/^Partially Cancelled/i.test(v)) return { bg: "#fef2f2", fg: "#dc2626", bd: "#fecaca" };
+  if (/^Partially Closed/i.test(v)) return { bg: "#f0fdfa", fg: "#0f766e", bd: "#99f6e4" };
+  if (/^Partially Invoiced/i.test(v)) return { bg: "#faf5ff", fg: "#7e22ce", bd: "#e9d5ff" };
+  if (/^Partially Ordered/i.test(v)) return { bg: "#eff6ff", fg: "#60a5fa", bd: "#dbeafe" };
+  // Draft-PO shade, deliberately the same amber family as "PO Created" — a
+  // draft has not gone to the supplier, so it must not look "ordered".
+  if (/^Partially Created/i.test(v)) return { bg: "#fffbeb", fg: "#d97706", bd: "#fde68a" };
+  // Sky, not the #eff6ff blue picStatusColor gives "Ready for Invoice" — that
+  // exact blue is already "PO Submitted" below, and two states sharing one
+  // colour in the same column is worse than not matching the sales side.
+  if (/^Partially Ready/i.test(v)) return { bg: "#f0f9ff", fg: "#7dd3fc", bd: "#e0f2fe" };
+  if (/^Ready to Order/i.test(v)) return { bg: "#f0f9ff", fg: "#0369a1", bd: "#bae6fd" };
+  if (/^PO Created/i.test(v)) return { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" };
+  if (/^PO Submitted/i.test(v)) return { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" };
+  if (/^Invoice Received/i.test(v)) return { bg: "#eef2ff", fg: "#4338ca", bd: "#c7d2fe" };
+  if (/^Purchase Invoice Submitted/i.test(v)) return { bg: "#f5f3ff", fg: "#6d28d9", bd: "#ddd6fe" };
+  if (/^Closed$/i.test(v)) return { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" };
+  if (/Cancel/i.test(v)) return { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" };
+  return { bg: "#f1f5f9", fg: "#475569", bd: "#e2e8f0" };
+}
+
+// Blank is a real state ("not ordered yet"), same convention as
+// PicStatusBadge rendering blank as "Work Not Done".
+export function SubPoStatusBadge({ value }) {
+  const c = subPoStatusColor(value);
+  return <StatusBadge value={value || "Not Ordered"} bg={c.bg} fg={c.fg} bd={c.bd} />;
+}
+
 export function IMStatusBadge({ value }) {
   if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
   const v = String(value);

@@ -10,7 +10,10 @@
   "expense_section",
   "expense_payable_account",
   "expense_tax_rate",
-  "expense_tax_account"
+  "expense_tax_account",
+  "subcon_po_section",
+  "purchase_tax_template",
+  "subcon_po_schedule_days"
  ],
  "fields": [
   {
@@ -54,12 +57,29 @@
    "fieldtype": "Link",
    "label": "Expense VAT Account",
    "options": "Account"
+  },
+  {
+   "fieldname": "subcon_po_section",
+   "fieldtype": "Section Break",
+   "label": "Subcon PO Settings"
+  },
+  {
+   "fieldname": "purchase_tax_template",
+   "fieldtype": "Link",
+   "label": "Purchase Taxes and Charges Template",
+   "options": "Purchase Taxes and Charges Template"
+  },
+  {
+   "default": "30",
+   "fieldname": "subcon_po_schedule_days",
+   "fieldtype": "Int",
+   "label": "Subcon PO Required-By Days"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-20 00:00:00",
+ "modified": "2026-08-17 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "INET Settings",
