@@ -132,8 +132,12 @@ export default function RolloutPlanning() {
   const [toDate, setToDate] = useState("");
   // "unplanned" = dispatch_status Dispatched (default)
   // "all" = all POIDs (re-plan)
-  // "open_dummy" = is_dummy_po=1 (unmapped dummy POs)
+  // "open_dummy" = dummy POs — which ones exactly is controlled separately
+  // by dummyFilter (open-only by default, with mapped/all as an in-tab
+  // filter rather than their own top-level tabs).
   const [planScope, setPlanScope] = useState(location.state?.planScope ?? "unplanned");
+  // "open" = is_dummy_po=1 (default) | "mapped" = was_dummy_po=1 | "all" = both
+  const [dummyFilter, setDummyFilter] = useState("open");
 
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -174,6 +178,19 @@ export default function RolloutPlanning() {
 
   useEffect(() => { loadMeta(); }, [loadMeta]);
 
+  // Badge count for the "Open Dummy POs" tab — same pattern as
+  // IMWorkDone.jsx's picRejectedBadgeCount (a small dedicated fetch, no
+  // separate count-only endpoint exists for PO Dispatch). Refetches on the
+  // same refreshKey as the main table so mapping/creating a plan updates it.
+  const [openDummyCount, setOpenDummyCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.listPODispatches({}, TABLE_ROW_LIMIT_ALL, { dummy_preset: "dummy" })
+      .then((list) => { if (!cancelled) setOpenDummyCount(Array.isArray(list) ? list.length : 0); })
+      .catch(() => { if (!cancelled) setOpenDummyCount(0); });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
   // ── Manage Table column filters ──────────────────────────────────────
   // Each column's typed value is matched only against that column's own
   // value on the backend (see column_filters / col_filter_map in
@@ -192,9 +209,12 @@ export default function RolloutPlanning() {
   // different dataset rendered through the same JSX, now with its own
   // data-table-key above - don't carry a typed column filter across a
   // scope switch, or it silently narrows the newly-loaded scope too.
+  // dummyFilter (Open/Mapped/All within the Open Dummy scope) swaps the row
+  // set the same way without changing data-table-key, so it needs the same
+  // reset.
   useEffect(() => {
     setColumnFilters({});
-  }, [planScope]);
+  }, [planScope, dummyFilter]);
   const activeColumnFilters = Object.fromEntries(
     Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
   );
@@ -219,7 +239,9 @@ export default function RolloutPlanning() {
     if (duidFilter.length) portal.site_code = duidFilter;
     if (fromDate) portal.from_date = fromDate;
     if (toDate) portal.to_date = toDate;
-    if (planScope === "open_dummy") portal.dummy_preset = "dummy";
+    if (planScope === "open_dummy") {
+      portal.dummy_preset = dummyFilter === "mapped" ? "mapped_dummy" : dummyFilter === "all" ? "dummy_any" : "dummy";
+    }
     const filters = planScope === "all" || planScope === "open_dummy"
       ? {}
       : { dispatch_status: "Dispatched" };
@@ -255,7 +277,7 @@ export default function RolloutPlanning() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, planScope, refreshKey, columnFiltersDebounced]);
+  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, planScope, dummyFilter, refreshKey, columnFiltersDebounced]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -407,7 +429,22 @@ export default function RolloutPlanning() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Rollout Planning</h1>
+          <h1 className="page-title">
+            Rollout Planning
+            {planScope === "open_dummy" && openDummyCount > 0 && (
+              <span
+                style={{
+                  marginLeft: 10, verticalAlign: "middle",
+                  fontSize: "0.72rem", fontWeight: 700,
+                  background: "#fffbeb", color: "#92400e",
+                  border: "1px solid #fde68a", borderRadius: 999,
+                  padding: "2px 10px",
+                }}
+              >
+                {openDummyCount} open dummy PO{openDummyCount !== 1 ? "s" : ""}
+              </span>
+            )}
+          </h1>
           <div className="page-subtitle">
             Create execution plans from dispatched PO lines. PO Dispatch carries the IM only; choose the field team here — it is stored on the Rollout Plan.
           </div>
@@ -455,7 +492,7 @@ export default function RolloutPlanning() {
             {[
               { id: "unplanned",   label: "Unplanned" },
               { id: "all",         label: "All POIDs (re-plan)" },
-              { id: "open_dummy",  label: "Open Dummy POs" },
+              { id: "open_dummy",  label: "Dummy POs" },
             ].map((tab) => {
               const active = planScope === tab.id;
               const isDummy = tab.id === "open_dummy";
@@ -484,6 +521,39 @@ export default function RolloutPlanning() {
               );
             })}
           </div>
+          {planScope === "open_dummy" && (
+            <div role="tablist" aria-label="Dummy filter" style={{
+              display: "inline-flex", padding: 3,
+              background: "#fffbeb", borderRadius: 8,
+              border: "1px solid #fde68a",
+            }}>
+              {[
+                { id: "open",   label: "Open" },
+                { id: "mapped", label: "Mapped" },
+                { id: "all",    label: "All" },
+              ].map((f) => {
+                const active = dummyFilter === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => { setSelected(new Set()); setDummyFilter(f.id); }}
+                    style={{
+                      padding: "4px 12px", fontSize: "0.76rem", fontWeight: 700,
+                      border: "none", borderRadius: 6, cursor: "pointer",
+                      background: active ? "#b45309" : "transparent",
+                      color: active ? "#fff" : "#92400e",
+                      transition: "background 120ms",
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <input
             type="search"
             placeholder="Search POID, Item, Project, IM, DUID, Center area, Region…"
@@ -560,6 +630,7 @@ export default function RolloutPlanning() {
                     />
                   </th>
                   <th>POID</th>
+                  {planScope === "open_dummy" && <th>Original Dummy POID</th>}
                   <th>Item Code</th>
                   <th>Description</th>
                   <th>Activity Type</th>
@@ -578,7 +649,7 @@ export default function RolloutPlanning() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={15} style={{ padding: 0 }}>
+                    <td colSpan={planScope === "open_dummy" ? 16 : 15} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
                           Loading dispatches…
@@ -589,16 +660,24 @@ export default function RolloutPlanning() {
                           <h3>
                             {searchDebounced.trim()
                               ? "No results match your search"
-                              : planScope === "open_dummy"
-                                ? "No unmapped dummy POs"
-                                : "No dispatched lines ready for planning"}
+                              : planScope !== "open_dummy"
+                                ? "No dispatched lines ready for planning"
+                                : dummyFilter === "mapped"
+                                  ? "No mapped dummy POs"
+                                  : dummyFilter === "all"
+                                    ? "No dummy POs at all"
+                                    : "No open dummy POs"}
                           </h3>
                           <p>
                             {searchDebounced.trim()
                               ? "Try a different search term."
-                              : planScope === "open_dummy"
-                                ? "All dummy POs have been mapped to real PO intake lines."
-                                : "Dispatch PO Intake lines first before creating rollout plans."}
+                              : planScope !== "open_dummy"
+                                ? "Dispatch PO Intake lines first before creating rollout plans."
+                                : dummyFilter === "mapped"
+                                  ? "No dummy POs have been mapped to a real PO intake line yet."
+                                  : dummyFilter === "all"
+                                    ? "No dummy POs exist, open or mapped."
+                                    : "All dummy POs have been mapped to real PO intake lines — check the Mapped filter."}
                           </p>
                         </div>
                       )}
@@ -635,6 +714,20 @@ export default function RolloutPlanning() {
                         >
                           DUMMY
                         </span>
+                      ) : row.was_dummy_po ? (
+                        <span
+                          title={row.original_dummy_poid ? `Originally dummy POID ${row.original_dummy_poid} — now mapped to this real PO intake line.` : "Originally a dummy PO — now mapped to a real PO intake line."}
+                          style={{
+                            display: "inline-block", marginLeft: 6,
+                            padding: "1px 7px", borderRadius: 999,
+                            fontSize: "0.62rem", fontWeight: 700,
+                            background: "#f0fdf4", color: "#15803d",
+                            border: "1px solid #bbf7d0",
+                            verticalAlign: "middle",
+                          }}
+                        >
+                          MAPPED
+                        </span>
                       ) : (row.dispatch_status || "").toLowerCase() === "planned" && (
                         <span
                           title="A rollout plan already exists for this POID. Selecting will create a new visit (visit_number auto-increments)."
@@ -651,6 +744,11 @@ export default function RolloutPlanning() {
                         </span>
                       )}
                     </td>
+                    {planScope === "open_dummy" && (
+                      <td style={{ fontFamily: "monospace", fontSize: "0.76rem", color: "#92400e" }}>
+                        {row.original_dummy_poid || "—"}
+                      </td>
+                    )}
                     <td>{row.item_code}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                       title={row.item_description || ""}>
@@ -699,6 +797,7 @@ export default function RolloutPlanning() {
                     )}
                   </td>
                   <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  {planScope === "open_dummy" && <td />}
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
                     {fmt.format(totalAmt)}
                   </td>
