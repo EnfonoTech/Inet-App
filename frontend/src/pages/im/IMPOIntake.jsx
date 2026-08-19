@@ -24,7 +24,11 @@ function todayMonth() {
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
 
-function monthOptions() {
+// ensureValue: when editing an existing dummy whose target_month is
+// already in the past, the normal forward-looking 12 months wouldn't
+// include it at all — the <select> would silently show the wrong month.
+// Prepend it so the current value always has a matching option.
+function monthOptions(ensureValue) {
   const out = [];
   const now = new Date();
   for (let i = 0; i < 12; i += 1) {
@@ -32,6 +36,11 @@ function monthOptions() {
     const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     const label = `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
     out.push({ id: value, label });
+  }
+  if (ensureValue && !out.some((m) => m.id === ensureValue)) {
+    const [y, mo] = ensureValue.split("-").map(Number);
+    const label = MONTH_NAMES[mo - 1] ? `${MONTH_NAMES[mo - 1]} ${y}` : ensureValue;
+    out.unshift({ id: ensureValue, label });
   }
   return out;
 }
@@ -346,8 +355,10 @@ export default function IMPOIntake() {
   const [transferRefreshKey, setTransferRefreshKey] = useState(0);
   const loadTransfers = useCallback(() => setTransferRefreshKey((k) => k + 1), []);
 
-  // Create dummy PO
+  // Create / Edit dummy PO — same modal + form state for both; editingDummy
+  // holds the row being edited (null = creating a new one).
   const [showCreateDummy, setShowCreateDummy] = useState(false);
+  const [editingDummy, setEditingDummy] = useState(null);
   const [dummyBusy, setDummyBusy] = useState(false);
   const [dummyErr, setDummyErr] = useState(null);
   const [projectsForDummy, setProjectsForDummy] = useState([]);
@@ -721,6 +732,7 @@ export default function IMPOIntake() {
 
   // ── Create dummy: open & reset ───────────────────────────────────────
   function openCreateDummy() {
+    setEditingDummy(null);
     setDummyErr(null);
     setDummyForm({ project_code: "", target_month: todayMonth(), site_code: "", duid_text: "", item_code: "", item_description: "", manager_remark: "" });
     setDuidsForDummy([]);
@@ -730,25 +742,59 @@ export default function IMPOIntake() {
     setShowCreateDummy(true);
   }
 
+  // ── Edit an OPEN (unmapped) dummy: same modal, pre-filled ──────────────
+  // Lets the IM fix project/DUID/item entered wrong before the real PO
+  // details were known — map_im_dummy_po_to_intake_line requires the
+  // dummy's project to exactly match the target PO line's project, so a
+  // wrong project here would otherwise block mapping with no way to fix it.
+  function openEditDummy(row) {
+    setEditingDummy(row);
+    setDummyErr(null);
+    setDummyForm({
+      project_code: row.project_code || "",
+      target_month: (row.target_month || "").slice(0, 7) || todayMonth(),
+      site_code: "",
+      duid_text: row.site_code || "",
+      item_code: row.item_code || "",
+      item_description: row.item_description || "",
+      manager_remark: row.manager_remark || "",
+    });
+    setDuidsForDummy([]);
+    setDuidSearch("");
+    setItemsForDummy(row.item_code ? [{ item_code: row.item_code, item_name: row.item_code, description: row.item_description }] : []);
+    setItemSearch("");
+    setShowCreateDummy(true);
+  }
+
   async function submitCreateDummy() {
     if (!dummyForm.project_code) { setDummyErr("Select a project."); return; }
     setDummyBusy(true);
     setDummyErr(null);
     try {
-      await pmApi.createIMDummyPODispatch({
+      const submitPayload = {
         project_code: dummyForm.project_code,
         target_month: dummyForm.target_month || undefined,
         site_code: dummyForm.site_code || dummyForm.duid_text || undefined,
         item_code: dummyForm.item_code || undefined,
         item_description: dummyForm.item_description || undefined,
         manager_remark: dummyForm.manager_remark || undefined,
-      });
+      };
+      if (editingDummy) {
+        await pmApi.updateIMDummyPODispatch({ dummy_po_dispatch: editingDummy.name, ...submitPayload });
+        setShowCreateDummy(false);
+        setEditingDummy(null);
+        setToastMsg("Dummy PO updated.");
+        setTimeout(() => setToastMsg(null), 4000);
+        loadDummy();
+        return;
+      }
+      await pmApi.createIMDummyPODispatch(submitPayload);
       setShowCreateDummy(false);
       setToastMsg("Dummy PO created.");
       setTimeout(() => setToastMsg(null), 4000);
       loadDummy();
     } catch (e) {
-      setDummyErr(e.message || "Could not create dummy PO");
+      setDummyErr(e.message || (editingDummy ? "Could not update dummy PO" : "Could not create dummy PO"));
     } finally {
       setDummyBusy(false);
     }
@@ -1665,7 +1711,7 @@ export default function IMPOIntake() {
                     <th>Plan Date</th>
                     <th>Original Dummy POID</th>
                     <th>Created</th>
-                    <th style={{ minWidth: 130 }}>Actions</th>
+                    <th style={{ minWidth: 220, width: 220, whiteSpace: "nowrap" }} data-default-width="220">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1723,11 +1769,14 @@ export default function IMPOIntake() {
                         <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{ps?.plan_date ? String(ps.plan_date).slice(0, 10) : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}</td>
                         <td style={{ fontFamily: "monospace", fontSize: "0.76rem", color: "#64748b" }}>{(row.original_dummy_poid || "").trim() || "—"}</td>
                         <td style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{(row.creation || row.modified || "").slice(0, 10)}</td>
-                        <td style={{ minWidth: 130, whiteSpace: "nowrap" }}>
-                          <div style={{ display: "flex", gap: 5 }}>
-                            <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }} onClick={() => setDetailRow(row)}>View</button>
+                        <td style={{ minWidth: 220, width: 220, whiteSpace: "nowrap" }}>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
+                            <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setDetailRow(row)}>View</button>
                             {isOpen && (
-                              <button type="button" style={{ fontSize: "0.7rem", padding: "3px 8px", background: "#fff7ed", color: "#92400e", border: "1px solid #f59e0b", borderRadius: 8, cursor: "pointer", fontWeight: 700 }} onClick={() => { setMapErr(null); setMapForRow(row); }}>Map PO</button>
+                              <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => openEditDummy(row)} title="Fix project, DUID, or item before mapping">Edit</button>
+                            )}
+                            {isOpen && (
+                              <button type="button" style={{ fontSize: "0.7rem", padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0, background: "#fffbeb", color: "#92400e", border: "1px solid #f59e0b", borderRadius: 8, cursor: "pointer", fontWeight: 700 }} onClick={() => { setMapErr(null); setMapForRow(row); }}>Map PO</button>
                             )}
                           </div>
                         </td>
@@ -1758,17 +1807,17 @@ export default function IMPOIntake() {
         </DataTableWrapper>
       </div>
 
-      {/* ── CREATE DUMMY PO MODAL ─────────────────────────────────────── */}
+      {/* ── CREATE / EDIT DUMMY PO MODAL ──────────────────────────────── */}
       <Modal
         open={showCreateDummy}
-        onClose={() => !dummyBusy && setShowCreateDummy(false)}
-        title="Create Dummy PO"
+        onClose={() => { if (!dummyBusy) { setShowCreateDummy(false); setEditingDummy(null); } }}
+        title={editingDummy ? `Edit Dummy PO — ${editingDummy.poid || editingDummy.name}` : "Create Dummy PO"}
         width={620}
         footer={
           <>
-            <button type="button" className="btn-secondary" disabled={dummyBusy} onClick={() => setShowCreateDummy(false)}>Cancel</button>
+            <button type="button" className="btn-secondary" disabled={dummyBusy} onClick={() => { setShowCreateDummy(false); setEditingDummy(null); }}>Cancel</button>
             <button type="button" className="btn-primary" disabled={dummyBusy} onClick={submitCreateDummy}>
-              {dummyBusy ? "Creating…" : "Create"}
+              {dummyBusy ? (editingDummy ? "Saving…" : "Creating…") : (editingDummy ? "Save Changes" : "Create")}
             </button>
           </>
         }
@@ -1787,7 +1836,7 @@ export default function IMPOIntake() {
           <div>
             <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Target Month</label>
             <select value={dummyForm.target_month || ""} onChange={(e) => setDummyForm((f) => ({ ...f, target_month: e.target.value }))} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}>
-              {monthOptions().map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              {monthOptions(dummyForm.target_month).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
           </div>
           <div>

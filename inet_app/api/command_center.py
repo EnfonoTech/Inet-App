@@ -2649,6 +2649,117 @@ def create_im_dummy_po_dispatch(payload=None):
     return {"name": final_name, "po_no": po_no, "poid": poid}
 
 
+@frappe.whitelist()
+def update_im_dummy_po_dispatch(payload=None):
+    """
+    Edit an OPEN (unmapped) dummy PO Dispatch's placeholder details —
+    project, target month, item, DUID, note — before mapping it to a real
+    PO line. IM-only, own dummy only, same field validation as
+    create_im_dummy_po_dispatch (this is deliberately the same shape:
+    the IM re-submits the full form, not a sparse patch).
+
+    Needed because map_im_dummy_po_to_intake_line requires the dummy's
+    project_code to exactly match the target PO line's project — a dummy
+    created with the wrong project (or DUID/item, entered before the real
+    PO details were known) could never be mapped without this, since there
+    was previously no way to fix those fields on an existing dummy.
+
+    payload: {"dummy_po_dispatch": required, "project_code": required,
+    "target_month", "site_code", "item_code", "item_description",
+    "manager_remark": all optional, same meaning as create}.
+    """
+    if isinstance(payload, str):
+        payload = frappe.parse_json(payload)
+    payload = payload or {}
+
+    dummy_name = (payload.get("dummy_po_dispatch") or "").strip()
+    if not dummy_name:
+        frappe.throw("dummy_po_dispatch is required")
+
+    _im_resolved, im_identifiers = _require_inet_im_session()
+
+    pd = frappe.db.get_value(
+        "PO Dispatch", dummy_name, ["im", "is_dummy_po"], as_dict=True
+    )
+    if not pd:
+        frappe.throw("PO Dispatch not found.")
+    if pd.im not in set(im_identifiers):
+        frappe.throw("Not permitted for this dispatch.")
+    if frappe.db.has_column("PO Dispatch", "is_dummy_po") and not cint(pd.is_dummy_po):
+        frappe.throw("This dispatch is not an open dummy PO — it has already been mapped.")
+
+    project_code = (payload.get("project_code") or "").strip()
+    if not project_code:
+        frappe.throw("project_code is required")
+    if not _pcc_im_allows_project(project_code, im_identifiers):
+        frappe.throw("You are not the Implementation Manager for this project.")
+
+    target_month = (payload.get("target_month") or "").strip()
+    if target_month:
+        try:
+            if len(target_month) == 7:
+                target_month = f"{target_month}-01"
+            target_month = str(getdate(target_month).replace(day=1))
+        except Exception:
+            frappe.throw("Invalid target_month (expected YYYY-MM or YYYY-MM-DD)")
+
+    manager_remark = (payload.get("manager_remark") or payload.get("note") or "").strip()
+
+    item_code_input = (payload.get("item_code") or "").strip()
+    item_code_val = None
+    item_description_val = (payload.get("item_description") or "").strip()
+    if item_code_input:
+        if not frappe.db.exists("Item", item_code_input):
+            frappe.throw(frappe._(f"Item {item_code_input} not found"))
+        item_code_val = item_code_input
+        master_desc = (frappe.db.get_value("Item", item_code_input, "description") or "").strip()
+        if master_desc:
+            item_description_val = master_desc
+
+    requested_site_code = (payload.get("site_code") or "").strip()
+    site_code = None
+    site_name = None
+    center_area = None
+    if requested_site_code:
+        if frappe.db.exists("DUID Master", requested_site_code):
+            d = frappe.db.get_value(
+                "DUID Master", requested_site_code,
+                ["site_name", "center_area"], as_dict=True,
+            ) or {}
+            site_code = requested_site_code
+            site_name = d.get("site_name") or requested_site_code
+            center_area = d.get("center_area")
+        else:
+            ok_duid, err_duid = ensure_duid_master(requested_site_code, site_name=requested_site_code)
+            if not ok_duid:
+                frappe.throw(err_duid or f"Could not create DUID Master for {requested_site_code}")
+            site_code = requested_site_code
+            site_name = requested_site_code
+        # Leaves the dummy's OLD auto-generated DUID Master placeholder row
+        # in place, unlinked — same "don't force-clean orphaned auxiliary
+        # records" convention already used elsewhere in this codebase.
+
+    updates = {
+        "project_code": project_code,
+        "customer": frappe.db.get_value("Project Control Center", project_code, "customer"),
+        "item_code": item_code_val,
+        "item_description": item_description_val,
+    }
+    if frappe.db.has_column("PO Dispatch", "manager_remark"):
+        updates["manager_remark"] = manager_remark[:8000]
+    if frappe.db.has_column("PO Dispatch", "target_month"):
+        updates["target_month"] = target_month or None
+    if site_code:
+        updates["site_code"] = site_code
+        updates["site_name"] = site_name
+        updates["center_area"] = center_area
+        updates["region_type"] = region_type_from_center_area(center_area)
+
+    frappe.db.set_value("PO Dispatch", dummy_name, updates, update_modified=True)
+    frappe.db.commit()
+    return {"name": dummy_name}
+
+
 INTERNAL_WORK_ITEM_GROUP = "Internal Work"
 
 

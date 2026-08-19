@@ -256,6 +256,10 @@ export const pmApi = {
     call("inet_app.api.command_center.create_im_dummy_po_dispatch", {
       payload: JSON.stringify(payload || {}),
     }),
+  updateIMDummyPODispatch: (payload) =>
+    call("inet_app.api.command_center.update_im_dummy_po_dispatch", {
+      payload: JSON.stringify(payload || {}),
+    }),
   createInternalWork: (payload) =>
     call("inet_app.api.command_center.create_internal_work", {
       payload: JSON.stringify(payload || {}),
