@@ -7998,13 +7998,22 @@ def list_legacy_milestones_needing_resubmission(filters=None, limit=500):
             wheres.append(f"{expr} LIKE %s")
             params.append(pat)
 
-    like_pat = _sql_like_pattern(filters.get("search") or filters.get("q") or "")
-    if like_pat:
-        wheres.append(
+    search_term = filters.get("search") or filters.get("q") or ""
+    if search_term:
+        # _sql_search_clause (not a plain _sql_like_pattern) so pasting
+        # several distinct POIDs at once — the same "paste comma/newline"
+        # UX list_work_done_rows already supports — works here too. A single
+        # LIKE '%...%' built from the whole pasted, semicolon-joined string
+        # could never match any real row, silently returning zero results.
+        clause, sp = _sql_search_clause(
             "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''), "
-            "IFNULL(pd.project_code,''), IFNULL(pd.site_code,''), pd.name) LIKE %s"
+            "IFNULL(pd.project_code,''), IFNULL(pd.site_code,''), pd.name)",
+            search_term,
+            exact_cols=["IFNULL(pd.poid,'')", "pd.name"],
         )
-        params.append(like_pat)
+        if clause:
+            wheres.append(clause)
+            params.extend(sp)
 
     rows = frappe.db.sql(
         f"""

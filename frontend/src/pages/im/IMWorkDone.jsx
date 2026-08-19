@@ -951,9 +951,7 @@ export default function IMWorkDone() {
             <span style={{ marginLeft: 6, background: "#fee2e2", color: "#991b1b", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{picRejectedBadgeCount}</span>
           )}
         </button>
-        {legacyRows.length > 0 && (
-          <button type="button" style={tabStyle(tab === "legacy")} onClick={() => setTab("legacy")}>Resubmit to PIC</button>
-        )}
+        <button type="button" style={tabStyle(tab === "legacy")} onClick={() => setTab("legacy")}>Resubmit to PIC</button>
       </div>
       <div className="toolbar">
         <input
