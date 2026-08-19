@@ -11,11 +11,17 @@ import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/R
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import AttachmentsSection from "../../components/AttachmentsSection";
+import MaterialItemPicker from "../../components/MaterialItemPicker";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
+// Hidden for now — the per-DUID materials dispatch section in the Create
+// Plan popup is built and working, but the wider material management
+// feature it belongs to isn't finished yet. Flip to true once ready; the
+// JSX, state, and handleCreatePlans() dispatch logic are all still intact.
+const SHOW_MATERIAL_DISPATCH = false;
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
 function todayMonth() {
@@ -219,6 +225,12 @@ export default function IMDispatch() {
   const [ciagRequired, setCiagRequired] = useState(true);
   const [teamsList, setTeamsList] = useState([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
+  // Optional materials dispatch, grouped per DUID (never per POID — Huawei
+  // stock is tracked per DUID and materials for one DUID must never be
+  // usable against another). Always goes to the lead team's warehouse.
+  const [materialSourceWh, setMaterialSourceWh] = useState("");
+  const [materialItemsByDuid, setMaterialItemsByDuid] = useState({});
+  const [expandedMaterialDuid, setExpandedMaterialDuid] = useState("");
   const [visitType, setVisitType] = useState("Execution");
   const [managerRemark, setManagerRemark] = useState("");
   const [planDocUrls, setPlanDocUrls] = useState([]);
@@ -435,6 +447,7 @@ export default function IMDispatch() {
       }
     })();
     pmApi.listHuaweiIMs().then((res) => { if (!cancelled) setHuaweiIms(res || []); }).catch(() => {});
+    pmApi.getSourceWarehouse().then((wh) => { if (!cancelled) setMaterialSourceWh(wh || ""); }).catch(() => {});
     return () => { cancelled = true; };
   }, [showModal, imName]);
 
@@ -833,6 +846,8 @@ export default function IMDispatch() {
     setCiagRequired(true);
     setManagerRemark("");
     setPlanDocUrls([]);
+    setMaterialItemsByDuid({});
+    setExpandedMaterialDuid("");
     setShowModal(true);
   }
 
@@ -881,7 +896,41 @@ export default function IMDispatch() {
         plan_documents: planDocUrls.length ? JSON.stringify(planDocUrls) : undefined,
       });
       const count = result?.created ?? dispatches.length;
-      setSuccessMsg(`Created ${count} rollout plan${count !== 1 ? "s" : ""}. View them under Planning.`);
+      let msg = `Created ${count} rollout plan${count !== 1 ? "s" : ""}. View them under Planning.`;
+
+      // Dispatch any materials selected per-DUID — a separate call from plan
+      // creation, so a failed material request doesn't roll back plans that
+      // DID get created. Still lands as a normal Pending Approval request;
+      // Warehouse Manager approval + Team Lead confirmation still apply.
+      const matGroups = SHOW_MATERIAL_DISPATCH
+        ? createPlanDuidGroups.filter((g) => (materialItemsByDuid[g.duid] || []).length > 0)
+        : [];
+      if (matGroups.length > 0) {
+        const matResults = [];
+        for (const g of matGroups) {
+          try {
+            const res = await pmApi.createMaterialRequest({
+              poid: g.poid || undefined,
+              duid: g.duid,
+              im: imName || undefined,
+              team: planTeam,
+              items: materialItemsByDuid[g.duid],
+            });
+            matResults.push({ duid: g.duid, ok: true, name: res?.name });
+          } catch (e) {
+            matResults.push({ duid: g.duid, ok: false, error: e.message || "Failed" });
+          }
+        }
+        const okCount = matResults.filter((r) => r.ok).length;
+        const failed = matResults.filter((r) => !r.ok);
+        msg += ` Material requests: ${okCount}/${matResults.length} created`;
+        if (failed.length > 0) {
+          msg += ` (failed for ${failed.map((f) => f.duid).join(", ")}: ${failed[0].error})`;
+        }
+        msg += ".";
+      }
+
+      setSuccessMsg(msg);
       setSelected(new Set());
       setShowModal(false);
       await load();
@@ -907,6 +956,16 @@ export default function IMDispatch() {
   const selectedBackendRows = createPlanSelRows;
   const createPlanDuids = [...new Set(createPlanSelRows.map((r) => r.site_code || r.name).filter(Boolean))];
   const createPlanTotalQty = createPlanSelRows.reduce((s, r) => s + Number(r.qty || 0), 0);
+  // Group selected lines by DUID for the optional materials-dispatch
+  // section — strictly per DUID, never mixed, even when the batch spans
+  // several DUIDs. poid/name of the first row in each group is used as the
+  // Material Request's linked POID (Huawei stock is DUID-scoped, so the
+  // material can be used against any POID at that DUID — this is only for
+  // accounting traceability).
+  const createPlanDuidGroups = createPlanDuids.map((duid) => {
+    const groupRows = createPlanSelRows.filter((r) => (r.site_code || r.name) === duid);
+    return { duid, poid: groupRows[0]?.poid || groupRows[0]?.name || "", count: groupRows.length };
+  });
   const planTeamsAssignedQty = (planTeams || [])
     .filter((r) => r.team)
     .reduce((s, r) => s + (Number(r.assigned_qty) || 0), 0);
@@ -1362,6 +1421,51 @@ export default function IMDispatch() {
           title="Planning Documents"
           noCamera
         />
+
+        {SHOW_MATERIAL_DISPATCH && createPlanDuidGroups.length > 0 && (
+          <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 16 }}>
+            <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8 }}>DISPATCH MATERIALS</div>
+            {createPlanDuidGroups.map((g) => {
+              const items = materialItemsByDuid[g.duid] || [];
+              const expanded = expandedMaterialDuid === g.duid;
+              return (
+                <div key={g.duid} style={{ border: "1px solid #e2e8f0", borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedMaterialDuid(expanded ? "" : g.duid)}
+                    style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "none", cursor: "pointer", textAlign: "left" }}
+                  >
+                    <span>
+                      <span style={{ fontSize: "0.82rem", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}>{g.duid}</span>
+                      <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: 8 }}>{g.count} line{g.count !== 1 ? "s" : ""}</span>
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {items.length > 0 && (
+                        <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#1d4ed8", background: "#eff6ff", padding: "2px 8px", borderRadius: 999 }}>
+                          {items.length} item{items.length !== 1 ? "s" : ""} selected
+                        </span>
+                      )}
+                      <span style={{ color: "#94a3b8" }}>{expanded ? "▲" : "▼"}</span>
+                    </span>
+                  </button>
+                  {/* CSS-hide, don't conditionally unmount — collapsing a
+                      group must not wipe the item selections the user
+                      already made in it (a remounted MaterialItemPicker
+                      re-fetches Huawei items and loses any Company items
+                      added). Every group's picker stays mounted for the
+                      life of the modal. */}
+                  <div style={{ padding: 12, borderTop: "1px solid #e2e8f0", display: expanded ? "block" : "none" }}>
+                    <MaterialItemPicker
+                      duid={g.duid}
+                      sourceWh={materialSourceWh}
+                      onItemsChange={(its) => setMaterialItemsByDuid((p) => ({ ...p, [g.duid]: its }))}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Modal>
 
       <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.poid ? ` · ${detailRow.poid}` : detailRow?.name ? ` · ${detailRow.name}` : ""}`} width={760}>
