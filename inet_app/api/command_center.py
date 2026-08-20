@@ -12811,8 +12811,18 @@ def _assert_rollout_plan_access_field_team(team_id, rollout_plan):
     if not frappe.db.exists("Rollout Plan", rollout_plan):
         frappe.throw("Rollout Plan not found")
     plan_team = frappe.db.get_value("Rollout Plan", rollout_plan, "team")
-    if plan_team != team_id:
-        frappe.throw("Not permitted", frappe.PermissionError)
+    if plan_team == team_id:
+        return
+    # Multi-team plans (see _sync_plan_teams / "Rollout Plan Team" child
+    # table) split one plan's qty across 2+ teams — Rollout Plan.team only
+    # ever holds the single PRIMARY team, so checking it alone locked every
+    # other assigned team out of their own execution with "Not permitted",
+    # even though they're legitimately on the plan.
+    if frappe.db.exists("DocType", "Rollout Plan Team") and frappe.db.exists(
+        "Rollout Plan Team", {"parent": rollout_plan, "parenttype": "Rollout Plan", "team": team_id}
+    ):
+        return
+    frappe.throw("Not permitted", frappe.PermissionError)
 
 
 def _im_team_ids_for_filter(im_filter=None):
