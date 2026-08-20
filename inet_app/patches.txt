@@ -17,3 +17,4 @@ inet_app.patches.sync_dispatch_status_from_pic
 inet_app.patches.sync_po_intake_line_status_from_dispatch
 inet_app.patches.backfill_subcon_overall_status
 inet_app.patches.repair_duid_field_split
+inet_app.patches.backfill_mapped_dummy_po_financials

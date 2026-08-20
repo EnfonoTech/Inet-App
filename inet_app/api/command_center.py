@@ -3789,6 +3789,11 @@ def map_im_dummy_po_to_intake_line(payload=None):
         or region_type_from_center_area(center_area),
         "site_code": site_code or None,
         "site_name": site_name,
+        # Both exist on PO Intake Line too — were never copied over, so a
+        # mapped dummy silently kept whatever blank/placeholder values it
+        # was created with instead of the real line's tax rate and terms.
+        "tax_rate": line_row.get("tax_rate"),
+        "payment_terms": line_row.get("payment_terms"),
     }
     if frappe.db.has_column("PO Dispatch", "is_dummy_po"):
         update_vals["is_dummy_po"] = 0
@@ -3812,7 +3817,19 @@ def map_im_dummy_po_to_intake_line(payload=None):
             )
         update_vals["poid"] = poid_target
 
-    frappe.db.set_value("PO Dispatch", dummy_name, update_vals, update_modified=True)
+    # frappe.db.set_value bypasses the doctype's own controller entirely —
+    # PODispatch.validate() is what derives ms1_pct/ms2_pct from
+    # payment_terms and ms1_amount/ms2_amount/ms1_unbilled/ms2_unbilled/
+    # remaining_milestone_pct from line_amount + those percentages (see
+    # po_dispatch.py's _fill_payment_term_pcts / _compute_ms_amounts). A raw
+    # set_value here left every one of those stale at whatever the dummy's
+    # placeholder values were (line_amount=0 at creation), even once
+    # tax_rate/payment_terms/line_amount above were finally being set
+    # correctly. Loading the doc and saving it runs that logic for real.
+    dispatch_doc = frappe.get_doc("PO Dispatch", dummy_name)
+    for fname, fval in update_vals.items():
+        dispatch_doc.set(fname, fval)
+    dispatch_doc.save(ignore_permissions=True)
 
     frappe.db.set_value(
         "PO Intake Line",
