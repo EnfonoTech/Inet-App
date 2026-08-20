@@ -43,6 +43,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
   const [companyItems, setCompanyItems] = useState([]);
   const [itemSearch, setItemSearch] = useState("");
   const [itemOptions, setItemOptions] = useState([]);
+  const [itemFocused, setItemFocused] = useState(false);
 
   // Load Huawei items received for this DUID (remaining/unrequested only).
   useEffect(() => {
@@ -64,10 +65,12 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
     return () => { cancelled = true; };
   }, [duid]);
 
-  // Search company items
+  // Search company items — an empty query still fetches (search_items()
+  // treats "" as "no code filter", returning the first N items by code) so
+  // clicking into the box with nothing typed yet shows a browsable default
+  // list with stock, rather than nothing until the user starts typing.
   useEffect(() => {
     let cancelled = false;
-    if (!itemSearch.trim()) { setItemOptions([]); return; }
     pmApi.searchItems({ query: itemSearch, warehouse: sourceWh || undefined, limit: 20 })
       .then((r) => { if (!cancelled) setItemOptions(Array.isArray(r) ? r : []); })
       .catch(() => { if (!cancelled) setItemOptions([]); });
@@ -148,7 +151,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
                 <tr key={h.item_code}>
                   <td style={{ padding: "5px 8px" }}>
                     <div style={{ fontWeight: 600, color: "#0f172a" }}>{h.item_code}</div>
-                    {h.item_name !== h.item_code && <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{h.item_name}</div>}
+                    {h.item_name !== h.item_code && <div style={{ fontSize: "0.72rem", color: "#64748b", overflowWrap: "anywhere" }}>{h.item_name}</div>}
                   </td>
                   <td style={{ padding: "5px 8px", textAlign: "right", color: "#475569" }}>{h.qty}</td>
                   <td style={{ padding: "5px 8px" }}>
@@ -175,8 +178,13 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
         {/* Item search */}
         <div style={{ position: "relative", marginBottom: 8 }}>
           <input style={{ ...inp, borderColor: "#6ee7b7" }} value={itemSearch}
-            onChange={(e) => setItemSearch(e.target.value)} placeholder="Search item code or name…" />
-          {itemOptions.length > 0 && (
+            onChange={(e) => setItemSearch(e.target.value)}
+            onFocus={() => setItemFocused(true)}
+            // Delayed so a click on a dropdown option (which blurs the
+            // input first) still registers before the list disappears.
+            onBlur={() => setTimeout(() => setItemFocused(false), 150)}
+            placeholder="Search item code or name (or click to browse)…" />
+          {itemFocused && itemOptions.length > 0 && (
             <div style={{
               position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200,
               background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8,
@@ -190,10 +198,10 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
                   onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
                 >
                   <div style={{ fontWeight: 600, fontSize: "0.84rem" }}>{opt.item_code}</div>
-                  <div style={{ display: "flex", gap: 12, fontSize: "0.72rem", color: "#64748b" }}>
-                    <span>{opt.item_name}</span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: "0.72rem", color: "#64748b" }}>
+                    <span style={{ overflowWrap: "anywhere", minWidth: 0 }}>{opt.item_name}</span>
                     {opt.actual_qty != null && (
-                      <span style={{ color: opt.actual_qty > 0 ? "#047857" : "#b91c1c" }}>
+                      <span style={{ color: opt.actual_qty > 0 ? "#047857" : "#b91c1c", whiteSpace: "nowrap" }}>
                         Stock: {opt.actual_qty} {opt.stock_uom}
                       </span>
                     )}
@@ -222,7 +230,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
                   <td style={{ padding: "5px 8px" }}>
                     <div style={{ fontWeight: 600 }}>{row.item_code}</div>
                     {row.item_name && row.item_name !== row.item_code && (
-                      <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{row.item_name}</div>
+                      <div style={{ fontSize: "0.72rem", color: "#64748b", overflowWrap: "anywhere" }}>{row.item_name}</div>
                     )}
                   </td>
                   <td style={{ padding: "5px 8px" }}>

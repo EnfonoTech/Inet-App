@@ -298,6 +298,11 @@ function MaterialsSection({ poDispatch, savedUsage, onUsageChange }) {
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>{m.item_name}</div>
                   <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 2 }}>{m.item_code}</div>
+                  {m.duid_level && (
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", marginTop: 3 }}>
+                      DUID-level — not requested for this POID specifically
+                    </div>
+                  )}
                 </div>
                 {m.transferred
                   ? <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999, background: "rgba(16,185,129,0.1)", color: "#047857", flexShrink: 0 }}>In Warehouse</span>

@@ -153,7 +153,6 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
   async function submit() {
     setErr("");
     if (!duid.trim()) { setErr("Please select a DUID."); return; }
-    if (!selectedPoid) { setErr("Please select a POID."); return; }
     if (!team.trim()) { setErr("Please select a team."); return; }
     if (!allItems.length) { setErr("Add at least one item to request."); return; }
 
@@ -211,15 +210,18 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
         />
       </div>
 
-      {/* POID — filtered to the selected DUID */}
+      {/* POID — filtered to the selected DUID; optional, since material
+          management is DUID-scoped and a DUID's stock is usable on any of
+          its POIDs. Leaving it blank still shows on the Execution form for
+          every POID under this DUID (see get_poid_materials duid_level rows). */}
       <div style={{ marginBottom: 14 }}>
-        {label("POID", true)}
+        {label("POID (optional)", false)}
         <SearchableSelect
           value={selectedPoid}
           onChange={handlePoidSelect}
           onSearch={setPoidSearch}
           options={poidSelectOptions}
-          placeholder={duid ? "Search POID…" : "Select a DUID first"}
+          placeholder={duid ? "Search POID… (optional)" : "Select a DUID first"}
           allLabel="Search POID…"
           disabled={!duid}
           style={{ display: "block", width: "100%" }}

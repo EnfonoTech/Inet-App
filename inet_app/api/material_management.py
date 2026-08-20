@@ -420,7 +420,11 @@ def parse_mr_import_excel(file_path):
         return ws.cell(row, col).value if col is not None else None
 
     def _s(v):
-        return str(v).strip() if v is not None else ""
+        # Source Excel uses \xa0 (non-breaking space) as its word separator
+        # in descriptions, not a plain space — a browser never wraps text at
+        # one, so a long description renders as a single unbreakable run
+        # that overflows its container instead of wrapping normally.
+        return str(v).replace("\xa0", " ").strip() if v is not None else ""
 
     rows = []
     for row in range(2, ws.max_row + 1):
@@ -2488,22 +2492,14 @@ def get_available_stock(item_code, warehouse=None):
     return [{"warehouse": r.warehouse, "qty": flt(r.actual_qty)} for r in rows]
 
 
-@frappe.whitelist()
-def get_poid_materials(po_dispatch):
-    """Return material items transferred for a POID (for field execution form)."""
-    # resolve po_dispatch name
-    pd_name = _resolve_po_dispatch(po_dispatch) if po_dispatch else None
-    if not pd_name:
-        return []
-    # Get all submitted Material Requests for this POID
-    mrs = frappe.get_all("Material Request",
-        filters={"poid": pd_name, "material_request_type": "Material Transfer", "docstatus": 1},
-        fields=["name", "set_warehouse"],
-        ignore_permissions=True)
-    if not mrs:
-        return []
-
-    out = []
+def _poid_material_rows(mrs, duid_level):
+    """Shared per-MR expansion for get_poid_materials: either the actual
+    transferred qty (from Stock Entry Detail, if a transfer SE exists) or
+    the still-pending requested qty. `duid_level` just tags where the row
+    came from for the frontend to badge differently — it doesn't change how
+    a row is computed.
+    """
+    rows = []
     for mr in mrs:
         team_wh = mr.set_warehouse or ""
 
@@ -2525,9 +2521,10 @@ def get_poid_materials(po_dispatch):
 
         if se_items:
             for row in se_items:
-                out.append({
+                rows.append({
                     "material_request": mr.name,
                     "transferred": True,
+                    "duid_level": duid_level,
                     "item_code": row.item_code,
                     "item_name": row.item_name or row.item_code,
                     "qty_transferred": flt(row.qty_transferred),
@@ -2542,9 +2539,10 @@ def get_poid_materials(po_dispatch):
                 fields=["item_code", "item_name", "qty", "uom", "stock_uom"],
                 ignore_permissions=True)
             for it in mr_items:
-                out.append({
+                rows.append({
                     "material_request": mr.name,
                     "transferred": False,
+                    "duid_level": duid_level,
                     "item_code": it.item_code,
                     "item_name": it.item_name or it.item_code,
                     "qty_transferred": flt(it.qty),
@@ -2552,7 +2550,46 @@ def get_poid_materials(po_dispatch):
                     "uom": it.uom or it.stock_uom or "Nos",
                     "team_warehouse": team_wh,
                 })
-    return out
+    return rows
+
+
+@frappe.whitelist()
+def get_poid_materials(po_dispatch):
+    """Return material items available for a POID's field execution: items
+    requested against this exact POID, PLUS items requested at the DUID
+    level with no POID picked — material management is DUID-scoped (a DUID's
+    stock is usable on any of its POIDs), and the request form allows POID
+    to be left blank for exactly that reason, so a DUID-only request must
+    still be visible here rather than disappearing because it names no POID.
+    """
+    pd_name = _resolve_po_dispatch(po_dispatch) if po_dispatch else None
+    if not pd_name:
+        return []
+
+    site_duid = frappe.db.get_value("PO Dispatch", pd_name, "site_code") or ""
+
+    mrs = frappe.get_all("Material Request",
+        filters={"poid": pd_name, "material_request_type": "Material Transfer", "docstatus": 1},
+        fields=["name", "set_warehouse"],
+        ignore_permissions=True)
+
+    duid_mrs = []
+    if site_duid:
+        duid_mrs = frappe.get_all("Material Request",
+            filters={
+                "duid": site_duid,
+                "poid": ["in", ["", None]],
+                "material_request_type": "Material Transfer",
+                "is_return_request": ["!=", 1],
+                "docstatus": 1,
+            },
+            fields=["name", "set_warehouse"],
+            ignore_permissions=True)
+
+    if not mrs and not duid_mrs:
+        return []
+
+    return _poid_material_rows(mrs, duid_level=False) + _poid_material_rows(duid_mrs, duid_level=True)
 
 
 # ─── Material Return Flow ──────────────────────────────────────────────────────
