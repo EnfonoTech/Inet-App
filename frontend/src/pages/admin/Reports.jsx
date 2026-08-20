@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
@@ -57,9 +57,16 @@ const MONTH_OPTIONS = (() => {
   return opts;
 })();
 
+/* Reports that render their own grid rather than the shared {columns,data}
+   table. Lazily imported so a report's code only downloads when opened. */
+const TeamIdleDomainReport = lazy(() => import("./TeamDomainReport"));
+
+/* Every report declares a `category` purely for grouping in the catalog.
+   Adding a report = one entry here; nothing else needs touching. */
 const REPORTS = [
   {
     key: "team_utilization_report",
+    category: "Teams & Utilisation",
     title: "Team Utilization",
     api: "reportTeamUtilizationReport",
     description: "Team activity and utilization — Planned vs Actual",
@@ -67,6 +74,7 @@ const REPORTS = [
   },
   {
     key: "monthly_team_details",
+    category: "Teams & Utilisation",
     title: "Monthly Team Details",
     api: "reportMonthlyTeamDetails",
     description: "Monthly team utilization — weekly breakdown per team",
@@ -75,6 +83,7 @@ const REPORTS = [
   },
   {
     key: "team_planning_report",
+    category: "Teams & Utilisation",
     title: "Planning Report",
     api: "reportTeamPlanningReport",
     description: "Daily team plan status — what each team is scheduled to do",
@@ -83,6 +92,7 @@ const REPORTS = [
   },
   {
     key: "team_utilisation_report",
+    category: "Teams & Utilisation",
     title: "Utilisation Report",
     api: "reportTeamUtilisationReport",
     description: "Daily team utilisation — what each team actually executed",
@@ -91,6 +101,7 @@ const REPORTS = [
   },
   {
     key: "team_implementation_report",
+    category: "Teams & Utilisation",
     title: "Implementation Report",
     api: "reportTeamImplementationReport",
     description: "Daily team implementation status with QC, CIAG and remarks",
@@ -99,6 +110,7 @@ const REPORTS = [
   },
   {
     key: "im_performance",
+    category: "Performance",
     title: "IM Performance",
     api: "reportIMPerformance",
     description: "Revenue, completion % and rating per Implementation Manager",
@@ -107,6 +119,7 @@ const REPORTS = [
   },
   {
     key: "top_teams",
+    category: "Performance",
     title: "Top Teams",
     api: "reportTopTeams",
     description: "Teams ranked by revenue — completion % and achievement %",
@@ -115,6 +128,7 @@ const REPORTS = [
   },
   {
     key: "team_pva",
+    category: "Teams & Utilisation",
     title: "Team PVA",
     api: "reportTeamPVA",
     description: "Planned vs Actual per team per day — daily utilisation breakdown",
@@ -123,6 +137,7 @@ const REPORTS = [
   },
   {
     key: "weekly_performance",
+    category: "Performance",
     title: "Weekly Performance",
     api: "reportWeeklyPerformance",
     description: "Weekly aggregated performance — lines, revenue, re-visits",
@@ -131,19 +146,44 @@ const REPORTS = [
   },
   {
     key: "revenue_forecast",
+    category: "Commercial",
     title: "Revenue Forecast",
     api: "reportRevenueForecast",
     description: "6-month rolling forecast — run-rate projection vs planned revenue",
     hasFilters: false,
   },
+  {
+    key: "team_idle_domain",
+    category: "Client / Domain Reports",
+    title: "Team Idle by Domain",
+    // Renders its own grid + filters + export; not a {columns,data} table.
+    component: TeamIdleDomainReport,
+    description: "Daily idle / project-domain matrix per team — the monthly sheet handed to the domains",
+  },
 ];
 
+const CATEGORIES = [...new Set(REPORTS.map((r) => r.category))];
+
 export default function Reports() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get("tab");
+  // A report is always open — the first of the first category by default, or
+  // whatever ?tab= asks for. Only that one report is fetched, and only its
+  // code is downloaded; the rest stay unloaded until picked.
   const [activeKey, setActiveKey] = useState(
     REPORTS.find((r) => r.key === initialTab) ? initialTab : REPORTS[0].key
   );
+  const [search, setSearch] = useState("");
+  // A custom report publishes its export rows here so the page keeps ONE
+  // Export button in the header rather than each report growing its own.
+  const [customExport, setCustomExport] = useState(null);
+  // Which category's report chips are on show. Kept separate from activeKey so
+  // the chip row stays put while a report is open — switching within a
+  // category is then one click, which is the whole point of the row.
+  const [activeCat, setActiveCat] = useState(() => {
+    const r = REPORTS.find((x) => x.key === initialTab);
+    return r ? r.category : REPORTS[0].category;
+  });
   const [columns, setColumns] = useState([]);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -160,24 +200,65 @@ export default function Reports() {
   const [imOptions, setImOptions] = useState([]);
 
   const active = useMemo(
-    () => REPORTS.find((r) => r.key === activeKey) || REPORTS[0],
+    () => (activeKey ? REPORTS.find((r) => r.key === activeKey) || null : null),
     [activeKey]
   );
+  // A report that brings its own renderer also brings its own filters/export.
+  const CustomReport = active?.component || null;
+  const isCustom = Boolean(CustomReport);
+
+  function openReport(key) {
+    if (!key) return;
+    setActiveKey(key);
+    const r = REPORTS.find((x) => x.key === key);
+    if (r) setActiveCat(r.category);
+    setSearchParams({ tab: key }, { replace: true });
+  }
+
+  /* Picking a category opens its first report straight away. Without this the
+     page would sit on a "now choose a report" limbo state, which is the extra
+     click this layout exists to remove. */
+  function openCategory(cat) {
+    setSearch("");
+    setActiveCat(cat);
+    const first = REPORTS.find((r) => r.category === cat);
+    if (first) openReport(first.key);
+  }
+
+  // A search spans every category; otherwise the row is the active category.
+  const chipReports = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (q) {
+      return REPORTS.filter((r) =>
+        r.title.toLowerCase().includes(q)
+        || (r.description || "").toLowerCase().includes(q)
+        || r.category.toLowerCase().includes(q));
+    }
+    return REPORTS.filter((r) => r.category === activeCat);
+  }, [search, activeCat]);
+
+
+  // Team/IM options feed the SHARED filter toolbar only, so they are not
+  // fetched on the catalog or for a self-filtering custom report.
+  const needsSharedFilters = Boolean(active && !isCustom && active.hasFilters);
 
   useEffect(() => {
+    if (!needsSharedFilters || teamOptions.length) return;
     pmApi.getTeamOptions().then((opts) => {
       if (Array.isArray(opts)) setTeamOptions(opts);
     }).catch(() => {});
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsSharedFilters]);
 
-  // Load IM options once
   useEffect(() => {
+    if (!needsSharedFilters || imOptions.length) return;
     pmApi.listIMsForPicker("").then((rows) => {
       if (Array.isArray(rows)) {
         setImOptions(rows.map((r) => ({ id: r.name, label: r.full_name || r.name })));
       }
     }).catch(() => {});
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsSharedFilters]);
 
   async function loadReport(filters) {
     setLoading(true);
@@ -206,6 +287,8 @@ export default function Reports() {
 
   // Reset filters when switching reports
   useEffect(() => {
+    setCustomExport(null);
+    if (!activeKey) return;
     setTeamFilter([]);
     setImFilter([]);
     setDateRange(DEFAULT_RANGE);
@@ -221,8 +304,10 @@ export default function Reports() {
     setData([]);
   }, [activeKey]);
 
-  // Auto-reload when active report or filters change
+  // Auto-reload when active report or filters change. Skipped entirely on the
+  // catalog and for custom reports, which fetch their own data.
   useEffect(() => {
+    if (!active || isCustom) return;
     const f = {};
     if (active.hasFilters) {
       if (teamFilter.length) f.team = teamFilter;
@@ -249,40 +334,82 @@ export default function Reports() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Reports</h1>
-          <div className="page-subtitle">{active.description}</div>
+          <h1 className="page-title">{active?.title || "Reports"}</h1>
+          <div className="page-subtitle">{active?.description || ""}</div>
         </div>
         <div className="page-actions">
-          <ExportExcelButton
-            rows={data}
-            columns={columns.map((c) => ({ key: c.fieldname || c.name, label: c.label }))}
-            filename={active.key}
+          <input
+            className="rpt-search"
+            placeholder="Search reports…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
           />
-          <button className="btn-secondary" onClick={() => {
-            if (active.filterType === "teamdate") setTeamDate((d) => ({ ...d }));
-            else setDateRange((d) => ({ ...d }));
-          }} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
+          {active && isCustom && (
+            <ExportExcelButton
+              rows={customExport?.rows || []}
+              filename={customExport?.filename || active.key}
+            />
+          )}
+          {active && !isCustom && (
+            <>
+              <ExportExcelButton
+                rows={data}
+                columns={columns.map((c) => ({ key: c.fieldname || c.name, label: c.label }))}
+                filename={active.key}
+              />
+              <button className="btn-secondary" onClick={() => {
+                if (active.filterType === "teamdate") setTeamDate((d) => ({ ...d }));
+                else setDateRange((d) => ({ ...d }));
+              }} disabled={loading}>
+                {loading ? "Loading…" : "Refresh"}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* ── Report Selector Tabs ──────────────────────────────── */}
-      <div className="tabs" style={active.hasFilters ? { marginBottom: 0 } : {}}>
-        {REPORTS.map((r) => (
+      {/* ── Switcher: always visible, so changing report is one click ──
+          Row 1 picks the category, row 2 picks the report inside it. A
+          search collapses row 2 into matches from every category. */}
+      <div className="tabs" style={{ marginBottom: 0 }}>
+        {CATEGORIES.map((c) => (
+          <button
+            key={c}
+            type="button"
+            className={`tab ${!search && c === activeCat ? "active" : ""}`}
+            onClick={() => openCategory(c)}
+          >
+            {c}
+            <span className="rpt-tab-count">{REPORTS.filter((r) => r.category === c).length}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="rpt-chips">
+        {chipReports.length === 0 ? (
+          <span className="rpt-chips-empty">No report matches “{search}”.</span>
+        ) : chipReports.map((r) => (
           <button
             key={r.key}
             type="button"
-            className={`tab ${r.key === activeKey ? "active" : ""}`}
-            onClick={() => setActiveKey(r.key)}
+            className={`rpt-chip ${r.key === activeKey ? "active" : ""}`}
+            title={r.description}
+            onClick={() => openReport(r.key)}
           >
             {r.title}
           </button>
         ))}
       </div>
 
+      {/* ── A custom report owns its own toolbar, grid and export ─ */}
+      {active && isCustom && (
+        <Suspense fallback={<div className="page-content"><div className="rpt-empty">Loading report…</div></div>}>
+          <CustomReport onExportReady={setCustomExport} />
+        </Suspense>
+      )}
+
       {/* ── Filters toolbar ───────────────────────────────────── */}
-      {active.hasFilters && (
+      {active && !isCustom && active.hasFilters && (
         <div className="toolbar">
           {active.filterType === "teamdate" ? (
             <DateRangePicker
@@ -344,6 +471,7 @@ export default function Reports() {
         </div>
       )}
 
+      {active && !isCustom && (
       <div className="page-content">
         {error && (
           <div className="notice error" style={{ marginBottom: 16 }}>
@@ -424,6 +552,7 @@ export default function Reports() {
           )}
         </DataTableWrapper>
       </div>
+      )}
     </div>
   );
 }

@@ -197,6 +197,13 @@ export const pmApi = {
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
   getCommandDashboard:  (args = {})  => call("inet_app.api.command_center.get_command_dashboard", { ...args, etag: args?.etag || "" }),
+  // Daily team idle / project-domain grid (the report handed to the domains).
+  getTeamDomainUtilization: (args = {}) => call("inet_app.api.command_center.get_team_domain_utilization", {
+    month:           args?.month || "",
+    domains:         args?.domains?.length ? JSON.stringify(args.domains) : "",
+    include_fridays: args?.include_fridays ? 1 : 0,
+    etag:            args?.etag || "",
+  }),
   // Order book + invoicing KPIs for the Commercial dashboard. Money figures
   // come from the same computation as the PIC dashboard, so the two agree.
   getCommercialDashboard: (args = {}) => call("inet_app.api.command_center.get_commercial_dashboard", { etag: args?.etag || "" }),

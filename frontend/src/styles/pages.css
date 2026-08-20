@@ -2380,3 +2380,150 @@
 
   .photo-thumb-grid { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* ================================================================
+   Team Idle / Project Domain report — a wide fixed pivot grid.
+   Deliberately mirrors .data-table's chrome (same header tint, same muted
+   uppercase labels, same borders) so it reads as one of the reports rather
+   than a foreign screen. It is NOT .data-table because DataTablePro would
+   attach column management and resize handles to it, which make no sense
+   for a day-per-column matrix and fight the frozen identity columns.
+   ================================================================ */
+.tdr-wrap { display: flex; flex-direction: column; min-height: 0; }
+
+.tdr-note {
+  padding: 7px 12px; font-size: 11px; line-height: 1.55; color: #8d6e63;
+  background: #fff8e1; border-bottom: 1px solid #f0e4c3; flex-shrink: 0;
+}
+
+/* The grid owns its own scroll in both axes; the page never scrolls sideways. */
+.tdr-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; }
+
+.tdr-table { border-collapse: separate; border-spacing: 0; white-space: nowrap; }
+
+/* Header: same treatment as .data-table th. */
+.tdr-table thead th {
+  position: sticky; top: 0; z-index: 3;
+  background: #f8fafc; background-clip: padding-box;
+  color: var(--text-muted);
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em;
+  line-height: 1.35; padding: 6px 6px; text-align: center;
+  border-bottom: 2px solid var(--border);
+  border-right: 1px solid var(--border-light);
+  user-select: none;
+  /* Every day column the same width regardless of content — without this,
+     a column that's mostly "Idle" shrinks next to one showing a longer
+     domain name, and the header date wraps unevenly column to column. */
+  min-width: 62px;
+}
+/* Idle-days total pinned to the right edge: with 26 day columns the headline
+   number would otherwise sit permanently off-screen. */
+.tdr-table thead th.tdr-total-head {
+  white-space: normal; min-width: 84px;
+  position: sticky; right: 0; z-index: 4; background: #eef2f6;
+  border-left: 2px solid var(--border);
+}
+
+.tdr-table td {
+  padding: 4px 6px; font-size: 0.74rem; text-align: center;
+  color: var(--text); vertical-align: middle;
+  border-bottom: 1px solid var(--border-light);
+  border-right: 1px solid var(--border-light);
+  /* Matches thead th's min-width so a cell never determines its own column's
+     width — a short "Idle" and a longer domain name land in equal-width
+     columns instead of the row jittering column to column. */
+  min-width: 62px;
+}
+.tdr-table tbody tr:nth-child(even) > td:not([style*="background"]) { background: #fafbfc; }
+.tdr-table tbody tr:hover > td { background: #f1f5f9; }
+
+/* Frozen identity columns — 26 day columns are unreadable without them. */
+.tdr-sticky { position: sticky; z-index: 2; background: var(--bg-white); }
+.tdr-table thead .tdr-sticky { z-index: 4; background: #f8fafc; }
+.tdr-sr   { left: 0;    min-width: 48px; }
+.tdr-acct {
+  left: 48px; min-width: 160px;
+  text-align: left !important; font-weight: 700; color: var(--text);
+}
+.tdr-table tbody tr:hover .tdr-sticky { background: #f1f5f9; }
+
+.tdr-warn { color: #F57C00; margin-left: 3px; font-weight: 800; cursor: help; }
+
+.tdr-total {
+  position: sticky; right: 0; z-index: 2;
+  background: #eef2f6; font-weight: 800;
+  border-left: 2px solid var(--border);
+}
+.tdr-table tbody tr:hover .tdr-total { background: #e2e8f0; }
+
+.tdr-table tfoot td {
+  position: sticky; bottom: 0; z-index: 3;
+  background: #f1f5f9; font-weight: 800; color: var(--text);
+  border-top: 2px solid var(--border);
+}
+.tdr-table tfoot td.tdr-acct { text-align: left !important; z-index: 5; }
+.tdr-table tfoot td.tdr-grand {
+  position: sticky; right: 0; z-index: 5;
+  background: #fff3cd; color: #7f1d1d; border-left: 2px solid var(--border);
+}
+
+/* Print: the whole grid, nothing frozen. */
+@media print {
+  .tdr-scroll { overflow: visible; max-height: none; }
+  .tdr-table thead th, .tdr-table tfoot td,
+  .tdr-sticky, .tdr-total, .tdr-total-head { position: static; }
+  .tdr-table { font-size: 8px; }
+}
+
+/* ── Reports page: category tabs + report chips ─────────────────
+   The page hosts a growing list of reports, so nothing is fetched until one
+   is picked. The two switcher rows stay visible while a report is open —
+   changing report, including within a category, is a single click. */
+.rpt-search {
+  width: 200px; padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg-white);
+  color: var(--text); font-size: 0.78rem; font-family: inherit; outline: none;
+}
+.rpt-search::placeholder { color: var(--text-muted); }
+.rpt-search:focus { border-color: #c3d9f7; }
+
+.rpt-tab-count {
+  margin-left: 6px; padding: 1px 5px; border-radius: 999px;
+  font-size: 9px; font-weight: 800; background: rgba(100, 116, 139, 0.14); color: inherit;
+}
+
+.rpt-chips {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 8px 0 10px;
+}
+.rpt-chip {
+  cursor: pointer; font: inherit; white-space: nowrap;
+  padding: 4px 11px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg-white);
+  color: #475569; font-size: 0.76rem; font-weight: 600;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.rpt-chip:hover { background: #f1f5f9; color: #1565C0; border-color: #c3d9f7; }
+.rpt-chip.active {
+  background: #1565C0; border-color: #1565C0; color: #fff; font-weight: 700; cursor: default;
+}
+.rpt-chip.clear { margin-left: 4px; color: #94a3b8; }
+.rpt-chip.clear:hover { color: #C62828; border-color: #f3c9c9; background: #fff5f5; }
+.rpt-chips-empty { font-size: 0.78rem; color: var(--text-muted); }
+
+/* Landing state: the chosen category's reports, with their descriptions. */
+.rpt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+
+.rpt-card {
+  text-align: left; cursor: pointer;
+  background: var(--bg-white); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
+  display: flex; flex-direction: column; gap: 4px; font: inherit;
+}
+.rpt-card:hover {
+  border-color: #c3d9f7; box-shadow: 0 4px 14px rgba(15,23,42,.08); transform: translateY(-1px);
+}
+.rpt-card-title { font-size: 0.82rem; font-weight: 700; color: var(--text); }
+.rpt-card-desc  { font-size: 0.72rem; color: var(--text-muted); line-height: 1.5; }
+
+.rpt-empty { padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.82rem; }

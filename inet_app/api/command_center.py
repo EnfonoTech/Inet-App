@@ -9036,6 +9036,181 @@ def get_po_vs_invoice_trend(from_date=None, to_date=None, months=0, etag=None):
 
 
 @frappe.whitelist()
+def get_team_domain_utilization(month=None, domains=None, include_fridays=0, etag=None):
+    """Daily team idle / project-domain grid — the report handed to the domains.
+
+    One row per Active INET Team (labelled by its ISDP account), one column per
+    day of ``month``, and per cell either the project domain the team worked in
+    that day or ``Idle``. Trailing column = idle days per team; footer row =
+    idle teams per day.
+
+    ``domains`` (multi-select of Project Domain names) does not remove rows: a
+    day whose domain is selected shows that domain's own name, any *other*
+    domain collapses to ``Other``, and no work is still ``Idle``. So the grid
+    keeps its shape and only the labelling narrows.
+
+    Attendance is the inclusive span ``execution_date`` ->
+    ``last_progress_date`` on Daily Execution; with no last-progress date the
+    execution counts as that single day. ``Daily Execution.team`` is the
+    signal — verified to be set on every row and never shared between teams.
+    If production ever shares one execution across teams, extend via
+    ``Rollout Plan Team.execution_name``.
+
+    Fridays are omitted to match the delivered report; pass
+    ``include_fridays=1`` to keep them.
+
+    No ``Leave`` state: nothing in inet_app records team leave yet, so it is
+    deliberately absent rather than guessed at.
+
+    Days outside a team's start/end window render ``-`` and never count as
+    idle — a team cannot be idle before it existed.
+    """
+    from calendar import monthrange
+
+    NA, IDLE, OTHER, NO_DOMAIN = "-", "Idle", "Other", "No Domain"
+
+    today = getdate(nowdate())
+    if month:
+        y, m = int(str(month)[:4]), int(str(month)[5:7])
+    else:
+        y, m = today.year, today.month
+    first = date(y, m, 1)
+    last = date(y, m, monthrange(y, m)[1])
+
+    selected = set(_ensure_list(domains))
+    keep_fri = cint(include_fridays)
+
+    current_etag = _dashboard_etag(
+        "team_domain", f"{y:04d}-{m:02d}", ",".join(sorted(selected)), keep_fri)
+    if etag and etag == current_etag:
+        return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
+
+    # Friday == weekday 4. The delivered report drops them.
+    days = []
+    d = first
+    while d <= last:
+        if keep_fri or d.weekday() != 4:
+            days.append(d)
+        d = add_days(d, 1)
+
+    teams = frappe.db.sql(
+        """
+        SELECT name, team_name, isdp_account, start_date, end_date, team_category
+        FROM `tabINET Team`
+        WHERE IFNULL(status, '') = 'Active'
+        ORDER BY IFNULL(NULLIF(isdp_account, ''), team_name)
+        """,
+        as_dict=True,
+    )
+
+    # Executions overlapping the month, with the domain resolved through the
+    # POID's project. Span is clamped to the month, so one row can contribute
+    # at most ~31 days no matter how stale its last_progress_date is.
+    execs = frappe.db.sql(
+        """
+        SELECT de.team AS team,
+               de.execution_date AS d1,
+               COALESCE(de.last_progress_date, de.execution_date) AS d2,
+               NULLIF(pcc.project_domain, '') AS domain
+        FROM `tabDaily Execution` de
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+        WHERE de.execution_date IS NOT NULL
+          AND IFNULL(de.team, '') != ''
+          AND de.execution_date <= %s
+          AND COALESCE(de.last_progress_date, de.execution_date) >= %s
+        """,
+        (last, first),
+        as_dict=True,
+    )
+
+    # (team, isodate) -> {domain: execution count}
+    worked = {}
+    undomained = 0
+    for r in execs:
+        dom = r.get("domain") or NO_DOMAIN
+        if dom == NO_DOMAIN:
+            undomained += 1
+        cur = max(getdate(r["d1"]), first)
+        end = min(getdate(r["d2"]), last)
+        while cur <= end:
+            slot = worked.setdefault((r["team"], cur.isoformat()), {})
+            slot[dom] = slot.get(dom, 0) + 1
+            cur = add_days(cur, 1)
+
+    def pick(counts, allowed=None):
+        """Most-executed domain that day; alphabetical tie-break for stability."""
+        items = [(k, v) for k, v in counts.items() if allowed is None or k in allowed]
+        if not items:
+            return None
+        return sorted(items, key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+    rows = []
+    idle_per_day = [0] * len(days)
+    grand_total = 0
+    for t in teams:
+        t_start = getdate(t["start_date"]) if t.get("start_date") else None
+        t_end = getdate(t["end_date"]) if t.get("end_date") else None
+        cells, idle_days = [], 0
+        for i, day in enumerate(days):
+            if (t_start and day < t_start) or (t_end and day > t_end):
+                cells.append(NA)
+                continue
+            counts = worked.get((t["name"], day.isoformat()))
+            if not counts:
+                cells.append(IDLE)
+                idle_days += 1
+                idle_per_day[i] += 1
+                continue
+            if selected:
+                hit = pick(counts, allowed=selected)
+                cells.append(hit or OTHER)
+            else:
+                cells.append(pick(counts) or OTHER)
+        rows.append({
+            "team": t["name"],
+            "team_name": t.get("team_name"),
+            "isdp_account": t.get("isdp_account") or "",
+            "label": t.get("isdp_account") or t.get("team_name") or t["name"],
+            "has_isdp": bool(t.get("isdp_account")),
+            "cells": cells,
+            "idle_days": idle_days,
+        })
+        grand_total += idle_days
+
+    domain_options = frappe.get_all(
+        "Project Domain", filters={"status": "Active"}, pluck="name", order_by="name")
+
+    proj_total = frappe.db.count("Project Control Center")
+    proj_no_domain = frappe.db.sql(
+        "SELECT COUNT(*) FROM `tabProject Control Center` WHERE IFNULL(project_domain,'') = ''")[0][0]
+
+    return {
+        "month": f"{y:04d}-{m:02d}",
+        "days": [{"d": d.isoformat(),
+                  "label": d.strftime("%d-%b-%Y"),
+                  "dow": d.strftime("%a")} for d in days],
+        "rows": rows,
+        "totals": {"idle_per_day": idle_per_day, "grand_total_idle": grand_total},
+        "domain_options": domain_options,
+        "domains_selected": sorted(selected),
+        "include_fridays": bool(keep_fri),
+        # Surfaced so an empty-looking grid explains itself instead of reading
+        # as a bug: both of these fields are unpopulated on local data.
+        "coverage": {
+            "teams": len(teams),
+            "teams_without_isdp": sum(1 for r in rows if not r["has_isdp"]),
+            "projects": cint(proj_total),
+            "projects_without_domain": cint(proj_no_domain),
+            "executions_in_window": len(execs),
+            "executions_without_domain": undomained,
+        },
+        "etag": current_etag,
+        "last_updated": _iso_now(),
+    }
+
+
+@frappe.whitelist()
 def get_commercial_dashboard(etag=None):
     """Commercial (order-book + invoicing) figures for the admin dashboard.
 
