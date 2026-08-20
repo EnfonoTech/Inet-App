@@ -12,6 +12,12 @@ from inet_app.api.notifications import _make_notification, _notify_role
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
 from inet_app.api.command_center import (
+    _MS1_INVOICED_SQL,
+    _MS1_NOT_INVOICED_SQL,
+    _MS2_INVOICED_SQL,
+    _MS2_NOT_INVOICED_SQL,
+    _NOT_CANCELLED_SQL,
+    _REPORTING_SCOPE_SQL,
     _batch_item_activity_types,
     _dashboard_etag,
     _ensure_list,
@@ -1412,6 +1418,77 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
     }
 
 
+def _invoice_month_clause(fd, td):
+    """WHERE clause + params scoping the ``YYYY-MM`` invoice bucket.
+
+    Both bounds are snapped to whole months — a mid-month ``from``/``to``
+    still includes its entire month, so a monthly roll-up never shows a
+    partial bar.
+    """
+    if fd and td:
+        return (
+            "WHERE m BETWEEN DATE_FORMAT(%s, '%%Y-%%m') AND DATE_FORMAT(%s, '%%Y-%%m')",
+            [fd, td],
+        )
+    if fd:
+        return "WHERE m >= DATE_FORMAT(%s, '%%Y-%%m')", [fd]
+    if td:
+        return "WHERE m <= DATE_FORMAT(%s, '%%Y-%%m')", [td]
+    return "", []
+
+
+def _monthly_invoicing_rows(fd=None, td=None, order="DESC", limit=36):
+    """MS1 + MS2 invoiced value grouped by invoicing month.
+
+    Single source of truth for the "Monthly Invoicing Roll-up" figure —
+    shared by ``get_pic_dashboard``, ``get_pic_report(kind="monthly")`` and
+    the admin PO-vs-invoice trend chart, so all three always reconcile.
+
+    A milestone is invoiced once it reaches "Commercial Invoice Submitted"
+    (invoice raised) or "Commercial Invoice Closed" (raised + paid), and its
+    value is the FULL ``ms1_amount`` / ``ms2_amount`` — a milestone is never
+    partly billed. This deliberately does NOT read ``ms1_invoiced`` /
+    ``ms2_invoiced``: those are per-row display fields on the PIC tracker and
+    hold bad values left over from earlier testing.
+
+    Milestones that are invoiced but carry no invoicing month cannot be put
+    in a bucket and are absent here — ``_undated_invoiced_value()`` in
+    command_center reports that residual.
+    """
+    invoice_clause, invoice_params = _invoice_month_clause(fd, td)
+    order_sql = "ASC" if str(order).upper() == "ASC" else "DESC"
+    limit_sql = f"LIMIT {cint(limit)}" if limit else ""
+    return frappe.db.sql(
+        f"""
+        SELECT m AS invoice_month,
+               COALESCE(SUM(ms1_inv), 0) AS ms1_invoiced,
+               COALESCE(SUM(ms2_inv), 0) AS ms2_invoiced,
+               COALESCE(SUM(ms1_inv + ms2_inv), 0) AS total
+        FROM (
+          SELECT DATE_FORMAT(pd.ms1_invoice_month, '%%Y-%%m') AS m,
+                 IFNULL(pd.ms1_amount, 0) AS ms1_inv, 0 AS ms2_inv
+          FROM `tabPO Dispatch` pd
+          WHERE pd.ms1_invoice_month IS NOT NULL
+            AND {_MS1_INVOICED_SQL}
+            AND {_REPORTING_SCOPE_SQL}
+          UNION ALL
+          SELECT DATE_FORMAT(pd.ms2_invoice_month, '%%Y-%%m') AS m,
+                 0 AS ms1_inv, IFNULL(pd.ms2_amount, 0) AS ms2_inv
+          FROM `tabPO Dispatch` pd
+          WHERE pd.ms2_invoice_month IS NOT NULL
+            AND {_MS2_INVOICED_SQL}
+            AND {_REPORTING_SCOPE_SQL}
+        ) u
+        {invoice_clause}
+        GROUP BY m
+        ORDER BY m {order_sql}
+        {limit_sql}
+        """,
+        tuple(invoice_params),
+        as_dict=True,
+    )
+
+
 @frappe.whitelist()
 def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     """KPIs + bucket counts + monthly invoicing roll-up for the PIC dashboard.
@@ -1430,6 +1507,24 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     if etag and etag == current_etag:
         return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
 
+    payload = pic_dashboard_payload(from_date, to_date)
+    payload["etag"] = current_etag
+    payload["last_updated"] = _iso_now()
+    return payload
+
+
+def pic_dashboard_payload(from_date=None, to_date=None):
+    """The PIC dashboard figures, with no role guard and no etag handling.
+
+    Split out of ``get_pic_dashboard`` so the admin Commercial dashboard can
+    show the same invoicing numbers without demanding the INET PIC role. The
+    two screens must never disagree about invoiced / unbilled / INET-vs-Subcon,
+    so they share one computation instead of two copies of this SQL.
+
+    Not whitelisted on purpose — callers are responsible for their own access
+    check (``get_pic_dashboard`` guards on the PIC roles; the Commercial
+    dashboard is admin/PM-facing and intentionally does not).
+    """
     fd = getdate(from_date) if from_date else None
     td = getdate(to_date) if to_date else None
 
@@ -1445,18 +1540,6 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     elif td:
         applied_clause = "AND pd.ms1_applied_date <= %s"
         applied_params = [td]
-
-    invoice_clause = ""
-    invoice_params = []
-    if fd and td:
-        invoice_clause = "WHERE m BETWEEN DATE_FORMAT(%s, '%%Y-%%m') AND DATE_FORMAT(%s, '%%Y-%%m')"
-        invoice_params = [fd, td]
-    elif fd:
-        invoice_clause = "WHERE m >= DATE_FORMAT(%s, '%%Y-%%m')"
-        invoice_params = [fd]
-    elif td:
-        invoice_clause = "WHERE m <= DATE_FORMAT(%s, '%%Y-%%m')"
-        invoice_params = [td]
 
     # Invoice-month conditions for the INET/Subcon split CASE expressions.
     # Each of the 4 SUM(CASE ...) uses split_ms1_cond (2 params each × 2 = 4)
@@ -1570,31 +1653,7 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     )
 
     # ── Monthly invoicing roll-up — date scopes the YYYY-MM bucket.
-    monthly = frappe.db.sql(
-        f"""
-        SELECT m AS invoice_month,
-               COALESCE(SUM(ms1_inv), 0) AS ms1_invoiced,
-               COALESCE(SUM(ms2_inv), 0) AS ms2_invoiced,
-               COALESCE(SUM(ms1_inv + ms2_inv), 0) AS total
-        FROM (
-          SELECT DATE_FORMAT(ms1_invoice_month, '%%Y-%%m') AS m,
-                 ms1_invoiced AS ms1_inv, 0 AS ms2_inv
-          FROM `tabPO Dispatch`
-          WHERE ms1_invoice_month IS NOT NULL
-          UNION ALL
-          SELECT DATE_FORMAT(ms2_invoice_month, '%%Y-%%m') AS m,
-                 0 AS ms1_inv, ms2_invoiced AS ms2_inv
-          FROM `tabPO Dispatch`
-          WHERE ms2_invoice_month IS NOT NULL
-        ) u
-        {invoice_clause}
-        GROUP BY m
-        ORDER BY m DESC
-        LIMIT 36
-        """,
-        tuple(invoice_params),
-        as_dict=True,
-    )
+    monthly = _monthly_invoicing_rows(fd, td, order="DESC", limit=36)
 
     # ── INET vs Subcon split — filtered by invoice month when date range set.
     _split = frappe.db.sql(
@@ -1638,12 +1697,14 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     kpi = frappe.db.sql(
         f"""
         SELECT
-          COALESCE(SUM(CASE WHEN IFNULL(pd.dispatch_status,'') != 'Cancelled'
-                            THEN pd.ms1_invoiced + pd.ms2_invoiced ELSE 0 END), 0) AS total_invoiced,
-          COALESCE(SUM(CASE WHEN IFNULL(pd.dispatch_status,'') != 'Cancelled'
-                            THEN pd.ms1_unbilled ELSE 0 END), 0) AS unbilled_ms1,
-          COALESCE(SUM(CASE WHEN IFNULL(pd.dispatch_status,'') != 'Cancelled'
-                            THEN pd.ms2_unbilled ELSE 0 END), 0) AS unbilled_ms2,
+          COALESCE(SUM(CASE WHEN {_MS1_INVOICED_SQL} AND {_NOT_CANCELLED_SQL}
+                            THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END), 0)
+        + COALESCE(SUM(CASE WHEN {_MS2_INVOICED_SQL} AND {_NOT_CANCELLED_SQL}
+                            THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END), 0) AS total_invoiced,
+          COALESCE(SUM(CASE WHEN {_MS1_NOT_INVOICED_SQL} AND {_NOT_CANCELLED_SQL}
+                            THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END), 0) AS unbilled_ms1,
+          COALESCE(SUM(CASE WHEN {_MS2_NOT_INVOICED_SQL} AND {_NOT_CANCELLED_SQL}
+                            THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END), 0) AS unbilled_ms2,
           COUNT(*) AS line_count,
           COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["pending"]} THEN 1 ELSE 0 END), 0) AS pending_count,
           COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["active"]} THEN 1 ELSE 0 END), 0) AS active_count,
@@ -1676,8 +1737,6 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
         "pending_isdp": pending_isdp,
         "monthly": monthly,
         "inet_subcon": inet_subcon,
-        "etag": current_etag,
-        "last_updated": _iso_now(),
     }
 
 
@@ -1744,18 +1803,8 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
         }
 
     if kind == "monthly":
-        # Optional date scope on the YYYY-MM bucket.
-        invoice_clause = ""
-        invoice_params = []
-        if fd and td:
-            invoice_clause = "WHERE m BETWEEN DATE_FORMAT(%s, '%%Y-%%m') AND DATE_FORMAT(%s, '%%Y-%%m')"
-            invoice_params = [fd, td]
-        elif fd:
-            invoice_clause = "WHERE m >= DATE_FORMAT(%s, '%%Y-%%m')"
-            invoice_params = [fd]
-        elif td:
-            invoice_clause = "WHERE m <= DATE_FORMAT(%s, '%%Y-%%m')"
-            invoice_params = [td]
+        # Optional date scope on the YYYY-MM bucket. Unlimited — the dashboard
+        # panel caps at 36 months, the report does not.
         return {
             "kind": kind,
             "columns": [
@@ -1764,30 +1813,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                 {"key": "ms2_invoiced", "label": "MS2 Invoiced", "numeric": True, "money": True},
                 {"key": "total", "label": "Total", "numeric": True, "money": True},
             ],
-            "rows": frappe.db.sql(
-                f"""
-                SELECT m AS invoice_month,
-                       COALESCE(SUM(ms1_inv), 0) AS ms1_invoiced,
-                       COALESCE(SUM(ms2_inv), 0) AS ms2_invoiced,
-                       COALESCE(SUM(ms1_inv + ms2_inv), 0) AS total
-                FROM (
-                  SELECT DATE_FORMAT(ms1_invoice_month, '%%Y-%%m') AS m,
-                         ms1_invoiced AS ms1_inv, 0 AS ms2_inv
-                  FROM `tabPO Dispatch`
-                  WHERE ms1_invoice_month IS NOT NULL
-                  UNION ALL
-                  SELECT DATE_FORMAT(ms2_invoice_month, '%%Y-%%m') AS m,
-                         0 AS ms1_inv, ms2_invoiced AS ms2_inv
-                  FROM `tabPO Dispatch`
-                  WHERE ms2_invoice_month IS NOT NULL
-                ) u
-                {invoice_clause}
-                GROUP BY m
-                ORDER BY m DESC
-                """,
-                tuple(invoice_params),
-                as_dict=True,
-            ),
+            "rows": _monthly_invoicing_rows(fd, td, order="DESC", limit=None),
         }
 
     if kind == "aging":

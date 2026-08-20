@@ -50,7 +50,8 @@ def _dashboard_etag(*discriminators):
               (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabDaily Execution`) AS de,
               (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabWork Done`)       AS wd,
               (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabRollout Plan`)    AS rp,
-              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabINET Team`)       AS it
+              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabINET Team`)       AS it,
+              (SELECT UNIX_TIMESTAMP(MAX(modified)) FROM `tabPO Intake Line`)  AS il
             """,
             as_dict=True,
         )
@@ -63,6 +64,9 @@ def _dashboard_etag(*discriminators):
         str(row.get("wd") or 0),
         str(row.get("rp") or 0),
         str(row.get("it") or 0),
+        # PO Intake Line — without it a PO upload would not bust the cache and
+        # any PO-value series (get_po_vs_invoice_trend) would serve stale.
+        str(row.get("il") or 0),
     ]
     for d in discriminators:
         parts.append("" if d is None else str(d))
@@ -8763,6 +8767,450 @@ def _team_cost_days(start_date, end_date, period_from, period_to, cap=30):
     return max(0, min(cap, days))
 
 
+# ── Reporting definition of "invoiced" ─────────────────────────────────────
+#
+# A milestone counts as invoiced once it reaches "Commercial Invoice
+# Submitted" (invoice raised) or "Commercial Invoice Closed" (raised AND
+# payment received). Both are invoiced; Closed just also means paid.
+#
+# The value is the milestone's FULL ``ms1_amount`` / ``ms2_amount``. There is
+# no partial billing inside a milestone — once MS1 is submitted, all of MS1 is
+# invoiced. This is why reporting must NOT use ``ms1_invoiced`` /
+# ``ms1_unbilled``: those two fields are PIC's own display fields and carry
+# bad values left over from earlier testing. They stay untouched on the PIC
+# dashboard; nothing that reports numbers should read them.
+_INVOICED_STATUSES_SQL = "('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
+
+_MS1_INVOICED_SQL = f"pd.pic_status IN {_INVOICED_STATUSES_SQL}"
+_MS2_INVOICED_SQL = f"pd.pic_status_ms2 IN {_INVOICED_STATUSES_SQL}"
+
+# Invoiced value: full milestone amount for every milestone that got there.
+_INVOICED_VALUE_SQL = f"""
+(CASE WHEN {_MS1_INVOICED_SQL} THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END
+ + CASE WHEN {_MS2_INVOICED_SQL} THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END)
+"""
+
+
+# Backlog: milestone value that has NOT reached an invoiced status yet.
+# Invoiced + backlog partitions the total milestone value exactly.
+#
+# NOTE the IFNULL. `NOT (pic_status IN (...))` is NOT the negation here:
+# `NULL IN (...)` evaluates to NULL, and `NOT NULL` is NULL — not TRUE — so a
+# CASE on it falls through to ELSE and the ~1.7k rows with a NULL pic_status
+# would contribute no backlog at all, breaking the partition by ~SAR 1.77M.
+_MS1_NOT_INVOICED_SQL = f"IFNULL(pd.pic_status, '') NOT IN {_INVOICED_STATUSES_SQL}"
+_MS2_NOT_INVOICED_SQL = f"IFNULL(pd.pic_status_ms2, '') NOT IN {_INVOICED_STATUSES_SQL}"
+
+_BACKLOG_VALUE_SQL = f"""
+(CASE WHEN {_MS1_NOT_INVOICED_SQL} THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END
+ + CASE WHEN {_MS2_NOT_INVOICED_SQL} THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END)
+"""
+
+# A cancelled line carries no money either way: nothing was invoiced and its
+# remainder is not backlog. Kept separate from the scope below because some
+# callers (PIC's "All Lines" tile) must still COUNT cancelled rows.
+_NOT_CANCELLED_SQL = """
+IFNULL(pd.dispatch_status, '') <> 'Cancelled'
+AND IFNULL(pd.pic_status, '') <> 'PO Line Canceled'
+AND IFNULL(pd.pic_status_ms2, '') <> 'PO Line Canceled'
+"""
+
+# Lines that count at all: real work, and not cancelled at either level.
+_REPORTING_SCOPE_SQL = f"""
+IFNULL(pd.is_internal_work, 0) = 0
+AND IFNULL(pd.is_dummy_po, 0) = 0
+AND {_NOT_CANCELLED_SQL}
+"""
+
+
+def _undated_invoiced_value():
+    """Invoiced milestone value with no invoicing month — can't be charted.
+
+    Returned alongside the monthly series so the gap between "total invoiced"
+    on a KPI tile and the sum of the chart's bars is stated, not hidden.
+    """
+    rows = frappe.db.sql(
+        f"""
+        SELECT
+          COALESCE(SUM(CASE WHEN {_MS1_INVOICED_SQL} AND pd.ms1_invoice_month IS NULL
+                            THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END), 0)
+        + COALESCE(SUM(CASE WHEN {_MS2_INVOICED_SQL} AND pd.ms2_invoice_month IS NULL
+                            THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END), 0) AS undated
+        FROM `tabPO Dispatch` pd
+        WHERE {_REPORTING_SCOPE_SQL}
+        """,
+        as_dict=True,
+    )
+    return flt((rows[0] if rows else {}).get("undated") or 0, 2)
+
+
+def _open_po_line_totals():
+    """Open order book: PO Intake Lines whose per-line status is not terminal.
+
+    The line-wise status is the source of truth — the parent PO Intake's
+    ``status`` is a roll-up and isn't authoritative for KPIs.
+
+    Shared by ``get_command_dashboard`` (operational.total_open_po_*) and
+    ``get_commercial_dashboard`` so the two can never report different order
+    books for the same moment.
+    """
+    rows = frappe.db.sql(
+        """
+        SELECT COALESCE(SUM(line_amount), 0) AS total_value, COUNT(*) AS line_count
+        FROM `tabPO Intake Line`
+        WHERE IFNULL(po_line_status, 'New') NOT IN ('Closed', 'Cancelled')
+        """,
+        as_dict=True,
+    )
+    return (rows[0] if rows else {}) or {}
+
+
+_MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _ym_label(ym):
+    """``"2024-03"`` -> ``"Mar-24"`` (the axis label format the charts use)."""
+    try:
+        y, m = int(ym[:4]), int(ym[5:7])
+        return f"{_MONTH_ABBR[m - 1]}-{y % 100:02d}"
+    except Exception:
+        return ym
+
+
+def _month_spine(start_ym, end_ym, max_months=180):
+    """Every ``YYYY-MM`` from start to end inclusive.
+
+    Charts must receive a dense series: a line chart draws straight across a
+    month that is simply absent from the data, which silently hides a gap.
+    Months with no rows have to be explicit zeros instead.
+    """
+    if not start_ym or not end_ym or start_ym > end_ym:
+        return []
+    y, m = int(start_ym[:4]), int(start_ym[5:7])
+    ey, em = int(end_ym[:4]), int(end_ym[5:7])
+    out = []
+    while (y, m) <= (ey, em) and len(out) < max_months:
+        out.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return out
+
+
+@frappe.whitelist()
+def get_po_vs_invoice_trend(from_date=None, to_date=None, months=0, etag=None):
+    """Monthly PO published value vs invoiced value, for the admin trend charts.
+
+    Two series on a shared dense month spine:
+
+    * ``po_value``  — SUM(`PO Intake Line`.line_amount) bucketed by the PO's
+      published month, ``COALESCE(publish_date, start_date, creation)``.
+      ``publish_date`` only lands on ~30% of lines (it comes from an optional
+      upload column), so ``start_date`` carries most rows; ``po_date_basis``
+      in the payload reports the split so the UI can be honest about it.
+    * ``invoiced``  — the PIC "Monthly Invoicing Roll-up" verbatim, so this
+      chart and the PIC dashboard always show the same number for a month.
+
+    ``months`` (>0) overrides the date range with the trailing N months ending
+    at the *current* month — deliberately anchored to today rather than to the
+    last month holding data, so a PIC data-entry lag shows as a real decline
+    instead of being cropped out of the window.
+
+    Unguarded like ``get_command_dashboard``: PM/admin users are the audience
+    and most of them lack the INET PIC role that ``get_pic_dashboard`` demands.
+    """
+    from inet_app.api.pic import _monthly_invoicing_rows
+
+    months = cint(months)
+    if months > 0:
+        today = getdate(nowdate())
+        end_ym = f"{today.year:04d}-{today.month:02d}"
+        y, m = today.year, today.month - (months - 1)
+        while m < 1:
+            m += 12
+            y -= 1
+        start_ym = f"{y:04d}-{m:02d}"
+        fd = getdate(f"{start_ym}-01")
+        td = get_last_day(getdate(f"{end_ym}-01"))
+    else:
+        fd = getdate(from_date) if from_date else None
+        td = getdate(to_date) if to_date else None
+        start_ym = f"{fd.year:04d}-{fd.month:02d}" if fd else None
+        end_ym = f"{td.year:04d}-{td.month:02d}" if td else None
+
+    current_etag = _dashboard_etag("po_trend", start_ym, end_ym)
+    if etag and etag == current_etag:
+        return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
+
+    # ── Series A: PO published value, bucketed by resolved publish month.
+    # Join is `po_intake` + `po_line_no` (covered by idx_pd_po_intake_line) —
+    # NOT `poid`, which is unindexed on both sides and trips MAX_JOIN_SIZE.
+    po_having, po_params = "", []
+    if start_ym and end_ym:
+        po_having, po_params = "HAVING m BETWEEN %s AND %s", [start_ym, end_ym]
+    elif start_ym:
+        po_having, po_params = "HAVING m >= %s", [start_ym]
+    elif end_ym:
+        po_having, po_params = "HAVING m <= %s", [end_ym]
+
+    po_rows = frappe.db.sql(
+        f"""
+        SELECT DATE_FORMAT(COALESCE(il.publish_date, il.start_date, il.creation),
+                           '%%Y-%%m') AS m,
+               COALESCE(SUM(il.line_amount), 0) AS po_value,
+               COUNT(*) AS po_lines
+        FROM `tabPO Intake Line` il
+        LEFT JOIN `tabPO Dispatch` pd
+               ON pd.po_intake = il.parent AND pd.po_line_no = il.po_line_no
+        WHERE IFNULL(il.po_line_status, 'New') <> 'Cancelled'
+          AND IFNULL(pd.is_dummy_po, 0) = 0
+          AND IFNULL(pd.is_internal_work, 0) = 0
+        GROUP BY m
+        {po_having}
+        ORDER BY m
+        """,
+        tuple(po_params),
+        as_dict=True,
+    )
+
+    # ── Series B: invoiced — the shared PIC roll-up, which now carries the
+    # reporting definition (full milestone amount at Submitted/Closed), so
+    # this chart and the PIC dashboard agree by construction.
+    inv_rows = _monthly_invoicing_rows(fd, td, order="ASC", limit=None)
+
+    po_by_month = {r["m"]: r for r in po_rows if r.get("m")}
+    inv_by_month = {r["invoice_month"]: r for r in inv_rows if r.get("invoice_month")}
+
+    if months > 0:
+        spine = _month_spine(start_ym, end_ym)
+    else:
+        keys = sorted(set(po_by_month) | set(inv_by_month))
+        spine = _month_spine(keys[0], keys[-1]) if keys else []
+
+    series = []
+    for ym in spine:
+        p = po_by_month.get(ym) or {}
+        i = inv_by_month.get(ym) or {}
+        series.append({
+            "m": ym,
+            "label": _ym_label(ym),
+            "po_value": flt(p.get("po_value") or 0, 2),
+            "po_lines": cint(p.get("po_lines") or 0),
+            "invoiced": flt(i.get("total") or 0, 2),
+        })
+
+    total_po = sum(r["po_value"] for r in series)
+    total_inv = sum(r["invoiced"] for r in series)
+
+    basis = frappe.db.sql(
+        """
+        SELECT
+          SUM(publish_date IS NOT NULL)                              AS by_publish,
+          SUM(publish_date IS NULL AND start_date IS NOT NULL)       AS by_start,
+          SUM(publish_date IS NULL AND start_date IS NULL)           AS by_creation
+        FROM `tabPO Intake Line`
+        WHERE IFNULL(po_line_status, 'New') <> 'Cancelled'
+        """,
+        as_dict=True,
+    )
+    basis_row = basis[0] if basis else {}
+
+    return {
+        "series": series,
+        "totals": {
+            "po_value": flt(total_po, 2),
+            "invoiced": flt(total_inv, 2),
+            "conversion_pct": flt((total_inv / total_po * 100) if total_po else 0, 1),
+        },
+        "po_date_basis": {
+            "publish_date": cint(basis_row.get("by_publish") or 0),
+            "start_date": cint(basis_row.get("by_start") or 0),
+            "creation": cint(basis_row.get("by_creation") or 0),
+        },
+        "undated_invoiced": _undated_invoiced_value(),
+        "range": {"from_month": start_ym, "to_month": end_ym, "months": months},
+        "etag": current_etag,
+        "last_updated": _iso_now(),
+    }
+
+
+@frappe.whitelist()
+def get_commercial_dashboard(etag=None):
+    """Commercial (order-book + invoicing) figures for the admin dashboard.
+
+    The Commercial dashboard used to read its money tiles off
+    ``get_command_dashboard``, which is an *operational day/month* payload —
+    ``company.total_achieved`` is this month's Work Done revenue, so "Total
+    Revenue" rendered as a few hundred SAR while PIC reported millions
+    invoiced. Everything money-shaped here now comes from the PIC computation
+    (``pic_dashboard_payload``) and the order book from the same helper
+    ``get_command_dashboard`` uses, so this screen agrees with both by
+    construction rather than by coincidence.
+
+    Deliberately takes no date range. The two trend charts each carry their
+    own time filter, and the KPI tiles are lifetime figures matching PIC's
+    unfiltered default.
+
+    A page-level date filter was investigated and dropped: this payload mixes
+    flows (invoiced, paid — dated by invoicing month) with stocks (backlog,
+    open order book — no invoicing date exists for them; of 4,584 backlog
+    lines only 2 carry an invoice month). Scoping everything by date would
+    zero the Backlog tile and push Billed % to ~100%. If it is ever revisited,
+    scope the flows only and leave the stocks alone — which is exactly what
+    ``get_command_dashboard`` does with ``total_open_po_line_value``.
+    """
+    from inet_app.api.pic import pic_dashboard_payload
+
+    current_etag = _dashboard_etag("commercial")
+    if etag and etag == current_etag:
+        return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
+
+    pic = pic_dashboard_payload()
+    kpi = pic.get("kpi") or {}
+
+    open_po = _open_po_line_totals()
+
+    # All money below uses the reporting definition of invoiced (full
+    # milestone amount once the milestone reaches Submitted/Closed) — never
+    # PIC's ms1_invoiced/ms1_unbilled display fields.
+    per_im = frappe.db.sql(
+        f"""
+        SELECT pd.im AS im,
+               COUNT(*) AS line_count,
+               COALESCE(SUM({_INVOICED_VALUE_SQL}), 0) AS invoiced,
+               COALESCE(SUM({_BACKLOG_VALUE_SQL}), 0) AS backlog
+        FROM `tabPO Dispatch` pd
+        WHERE {_REPORTING_SCOPE_SQL}
+          AND IFNULL(pd.im, '') != ''
+        GROUP BY pd.im
+        ORDER BY invoiced DESC
+        LIMIT 10
+        """,
+        as_dict=True,
+    )
+
+    per_project = frappe.db.sql(
+        f"""
+        SELECT pd.project_code AS project_code,
+               COALESCE(MAX(proj.project_name), pd.project_code) AS project_name,
+               COUNT(*) AS line_count,
+               COALESCE(SUM({_INVOICED_VALUE_SQL}), 0) AS invoiced,
+               COALESCE(SUM({_BACKLOG_VALUE_SQL}), 0) AS backlog
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
+        WHERE {_REPORTING_SCOPE_SQL}
+          AND IFNULL(pd.project_code, '') != ''
+        GROUP BY pd.project_code
+        ORDER BY invoiced DESC
+        LIMIT 8
+        """,
+        as_dict=True,
+    )
+
+    # Subcontract resolution and the payout/margin split mirror the PIC
+    # dashboard's INET-vs-Subcon query (pic.py _PIC_FROM_JOIN_LEAN + _split):
+    # pd.contract wins, else the rollout-plan team's subcontractor, else the
+    # backend team's. Percentages come off Subcontract Master the same way,
+    # defaulting margin to 100% and payout to 0% when no master is linked.
+    #
+    # The alias is `sub_key`, NOT `contract` — `PO Dispatch` has a real
+    # `contract` column, so `GROUP BY contract` binds to that column instead
+    # of the SELECT alias and silently splits one subcontractor into two rows.
+    per_subcontract = frappe.db.sql(
+        f"""
+        SELECT
+          COALESCE(pd.contract, plan_contract.subcontractor, sc_team.subcontractor) AS sub_key,
+          MAX(COALESCE(sm.subcontractor_name,
+                       pd.contract, plan_contract.subcontractor, sc_team.subcontractor)) AS subcontractor_name,
+          MAX(COALESCE(sm.type, 'SUB')) AS type,
+          MAX(COALESCE(sm.sub_payout_pct, 0)) AS payout_pct,
+          MAX(COALESCE(sm.inet_margin_pct, 100)) AS margin_pct,
+          COUNT(*) AS line_count,
+          COALESCE(SUM({_INVOICED_VALUE_SQL}), 0) AS invoiced,
+          COALESCE(SUM({_BACKLOG_VALUE_SQL}), 0) AS backlog,
+          COALESCE(SUM({_INVOICED_VALUE_SQL} * COALESCE(sm.sub_payout_pct, 0) / 100), 0) AS payout,
+          COALESCE(SUM({_INVOICED_VALUE_SQL} * COALESCE(sm.inet_margin_pct, 100) / 100), 0) AS inet_margin
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN (
+            SELECT rp.po_dispatch, MAX(it.subcontractor) AS subcontractor
+            FROM `tabRollout Plan` rp
+            LEFT JOIN `tabINET Team` it ON it.name = rp.team
+            GROUP BY rp.po_dispatch
+        ) plan_contract ON plan_contract.po_dispatch = pd.name
+        LEFT JOIN `tabINET Team` sc_team ON sc_team.name = pd.backend_team
+        LEFT JOIN `tabSubcontract Master` sm
+               ON sm.name = COALESCE(pd.contract, plan_contract.subcontractor, sc_team.subcontractor)
+        WHERE {_REPORTING_SCOPE_SQL}
+          AND COALESCE(pd.contract, plan_contract.subcontractor, sc_team.subcontractor) IS NOT NULL
+        GROUP BY sub_key
+        ORDER BY invoiced DESC
+        LIMIT 12
+        """,
+        as_dict=True,
+    )
+
+    # Headline money, on the reporting definition. `invoiced + backlog` is an
+    # exact partition of the total milestone value, which the PIC display
+    # fields are not (they miss by ~SAR 3.5k of bad test data).
+    totals = frappe.db.sql(
+        f"""
+        SELECT
+          COALESCE(SUM({_INVOICED_VALUE_SQL}), 0) AS invoiced,
+          COALESCE(SUM({_BACKLOG_VALUE_SQL}), 0) AS backlog,
+          COALESCE(SUM(CASE WHEN {_MS1_INVOICED_SQL}
+                            THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END), 0) AS invoiced_ms1,
+          COALESCE(SUM(CASE WHEN {_MS2_INVOICED_SQL}
+                            THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END), 0) AS invoiced_ms2,
+          COALESCE(SUM(CASE WHEN pd.pic_status = 'Commercial Invoice Closed'
+                            THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END), 0)
+        + COALESCE(SUM(CASE WHEN pd.pic_status_ms2 = 'Commercial Invoice Closed'
+                            THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END), 0) AS paid
+        FROM `tabPO Dispatch` pd
+        WHERE {_REPORTING_SCOPE_SQL}
+        """,
+        as_dict=True,
+    )
+    t = (totals[0] if totals else {}) or {}
+    total_invoiced = flt(t.get("invoiced") or 0, 2)
+    backlog = flt(t.get("backlog") or 0, 2)
+    booked = total_invoiced + backlog
+
+    return {
+        "kpi": {
+            "total_invoiced": total_invoiced,
+            "invoiced_ms1": flt(t.get("invoiced_ms1") or 0, 2),
+            "invoiced_ms2": flt(t.get("invoiced_ms2") or 0, 2),
+            # "Closed" milestones only — invoice raised AND payment received.
+            "paid": flt(t.get("paid") or 0, 2),
+            "backlog": backlog,
+            "booked_value": flt(booked, 2),
+            "line_count": cint(kpi.get("line_count") or 0),
+            "pending_count": cint(kpi.get("pending_count") or 0),
+            "active_count": cint(kpi.get("active_count") or 0),
+            "closed_count": cint(kpi.get("closed_count") or 0),
+            "cancelled_count": cint(kpi.get("cancelled_count") or 0),
+            # Share of booked milestone value that has been invoiced.
+            # Denominator is invoiced + backlog, not the order book: PO value
+            # with no milestone split yet was never billable.
+            "billed_pct": flt((total_invoiced / booked * 100) if booked else 0, 1),
+            # Share of invoiced value where payment has landed.
+            "collected_pct": flt((flt(t.get("paid") or 0) / total_invoiced * 100)
+                                 if total_invoiced else 0, 1),
+        },
+        "order_book": {
+            "open_value": flt(open_po.get("total_value") or 0),
+            "open_lines": cint(open_po.get("line_count") or 0),
+        },
+        "inet_subcon": pic.get("inet_subcon") or {},
+        "per_im": per_im,
+        "per_project": per_project,
+        "per_subcontract": per_subcontract,
+        "etag": current_etag,
+        "last_updated": _iso_now(),
+    }
+
+
 @frappe.whitelist()
 def get_command_dashboard(from_date=None, to_date=None, etag=None):
     """
@@ -8796,17 +9244,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Open lines = PO Intake Lines whose per-line status is NOT terminal.
     # The line-wise status is the source of truth — the parent PO Intake's
     # status field is just a roll-up and isn't authoritative for KPIs.
-    open_po_result = frappe.db.sql(
-        """
-        SELECT COALESCE(SUM(line_amount), 0) AS total_value, COUNT(*) AS line_count
-        FROM `tabPO Intake Line`
-        WHERE IFNULL(po_line_status, 'New') NOT IN ('Closed', 'Cancelled')
-        """,
-        as_dict=True,
-    )
-    _open_po_row = open_po_result[0] if open_po_result else None
-    total_open_po_line_value = flt(_open_po_row.total_value if _open_po_row else 0)
-    total_open_po_lines = cint(_open_po_row.line_count if _open_po_row else 0)
+    _open_po_row = _open_po_line_totals()
+    total_open_po_line_value = flt(_open_po_row.get("total_value") or 0)
+    total_open_po_lines = cint(_open_po_row.get("line_count") or 0)
     # Legacy key: same as total open line amount (SAR)
     total_open_po = total_open_po_line_value
 

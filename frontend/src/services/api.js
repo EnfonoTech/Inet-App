@@ -197,6 +197,17 @@ export const pmApi = {
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
   getCommandDashboard:  (args = {})  => call("inet_app.api.command_center.get_command_dashboard", { ...args, etag: args?.etag || "" }),
+  // Order book + invoicing KPIs for the Commercial dashboard. Money figures
+  // come from the same computation as the PIC dashboard, so the two agree.
+  getCommercialDashboard: (args = {}) => call("inet_app.api.command_center.get_commercial_dashboard", { etag: args?.etag || "" }),
+  // PO published value vs invoiced value, monthly. `months` > 0 = trailing N
+  // months (overrides from/to); otherwise from/to snap to whole months.
+  getPoVsInvoiceTrend:  (args = {})  => call("inet_app.api.command_center.get_po_vs_invoice_trend", {
+    from_date: args?.from_date || "",
+    to_date:   args?.to_date   || "",
+    months:    args?.months    ?? 0,
+    etag:      args?.etag      || "",
+  }),
   getIMDashboard:       (im, args = {}) => call("inet_app.api.command_center.get_im_dashboard", { im, ...args, etag: args?.etag || "" }),
   getIMReports:         ()          => call("inet_app.api.command_center.get_im_reports"),
   listIMRolloutPlans:   (im, planStatus, limit, portalFilters) => {

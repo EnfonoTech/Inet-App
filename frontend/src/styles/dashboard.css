@@ -14,8 +14,13 @@
   color: var(--text);
 }
 
-/* ── Dashboard Header ───────────────────────────────────────── */
-.dashboard .dash-header {
+/* ── Dashboard Header ─────────────────────────────────────────
+   Shared by the Command Dashboard (.dashboard) and the newer
+   .nd-dashboard pages. The Command Dashboard's header is client-approved —
+   these selectors were only EXTENDED to the second container, never
+   changed, so that approved rendering is untouched. */
+.dashboard .dash-header,
+.nd-dashboard .dash-header {
   text-align: center;
   padding: 28px 20px 24px;
   margin-bottom: 28px;
@@ -26,7 +31,8 @@
   position: relative;
 }
 
-.dashboard .dash-header h1 {
+.dashboard .dash-header h1,
+.nd-dashboard .dash-header h1 {
   font-size: 1.35rem;
   font-weight: 800;
   color: var(--text);
@@ -34,7 +40,8 @@
   margin-bottom: 6px;
 }
 
-.dashboard .dash-header .subtitle {
+.dashboard .dash-header .subtitle,
+.nd-dashboard .dash-header .subtitle {
   font-size: 0.78rem;
   color: var(--text-muted);
   display: flex;
@@ -43,7 +50,8 @@
   gap: 8px;
 }
 
-.dashboard .live-dot {
+.dashboard .live-dot,
+.nd-dashboard .live-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -57,7 +65,8 @@
   50%      { opacity: 0.7; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
 }
 
-.dashboard .dash-timestamp {
+.dashboard .dash-timestamp,
+.nd-dashboard .dash-timestamp {
   font-size: 0.72rem;
   color: var(--text-muted);
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;

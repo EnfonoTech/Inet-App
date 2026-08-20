@@ -135,6 +135,12 @@
 .nd-chart-h140 { height: 140px; }
 .nd-chart-h160 { height: 160px; }
 .nd-chart-h170 { height: 170px; }
+/* Full-width monthly trend charts. A full-bleed panel is ~1500px wide, so
+   anything under ~300px tall reads as a squashed ribbon — these keep the plot
+   area near a 4:1 aspect instead of 6:1. */
+.nd-chart-h240 { height: 240px; }
+.nd-chart-h300 { height: 300px; }
+.nd-chart-h340 { height: 340px; }
 .nd-donut-sm { width: 100px; height: 100px; margin: 0 auto; }
 .nd-donut-xs { width: 80px; height: 80px; margin: 0 auto; }
 .nd-donut-xxs { width: 60px; height: 60px; margin: 0 auto; }
@@ -161,4 +167,110 @@
   .nd-kpi-row { grid-template-columns: repeat(2, 1fr); }
   .nd-grid.col3, .nd-grid.col3wide { grid-template-columns: 1fr; }
   .nd-dashboard { padding: 6px; }
+}
+
+/* ================================================================
+   Commercial dashboard — richer cards, chart toolbar, print support
+   ================================================================ */
+
+/* ── KPI card with an accent rail + a sub-line ──────────────────
+   The base .nd-kpi-card clamps to max-height 72px, which clips a third
+   line of text. This variant makes room and adds a colored left rail so
+   a row of five tiles reads as distinct cards, not one grey band. */
+.nd-kpi-card.accent {
+  position: relative;
+  max-height: none;
+  padding-left: 14px;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.nd-kpi-card.accent::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  border-radius: 8px 0 0 8px;
+  background: var(--kpi-accent, #cbd5e1);
+}
+.nd-kpi-card.accent:hover {
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+.nd-kpi-sub {
+  font-size: 10px; color: #94a3b8; font-weight: 600; margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── Panel header: faint tint so the title band separates from the body ── */
+.nd-panel-header.tinted {
+  background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+  border-bottom: 1px solid #eef2f6;
+}
+.nd-panel-eyebrow {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.09em;
+  color: #94a3b8; text-transform: uppercase;
+}
+.nd-panel-note {
+  font-size: 10px; color: #94a3b8; margin-top: 8px; line-height: 1.55;
+  padding-top: 7px; border-top: 1px dashed #eef2f6;
+}
+
+/* ── Chart toolbar (Print / PNG / CSV, behind a single ⋮ menu) ─── */
+.nd-chart-actions { display: inline-flex; position: relative; }
+.nd-chart-actions-trigger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid #e2e8f0;
+  background: #fff; color: #64748b; font-size: 1rem; font-weight: 700; line-height: 1;
+  cursor: pointer; transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.nd-chart-actions-trigger:hover,
+.nd-chart-actions-trigger[aria-expanded="true"] { background: #f1f5f9; color: #1565C0; border-color: #c3d9f7; }
+.nd-chart-actions-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 40;
+  display: flex; flex-direction: column; min-width: 128px; gap: 2px;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15,23,42,0.12); padding: 4px;
+}
+.nd-chart-actions-menu button {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 6px 10px; border-radius: 6px; border: none;
+  background: none; color: #334155; font-size: 0.76rem; font-weight: 600;
+  cursor: pointer; text-align: left; white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.nd-chart-actions-menu button:hover { background: #f1f5f9; color: #1565C0; }
+.nd-chart-actions-menu button:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Table row hover ───────────────────────────────────────────── */
+.nd-table tbody tr { transition: background 0.1s ease; }
+.nd-table tbody tr:hover { background: #f8fafc; }
+.nd-table tbody tr:last-child td { border-bottom: none; }
+
+/* ── Subcontract list rows ─────────────────────────────────────── */
+.nd-sub-row {
+  padding: 7px 6px; border-radius: 6px; border-bottom: 1px solid #f1f5f9;
+  transition: background 0.1s ease;
+}
+.nd-sub-row:hover { background: #f8fafc; }
+.nd-sub-row:last-child { border-bottom: none; }
+
+/* ── Split bar (two fills, 2px surface gap between them) ───────── */
+.nd-splitbar {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+  gap: 2px; background: #f1f5f9; flex: 1;
+}
+.nd-splitbar > span { display: block; height: 100%; }
+
+/* ── Print: isolate one panel ──────────────────────────────────
+   Uses visibility (not display) so the printed panel keeps the width it
+   was laid out with — display:none on ancestors collapses the grid and
+   recharts' already-rendered SVG would print at the wrong size. */
+@media print {
+  @page { size: landscape; margin: 12mm; }
+  body.nd-printing * { visibility: hidden !important; }
+  body.nd-printing .nd-print-target,
+  body.nd-printing .nd-print-target * { visibility: visible !important; }
+  body.nd-printing .nd-print-target {
+    position: absolute; left: 0; top: 0; width: 100%;
+    border: none; box-shadow: none;
+  }
+  body.nd-printing .nd-print-target .nd-chart-actions,
+  body.nd-printing .nd-print-target .nd-chart-filter { display: none !important; }
 }
