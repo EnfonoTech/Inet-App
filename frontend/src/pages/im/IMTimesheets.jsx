@@ -250,7 +250,7 @@ export default function IMTimesheets() {
                   <tr key={row.name} style={idx >= displayLimit ? { display: "none" } : undefined}>
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
                     <td>{row.user_full_name || row.user}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: 12 }}>{row.team_id || "—"}</td>
+                    <td>{row.team_name || row.team_id || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{shortDt(row.start_time)}</td>
@@ -303,7 +303,7 @@ export default function IMTimesheets() {
               pills={[
                 { label: "Log", value: detailRow.name || "—", tone: "blue" },
                 { label: "User", value: detailRow.user_full_name || detailRow.user || "—", tone: "amber" },
-                detailRow.team_id ? { label: "Team", value: detailRow.team_id, tone: "green" } : null,
+                detailRow.team_id ? { label: "Team", value: detailRow.team_name || detailRow.team_id, tone: "green" } : null,
                 detailRow.is_running ? { label: "Status", value: "Running", tone: "green" } : null,
               ].filter(Boolean)}
             />

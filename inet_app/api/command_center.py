@@ -13487,6 +13487,9 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
         row["user_full_name"] = (
             frappe.get_cached_value("User", row.get("user"), "full_name") or row.get("user")
         )
+        row["team_name"] = (
+            frappe.get_cached_value("INET Team", row.get("team_id"), "team_name") or row.get("team_id")
+        ) if row.get("team_id") else None
         pd = plan_map.get(row.get("rollout_plan"))
         if pd:
             row["plan_date"] = str(pd.plan_date) if pd.plan_date else None

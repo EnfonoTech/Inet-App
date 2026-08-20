@@ -225,7 +225,7 @@ export default function Timesheets() {
                   <tr key={row.name} style={idx >= displayLimit ? { display: "none" } : undefined}>
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
                     <td>{row.user_full_name || row.user}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: 12 }}>{row.team_id || "—"}</td>
+                    <td>{row.team_name || row.team_id || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 220 }}>
                       {row.item_description || row.project_code || "—"}
