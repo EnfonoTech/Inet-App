@@ -254,6 +254,25 @@ def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
     }
 
 
+def _existing_material_receipt_for_bill(bill_no):
+    """Any non-cancelled Material Receipt Stock Entry already linked to this
+    bill, checked directly against Stock Entry rather than relying on
+    Huawei Outbound Plan.material_receipt alone — that field is only ever
+    set once a receipt is actually SUBMITTED (see on_stock_entry_submit), so
+    a Draft receipt already sitting there would otherwise look "not yet
+    received" and let a second, duplicate receipt get created alongside it.
+    """
+    return frappe.db.get_value(
+        "Stock Entry",
+        {
+            "huawei_outbound_plan": bill_no,
+            "stock_entry_type": "Material Receipt",
+            "docstatus": ["!=", 2],
+        },
+        "name",
+    )
+
+
 @frappe.whitelist()
 def create_material_receipt_from_outbound(bill_no):
     """Open a new Stock Entry (Material Receipt) linked to a Huawei Outbound Plan.
@@ -272,8 +291,9 @@ def create_material_receipt_from_outbound(bill_no):
     if (plan.subcon or "").strip().upper() != "INET":
         frappe.throw("Material Receipt can only be created for INET items.")
 
-    if plan.material_receipt:
-        frappe.throw(f"Material Receipt already exists: {plan.material_receipt}")
+    existing = _existing_material_receipt_for_bill(bill_no)
+    if existing:
+        frappe.throw(f"Material Receipt already exists: {existing}")
 
     # Prefer the Link field (duid_master) over the Data field (du_id); the Link
     # field is always the canonical DUID Master record name. Fall back to du_id
@@ -290,6 +310,393 @@ def create_material_receipt_from_outbound(bill_no):
         "redirect_url": new_se_url,
         "du_id": du_id,
     }
+
+
+_HUAWEI_ITEM_GROUP = "Huawei Materials"
+
+
+def _ensure_huawei_item_group():
+    """Create the dedicated Item Group for Huawei-supplied stock, once."""
+    if frappe.db.exists("Item Group", _HUAWEI_ITEM_GROUP):
+        return _HUAWEI_ITEM_GROUP
+    root = frappe.db.get_value("Item Group", {"is_group": 1, "parent_item_group": ""}, "name")
+    frappe.get_doc({
+        "doctype": "Item Group",
+        "item_group_name": _HUAWEI_ITEM_GROUP,
+        "parent_item_group": root,
+        "is_group": 0,
+    }).insert(ignore_permissions=True)
+    return _HUAWEI_ITEM_GROUP
+
+
+def _ensure_uom(unit):
+    """Create the UOM if the Excel's unit text doesn't already exist as one."""
+    unit = (unit or "Nos").strip() or "Nos"
+    if not frappe.db.exists("UOM", unit):
+        try:
+            frappe.get_doc({"doctype": "UOM", "uom_name": unit}).insert(ignore_permissions=True)
+        except Exception:
+            if not frappe.db.exists("UOM", unit):
+                raise
+    return unit
+
+
+def _get_or_create_huawei_item(item_code, description="", unit=""):
+    """Return an existing Item code as-is, or create a new customer-provided
+    stock Item for Huawei-supplied material. Never touches an Item that
+    already exists — this only fills in items missing from the system.
+
+    The Huawei customer record is never hardcoded (it may be named
+    differently on another site) — it comes from INET Settings, and creation
+    is refused with a clear message if that isn't configured yet.
+    """
+    item_code = str(item_code).strip()
+    if item_code.endswith(".0") and item_code[:-2].isdigit():
+        item_code = item_code[:-2]  # openpyxl reads a bare numeric code as a float
+    if not item_code:
+        frappe.throw("Item Code is required in the import file.")
+
+    if frappe.db.exists("Item", item_code):
+        return item_code
+
+    customer = frappe.db.get_single_value("INET Settings", "huawei_customer")
+    if not customer:
+        frappe.throw(
+            f"Item {item_code} does not exist and INET Settings has no Huawei Customer "
+            "configured to create it against. Set 'Huawei Customer' in INET Settings, "
+            "or create the Item manually first."
+        )
+
+    item_group = _ensure_huawei_item_group()
+    stock_uom = _ensure_uom(unit)
+    description = (description or item_code).strip()
+    frappe.get_doc({
+        "doctype": "Item",
+        "item_code": item_code,
+        "item_name": description[:140],
+        "description": description,
+        "item_group": item_group,
+        "stock_uom": stock_uom,
+        "is_stock_item": 1,
+        "is_customer_provided_item": 1,
+        "is_purchase_item": 0,  # ERPNext forbids a customer-provided item from also being purchasable
+        "customer": customer,
+    }).insert(ignore_permissions=True)
+    return item_code
+
+
+def parse_mr_import_excel(file_path):
+    """Parse a Huawei MR-configuration Excel (packing-list shape: Item Code,
+    Item Description, Unit, Config. Qty., Ship Qty, C/L No., Box No., Remark).
+
+    Returns a list of dicts, one per non-blank data row, in file order.
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        raise ImportError("openpyxl is required. Run: pip install openpyxl")
+
+    if not file_path or not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    if ws.max_row < 2:
+        raise ValueError("File has no data rows")
+
+    header = {}
+    for col in range(1, ws.max_column + 1):
+        val = str(ws.cell(1, col).value or "").strip()
+        if val:
+            header[val] = col
+
+    required = ["Item Code", "Ship Qty"]
+    missing = [r for r in required if r not in header]
+    if missing:
+        raise ValueError(f"Required column(s) not found in Excel: {', '.join(missing)}. Found: {list(header.keys())}")
+
+    def _cell(row, name):
+        col = header.get(name)
+        return ws.cell(row, col).value if col is not None else None
+
+    def _s(v):
+        return str(v).strip() if v is not None else ""
+
+    rows = []
+    for row in range(2, ws.max_row + 1):
+        item_code = _cell(row, "Item Code")
+        if item_code is None or _s(item_code) == "":
+            continue
+        rows.append({
+            "item_code": _s(item_code),
+            "item_description": _s(_cell(row, "Item Description")),
+            "unit": _s(_cell(row, "Unit")) or "Nos",
+            "config_qty": flt(_cell(row, "Config. Qty.")),
+            "ship_qty": flt(_cell(row, "Ship Qty")),
+            "cl_no": _s(_cell(row, "C/L No.")),
+            "box_no": _s(_cell(row, "Box No.")),
+            "remark": _s(_cell(row, "Remark")),
+        })
+
+    if not rows:
+        raise ValueError("No data rows with an Item Code were found in the file.")
+    return rows
+
+
+def _create_receipt_for_bill(bill_no, bill_rows):
+    """Create the Material Receipt for one bill's rows (aggregated by item
+    code, summing Ship Qty). Follows the exact same eligibility rules the
+    manual create_material_receipt_from_outbound flow already uses (INET
+    subcon only, one receipt per bill).
+
+    Returns (material_receipt_name_or_None, message). None means the bill
+    was skipped (not a hard failure) — message explains why.
+    """
+    if not frappe.db.exists("Huawei Outbound Plan", bill_no):
+        return None, f"No Huawei Outbound Plan found for bill '{bill_no}'. Import the header-level Outbound Import first."
+
+    plan = frappe.get_doc("Huawei Outbound Plan", bill_no)
+    if (plan.subcon or "").strip().upper() != "INET":
+        return None, f"Bill '{bill_no}' is not an INET subcon bill — skipped."
+    existing = _existing_material_receipt_for_bill(bill_no)
+    if existing:
+        return None, f"Material Receipt already exists: {existing}"
+
+    # Aggregate by item_code — sum Ship Qty (the actually-received
+    # quantity), and note which codes were combined from more than one
+    # row (e.g. the same item split across boxes within this bill).
+    agg = {}
+    for r in bill_rows:
+        a = agg.setdefault(r["item_code"], {
+            "qty": 0.0, "unit": r["unit"], "item_description": r["item_description"], "rows": 0,
+        })
+        a["qty"] += flt(r["ship_qty"])
+        a["rows"] += 1
+
+    combined = [
+        f"{code} ({a['rows']} rows → qty {a['qty']:g})"
+        for code, a in agg.items() if a["rows"] > 1
+    ]
+    combined_notice = ("Combined from multiple rows: " + ", ".join(combined)) if combined else "No rows were combined."
+
+    to_warehouse = frappe.db.get_single_value("INET Settings", "source_warehouse") or ""
+    if not to_warehouse:
+        frappe.throw("Configure the Main Store Warehouse in INET Settings before importing.")
+
+    # Same priority the manual create_material_receipt_from_outbound flow
+    # uses: the Link field (duid_master) is the canonical DUID Master record
+    # name, du_id is only a fallback for plans imported before duid_master
+    # was populated. Set explicitly here — the manual flow's stock_entry.js
+    # fills this on the Draft form via a browser session, which an
+    # API-created Stock Entry never goes through, and the before_submit
+    # hook that also fills it only runs once the entry is actually
+    # submitted, leaving a Draft receipt showing no DUID otherwise.
+    du_id = (plan.duid_master or plan.du_id or "").strip()
+
+    se_items = []
+    for code, a in agg.items():
+        resolved_code = _get_or_create_huawei_item(code, a["item_description"], a["unit"])
+        item_uom = frappe.db.get_value("Item", resolved_code, "stock_uom") or a["unit"] or "Nos"
+        row = {
+            "item_code": resolved_code,
+            "qty": a["qty"],
+            "uom": item_uom,
+            "t_warehouse": to_warehouse,
+        }
+        if du_id:
+            row["to_duid"] = du_id
+        se_items.append(row)
+
+    se = frappe.get_doc({
+        "doctype": "Stock Entry",
+        "stock_entry_type": "Material Receipt",
+        "huawei_outbound_plan": bill_no,
+        "to_warehouse": to_warehouse,
+        "items": se_items,
+    })
+    se.insert(ignore_permissions=True)
+    if frappe.db.get_single_value("INET Settings", "auto_submit_huawei_material_receipt"):
+        se.submit()
+    frappe.db.commit()
+
+    return se.name, combined_notice
+
+
+@frappe.whitelist()
+def preview_huawei_mr_import(name):
+    """Parse a Huawei MR Import's Excel WITHOUT creating anything, and report
+    which bills (C/L No.) have no matching Huawei Outbound Plan, already
+    have a receipt, or aren't an INET bill — so the caller can warn the user
+    BEFORE any Material Receipt is auto-created, not just after the fact.
+    """
+    frappe.only_for(["System Manager", "Stock Manager"])
+    doc = frappe.get_doc("Huawei MR Import", name)
+    if not doc.file:
+        frappe.throw("Attach the Excel file first.")
+
+    file_path = _resolve_file_path(doc.file)
+    rows = parse_mr_import_excel(file_path)
+
+    by_bill = {}
+    blank_cl_rows = 0
+    for r in rows:
+        bill_no = r["cl_no"]
+        if not bill_no:
+            blank_cl_rows += 1
+            continue
+        by_bill.setdefault(bill_no, []).append(r)
+
+    eligible, missing, already_received, wrong_subcon = [], [], [], []
+    for bill_no in by_bill:
+        if not frappe.db.exists("Huawei Outbound Plan", bill_no):
+            missing.append(bill_no)
+            continue
+        plan = frappe.db.get_value(
+            "Huawei Outbound Plan", bill_no, ["subcon"], as_dict=True
+        )
+        if (plan.subcon or "").strip().upper() != "INET":
+            wrong_subcon.append(bill_no)
+        elif _existing_material_receipt_for_bill(bill_no):
+            already_received.append(bill_no)
+        else:
+            eligible.append(bill_no)
+
+    return {
+        "bill_count": len(by_bill),
+        "eligible": eligible,
+        "missing": missing,
+        "already_received": already_received,
+        "wrong_subcon": wrong_subcon,
+        "blank_cl_rows": blank_cl_rows,
+    }
+
+
+@frappe.whitelist()
+def start_huawei_mr_import(name):
+    """Parse a Huawei MR Import's Excel and auto-create a Material Receipt
+    for EVERY distinct bill found in the file — the Excel's C/L No. is the
+    same bill identifier as Huawei Outbound Plan.bill_no, and one packing-
+    list file commonly covers several bills/shipments at once.
+
+    Each bill is processed independently: a problem with one (no matching
+    Plan, wrong subcon, already received, item-creation failure, ...) is
+    recorded as that bill's own result and never stops the others.
+    """
+    frappe.only_for(["System Manager", "Stock Manager"])
+    doc = frappe.get_doc("Huawei MR Import", name)
+    if doc.status not in ("Draft", "Failed", "No Receipts Created", "Partially Completed"):
+        frappe.throw(f"Cannot start import in status '{doc.status}'.")
+
+    # Clear any child rows left over from a previous run BEFORE this first
+    # save, not after — a retry's leftover `results` rows can point to a
+    # Material Receipt that's since been deleted, and Frappe validates every
+    # Link field on save (untouched rows included), so saving with the old
+    # rows still in place throws "Could not find Row #N: Material Receipt: ..."
+    # before this function ever gets a chance to rebuild them.
+    doc.set("items", [])
+    doc.set("results", [])
+    doc.status = "Processing"
+    doc.flags.ignore_permissions = True
+    doc.save()
+    frappe.db.commit()
+
+    try:
+        file_path = _resolve_file_path(doc.file)
+        rows = parse_mr_import_excel(file_path)
+
+        # Preserve every raw row for audit before touching Items/Stock
+        # Entries, so the data survives even if a later step fails.
+        doc.set("items", [])
+        for r in rows:
+            doc.append("items", r)
+        doc.save()
+        frappe.db.commit()
+
+        # Group by C/L No. — the Excel's bill identifier, matched 1:1
+        # against Huawei Outbound Plan.bill_no.
+        by_bill = {}
+        blank_cl_rows = 0
+        for r in rows:
+            bill_no = r["cl_no"]
+            if not bill_no:
+                blank_cl_rows += 1
+                continue
+            by_bill.setdefault(bill_no, []).append(r)
+
+        results = []
+        created_count = 0
+        skipped_count = 0
+
+        for bill_no, bill_rows in by_bill.items():
+            row_count = len(bill_rows)
+            ship_qty_total = sum(flt(r["ship_qty"]) for r in bill_rows)
+            try:
+                material_receipt, message = _create_receipt_for_bill(bill_no, bill_rows)
+            except Exception as e:
+                material_receipt, message = None, str(e)[:500]
+                status = "Failed"
+            else:
+                status = "Created" if material_receipt else "Skipped"
+
+            if status == "Created":
+                created_count += 1
+            else:
+                skipped_count += 1
+            results.append({
+                "bill_no": bill_no,
+                "status": status,
+                "row_count": row_count,
+                "ship_qty_total": ship_qty_total,
+                "material_receipt": material_receipt,
+                "message": message,
+            })
+
+        if blank_cl_rows:
+            skipped_count += 1
+            results.append({
+                "bill_no": "(blank)",
+                "status": "Skipped",
+                "row_count": blank_cl_rows,
+                "ship_qty_total": 0,
+                "message": "Row has no C/L No. — cannot tell which bill it belongs to.",
+            })
+
+        doc.set("results", [])
+        for res in results:
+            doc.append("results", res)
+        # "Completed" must mean EVERY bill actually got a receipt — a run
+        # with any skips is only partial (and must stay retriable, e.g. once
+        # the missing Outbound Plan is imported), not indistinguishable from
+        # full success just because something got created.
+        if created_count > 0 and skipped_count == 0:
+            doc.status = "Completed"
+        elif created_count > 0:
+            doc.status = "Partially Completed"
+        else:
+            doc.status = "No Receipts Created"
+        doc.bill_count = len(by_bill)
+        doc.created_count = created_count
+        doc.skipped_count = skipped_count
+        doc.save()
+        frappe.db.commit()
+
+        summary = f"Bills found: {len(by_bill)} | Receipts created: {created_count} | Skipped: {skipped_count}"
+        frappe.msgprint(summary, title="Import Summary", indicator="green" if created_count else "orange")
+
+        return {
+            "status": doc.status,
+            "bill_count": len(by_bill),
+            "created_count": created_count,
+            "skipped_count": skipped_count,
+        }
+
+    except Exception as e:
+        doc.status = "Failed"
+        doc.error_message = str(e)[:5000]
+        doc.save()
+        frappe.db.commit()
+        frappe.log_error(frappe.get_traceback(), "Huawei MR Import failed")
+        raise
 
 
 def stock_entry_has_permission(doc, ptype=None, user=None, debug=False):

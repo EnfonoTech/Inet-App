@@ -1,0 +1,77 @@
+{
+ "actions": [],
+ "creation": "2026-08-20 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "item_description",
+  "unit",
+  "config_qty",
+  "ship_qty",
+  "cl_no",
+  "box_no",
+  "remark"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Code"
+  },
+  {
+   "fieldname": "item_description",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Item Description"
+  },
+  {
+   "fieldname": "unit",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Unit"
+  },
+  {
+   "fieldname": "config_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Config. Qty."
+  },
+  {
+   "fieldname": "ship_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Ship Qty"
+  },
+  {
+   "fieldname": "cl_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "C/L No."
+  },
+  {
+   "fieldname": "box_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Box No."
+  },
+  {
+   "fieldname": "remark",
+   "fieldtype": "Small Text",
+   "label": "Remark"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-20 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Huawei MR Import Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

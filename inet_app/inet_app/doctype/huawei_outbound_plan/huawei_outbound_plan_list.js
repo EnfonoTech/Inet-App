@@ -6,12 +6,15 @@ frappe.listview_settings["Huawei Outbound Plan"] = {
             listview.filter_area.add([["Huawei Outbound Plan", "subcon", "=", "INET"]]);
         }
 
-        listview.page.add_inner_button(__("Import from Excel"), () => {
+        // Just the two create actions, standalone (not tucked inside an
+        // "Actions" dropdown) — no separate "View" buttons, since both
+        // doctypes' own lists are already one search/sidebar click away.
+        listview.page.add_inner_button(__("New Huawei Outbound Import"), () => {
             frappe.new_doc("Huawei Outbound Import");
-        }, __("Actions"));
-        listview.page.add_inner_button(__("View Imports"), () => {
-            frappe.set_route("List", "Huawei Outbound Import");
-        }, __("Actions"));
+        });
+        listview.page.add_inner_button(__("Import Material Receipt Excel"), () => {
+            frappe.new_doc("Huawei MR Import");
+        });
     },
     get_indicator(doc) {
         if (doc.outbound_status === "Received") return ["Received", "green", "outbound_status,=,Received"];

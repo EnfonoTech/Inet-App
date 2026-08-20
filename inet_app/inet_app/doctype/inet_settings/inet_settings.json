@@ -7,6 +7,8 @@
   "sales_tax_template",
   "material_section",
   "source_warehouse",
+  "huawei_customer",
+  "auto_submit_huawei_material_receipt",
   "expense_section",
   "expense_payable_account",
   "expense_tax_rate",
@@ -33,6 +35,20 @@
    "label": "Main Store Warehouse",
    "options": "Warehouse",
    "description": "Default source warehouse for all material transfer requests (e.g. Stores - INET)"
+  },
+  {
+   "fieldname": "huawei_customer",
+   "fieldtype": "Link",
+   "label": "Huawei Customer",
+   "options": "Customer",
+   "description": "Customer record representing Huawei on this site. Used when auto-creating customer-provided material items during a Huawei MR Import."
+  },
+  {
+   "default": "0",
+   "fieldname": "auto_submit_huawei_material_receipt",
+   "fieldtype": "Check",
+   "label": "Auto-submit Huawei Material Receipts",
+   "description": "If enabled, Material Receipts created from a Huawei MR Import are submitted automatically. Otherwise they are left as Draft for review."
   },
   {
    "fieldname": "expense_section",

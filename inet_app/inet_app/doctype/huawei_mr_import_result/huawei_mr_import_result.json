@@ -1,0 +1,66 @@
+{
+ "actions": [],
+ "creation": "2026-08-20 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bill_no",
+  "status",
+  "row_count",
+  "ship_qty_total",
+  "material_receipt",
+  "message"
+ ],
+ "fields": [
+  {
+   "fieldname": "bill_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Bill No. (C/L No.)"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Created\nSkipped\nFailed"
+  },
+  {
+   "fieldname": "row_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Rows"
+  },
+  {
+   "fieldname": "ship_qty_total",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Total Ship Qty"
+  },
+  {
+   "fieldname": "material_receipt",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Material Receipt",
+   "options": "Stock Entry"
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Message"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-20 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Huawei MR Import Result",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

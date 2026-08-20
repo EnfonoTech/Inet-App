@@ -312,7 +312,11 @@ scheduler_events = {
 # Ignore links to specified DocTypes when deleting documents
 # -----------------------------------------------------------
 
-# ignore_links_on_delete = ["Communication", "ToDo"]
+# Huawei MR Import is an audit log of an import run — it links to the
+# Material Receipt it created (Huawei MR Import Result.material_receipt),
+# but that's a record of what happened, not a real dependency. It must
+# never block deleting/cancelling the Stock Entry it points to.
+ignore_links_on_delete = ["Huawei MR Import"]
 
 # Request Events
 # ----------------
