@@ -1,7 +1,8 @@
 {
  "actions": [],
+ "allow_import": 1,
  "autoname": "field:domain_name",
- "creation": "2026-04-06 00:00:00.000000",
+ "creation": "2026-04-06 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -13,19 +14,20 @@
   {
    "fieldname": "domain_name",
    "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Domain Name",
    "reqd": 1,
-   "in_list_view": 1,
-   "in_standard_filter": 1
+   "unique": 1
   },
   {
    "default": "Active",
    "fieldname": "status",
    "fieldtype": "Select",
-   "label": "Status",
-   "options": "Active\nInactive",
    "in_list_view": 1,
-   "in_standard_filter": 1
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Active\nInactive"
   },
   {
    "fieldname": "description",
@@ -34,9 +36,8 @@
   }
  ],
  "index_web_pages_for_search": 1,
- "istable": 0,
  "links": [],
- "modified": "2026-04-06 00:00:00.000000",
+ "modified": "2026-08-20 10:31:00.345768",
  "modified_by": "Administrator",
  "module": "Inet App",
  "name": "Project Domain",
@@ -84,7 +85,10 @@
    "role": "INET PIC"
   }
  ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
  "sort_field": "domain_name",
  "sort_order": "ASC",
+ "states": [],
  "track_changes": 1
 }
