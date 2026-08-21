@@ -5,6 +5,8 @@ import re
 import frappe
 from frappe.utils import flt, now, nowdate
 
+from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
+
 
 # Regex: "JDL Outbound Plan of HUAWEI CWH For 10th_May_2026.xlsx"
 _FILENAME_DATE_RE = re.compile(
@@ -256,29 +258,39 @@ def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
 
 def _existing_material_receipt_for_bill(bill_no):
     """Any non-cancelled Material Receipt Stock Entry already linked to this
-    bill, checked directly against Stock Entry rather than relying on
-    Huawei Outbound Plan.material_receipt alone — that field is only ever
-    set once a receipt is actually SUBMITTED (see on_stock_entry_submit), so
-    a Draft receipt already sitting there would otherwise look "not yet
-    received" and let a second, duplicate receipt get created alongside it.
+    bill — via the item-level Batch (batch = bill, see
+    _get_or_create_huawei_batch), not a header field. A Draft receipt
+    already sitting there still counts as "existing" (not just a submitted
+    one) — otherwise it would look "not yet received" and let a second,
+    duplicate receipt get created alongside it.
     """
-    return frappe.db.get_value(
-        "Stock Entry",
-        {
-            "huawei_outbound_plan": bill_no,
-            "stock_entry_type": "Material Receipt",
-            "docstatus": ["!=", 2],
-        },
-        "name",
+    rows = frappe.db.sql(
+        """SELECT se.name
+           FROM `tabStock Entry` se
+           JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+           JOIN `tabBatch` b ON b.name = sed.batch_no
+           WHERE se.stock_entry_type = 'Material Receipt'
+             AND se.docstatus != 2
+             AND b.reference_doctype = 'Huawei Outbound Plan'
+             AND b.reference_name = %s
+           LIMIT 1""",
+        (bill_no,), as_dict=True,
     )
+    return rows[0]["name"] if rows else None
 
 
 @frappe.whitelist()
 def create_material_receipt_from_outbound(bill_no):
-    """Open a new Stock Entry (Material Receipt) linked to a Huawei Outbound Plan.
+    """Open a new Stock Entry (Material Receipt) for a Huawei Outbound Plan.
 
-    Returns a redirect URL to the new Stock Entry form. Items and qty are entered
-    manually by the user. The Outbound Plan link is pre-filled on the Stock Entry.
+    Returns a redirect URL to the new Stock Entry form. Items and qty are
+    entered manually by the user; DUID auto-fill and per-item batch tagging
+    (batch = bill, via get_or_create_batch_for_bill_item) are driven
+    client-side (stock_entry.js) off `frm.doc.bill_no_hint` — a virtual,
+    never-persisted field that exists only to survive Frappe's own
+    route-options/URL clearing on page load. There's no stored field
+    carrying the bill onto the Stock Entry itself, only each item's own
+    Batch does that.
     """
     roles = set(frappe.get_roles(frappe.session.user))
     if not roles & {"Administrator", "System Manager", "Stock Manager"}:
@@ -300,11 +312,14 @@ def create_material_receipt_from_outbound(bill_no):
     # for plans imported before duid_master was populated.
     du_id = (plan.duid_master or plan.du_id or "").strip()
 
+    # bill_no_hint matches a real (if virtual/hidden) field name, so
+    # Frappe's own get_new_doc() copies it onto the new doc's in-memory
+    # object before clearing route_options — see Stock Entry-bill_no_hint
+    # in setup.py for why a plain `?bill_no=` URL param doesn't survive.
     new_se_url = (
         f"/app/stock-entry/new-stock-entry"
         f"?stock_entry_type=Material Receipt"
-        f"&huawei_outbound_plan={bill_no}"
-        f"&duid={du_id}"
+        f"&bill_no_hint={bill_no}"
     )
     return {
         "redirect_url": new_se_url,
@@ -381,8 +396,57 @@ def _get_or_create_huawei_item(item_code, description="", unit=""):
         "is_customer_provided_item": 1,
         "is_purchase_item": 0,  # ERPNext forbids a customer-provided item from also being purchasable
         "customer": customer,
+        "has_batch_no": 1,  # one Batch per (bill, item) — see _get_or_create_huawei_batch
     }).insert(ignore_permissions=True)
     return item_code
+
+
+def _get_or_create_huawei_batch(bill_no, item_code):
+    """One Batch per (bill, item) — the batch IS the bill, for that item.
+    Batch.item is required and batch_id must be globally unique, so a single
+    bill spanning several items needs one Batch per item, not one per bill.
+    reference_doctype/reference_name (already on core Batch, unused by core
+    ERPNext) is the formal, queryable link back to the bill.
+    """
+    batch_id = f"{bill_no}::{item_code}"
+    if frappe.db.exists("Batch", batch_id):
+        return batch_id
+    frappe.get_doc({
+        "doctype": "Batch",
+        "batch_id": batch_id,
+        "item": item_code,
+        "reference_doctype": "Huawei Outbound Plan",
+        "reference_name": bill_no,
+    }).insert(ignore_permissions=True)
+    return batch_id
+
+
+def _batch_row_fields(bill_no, item_code):
+    """Stock Entry Detail fields to attach when this item is batch-tracked —
+    {} if not (e.g. Company/Additional items, which are never bill-tracked).
+    """
+    if not frappe.get_cached_value("Item", item_code, "has_batch_no"):
+        return {}
+    return {
+        "batch_no": _get_or_create_huawei_batch(bill_no, item_code),
+        "use_serial_batch_fields": 1,
+    }
+
+
+@frappe.whitelist()
+def get_or_create_batch_for_bill_item(bill_no, item_code):
+    """Client-side helper for the manual "Create Material Receipt" form
+    (stock_entry.js) — resolves/creates the same (bill, item) Batch the
+    automated Huawei MR Import path uses, so a manually-added item row gets
+    the identical batch tagging. Returns None for a non-batch-tracked item
+    (e.g. a Company/Additional item added by mistake on a Huawei receipt).
+    """
+    frappe.only_for(["System Manager", "Stock Manager"])
+    if not frappe.db.exists("Huawei Outbound Plan", bill_no):
+        frappe.throw(f"Huawei Outbound Plan {bill_no} not found.")
+    if not frappe.get_cached_value("Item", item_code, "has_batch_no"):
+        return None
+    return _get_or_create_huawei_batch(bill_no, item_code)
 
 
 def parse_mr_import_excel(file_path):
@@ -447,14 +511,12 @@ def parse_mr_import_excel(file_path):
     return rows
 
 
-def _create_receipt_for_bill(bill_no, bill_rows):
-    """Create the Material Receipt for one bill's rows (aggregated by item
-    code, summing Ship Qty). Follows the exact same eligibility rules the
-    manual create_material_receipt_from_outbound flow already uses (INET
-    subcon only, one receipt per bill).
+def _check_bill_eligible(bill_no):
+    """Eligibility checks for auto-creating a Material Receipt against this
+    bill — the same rules the manual create_material_receipt_from_outbound
+    flow already uses (INET subcon only, not already received).
 
-    Returns (material_receipt_name_or_None, message). None means the bill
-    was skipped (not a hard failure) — message explains why.
+    Returns (plan_doc, None) if eligible, or (None, skip_message).
     """
     if not frappe.db.exists("Huawei Outbound Plan", bill_no):
         return None, f"No Huawei Outbound Plan found for bill '{bill_no}'. Import the header-level Outbound Import first."
@@ -465,10 +527,19 @@ def _create_receipt_for_bill(bill_no, bill_rows):
     existing = _existing_material_receipt_for_bill(bill_no)
     if existing:
         return None, f"Material Receipt already exists: {existing}"
+    return plan, None
 
-    # Aggregate by item_code — sum Ship Qty (the actually-received
-    # quantity), and note which codes were combined from more than one
-    # row (e.g. the same item split across boxes within this bill).
+
+def _build_receipt_rows_for_bill(plan, bill_rows, to_warehouse):
+    """Aggregate one bill's rows by item code (summing Ship Qty), resolve or
+    create each Item, and tag every row with its (bill, item) Batch — the
+    Batch is what carries the bill-linkage now (no header field), so several
+    bills' rows can be safely combined into one shared Stock Entry by the
+    caller without losing which bill each item came from.
+
+    Returns (se_items, combined_notice) — doesn't touch Stock Entry itself.
+    """
+    bill_no = plan.name
     agg = {}
     for r in bill_rows:
         a = agg.setdefault(r["item_code"], {
@@ -483,18 +554,10 @@ def _create_receipt_for_bill(bill_no, bill_rows):
     ]
     combined_notice = ("Combined from multiple rows: " + ", ".join(combined)) if combined else "No rows were combined."
 
-    to_warehouse = frappe.db.get_single_value("INET Settings", "source_warehouse") or ""
-    if not to_warehouse:
-        frappe.throw("Configure the Main Store Warehouse in INET Settings before importing.")
-
     # Same priority the manual create_material_receipt_from_outbound flow
     # uses: the Link field (duid_master) is the canonical DUID Master record
     # name, du_id is only a fallback for plans imported before duid_master
-    # was populated. Set explicitly here — the manual flow's stock_entry.js
-    # fills this on the Draft form via a browser session, which an
-    # API-created Stock Entry never goes through, and the before_submit
-    # hook that also fills it only runs once the entry is actually
-    # submitted, leaving a Draft receipt showing no DUID otherwise.
+    # was populated.
     du_id = (plan.duid_master or plan.du_id or "").strip()
 
     se_items = []
@@ -509,21 +572,10 @@ def _create_receipt_for_bill(bill_no, bill_rows):
         }
         if du_id:
             row["to_duid"] = du_id
+        row.update(_batch_row_fields(bill_no, resolved_code))
         se_items.append(row)
 
-    se = frappe.get_doc({
-        "doctype": "Stock Entry",
-        "stock_entry_type": "Material Receipt",
-        "huawei_outbound_plan": bill_no,
-        "to_warehouse": to_warehouse,
-        "items": se_items,
-    })
-    se.insert(ignore_permissions=True)
-    if frappe.db.get_single_value("INET Settings", "auto_submit_huawei_material_receipt"):
-        se.submit()
-    frappe.db.commit()
-
-    return se.name, combined_notice
+    return se_items, combined_notice
 
 
 @frappe.whitelist()
@@ -627,33 +679,73 @@ def start_huawei_mr_import(name):
                 continue
             by_bill.setdefault(bill_no, []).append(r)
 
+        to_warehouse = frappe.db.get_single_value("INET Settings", "source_warehouse") or ""
+        if not to_warehouse:
+            frappe.throw("Configure the Main Store Warehouse in INET Settings before importing.")
+
         results = []
         created_count = 0
         skipped_count = 0
+        combined_se_items = []
+        eligible_bills = []  # bills that passed eligibility, pending the one shared Stock Entry
 
         for bill_no, bill_rows in by_bill.items():
             row_count = len(bill_rows)
             ship_qty_total = sum(flt(r["ship_qty"]) for r in bill_rows)
             try:
-                material_receipt, message = _create_receipt_for_bill(bill_no, bill_rows)
+                plan, skip_message = _check_bill_eligible(bill_no)
+                if not plan:
+                    skipped_count += 1
+                    results.append({
+                        "bill_no": bill_no, "status": "Skipped", "row_count": row_count,
+                        "ship_qty_total": ship_qty_total, "message": skip_message,
+                    })
+                    continue
+                se_items, combined_notice = _build_receipt_rows_for_bill(plan, bill_rows, to_warehouse)
+                combined_se_items.extend(se_items)
+                eligible_bills.append({
+                    "bill_no": bill_no, "row_count": row_count,
+                    "ship_qty_total": ship_qty_total, "message": combined_notice,
+                })
             except Exception as e:
-                material_receipt, message = None, str(e)[:500]
-                status = "Failed"
-            else:
-                status = "Created" if material_receipt else "Skipped"
-
-            if status == "Created":
-                created_count += 1
-            else:
                 skipped_count += 1
-            results.append({
-                "bill_no": bill_no,
-                "status": status,
-                "row_count": row_count,
-                "ship_qty_total": ship_qty_total,
-                "material_receipt": material_receipt,
-                "message": message,
-            })
+                results.append({
+                    "bill_no": bill_no, "status": "Failed", "row_count": row_count,
+                    "ship_qty_total": ship_qty_total, "message": str(e)[:500],
+                })
+
+        # One combined Material Receipt for every eligible bill in this run —
+        # each item row already carries its own (bill, item) Batch, so a
+        # separate Stock Entry per bill would just be redundant documents
+        # tracking the exact same information the batch already carries.
+        if combined_se_items:
+            try:
+                se = frappe.get_doc({
+                    "doctype": "Stock Entry",
+                    "stock_entry_type": "Material Receipt",
+                    "to_warehouse": to_warehouse,
+                    "items": combined_se_items,
+                })
+                se.insert(ignore_permissions=True)
+                if frappe.db.get_single_value("INET Settings", "auto_submit_huawei_material_receipt"):
+                    se.submit()
+                frappe.db.commit()
+                material_receipt = se.name
+                status, extra_message = "Created", None
+            except Exception as e:
+                material_receipt = None
+                status, extra_message = "Failed", str(e)[:500]
+
+            for b in eligible_bills:
+                if status == "Created":
+                    created_count += 1
+                else:
+                    skipped_count += 1
+                results.append({
+                    "bill_no": b["bill_no"], "status": status, "row_count": b["row_count"],
+                    "ship_qty_total": b["ship_qty_total"], "material_receipt": material_receipt,
+                    "message": extra_message or b["message"],
+                })
 
         if blank_cl_rows:
             skipped_count += 1
@@ -783,6 +875,19 @@ def before_stock_entry_insert(doc, method=None):
     check is structural, not dependent on this bookkeeping) but would never
     show up for the team to confirm and would carry no visible indication
     of why it's stuck — see the confirmation_stage banner in stock_entry.js.
+
+    Also backstops DUID-aware batch selection for this same "created some
+    other way" case. This MUST happen here, before insert, not at
+    before_submit: ERPNext's own core validate() auto-creates a Serial and
+    Batch Bundle for any batch-tracked row that still has an empty batch_no
+    the very first time the doc is saved (i.e. during this insert) — using
+    its own non-DUID-aware default pick. By before_submit that bundle
+    already exists, and setting batch_no on top of it corrupts the row
+    (confirmed by testing: wrong batch selected, submit fails/partially
+    applies). Setting batch_no here, before that first validate() runs,
+    is what approve_material_request() already does structurally (it sets
+    batch_no on the in-memory doc before calling insert() at all) — this
+    just does the same for a doc we didn't build ourselves.
     """
     if doc.stock_entry_type != "Material Transfer" or doc.get("confirmation_stage"):
         return
@@ -793,7 +898,7 @@ def before_stock_entry_insert(doc, method=None):
 
     mr = frappe.db.get_value(
         "Material Request", mr_names[0],
-        ["docstatus", "is_return_request", "pending_transfer_se"],
+        ["docstatus", "is_return_request", "pending_transfer_se", "duid", "poid"],
         as_dict=True,
     )
     if not mr or mr.docstatus != 1 or mr.pending_transfer_se:
@@ -803,6 +908,20 @@ def before_stock_entry_insert(doc, method=None):
         "Awaiting Warehouse Confirmation" if mr.is_return_request else "Awaiting Team Confirmation"
     )
     doc.flags._inet_stage_mr = mr_names[0]
+
+    duid = (mr.get("duid") or "").strip()
+    if not duid and mr.get("poid"):
+        duid = (frappe.db.get_value("PO Dispatch", mr.poid, "site_code") or "").strip()
+
+    extra_rows = []
+    for item in doc.items:
+        if duid and not item.get("duid"):
+            item.duid = duid
+        if item.get("batch_no") or not item.get("s_warehouse"):
+            continue
+        extra_rows.extend(_auto_select_batch_for_row(item))
+    for row in extra_rows:
+        doc.append("items", row)
 
 
 def after_stock_entry_insert(doc, method=None):
@@ -893,11 +1012,16 @@ def _clear_stale_confirmation_bookkeeping(doc):
 
 
 def on_stock_entry_submit(doc, method=None):
-    """When a Material Receipt is submitted, link the Huawei Outbound Plan
-    and set its status to Received.
+    """When a Material Receipt is submitted, link the Huawei Outbound Plan(s)
+    it covers and set their status to Received.
 
-    Primary: uses huawei_outbound_plan field on the Stock Entry header.
-    Fallback: matches by duid field on items for receipts without a header link.
+    Primary: derives the bill from each item's own Batch (batch = bill, see
+    _get_or_create_huawei_batch) — both the automated Huawei MR Import and
+    the manual "Create Material Receipt" form tag items this way; there is
+    no header-level field carrying the bill anymore.
+    Fallback: matches by duid field on items, for a receipt with no
+    batch-tracked items at all (e.g. predates batch tracking, or is a fully
+    ad-hoc Stock Entry).
     """
     if doc.stock_entry_type == "Material Transfer":
         _clear_stale_confirmation_bookkeeping(doc)
@@ -905,15 +1029,26 @@ def on_stock_entry_submit(doc, method=None):
     if doc.stock_entry_type != "Material Receipt":
         return
 
-    plan_name = (doc.get("huawei_outbound_plan") or "").strip()
-    if plan_name and frappe.db.exists("Huawei Outbound Plan", plan_name):
-        subcon = frappe.db.get_value("Huawei Outbound Plan", plan_name, "subcon")
-        if (subcon or "").strip().upper() == "INET":
-            frappe.db.set_value("Huawei Outbound Plan", plan_name, {
-                "material_receipt": doc.name,
-                "outbound_status": "Received",
-            })
-            frappe.db.commit()
+    batch_nos = {item.batch_no for item in doc.items if item.get("batch_no")}
+    bill_nos = set()
+    if batch_nos:
+        bill_nos = {
+            r["reference_name"] for r in frappe.db.get_all(
+                "Batch",
+                filters={"name": ["in", list(batch_nos)], "reference_doctype": "Huawei Outbound Plan"},
+                fields=["reference_name"],
+            ) if r.get("reference_name")
+        }
+
+    if bill_nos:
+        for plan_name in bill_nos:
+            subcon = frappe.db.get_value("Huawei Outbound Plan", plan_name, "subcon")
+            if (subcon or "").strip().upper() == "INET":
+                frappe.db.set_value("Huawei Outbound Plan", plan_name, {
+                    "material_receipt": doc.name,
+                    "outbound_status": "Received",
+                })
+        frappe.db.commit()
         return
 
     # Fallback: match unlinked INET plans by duid on items
@@ -937,6 +1072,50 @@ def on_stock_entry_submit(doc, method=None):
             })
 
     frappe.db.commit()
+
+
+def on_stock_entry_cancel(doc, method=None):
+    """Reverse on_stock_entry_submit's Huawei Outbound Plan linkage when a
+    Material Receipt is cancelled — status must follow the document
+    automatically, not be left stuck at "Received" pointing at a cancelled
+    entry. Frappe runs on_cancel BEFORE its own back-link check
+    (Document.run_post_save_methods calls on_cancel first, then
+    check_no_back_links_exist) — clearing the Plan's reference here is what
+    lets the cancel itself go through instead of being blocked by that check.
+
+    Matches by material_receipt = doc.name rather than re-deriving via
+    huawei_outbound_plan/duid, so it correctly reverses whichever path
+    (header link or DUID fallback) actually set it.
+    """
+    if doc.stock_entry_type != "Material Receipt":
+        return
+
+    plans = frappe.db.get_all("Huawei Outbound Plan",
+        filters={"material_receipt": doc.name}, pluck="name")
+    for plan_name in plans:
+        frappe.db.set_value("Huawei Outbound Plan", plan_name, {
+            "material_receipt": "",
+            "outbound_status": "Prepared",
+        })
+    if plans:
+        frappe.db.commit()
+
+
+def on_stock_entry_trash(doc, method=None):
+    """Deleting a staged Draft Transfer/Return directly (bypassing the
+    formal reject flow, which already clears this itself) must not leave
+    the originating Material Request's pending_transfer_se pointing at a
+    document that no longer exists. Frappe runs on_trash BEFORE its own
+    back-link check (delete_doc.delete_doc calls on_trash first, then
+    check_if_doc_is_linked) — clearing the reference here is what lets the
+    delete go through instead of being blocked by that check.
+    """
+    mr_names = frappe.db.get_all(
+        "Material Request", filters={"pending_transfer_se": doc.name}, pluck="name")
+    for mr_name in mr_names:
+        frappe.db.set_value("Material Request", mr_name, "pending_transfer_se", "")
+    if mr_names:
+        frappe.db.commit()
 
 
 # ─── Phase 2: Material Request — uses standard ERPNext Material Request ───────
@@ -1320,6 +1499,83 @@ def get_duid_received_items(duid):
             "material_receipt": info["material_receipt"],
         })
     return result
+
+
+@frappe.whitelist()
+def get_duid_bill_materials(duid):
+    """Per-bill item breakdown for a DUID, for the "click a DUID to see its
+    bills" popup — bill_no, its items/qty, and whether that bill's Material
+    Receipt is still Draft ("incoming", not yet actually in the warehouse)
+    or Received (submitted).
+
+    A bill's items live on its Material Receipt's Stock Entry Detail rows
+    (each item row tagged with a Batch whose reference_name is the bill —
+    see Batch = bill), not on the Huawei Outbound Plan itself. Joining via
+    Batch rather than Huawei Outbound Plan.material_receipt is what lets a
+    still-Draft receipt show up here at all: that link field is only ever
+    set at submit time (on_stock_entry_submit), so a bill whose receipt
+    hasn't been submitted yet would otherwise be invisible.
+    """
+    if not duid:
+        return []
+    bills = frappe.db.sql(
+        """SELECT bill_no, outbound_date, outbound_status
+           FROM `tabHuawei Outbound Plan`
+           WHERE subcon = 'INET' AND (du_id = %s OR duid_master = %s)
+           ORDER BY outbound_date DESC""",
+        (duid, duid), as_dict=True,
+    )
+    if not bills:
+        return []
+
+    bill_nos = [b.bill_no for b in bills]
+    placeholders = ", ".join(["%s"] * len(bill_nos))
+    item_rows = frappe.db.sql(
+        f"""SELECT b.reference_name AS bill_no, sed.item_code, sed.qty, sed.uom,
+                   se.name AS stock_entry, se.docstatus
+            FROM `tabBatch` b
+            JOIN `tabStock Entry Detail` sed ON sed.batch_no = b.name
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE b.reference_doctype = 'Huawei Outbound Plan'
+              AND b.reference_name IN ({placeholders})
+              AND se.stock_entry_type = 'Material Receipt'
+              AND se.docstatus != 2""",
+        bill_nos, as_dict=True,
+    )
+    item_names = {}
+    if item_rows:
+        item_names = {
+            r["name"]: r["item_name"] for r in frappe.db.get_all(
+                "Item",
+                filters={"name": ["in", list({r.item_code for r in item_rows})]},
+                fields=["name", "item_name"],
+            )
+        }
+
+    by_bill = {
+        b.bill_no: {
+            "bill_no": b.bill_no,
+            "outbound_date": str(b.outbound_date or ""),
+            "outbound_status": b.outbound_status,
+            "receipt_status": None,  # "Draft" | "Received" | None (no receipt yet)
+            "stock_entry": None,
+            "items": [],
+        }
+        for b in bills
+    }
+    for r in item_rows:
+        g = by_bill.get(r.bill_no)
+        if not g:
+            continue
+        g["stock_entry"] = r.stock_entry
+        g["receipt_status"] = "Received" if r.docstatus == 1 else "Draft"
+        g["items"].append({
+            "item_code": r.item_code,
+            "item_name": item_names.get(r.item_code, r.item_code),
+            "qty": flt(r.qty),
+            "uom": r.uom,
+        })
+    return list(by_bill.values())
 
 
 @frappe.whitelist()
@@ -1759,6 +2015,79 @@ def _check_team_lead_for_warehouse(warehouse):
         frappe.throw("Only the team's Team Lead can confirm or reject this transfer.", frappe.PermissionError)
 
 
+def _auto_select_batch_for_row(item_row):
+    """For an OUTGOING Stock Entry Detail row (drawing from item_row.s_warehouse),
+    auto-pick which batch(es) to draw from via ERPNext's own
+    get_auto_batch_nos (oldest-first) — the same mechanism the Desk "Fetch
+    Batch No" button uses, just called server-side so no one has to pick
+    manually.
+
+    get_auto_batch_nos has no concept of DUID — left unscoped, several
+    bills' batches for the same item can sit in the same warehouse, and it
+    would happily pick whichever is oldest regardless of DUID, silently
+    misattributing the movement to the wrong bill. When item_row carries a
+    duid, this restricts selection to batches whose bill actually matches
+    it first, only topping up from any other batch if the matching one(s)
+    don't cover the full qty (a real DUID-level shortage should still let
+    the item move — this is about traceability, not a new hard block).
+
+    Updates item_row in place for the first (or only) batch, and returns a
+    list of extra row dicts for the caller to append if the qty had to
+    split across more than one batch.
+    """
+    if not frappe.get_cached_value("Item", item_row.item_code, "has_batch_no"):
+        return []
+
+    from erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle import get_auto_batch_nos
+
+    base = {"item_code": item_row.item_code, "warehouse": item_row.s_warehouse}
+    qty_needed = flt(item_row.qty)
+    duid = item_row.get("duid")
+
+    picks = []
+    if duid:
+        matching_batches = frappe.db.sql(
+            """SELECT b.name FROM `tabBatch` b
+               JOIN `tabHuawei Outbound Plan` hop ON hop.name = b.reference_name
+               WHERE b.item = %s AND b.reference_doctype = 'Huawei Outbound Plan'
+                 AND (hop.duid_master = %s OR hop.du_id = %s)""",
+            (item_row.item_code, duid, duid), pluck="name",
+        )
+        if matching_batches:
+            picks = list(get_auto_batch_nos(frappe._dict({
+                **base, "qty": qty_needed, "batch_no": matching_batches,
+            })) or [])
+
+    remaining = qty_needed - sum(flt(p.qty) for p in picks)
+    if remaining > 0.0001:
+        already_picked = {p.batch_no for p in picks}
+        more = get_auto_batch_nos(frappe._dict({**base, "qty": remaining})) or []
+        picks += [p for p in more if p.batch_no not in already_picked]
+
+    if not picks:
+        return []
+
+    item_row.batch_no = picks[0].batch_no
+    item_row.qty = picks[0].qty
+    item_row.use_serial_batch_fields = 1
+
+    extra_rows = []
+    for pick in picks[1:]:
+        extra_rows.append({
+            "item_code": item_row.item_code,
+            "qty": pick.qty,
+            "uom": item_row.uom,
+            "s_warehouse": item_row.s_warehouse,
+            "t_warehouse": item_row.t_warehouse,
+            "duid": item_row.get("duid"),
+            "material_request": item_row.get("material_request"),
+            "material_request_item": item_row.get("material_request_item"),
+            "batch_no": pick.batch_no,
+            "use_serial_batch_fields": 1,
+        })
+    return extra_rows
+
+
 @frappe.whitelist()
 def approve_material_request(name):
     """Stock Manager stages a Material Transfer via ERPNext make_stock_entry
@@ -1785,8 +2114,12 @@ def approve_material_request(name):
     poid_val = mr.get("poid") or ""
     se.poid = poid_val
     se.confirmation_stage = "Awaiting Team Confirmation"
+    extra_rows = []
     for item in se.items:
         item.duid = duid
+        extra_rows.extend(_auto_select_batch_for_row(item))
+    for row in extra_rows:
+        se.append("items", row)
 
     se.insert(ignore_permissions=True)
     frappe.db.set_value("Material Request", name, "pending_transfer_se", se.name)
@@ -1948,132 +2281,6 @@ def reject_material_request(name, reason=None):
         mr.save()
     frappe.db.commit()
     return {"name": name, "status": "Rejected"}
-
-
-def _create_material_issue_se(mr_name, qty_map=None):
-    """Internal: create and submit a Material Issue SE for materials used in an execution.
-
-    qty_map — dict {item_code: qty_used} from Daily Execution Material child table.
-              If None/empty, issues the full transferred qty per item.
-    Idempotent: returns existing SE if one already exists for this MR.
-    Returns {"name": mr_name, "stock_entry": se.name, "status": ...}.
-    """
-    qty_map = qty_map or {}
-
-    # Idempotency: return existing Issue SE if already created for this MR
-    existing_issue = frappe.db.sql(
-        """SELECT se.name FROM `tabStock Entry` se
-           JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
-           WHERE se.docstatus = 1
-             AND se.stock_entry_type = 'Material Issue'
-             AND sed.material_request = %s
-           LIMIT 1""",
-        (mr_name,), as_list=True,
-    )
-    if existing_issue:
-        return {"name": mr_name, "stock_entry": existing_issue[0][0], "status": "Already Issued"}
-
-    # Verify at least one submitted Transfer SE exists for this MR
-    has_transfer = frappe.db.sql(
-        """SELECT 1 FROM `tabStock Entry` se
-           JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
-           WHERE se.docstatus = 1
-             AND se.stock_entry_type = 'Material Transfer'
-             AND sed.material_request = %s
-           LIMIT 1""",
-        (mr_name,), as_list=True,
-    )
-    if not has_transfer:
-        frappe.throw("No completed Material Transfer found for this request. Transfer the materials first.")
-
-    # Get DUID per item from the Transfer SE Detail — this is the correct
-    # inventory dimension value (Link to DUID Master) rather than the
-    # plain string on the MR header.
-    duid_by_item = {}
-    transfer_item_rows = frappe.db.sql(
-        """SELECT sed.item_code, sed.duid
-           FROM `tabStock Entry` se
-           JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
-           WHERE se.docstatus = 1
-             AND se.stock_entry_type = 'Material Transfer'
-             AND sed.material_request = %s""",
-        (mr_name,), as_dict=True,
-    )
-    for row in transfer_item_rows:
-        if row.item_code not in duid_by_item and row.duid:
-            duid_by_item[row.item_code] = row.duid
-
-    mr = frappe.get_doc("Material Request", mr_name)
-    mr_duid = mr.get("duid") or ""  # fallback when SE item has no duid
-    poid_val = mr.get("poid") or ""
-    team_wh = mr.set_warehouse
-
-    se_items = []
-    for item in mr.items:
-        used_qty = flt(qty_map.get(item.item_code, item.qty))
-        if used_qty <= 0:
-            continue
-        se_items.append({
-            "item_code": item.item_code,
-            "qty": used_qty,
-            "uom": item.uom or item.stock_uom,
-            "s_warehouse": team_wh,
-            "duid": duid_by_item.get(item.item_code) or mr_duid,
-            "material_request": mr_name,
-            "material_request_item": item.name,
-        })
-
-    if not se_items:
-        frappe.throw("No items to issue (all quantities are zero).")
-
-    se = frappe.get_doc({
-        "doctype": "Stock Entry",
-        "stock_entry_type": "Material Issue",
-        "purpose": "Material Issue",
-        "from_warehouse": team_wh,
-        "poid": poid_val,
-        "items": se_items,
-    })
-    se.insert(ignore_permissions=True)
-    se.submit()
-    frappe.db.commit()
-    return {"name": mr_name, "stock_entry": se.name, "status": "Issued"}
-
-
-@frappe.whitelist()
-def issue_materials_for_work_done(name, qty_overrides=None):
-    """Create Material Issue Stock Entry from team warehouse when work is done.
-
-    qty_overrides — optional JSON dict mapping item_code → qty_used.
-    When provided, only that qty is issued (0 = skip item).
-    If not provided, checks Daily Execution material_usage for field team adjustments.
-    """
-    frappe.only_for(["System Manager", "Stock Manager"])
-
-    # parse qty_overrides if JSON string
-    if isinstance(qty_overrides, str):
-        try:
-            qty_overrides = frappe.parse_json(qty_overrides)
-        except Exception:
-            qty_overrides = None
-    qty_map = qty_overrides or {}
-
-    # If no overrides passed, check if field team saved usage on the DE child table
-    if not qty_map:
-        poid = frappe.db.get_value("Material Request", name, "poid")
-        if poid:
-            de_name = frappe.db.get_value(
-                "Daily Execution", {"system_id": poid}, "name", order_by="modified desc"
-            )
-            if de_name and frappe.db.exists("DocType", "Daily Execution Material"):
-                rows = frappe.db.get_all(
-                    "Daily Execution Material",
-                    filters={"parent": de_name},
-                    fields=["item_code", "qty_used"],
-                )
-                qty_map = {r["item_code"]: flt(r["qty_used"]) for r in rows if r.get("item_code")}
-
-    return _create_material_issue_se(name, qty_map)
 
 
 # ─── Phase 3: Stock Balance & POID Material APIs ─────────────────────────────
@@ -2550,6 +2757,18 @@ def _poid_material_rows(mrs, duid_level):
                     "uom": it.uom or it.stock_uom or "Nos",
                     "team_warehouse": team_wh,
                 })
+
+    if rows:
+        is_huawei_map = {
+            r["name"]: bool(r["is_customer_provided_item"])
+            for r in frappe.db.get_all(
+                "Item",
+                filters={"name": ["in", list({r["item_code"] for r in rows})]},
+                fields=["name", "is_customer_provided_item"],
+            )
+        }
+        for row in rows:
+            row["is_huawei"] = is_huawei_map.get(row["item_code"], False)
     return rows
 
 
@@ -2623,6 +2842,160 @@ def _get_team_duid_per_item(team_wh, item_codes):
         if r["item_code"] not in result:   # highest-qty DUID wins
             result[r["item_code"]] = r["to_duid"]
     return result
+
+
+def _team_duid_item_balance(team_wh, duid, item_code):
+    """Current net qty of item_code, for this DUID, at team_wh — the exact
+    same reconstruction get_team_material_stock() uses (Transfer-in via
+    to_duid, minus Issue-out via duid), so this check never disagrees with
+    what the team-stock view already shows as "available". SLE doesn't
+    carry the DUID dimension on this installation, hence reconstructing
+    from Stock Entry Detail rather than reading Bin/SLE directly.
+    """
+    in_qty = flt((frappe.db.sql(
+        """SELECT SUM(sed.qty) FROM `tabStock Entry Detail` sed
+           JOIN `tabStock Entry` se ON se.name = sed.parent
+           WHERE se.docstatus = 1 AND se.stock_entry_type = 'Material Transfer'
+             AND sed.t_warehouse = %s AND sed.to_duid = %s AND sed.item_code = %s""",
+        (team_wh, duid, item_code),
+    ) or [[0]])[0][0])
+    out_qty = flt((frappe.db.sql(
+        """SELECT SUM(sed.qty) FROM `tabStock Entry Detail` sed
+           JOIN `tabStock Entry` se ON se.name = sed.parent
+           WHERE se.docstatus = 1 AND se.stock_entry_type = 'Material Issue'
+             AND sed.s_warehouse = %s AND sed.duid = %s AND sed.item_code = %s""",
+        (team_wh, duid, item_code),
+    ) or [[0]])[0][0])
+    return in_qty - out_qty
+
+
+def issue_material_for_execution(doc):
+    """Auto-issue whatever new qty_used the TL just recorded on
+    doc.material_usage — this is the "Site Sign" event: stock-out happens
+    the moment the TL reports using material on site, not when the job or
+    its paperwork is later marked complete.
+
+    Idempotent per row via qty_issued: only the increase since last time is
+    issued; lowering qty_used is treated as a correction and never
+    auto-reverses stock that already moved.
+
+    Raises on insufficient stock — a real business-rule violation (the team
+    can't have used more than they actually have) that the caller should
+    let block the save so the TL corrects the number. Any other error
+    (config, bug) is the caller's call whether to swallow — this function
+    itself doesn't decide that; it just does the work or raises.
+
+    Returns the Material Issue Stock Entry name, or None if there was
+    nothing new to issue.
+    """
+    if not doc.get("material_usage") or not doc.get("team") or not doc.get("system_id"):
+        return None
+
+    team_wh = frappe.db.get_value("INET Team", doc.team, "warehouse")
+    duid = frappe.db.get_value("PO Dispatch", doc.system_id, "site_code")
+    if not team_wh or not duid:
+        return None
+
+    to_issue = [
+        (row, flt(row.qty_used) - flt(row.get("qty_issued") or 0))
+        for row in doc.material_usage
+    ]
+    to_issue = [(row, delta) for row, delta in to_issue if delta > 0]
+    if not to_issue:
+        return None
+
+    expense_account = frappe.db.get_single_value("INET Settings", "material_issue_expense_account")
+
+    # Additional (company-owned) items aren't DUID-tracked — they're general
+    # team stock, not tied to any one site's bill — so their availability is
+    # the warehouse's plain Bin balance, not the DUID-scoped reconstruction
+    # Huawei/customer-provided items use. Without this split, an Additional
+    # item the TL genuinely has in stock would always show 0 available and
+    # block the save, since it never carries a to_duid on its transfer in.
+    item_codes = list({row.item_code for row, _ in to_issue})
+    is_huawei_map = {
+        r["name"]: bool(r["is_customer_provided_item"])
+        for r in frappe.db.get_all("Item", filters={"name": ["in", item_codes]}, fields=["name", "is_customer_provided_item"])
+    }
+
+    se_items = []
+    for row, delta in to_issue:
+        if is_huawei_map.get(row.item_code):
+            balance = _team_duid_item_balance(team_wh, duid, row.item_code)
+        else:
+            balance = flt(frappe.db.get_value("Bin", {"item_code": row.item_code, "warehouse": team_wh}, "actual_qty") or 0)
+        if delta > balance:
+            item_label = row.get("item_name") or row.item_code
+            frappe.throw(
+                f"Only {balance:g} {row.uom or ''} of \"{item_label}\" is in your stock for "
+                f"this site — a transfer may still be pending approval. Check Incoming, or "
+                f"adjust Used Qty."
+            )
+
+        item_row = frappe._dict({
+            "item_code": row.item_code,
+            "qty": delta,
+            "uom": row.uom or "Nos",
+            "s_warehouse": team_wh,
+            "duid": duid,
+            # Deliberately NOT carrying material_request through onto the
+            # Issue row: ERPNext's own validate_with_material_request()
+            # looks up a Material Request Item by (material_request_item,
+            # material_request) whenever material_request is truthy, and
+            # crashes with AttributeError on a None result if
+            # material_request_item isn't also set to a matching child row
+            # — which it never was here. A Material Issue also doesn't
+            # correspond 1:1 with the original transfer request anyway (a
+            # TL can use partial/combined qty from it), so there's nothing
+            # meaningful to link back to; traceability already comes from
+            # the DUID + batch stamped below, not from this.
+        })
+        extra_rows = _auto_select_batch_for_row(item_row)
+
+        se_item = dict(item_row)
+        if expense_account:
+            se_item["expense_account"] = expense_account
+        se_item[ACCOUNTING_DUID_FIELDNAME] = duid
+        se_items.append(se_item)
+        for extra in extra_rows:
+            if expense_account:
+                extra["expense_account"] = expense_account
+            extra[ACCOUNTING_DUID_FIELDNAME] = duid
+        se_items.extend(extra_rows)
+
+    se = frappe.get_doc({
+        "doctype": "Stock Entry",
+        "stock_entry_type": "Material Issue",
+        "items": se_items,
+    })
+    se.insert(ignore_permissions=True)
+    se.submit()
+    frappe.db.commit()
+
+    for row, delta in to_issue:
+        row.qty_issued = flt(row.qty_used)
+        row.material_issue = se.name
+
+    return se.name
+
+
+@frappe.whitelist()
+def get_execution_material_usage(execution):
+    """Materials a TL reported using on a Daily Execution, for the IM/PM
+    detail view — otherwise there is no visibility at all into what a TL
+    submitted for material usage, or whether it was actually issued out of
+    stock (issue_material_for_execution runs silently as part of
+    update_execution; nothing surfaces it anywhere in the IM-facing UI)."""
+    if not execution or not frappe.db.exists("Daily Execution", execution):
+        return []
+    rows = frappe.get_all(
+        "Daily Execution Material",
+        filters={"parent": execution},
+        fields=["item_code", "item_name", "qty_transferred", "qty_used", "qty_issued", "uom", "material_issue"],
+    )
+    for r in rows:
+        r["is_huawei"] = bool(frappe.get_cached_value("Item", r["item_code"], "is_customer_provided_item"))
+    return rows
 
 
 def _resolve_team_for_user():
@@ -2913,10 +3286,23 @@ def approve_material_return_request(name):
     item_codes = [i.item_code for i in mr.items]
     duid_by_item = _get_team_duid_per_item(team_wh, item_codes)
 
+    extra_rows = []
     for item in se.items:
         duid = duid_by_item.get(item.item_code, "")
         if duid:
-            item.duid = duid   # before_stock_entry_submit respects pre-set values
+            # Returned Huawei/customer-provided stock re-enters the main
+            # warehouse still belonging to the same DUID — it doesn't become
+            # generic un-DUID'd stock just because it came back. Stamp both
+            # sides so the target (to_duid) isn't left blank, relying only
+            # on before_stock_entry_submit's generic backstop — that backstop
+            # derives its DUID from the Material Request's own duid/poid,
+            # which isn't reliably populated on a return request the way
+            # duid_by_item (the item's actual DUID at the team warehouse) is.
+            item.duid = duid
+            item.to_duid = duid
+        extra_rows.extend(_auto_select_batch_for_row(item))
+    for row in extra_rows:
+        se.append("items", row)
 
     se.confirmation_stage = "Awaiting Warehouse Confirmation"
     se.insert(ignore_permissions=True)

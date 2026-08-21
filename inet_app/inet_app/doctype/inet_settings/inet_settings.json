@@ -9,6 +9,7 @@
   "source_warehouse",
   "huawei_customer",
   "auto_submit_huawei_material_receipt",
+  "material_issue_expense_account",
   "expense_section",
   "expense_payable_account",
   "expense_tax_rate",
@@ -49,6 +50,13 @@
    "fieldtype": "Check",
    "label": "Auto-submit Huawei Material Receipts",
    "description": "If enabled, Material Receipts created from a Huawei MR Import are submitted automatically. Otherwise they are left as Draft for review."
+  },
+  {
+   "fieldname": "material_issue_expense_account",
+   "fieldtype": "Link",
+   "label": "Material Issue Expense Account",
+   "options": "Account",
+   "description": "GL account charged when a Material Issue Stock Entry is created for material a Team Lead reports as used on site. Overrides ERPNext's default Stock Adjustment Account for these entries."
   },
   {
    "fieldname": "expense_section",

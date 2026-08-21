@@ -5,6 +5,7 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import SearchableSelect from "../../components/SearchableSelect";
 import { useDebounced } from "../../hooks/useDebounced";
 import MaterialItemPicker, { HuaweiBadge, CompanyBadge } from "../../components/MaterialItemPicker";
+import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 
 // ─── Status ───────────────────────────────────────────────────────────────────
 
@@ -193,73 +194,75 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
     <div>
       {err && <div className="notice error" style={{ marginBottom: 12 }}>{err}</div>}
 
-      {/* DUID — selected first; POID below is filtered by it */}
-      <div style={{ marginBottom: 14 }}>
-        {label("DUID", true)}
-        <SearchableSelect
-          value={duid}
-          onChange={handleDuidSelect}
-          onSearch={setDuidSearch}
-          options={duidSelectOptions}
-          placeholder="Search DUID…"
-          allLabel="Search DUID…"
-          style={{ display: "block", width: "100%" }}
-          minWidth={0}
-          triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.86rem" }}
-          panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
-        />
-      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+        {/* DUID — selected first; POID below is filtered by it */}
+        <div style={{ marginBottom: 14 }}>
+          {label("DUID", true)}
+          <SearchableSelect
+            value={duid}
+            onChange={handleDuidSelect}
+            onSearch={setDuidSearch}
+            options={duidSelectOptions}
+            placeholder="Search DUID…"
+            allLabel="Search DUID…"
+            style={{ display: "block", width: "100%" }}
+            minWidth={0}
+            triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.86rem" }}
+            panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
+          />
+        </div>
 
-      {/* POID — filtered to the selected DUID; optional, since material
-          management is DUID-scoped and a DUID's stock is usable on any of
-          its POIDs. Leaving it blank still shows on the Execution form for
-          every POID under this DUID (see get_poid_materials duid_level rows). */}
-      <div style={{ marginBottom: 14 }}>
-        {label("POID (optional)", false)}
-        <SearchableSelect
-          value={selectedPoid}
-          onChange={handlePoidSelect}
-          onSearch={setPoidSearch}
-          options={poidSelectOptions}
-          placeholder={duid ? "Search POID… (optional)" : "Select a DUID first"}
-          allLabel="Search POID…"
-          disabled={!duid}
-          style={{ display: "block", width: "100%" }}
-          minWidth={0}
-          triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.86rem" }}
-          panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
-        />
-        {poidLoading && <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginTop: 3 }}>Loading POID details…</div>}
-        {poidInfo && (
-          <div style={{ marginTop: 5, padding: "6px 10px", borderRadius: 6, background: "#ecfdf5", fontSize: "0.78rem", color: "#047857" }}>
-            {poidInfo.project_code && <>Project: <strong>{poidInfo.project_code}</strong></>}
-            {poidInfo.im && <> · IM: <strong>{poidInfo.im}</strong></>}
-            {poidInfo.team
-              ? <> · Team: <strong>{poidInfo.team}</strong> ✓</>
-              : <span style={{ color: "#b45309" }}> · No rollout plan found — select team below</span>
-            }
-            {!imName && !poidInfo.im && (
-              <span style={{ color: "#b91c1c" }}> · No IM on this POID — IM will not be set</span>
-            )}
-          </div>
-        )}
-      </div>
+        {/* POID — filtered to the selected DUID; optional, since material
+            management is DUID-scoped and a DUID's stock is usable on any of
+            its POIDs. Leaving it blank still shows on the Execution form for
+            every POID under this DUID (see get_poid_materials duid_level rows). */}
+        <div style={{ marginBottom: 14 }}>
+          {label("POID (optional)", false)}
+          <SearchableSelect
+            value={selectedPoid}
+            onChange={handlePoidSelect}
+            onSearch={setPoidSearch}
+            options={poidSelectOptions}
+            placeholder={duid ? "Search POID… (optional)" : "Select a DUID first"}
+            allLabel="Search POID…"
+            disabled={!duid}
+            style={{ display: "block", width: "100%" }}
+            minWidth={0}
+            triggerStyle={{ width: "100%", borderRadius: 8, fontSize: "0.86rem" }}
+            panelStyle={{ width: "100%", minWidth: 0, maxWidth: "none", right: 0 }}
+          />
+          {poidLoading && <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginTop: 3 }}>Loading POID details…</div>}
+          {poidInfo && (
+            <div style={{ marginTop: 5, padding: "6px 10px", borderRadius: 6, background: "#ecfdf5", fontSize: "0.78rem", color: "#047857" }}>
+              {poidInfo.project_code && <>Project: <strong>{poidInfo.project_code}</strong></>}
+              {poidInfo.im && <> · IM: <strong>{poidInfo.im}</strong></>}
+              {poidInfo.team
+                ? <> · Team: <strong>{poidInfo.team}</strong> ✓</>
+                : <span style={{ color: "#b45309" }}> · No rollout plan found — select team below</span>
+              }
+              {!imName && !poidInfo.im && (
+                <span style={{ color: "#b91c1c" }}> · No IM on this POID — IM will not be set</span>
+              )}
+            </div>
+          )}
+        </div>
 
-      {/* Team */}
-      <div style={{ marginBottom: 14 }}>
-        {label("Team", true)}
-        <select style={inp} value={team} onChange={(e) => setTeam(e.target.value)}>
-          <option value="">— Select team —</option>
-          {teams.map((t) => (
-            <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
-          ))}
-        </select>
-      </div>
+        {/* Team */}
+        <div style={{ marginBottom: 14 }}>
+          {label("Team", true)}
+          <select style={inp} value={team} onChange={(e) => setTeam(e.target.value)}>
+            <option value="">— Select team —</option>
+            {teams.map((t) => (
+              <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+            ))}
+          </select>
+        </div>
 
-      <div style={{ marginBottom: 14 }}>
-        {label("Remark")}
-        <textarea style={{ ...inp, resize: "vertical", minHeight: 44 }} value={remark}
-          onChange={(e) => setRemark(e.target.value)} placeholder="Optional note…" />
+        <div style={{ marginBottom: 14 }}>
+          {label("Remark")}
+          <textarea style={{ ...inp, resize: "vertical", minHeight: 38 }} value={remark}
+            onChange={(e) => setRemark(e.target.value)} placeholder="Optional note…" />
+        </div>
       </div>
 
       <div style={{ marginBottom: 20 }}>
@@ -440,6 +443,7 @@ function DuidStockTab({ onRequest }) {
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState(""); // "" | "received" | "pending"
+  const [viewDuid, setViewDuid] = useState("");
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -537,7 +541,7 @@ function DuidStockTab({ onRequest }) {
                   </td>
                 </tr>
               ) : visible.map((row) => (
-                <tr key={row.duid}>
+                <tr key={row.duid} onClick={() => setViewDuid(row.duid)} style={{ cursor: "pointer" }}>
                   <td style={{ fontFamily: "monospace", fontSize: "0.8rem", fontWeight: 600 }}>{row.duid}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.project_name}>{row.project_name || "—"}</td>
                   <td style={{ textAlign: "center" }}>
@@ -562,7 +566,7 @@ function DuidStockTab({ onRequest }) {
                         type="button"
                         className="btn-primary"
                         style={{ fontSize: "0.72rem", padding: "4px 12px", whiteSpace: "nowrap" }}
-                        onClick={() => onRequest(row.duid)}
+                        onClick={(e) => { e.stopPropagation(); onRequest(row.duid); }}
                       >
                         Request
                       </button>
@@ -588,6 +592,8 @@ function DuidStockTab({ onRequest }) {
           </table>
       </DataTableWrapper>
       </div>
+
+      <DuidBillMaterialsModal duid={viewDuid} onClose={() => setViewDuid("")} />
     </>
   );
 }
@@ -1470,7 +1476,7 @@ export default function IMMaterialRequest() {
       )}
 
       <Modal open={showNew} onClose={() => setShowNew(false)}
-        title="New Material Request" width={640}>
+        title="New Material Request" width={920}>
         <NewRequestForm
           imName={imName}
           prefillDuid={prefillDuid}

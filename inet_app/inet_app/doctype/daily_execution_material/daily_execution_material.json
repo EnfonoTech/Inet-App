@@ -11,7 +11,9 @@
   "column_break_a",
   "qty_transferred",
   "qty_used",
-  "uom"
+  "uom",
+  "qty_issued",
+  "material_issue"
  ],
  "fields": [
   {
@@ -60,6 +62,21 @@
    "fieldname": "uom",
    "fieldtype": "Data",
    "label": "UOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qty_issued",
+   "fieldtype": "Float",
+   "label": "Qty Already Issued",
+   "precision": "4",
+   "read_only": 1,
+   "description": "How much of Used Qty has actually been stocked out so far. Raising Used Qty issues the difference; lowering it does not auto-reverse — that needs a manual correction."
+  },
+  {
+   "fieldname": "material_issue",
+   "fieldtype": "Link",
+   "label": "Material Issue",
+   "options": "Stock Entry",
    "read_only": 1
   }
  ],

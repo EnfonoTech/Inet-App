@@ -190,8 +190,6 @@ def _declutter_stock_entry_list_view():
         except Exception:
             pass
 
-    if frappe.db.exists("Custom Field", "Stock Entry-huawei_outbound_plan"):
-        frappe.db.set_value("Custom Field", "Stock Entry-huawei_outbound_plan", "in_list_view", 0)
 
 
 def _hide_unused_activity_type_fields():
@@ -425,11 +423,37 @@ def _ensure_outbound_custom_fields():
             "options": CONFIRMATION_STAGE_OPTIONS,
         })
 
-    _add_field("Stock Entry", "Stock Entry-huawei_outbound_plan", {
-        "fieldname": "huawei_outbound_plan",
-        "fieldtype": "Link",
-        "label": "Huawei Outbound Plan",
-        "options": "Huawei Outbound Plan",
+    # Superseded by item-level Batch tracking (batch = bill, via
+    # _get_or_create_huawei_batch) — a header-level bill link duplicated what
+    # each item's own batch already says, and only the Huawei-import paths
+    # ever populated it. Actively removed, not just stopped-being-created,
+    # since sites that ran an earlier version already have the column.
+    if frappe.db.exists("Custom Field", "Stock Entry-huawei_outbound_plan"):
+        frappe.delete_doc("Custom Field", "Stock Entry-huawei_outbound_plan", ignore_permissions=True)
+
+    # Purely a client-side carrier for the "Create Material Receipt" button
+    # on Huawei Outbound Plan — is_virtual means it never gets a DB column
+    # and never persists, so it's not a second stored source of truth for
+    # the bill (that's still only ever the item-level Batch). It exists only
+    # because frappe.route_options and the URL query string both get wiped
+    # by Frappe's own router (create_new.js's get_new_doc(), then
+    # router.js's push_state()) before a form's refresh handler ever runs —
+    # but a route_options value matching a REAL field name (even a virtual,
+    # hidden one) gets copied onto the new doc's in-memory object first,
+    # which survives because it's now just normal (if virtual) doc data.
+    # no_copy is deliberately NOT set here — Frappe's own get_new_doc()
+    # (model/create_new.js) checks that exact flag to decide whether to
+    # copy a route_options value onto the new doc at all
+    # (`if (df && !df.no_copy) doc[fieldname] = value`), which is the ONE
+    # thing this field exists to receive. is_virtual already guarantees it
+    # never persists, so no_copy would only ever break the one job this
+    # field has, for no actual benefit.
+    _add_field("Stock Entry", "Stock Entry-bill_no_hint", {
+        "fieldname": "bill_no_hint",
+        "fieldtype": "Data",
+        "label": "Bill No. Hint",
+        "hidden": 1,
+        "is_virtual": 1,
         "insert_after": "stock_entry_type",
         "module": "Inet App",
     })

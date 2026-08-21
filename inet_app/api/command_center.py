@@ -5372,6 +5372,10 @@ def update_execution(payload):
                 if not doc.region_type:
                     doc.region_type = "Standard"
 
+    # Captured before the update loop overwrites it, so ciag_status_date
+    # only stamps on an actual change, not every unrelated save.
+    old_ciag_status = doc.get("ciag_status")
+
     # Apply updatable fields
     for field in [
         "execution_date",
@@ -5514,6 +5518,9 @@ def update_execution(payload):
             )
             doc.activity_cost_sar = flt(acm_cost or 0)
 
+    if hasattr(doc, "ciag_status_date") and doc.get("ciag_status") != old_ciag_status:
+        doc.ciag_status_date = frappe.utils.now_datetime()
+
     if doc.is_new():
         doc.insert(ignore_permissions=True)
     else:
@@ -5631,6 +5638,22 @@ def update_execution(payload):
             issue_category=(payload.get("issue_category") or "QC Rejection"),
             planning_route="with_issue",
         )
+
+    # "Site Sign": stock-out happens the moment the TL reports material used
+    # on site, not when the job/paperwork is later marked complete — so this
+    # runs on every save that touches material_usage, regardless of
+    # tl_status/execution_status. Insufficient stock is a real business-rule
+    # violation and is let through to the caller (the TL needs to fix the
+    # qty they entered); anything else (config, bug) is logged so a
+    # material-issue problem never blocks the TL from saving their update.
+    if "material_usage" in payload:
+        from inet_app.api.material_management import issue_material_for_execution
+        try:
+            issue_material_for_execution(doc)
+        except frappe.ValidationError:
+            raise
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"issue_material_for_execution failed for {doc.name}")
 
     frappe.db.commit()
     return {"name": doc.name, "status": doc.execution_status}
@@ -6010,76 +6033,7 @@ def generate_work_done(execution_name, issue_flag=None):
                 frappe.db.set_value("PO Intake Line", intake_line, "po_line_status", "Completed")
         frappe.db.commit()
 
-    # Auto-issue materials used by the field team (fire-and-forget; errors are logged)
-    _auto_issue_materials_for_execution(exec_doc)
-
     return {"name": wd.name}
-
-
-def _auto_issue_materials_for_execution(exec_doc):
-    """Create a Material Issue Stock Entry for the materials used in this execution.
-
-    Reads exec_doc.material_usage (JSON saved by field team on submit) for qty
-    overrides. If no overrides, issues the full transferred qty. Silently skips
-    when no transferred Material Request exists for the POID.
-
-    Returns the created Stock Entry name, or None.
-    """
-    try:
-        pd_name = exec_doc.system_id
-        if not pd_name:
-            return None
-
-        # Find MRs for this POID that have at least one submitted Transfer SE
-        # (join on SED.material_request — the field lives on the item row, not SE header)
-        mr_rows = frappe.db.sql(
-            """SELECT DISTINCT mr.name
-               FROM `tabMaterial Request` mr
-               JOIN `tabStock Entry Detail` sed ON sed.material_request = mr.name
-               JOIN `tabStock Entry` se ON se.name = sed.parent
-               WHERE mr.poid = %s
-                 AND mr.material_request_type = 'Material Transfer'
-                 AND mr.docstatus = 1
-                 AND se.docstatus = 1
-                 AND se.stock_entry_type = 'Material Transfer'""",
-            (pd_name,), as_list=True,
-        )
-        if not mr_rows:
-            return None
-
-        # Build qty_overrides from this execution's material_usage child table
-        usage_rows = getattr(exec_doc, "material_usage", None)
-        if not usage_rows:
-            usage_rows = frappe.db.get_all(
-                "Daily Execution Material",
-                filters={"parent": exec_doc.name},
-                fields=["item_code", "qty_used"],
-            )
-        qty_overrides = {
-            r.get("item_code"): flt(r.get("qty_used", 0))
-            for r in (usage_rows or [])
-            if r.get("item_code")
-        }
-
-        from inet_app.api.material_management import _create_material_issue_se
-        first_se = None
-        for (mr_name,) in mr_rows:
-            try:
-                result = _create_material_issue_se(mr_name, qty_overrides)
-                if not first_se:
-                    first_se = result.get("stock_entry")
-            except Exception:
-                frappe.log_error(
-                    frappe.get_traceback(),
-                    f"_auto_issue: SE creation failed for MR {mr_name}",
-                )
-        return first_se
-    except Exception:
-        frappe.log_error(
-            frappe.get_traceback(),
-            f"_auto_issue_materials_for_execution failed for {exec_doc.name}",
-        )
-        return None
 
 
 def _ensure_work_done_for_execution(execution_name):

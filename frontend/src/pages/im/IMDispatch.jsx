@@ -12,16 +12,13 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import AttachmentsSection from "../../components/AttachmentsSection";
 import MaterialItemPicker from "../../components/MaterialItemPicker";
+import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
-// Hidden for now — the per-DUID materials dispatch section in the Create
-// Plan popup is built and working, but the wider material management
-// feature it belongs to isn't finished yet. Flip to true once ready; the
-// JSX, state, and handleCreatePlans() dispatch logic are all still intact.
-const SHOW_MATERIAL_DISPATCH = false;
+const SHOW_MATERIAL_DISPATCH = true;
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
 function todayMonth() {
@@ -231,6 +228,7 @@ export default function IMDispatch() {
   const [materialSourceWh, setMaterialSourceWh] = useState("");
   const [materialItemsByDuid, setMaterialItemsByDuid] = useState({});
   const [expandedMaterialDuid, setExpandedMaterialDuid] = useState("");
+  const [viewBillsDuid, setViewBillsDuid] = useState("");
   const [visitType, setVisitType] = useState("Execution");
   const [managerRemark, setManagerRemark] = useState("");
   const [planDocUrls, setPlanDocUrls] = useState([]);
@@ -1445,6 +1443,14 @@ export default function IMDispatch() {
                           {items.length} item{items.length !== 1 ? "s" : ""} selected
                         </span>
                       )}
+                      <span
+                        role="button"
+                        title="View bills for this DUID"
+                        onClick={(e) => { e.stopPropagation(); setViewBillsDuid(g.duid); }}
+                        style={{ fontSize: "0.72rem", fontWeight: 700, color: "#475569", background: "#f1f5f9", padding: "2px 8px", borderRadius: 999, cursor: "pointer" }}
+                      >
+                        Bills
+                      </span>
                       <span style={{ color: "#94a3b8" }}>{expanded ? "▲" : "▼"}</span>
                     </span>
                   </button>
@@ -1467,6 +1473,8 @@ export default function IMDispatch() {
           </div>
         )}
       </Modal>
+
+      <DuidBillMaterialsModal duid={viewBillsDuid} onClose={() => setViewBillsDuid("")} />
 
       <Modal open={!!detailRow} onClose={() => setDetailRow(null)} title={`PO Dispatch Details${detailRow?.poid ? ` · ${detailRow.poid}` : detailRow?.name ? ` · ${detailRow.name}` : ""}`} width={760}>
         {detailRow && (

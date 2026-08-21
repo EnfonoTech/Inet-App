@@ -11,6 +11,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
+import ExecutionMaterialUsage from "../../components/ExecutionMaterialUsage";
 import RemarksPanel from "../../components/RemarksPanel";
 import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -1763,6 +1764,7 @@ export default function IMExecution() {
                 rolloutPlan={detailRow.rollout_plan}
                 currentPlanName={detailRow.rollout_plan}
               />
+              <ExecutionMaterialUsage execution={detailRow.name} />
               <div style={{ marginTop: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.05em" }}>Reschedule History</span>

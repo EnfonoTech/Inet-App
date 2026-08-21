@@ -239,6 +239,8 @@ doc_events = {
 			"inet_app.api.material_management.on_stock_entry_submit",
 			"inet_app.api.notifications.on_stock_entry_submit_notification",
 		],
+		"on_cancel": "inet_app.api.material_management.on_stock_entry_cancel",
+		"on_trash": "inet_app.api.material_management.on_stock_entry_trash",
 	},
 	"Daily Execution": {
 		"after_insert": "inet_app.api.notifications.on_daily_execution_insert",

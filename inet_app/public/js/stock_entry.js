@@ -1,4 +1,6 @@
-// Auto-fill DUID Inventory Dimension on Stock Entry items.
+// Auto-fill DUID Inventory Dimension on Stock Entry items, and (for a
+// manually-created Huawei Material Receipt) tag each item with the same
+// (bill, item) Batch the automated Huawei MR Import path already uses.
 //
 // Correct direction per entry type:
 //   Material Receipt  → to_duid only          (stock arrives at target)
@@ -8,23 +10,35 @@
 // Sources:
 //   Material Receipt  ← Huawei Outbound Plan.duid_master / du_id
 //   Transfer / Issue  ← Material Request.duid  (→ PO Dispatch.site_code fallback)
-
+//
+// There is no stored "which bill" field on Stock Entry — batch tracking
+// (batch = bill, see _get_or_create_huawei_batch in material_management.py)
+// carries that per item instead. The manual "Create Material Receipt"
+// button on Huawei Outbound Plan passes the bill via `bill_no_hint`, a
+// virtual (never persisted, no DB column at all — see setup.py) field on
+// Stock Entry that exists ONLY to survive page load reliably:
+//   - frappe.route_options is NOT reliable here — Frappe's own
+//     get_new_doc() (model/create_new.js) always clears it right after
+//     applying it to matching fields, and a URL param with no matching
+//     field just gets dropped, not applied — this is why a plain
+//     `?bill_no=` param (not a real field) silently failed.
+//   - The raw URL query string is ALSO not reliable — Frappe's router
+//     (router.js push_state()) rewrites the visible URL down to just the
+//     pathname shortly after the route resolves, before this refresh
+//     handler runs, so window.location.search is already stripped by then.
+//   - A route_options value that DOES match a real field name (even
+//     virtual/hidden) gets copied onto the new doc's in-memory object
+//     inside that same get_new_doc() call — so frm.doc.bill_no_hint
+//     survives everything above, because by then it's just normal (if
+//     virtual) doc data, not something route_options/URL state anymore.
 frappe.ui.form.on('Stock Entry', {
     refresh: function(frm) {
-        if (frm.doc.huawei_outbound_plan) {
+        if (frm.is_new() && !frm._inet_bill_no && frm.doc.bill_no_hint) {
+            frm._inet_bill_no = frm.doc.bill_no_hint;
             _fetch_and_cache_du_id_from_plan(frm);
         }
         _backfill_duid_from_items(frm);
         _show_confirmation_stage_banner(frm);
-    },
-
-    huawei_outbound_plan: function(frm) {
-        if (!frm.doc.huawei_outbound_plan) { frm._inet_du_id = null; return; }
-        _fetch_and_cache_du_id_from_plan(frm, function() {
-            (frm.doc.items || []).forEach(function(item) {
-                _apply_duid_to_row(frm, item.doctype, item.name, frm._inet_du_id);
-            });
-        });
     },
 });
 
@@ -32,11 +46,30 @@ frappe.ui.form.on('Stock Entry Detail', {
     items_add: function(frm, cdt, cdn) {
         if (frm._inet_du_id) {
             _apply_duid_to_row(frm, cdt, cdn, frm._inet_du_id);
-        } else if (frm.doc.huawei_outbound_plan) {
+        } else if (frm._inet_bill_no) {
             _fetch_and_cache_du_id_from_plan(frm, function() {
                 if (frm._inet_du_id) _apply_duid_to_row(frm, cdt, cdn, frm._inet_du_id);
             });
         }
+    },
+
+    // Manually adding/changing an item on a bill-tracked Material Receipt —
+    // tag the same (bill, item) Batch the automated import path uses, so a
+    // hand-typed row lands on the correct bill's ledger too.
+    item_code: function(frm, cdt, cdn) {
+        if (frm.doc.stock_entry_type !== 'Material Receipt' || !frm._inet_bill_no) return;
+        var row = frappe.get_doc(cdt, cdn);
+        if (!row.item_code) return;
+        frappe.call({
+            method: 'inet_app.api.material_management.get_or_create_batch_for_bill_item',
+            args: { bill_no: frm._inet_bill_no, item_code: row.item_code },
+            callback: function(r) {
+                if (r.message) {
+                    frappe.model.set_value(cdt, cdn, 'batch_no', r.message);
+                    frappe.model.set_value(cdt, cdn, 'use_serial_batch_fields', 1);
+                }
+            }
+        });
     },
 
     // When material_request is set on an item row, fill the appropriate DUID fields
@@ -110,7 +143,8 @@ function _backfill_duid_from_items(frm) {
 }
 
 function _fetch_and_cache_du_id_from_plan(frm, callback) {
-    frappe.db.get_value('Huawei Outbound Plan', frm.doc.huawei_outbound_plan, ['duid_master', 'du_id'], function(r) {
+    if (!frm._inet_bill_no) { if (callback) callback(); return; }
+    frappe.db.get_value('Huawei Outbound Plan', frm._inet_bill_no, ['duid_master', 'du_id'], function(r) {
         frm._inet_du_id = (r && (r.duid_master || r.du_id)) || null;
         if (callback) callback();
     });

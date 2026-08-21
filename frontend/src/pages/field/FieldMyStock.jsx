@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
+import Modal from "../../components/Modal";
 
 function fmt(n) {
   return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -38,8 +39,8 @@ function StockCard({ item }) {
       style={{ borderLeftColor: isCustomer ? "var(--amber)" : "var(--blue)" }}
     >
       <div className="history-card-row">
-        <div style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--text)" }}>
-          {item.item_name || item.item_code}
+        <div style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--text)", fontFamily: "monospace" }}>
+          {item.item_code}
         </div>
         <span style={{ fontSize: "1.4rem", fontWeight: 800, color: "var(--text)", lineHeight: 1 }}>
           {fmt(item.qty)}
@@ -49,9 +50,11 @@ function StockCard({ item }) {
         </span>
       </div>
 
-      <div style={{ fontFamily: "monospace", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
-        {item.item_code}
-      </div>
+      {item.item_name && item.item_name !== item.item_code && (
+        <div style={{ fontSize: "0.78rem", fontWeight: 400, color: "var(--text-muted)", marginTop: 2 }}>
+          {item.item_name}
+        </div>
+      )}
 
       <div className="history-card-meta" style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{
@@ -396,11 +399,11 @@ function ReturnDetailSheet({ row, onClose, onActioned }) {
                     style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border)", fontSize: "0.84rem" }}
                   />
                   <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                    <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem" }}
+                    <button type="button" className="btn-secondary" style={{ fontSize: "0.84rem", padding: "9px 18px" }}
                       onClick={() => { setShowReject(false); setActionErr(""); }} disabled={busy}>
                       Cancel
                     </button>
-                    <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "#fca5a5" }}
+                    <button type="button" className="btn-secondary" style={{ fontSize: "0.84rem", padding: "9px 18px", color: "#dc2626", borderColor: "#fca5a5" }}
                       onClick={reject} disabled={busy || !rejectReason.trim()}>
                       {busy ? "…" : "Confirm Decline"}
                     </button>
@@ -408,11 +411,11 @@ function ReturnDetailSheet({ row, onClose, onActioned }) {
                 </div>
               ) : (
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "#fca5a5" }}
+                  <button type="button" className="btn-secondary" style={{ fontSize: "0.84rem", padding: "9px 18px", color: "#dc2626", borderColor: "#fca5a5" }}
                     onClick={() => setShowReject(true)} disabled={busy}>
                     Reject
                   </button>
-                  <button type="button" className="btn-primary" style={{ fontSize: "0.78rem" }}
+                  <button type="button" className="btn-primary" style={{ fontSize: "0.84rem", padding: "9px 18px" }}
                     onClick={approve} disabled={busy}>
                     {busy ? "Approving…" : "Approve Release"}
                   </button>
@@ -428,11 +431,37 @@ function ReturnDetailSheet({ row, onClose, onActioned }) {
 
 // ─── Incoming transfers (staged outbound — Team Lead confirms/rejects) ──────
 
-function IncomingTransferCard({ row, onDone }) {
+function IncomingTransferCard({ row, onOpen }) {
+  const items = row.items || [];
+  const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
+  return (
+    <div className="history-card" style={{ borderLeftColor: "var(--amber)", cursor: "pointer" }} onClick={() => onOpen(row)}>
+      <div className="history-card-row">
+        <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 700 }}>{row.name}</span>
+        <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{row.request_date}</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 14px", marginTop: 3, fontSize: "0.76rem", color: "var(--text-muted)" }}>
+        {row.duid && <span>DUID: <strong style={{ color: "#0f172a" }}>{row.duid}</strong></span>}
+        {row.poid && <span>POID: {row.poid}</span>}
+      </div>
+      <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: "0.82rem" }}>
+          {items.length} item{items.length !== 1 ? "s" : ""} · <strong>{fmt(totalQty)}</strong> qty
+        </span>
+        <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#2563eb" }}>View & Confirm →</span>
+      </div>
+    </div>
+  );
+}
+
+function IncomingTransferDetailModal({ row, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [showReject, setShowReject] = useState(false);
   const [reason, setReason] = useState("");
   const [err, setErr] = useState("");
+
+  // Reset per-open state whenever a different (or no) row is shown.
+  useEffect(() => { setShowReject(false); setReason(""); setErr(""); setBusy(false); }, [row]);
 
   async function confirm() {
     setBusy(true);
@@ -460,69 +489,92 @@ function IncomingTransferCard({ row, onDone }) {
   }
 
   return (
-    <div className="history-card" style={{ borderLeftColor: "var(--amber)" }}>
-      <div className="history-card-row">
-        <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 700 }}>{row.name}</span>
-        <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{row.request_date}</span>
-      </div>
-      {row.poid && (
-        <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: 2 }}>POID: {row.poid}</div>
-      )}
-
-      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
-        {(row.items || []).map((it, i) => (
-          <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem" }}>
-            <span>{it.item_name || it.item_code}</span>
-            <strong>{fmt(it.qty)} {it.uom || "pcs"}</strong>
+    <Modal open={!!row} onClose={onClose} title={row?.name || ""} width={560}>
+      {row && (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px", marginBottom: 12, fontSize: "0.82rem", color: "#475569" }}>
+            {row.duid && <span>DUID: <strong style={{ color: "#0f172a" }}>{row.duid}</strong></span>}
+            {row.poid && <span>POID: <strong style={{ color: "#0f172a" }}>{row.poid}</strong></span>}
+            <span>Date: <strong style={{ color: "#0f172a" }}>{row.request_date}</strong></span>
           </div>
-        ))}
-      </div>
 
-      {err && (
-        <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: "#fef2f2", color: "#dc2626", fontSize: "0.78rem" }}>
-          {err}
-        </div>
-      )}
+          <table style={{ width: "100%", tableLayout: "fixed", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+            <colgroup>
+              <col style={{ width: "auto" }} />
+              <col style={{ width: 75 }} />
+              <col style={{ width: 55 }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "5px 8px", fontSize: "0.7rem", color: "#94a3b8" }}>Item</th>
+                <th style={{ textAlign: "right", padding: "5px 8px", fontSize: "0.7rem", color: "#94a3b8" }}>Qty</th>
+                <th style={{ textAlign: "left", padding: "5px 8px", fontSize: "0.7rem", color: "#94a3b8" }}>UOM</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(row.items || []).map((it, i) => (
+                <tr key={i} style={{ borderTop: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "5px 8px", overflowWrap: "anywhere" }}>
+                    <div style={{ fontWeight: 600 }}>{it.item_code}</div>
+                    {it.item_name && it.item_name !== it.item_code && (
+                      <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{it.item_name}</div>
+                    )}
+                  </td>
+                  <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600 }}>{fmt(it.qty)}</td>
+                  <td style={{ padding: "5px 8px", color: "#64748b" }}>{it.uom || "pcs"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-      {showReject ? (
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-          <input
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-            placeholder="Reason for declining…"
-            disabled={busy}
-            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border)", fontSize: "0.84rem" }}
-          />
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem" }}
-              onClick={() => { setShowReject(false); setErr(""); }} disabled={busy}>
-              Cancel
-            </button>
-            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "#fca5a5" }}
-              onClick={reject} disabled={busy || !reason.trim()}>
-              {busy ? "…" : "Confirm Decline"}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", color: "#dc2626", borderColor: "#fca5a5" }}
-            onClick={() => setShowReject(true)} disabled={busy}>
-            Decline
-          </button>
-          <button type="button" className="btn-primary" style={{ fontSize: "0.78rem" }}
-            onClick={confirm} disabled={busy}>
-            {busy ? "Confirming…" : "Confirm Receipt"}
-          </button>
-        </div>
+          {err && (
+            <div style={{ marginTop: 10, padding: "6px 10px", borderRadius: 6, background: "#fef2f2", color: "#dc2626", fontSize: "0.78rem" }}>
+              {err}
+            </div>
+          )}
+
+          {showReject ? (
+            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+              <input
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                placeholder="Reason for declining…"
+                disabled={busy}
+                style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border)", fontSize: "0.84rem" }}
+              />
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button type="button" className="btn-secondary" style={{ fontSize: "0.84rem", padding: "9px 18px" }}
+                  onClick={() => { setShowReject(false); setErr(""); }} disabled={busy}>
+                  Cancel
+                </button>
+                <button type="button" className="btn-secondary" style={{ fontSize: "0.84rem", padding: "9px 18px", color: "#dc2626", borderColor: "#fca5a5" }}
+                  onClick={reject} disabled={busy || !reason.trim()}>
+                  {busy ? "…" : "Confirm Decline"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginTop: 14, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="btn-secondary" style={{ fontSize: "0.84rem", padding: "9px 18px", color: "#dc2626", borderColor: "#fca5a5" }}
+                onClick={() => setShowReject(true)} disabled={busy}>
+                Decline
+              </button>
+              <button type="button" className="btn-primary" style={{ fontSize: "0.84rem", padding: "9px 18px" }}
+                onClick={confirm} disabled={busy}>
+                {busy ? "Confirming…" : "Confirm Receipt"}
+              </button>
+            </div>
+          )}
+        </>
       )}
-    </div>
+    </Modal>
   );
 }
 
 function IncomingTransfers({ refresh, onCount, onDone }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [openRow, setOpenRow] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -538,28 +590,31 @@ function IncomingTransfers({ refresh, onCount, onDone }) {
   useEffect(() => { load(); }, [load, refresh]);
 
   function handleDone(msg) {
+    setOpenRow(null);
     onDone(msg);
     load();
   }
 
-  if (rows.length > 0) return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {rows.map(r => <IncomingTransferCard key={r.name} row={r} onDone={handleDone} />)}
-    </div>
-  );
-
-  if (loading) return (
-    <div className="history-card" style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: 18 }}>
-      Loading incoming transfers…
-    </div>
-  );
-
   return (
-    <div className="empty-state" style={{ padding: "24px 0" }}>
-      <div className="empty-icon">📥</div>
-      <h3>Nothing awaiting confirmation</h3>
-      <p>Transfers the Warehouse Manager stages for your team will show up here for you to confirm before stock moves.</p>
-    </div>
+    <>
+      {rows.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {rows.map(r => <IncomingTransferCard key={r.name} row={r} onOpen={setOpenRow} />)}
+        </div>
+      ) : loading ? (
+        <div className="history-card" style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: 18 }}>
+          Loading incoming transfers…
+        </div>
+      ) : (
+        <div className="empty-state" style={{ padding: "24px 0" }}>
+          <div className="empty-icon">📥</div>
+          <h3>Nothing awaiting confirmation</h3>
+          <p>Transfers the Warehouse Manager stages for your team will show up here for you to confirm before stock moves.</p>
+        </div>
+      )}
+
+      <IncomingTransferDetailModal row={openRow} onClose={() => setOpenRow(null)} onDone={handleDone} />
+    </>
   );
 }
 
@@ -731,7 +786,7 @@ export default function FieldMyStock() {
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
             {items.length > 0 && (
-              <button className="btn-primary" type="button" onClick={() => setShowReturn(true)} style={{ fontSize: "0.78rem", padding: "6px 12px" }}>
+              <button className="btn-primary" type="button" onClick={() => setShowReturn(true)} style={{ fontSize: "0.84rem", fontWeight: 700, padding: "9px 16px", borderRadius: 9 }}>
                 Return
               </button>
             )}
@@ -749,9 +804,10 @@ export default function FieldMyStock() {
             {incomingCount > 0 && (
               <span style={{
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
-                minWidth: 16, height: 16, padding: "0 5px", marginLeft: 5,
-                borderRadius: 999, fontSize: "0.62rem", fontWeight: 800,
-                background: "#f59e0b", color: "#fff",
+                minWidth: 19, height: 19, padding: "0 6px", marginLeft: 5,
+                borderRadius: 999, fontSize: "0.68rem", fontWeight: 800,
+                background: "linear-gradient(180deg, #f87171, #ef4444)", color: "#fff",
+                boxShadow: "0 2px 6px rgba(239,68,68,0.45)",
               }}>
                 {incomingCount}
               </span>
@@ -835,12 +891,12 @@ export default function FieldMyStock() {
           )
         )}
 
-        {/* Incoming transfers tab */}
-        {tab === "incoming" && (
-          <div className="exec-section">
-            <IncomingTransfers refresh={incomingRefresh} onCount={setIncomingCount} onDone={handleIncomingDone} />
-          </div>
-        )}
+        {/* Incoming transfers tab — always mounted (not gated on tab === "incoming")
+            so its pending count keeps loading/updating in the background and the
+            tab badge is accurate even before the user ever opens this tab. */}
+        <div className="exec-section" style={{ display: tab === "incoming" ? "block" : "none" }}>
+          <IncomingTransfers refresh={incomingRefresh} onCount={setIncomingCount} onDone={handleIncomingDone} />
+        </div>
 
         {/* Return requests tab */}
         {tab === "returns" && (

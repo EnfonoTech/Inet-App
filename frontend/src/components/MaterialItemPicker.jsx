@@ -39,6 +39,7 @@ const inp = {
 export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
   const [huaweiItems, setHuaweiItems] = useState([]);
   const [huaweiQtys, setHuaweiQtys] = useState({});
+  const [removedHuawei, setRemovedHuawei] = useState(new Set());
   const [huaweiLoading, setHuaweiLoading] = useState(false);
   const [companyItems, setCompanyItems] = useState([]);
   const [itemSearch, setItemSearch] = useState("");
@@ -47,7 +48,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
 
   // Load Huawei items received for this DUID (remaining/unrequested only).
   useEffect(() => {
-    if (!duid) { setHuaweiItems([]); setHuaweiQtys({}); return; }
+    if (!duid) { setHuaweiItems([]); setHuaweiQtys({}); setRemovedHuawei(new Set()); return; }
     let cancelled = false;
     setHuaweiLoading(true);
     pmApi.getDuidReceivedItems(duid)
@@ -55,6 +56,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
         if (cancelled) return;
         const list = Array.isArray(res) ? res : [];
         setHuaweiItems(list);
+        setRemovedHuawei(new Set());
         // Default requested qty = received qty
         const qtys = {};
         list.forEach((i) => { qtys[i.item_code] = i.qty; });
@@ -82,6 +84,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
   // setter, including it would just re-fire this on every parent render.
   useEffect(() => {
     const huaweiSelected = huaweiItems
+      .filter((h) => !removedHuawei.has(h.item_code))
       .map((h) => ({ ...h, requestedQty: Number(huaweiQtys[h.item_code] || 0) }))
       .filter((h) => h.requestedQty > 0);
     const companySelected = companyItems.filter((r) => r.item_code.trim() && Number(r.qty) > 0);
@@ -101,7 +104,11 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
     ];
     onItemsChange?.(allItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [huaweiItems, huaweiQtys, companyItems]);
+  }, [huaweiItems, huaweiQtys, removedHuawei, companyItems]);
+
+  function removeHuaweiItem(itemCode) {
+    setRemovedHuawei((p) => new Set(p).add(itemCode));
+  }
 
   function setCompanyItem(i, f, v) {
     setCompanyItems((p) => p.map((r, idx) => idx === i ? { ...r, [f]: v } : r));
@@ -120,6 +127,8 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
     setItemOptions([]);
   }
 
+  const visibleHuaweiItems = huaweiItems.filter((h) => !removedHuawei.has(h.item_code));
+
   return (
     <div>
       {/* ── Huawei Materials (auto-filled) ── */}
@@ -130,7 +139,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
         </div>
         {huaweiLoading ? (
           <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>Loading received items…</div>
-        ) : huaweiItems.length === 0 ? (
+        ) : visibleHuaweiItems.length === 0 ? (
           <div style={{ fontSize: "0.78rem", color: "#64748b" }}>
             {duid
               ? "No remaining Huawei items to request for this DUID — all received items have already been requested."
@@ -144,10 +153,11 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
                 <th style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 90 }}>Remaining</th>
                 <th style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 90 }}>Request Qty</th>
                 <th style={{ padding: "5px 8px", textAlign: "left", fontWeight: 600, color: "#1d4ed8", fontSize: "0.72rem", width: 60 }}>UOM</th>
+                <th style={{ width: 28 }} />
               </tr>
             </thead>
             <tbody>
-              {huaweiItems.map((h) => (
+              {visibleHuaweiItems.map((h) => (
                 <tr key={h.item_code}>
                   <td style={{ padding: "5px 8px" }}>
                     <div style={{ fontWeight: 600, color: "#0f172a" }}>{h.item_code}</div>
@@ -161,6 +171,10 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
                       onChange={(e) => setHuaweiQtys((q) => ({ ...q, [h.item_code]: e.target.value }))} />
                   </td>
                   <td style={{ padding: "5px 8px", color: "#64748b" }}>{h.uom}</td>
+                  <td style={{ padding: "5px 6px", textAlign: "center" }}>
+                    <button type="button" title="Remove from this request" onClick={() => removeHuaweiItem(h.item_code)}
+                      style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 17, lineHeight: 1 }}>×</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

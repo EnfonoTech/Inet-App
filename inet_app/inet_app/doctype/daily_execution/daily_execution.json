@@ -22,6 +22,7 @@
   "photos",
   "qc_status",
   "ciag_status",
+  "ciag_status_date",
   "revisit_flag",
   "section_break_yvjh",
   "remarks",
@@ -140,6 +141,13 @@
    "fieldtype": "Select",
    "label": "CIAG Status",
    "options": "Open\nApproved\nNot Applicable"
+  },
+  {
+   "fieldname": "ciag_status_date",
+   "fieldtype": "Datetime",
+   "label": "CIAG Status Date",
+   "read_only": 1,
+   "description": "Server-stamped whenever CIAG Status changes — the Site Verify report's \"pending days\" is measured from this, not from Execution Date."
   },
   {
    "default": "0",
