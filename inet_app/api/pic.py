@@ -451,6 +451,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         where.append(f"IFNULL({sc_col},'') IN ({ph})")
         params.extend(subcon_vals)
 
+    vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
     sql = f"""
     SELECT  /* {limit_page_length} = 0 → unlimited; with_team_type={int(with_team_type)} */
       pd.name AS po_dispatch,
@@ -485,6 +486,8 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       pd.ms1_amount, pd.ms2_amount,
       pd.ms1_invoiced, pd.ms2_invoiced,
       pd.ms1_unbilled, pd.ms2_unbilled,
+      ROUND(IFNULL(pd.ms1_invoiced, 0) * ({vat_frac}), 2) AS ms1_vat,
+      ROUND(IFNULL(pd.ms2_invoiced, 0) * ({vat_frac}), 2) AS ms2_vat,
       pd.ms1_applied_date, pd.ms2_applied_date,
       pd.ms1_invoice_month, pd.ms2_invoice_month,
       pd.ms1_ibuy_inv_date, pd.ms2_ibuy_inv_date,
@@ -508,8 +511,10 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         SELECT COUNT(*) AS total,
                COALESCE(SUM(pd.ms1_amount), 0) AS ms1_amount_total,
                COALESCE(SUM(pd.ms1_invoiced), 0) AS ms1_invoiced_total,
+               COALESCE(SUM(ROUND(IFNULL(pd.ms1_invoiced, 0) * ({vat_frac}), 2)), 0) AS ms1_vat_total,
                COALESCE(SUM(pd.ms2_amount), 0) AS ms2_amount_total,
-               COALESCE(SUM(pd.ms2_invoiced), 0) AS ms2_invoiced_total
+               COALESCE(SUM(pd.ms2_invoiced), 0) AS ms2_invoiced_total,
+               COALESCE(SUM(ROUND(IFNULL(pd.ms2_invoiced, 0) * ({vat_frac}), 2)), 0) AS ms2_vat_total
         {from_clause}
         WHERE {' AND '.join(where)}
         """,
@@ -531,8 +536,10 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         "totals": {
             "ms1_amount": flt(agg.get("ms1_amount_total") or 0),
             "ms1_invoiced": flt(agg.get("ms1_invoiced_total") or 0),
+            "ms1_vat": flt(agg.get("ms1_vat_total") or 0),
             "ms2_amount": flt(agg.get("ms2_amount_total") or 0),
             "ms2_invoiced": flt(agg.get("ms2_invoiced_total") or 0),
+            "ms2_vat": flt(agg.get("ms2_vat_total") or 0),
         },
     }
 
@@ -600,6 +607,24 @@ def _batch_draft_invoices_by_milestone(poids):
             out.setdefault((r["poid"], "MS1"), r["si_name"])
             out.setdefault((r["poid"], "MS2"), r["si_name"])
     return out
+
+
+# PO Dispatch.tax_rate is a free-text field — almost always "15%", sometimes
+# a raw fraction like "0.15", occasionally blank. Normalize to a fraction for
+# VAT math; default to the standard 15% KSA rate when nothing is recorded.
+_TAX_RATE_FRACTION_SQL = """
+    CASE
+      WHEN {col} IS NULL OR {col} = '' THEN 0.15
+      WHEN LOCATE('%%', {col}) > 0 THEN CAST(REPLACE({col}, '%%', '') AS DECIMAL(10,4)) / 100
+      ELSE CAST({col} AS DECIMAL(10,4))
+    END
+"""
+
+
+def _vat_on_sql(amount_expr, tax_col="pd.tax_rate"):
+    """VAT on ``amount_expr`` using the PO line's ``tax_rate`` field."""
+    frac = _TAX_RATE_FRACTION_SQL.format(col=tax_col)
+    return f"IFNULL({amount_expr}, 0) * ({frac})"
 
 
 @frappe.whitelist()
@@ -688,6 +713,9 @@ def pic_invoicing_summary(portal_filters=None):
         params_ms2.extend(ms2_month_vals)
     where_ms2.append("IFNULL(pd.ms2_amount, 0) > 0")
 
+    vat_on_invoiced = _vat_on_sql("pd.ms1_invoiced")
+    vat_on_ms2_invoiced = _vat_on_sql("pd.ms2_invoiced")
+
     # ── MS1 breakdown query ───────────────────────────────────────────────
     ms1_sql = f"""
     SELECT
@@ -695,9 +723,12 @@ def pic_invoicing_summary(portal_filters=None):
       COUNT(*) AS row_count,
       SUM(IFNULL(pd.ms1_amount,  0)) AS po_amount,
       SUM(IFNULL(pd.ms1_invoiced,0)) AS invoiced,
+      SUM({vat_on_invoiced}) AS vat,
       SUM(IFNULL(pd.ms1_unbilled,0)) AS unbilled,
       SUM(IFNULL(pd.ms1_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
-      SUM(IFNULL(pd.ms1_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt
+      SUM(IFNULL(pd.ms1_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt,
+      SUM(IFNULL(pd.ms1_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
+      SUM(IFNULL(pd.ms1_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
     {_PIC_FROM_JOIN_LEAN}
     WHERE {' AND '.join(where_ms1)}
     GROUP BY ({_PIC_INITIAL_RULE_SQL.strip()})
@@ -711,9 +742,12 @@ def pic_invoicing_summary(portal_filters=None):
       COUNT(*) AS row_count,
       SUM(IFNULL(pd.ms2_amount,  0)) AS po_amount,
       SUM(IFNULL(pd.ms2_invoiced,0)) AS invoiced,
+      SUM({vat_on_ms2_invoiced}) AS vat,
       SUM(IFNULL(pd.ms2_unbilled,0)) AS unbilled,
       SUM(IFNULL(pd.ms2_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
-      SUM(IFNULL(pd.ms2_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt
+      SUM(IFNULL(pd.ms2_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt,
+      SUM(IFNULL(pd.ms2_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
+      SUM(IFNULL(pd.ms2_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
     {_PIC_FROM_JOIN_LEAN}
     WHERE {' AND '.join(where_ms2)}
     GROUP BY COALESCE(NULLIF(pd.pic_status_ms2, ''), 'Work Not Done')
@@ -728,15 +762,25 @@ def pic_invoicing_summary(portal_filters=None):
     for r in ms1_rows:
         if r.get("pic_status") not in _INVOICED:
             r["subcon_amt"] = 0.0; r["inet_amt"] = 0.0
+            r["subcon_vat"] = 0.0; r["inet_vat"] = 0.0
+            r["vat"] = 0.0
     for r in ms2_rows:
         if r.get("pic_status") not in _INVOICED:
             r["subcon_amt"] = 0.0; r["inet_amt"] = 0.0
+            r["subcon_vat"] = 0.0; r["inet_vat"] = 0.0
+            r["vat"] = 0.0
 
     # ── Top summary (derived from row aggregates) ─────────────────────────
     inet_ms1   = sum(flt(r.get("inet_amt"))   for r in ms1_rows)
     subcon_ms1 = sum(flt(r.get("subcon_amt")) for r in ms1_rows)
     inet_ms2   = sum(flt(r.get("inet_amt"))   for r in ms2_rows)
     subcon_ms2 = sum(flt(r.get("subcon_amt")) for r in ms2_rows)
+    inet_ms1_vat   = sum(flt(r.get("inet_vat"))   for r in ms1_rows)
+    subcon_ms1_vat = sum(flt(r.get("subcon_vat")) for r in ms1_rows)
+    inet_ms2_vat   = sum(flt(r.get("inet_vat"))   for r in ms2_rows)
+    subcon_ms2_vat = sum(flt(r.get("subcon_vat")) for r in ms2_rows)
+    total_ms1_vat = inet_ms1_vat + subcon_ms1_vat
+    total_ms2_vat = inet_ms2_vat + subcon_ms2_vat
 
     return {
         "top": {
@@ -749,22 +793,33 @@ def pic_invoicing_summary(portal_filters=None):
             "inet_total":  round(inet_ms1 + inet_ms2, 2),
             "subcon_total": round(subcon_ms1 + subcon_ms2, 2),
             "grand_total": round(inet_ms1 + subcon_ms1 + inet_ms2 + subcon_ms2, 2),
+            "inet_ms1_vat": round(inet_ms1_vat, 2),
+            "subcon_ms1_vat": round(subcon_ms1_vat, 2),
+            "total_ms1_vat": round(total_ms1_vat, 2),
+            "inet_ms2_vat": round(inet_ms2_vat, 2),
+            "subcon_ms2_vat": round(subcon_ms2_vat, 2),
+            "total_ms2_vat": round(total_ms2_vat, 2),
+            "inet_total_vat": round(inet_ms1_vat + inet_ms2_vat, 2),
+            "subcon_total_vat": round(subcon_ms1_vat + subcon_ms2_vat, 2),
+            "grand_total_vat": round(total_ms1_vat + total_ms2_vat, 2),
+            "inet_ms1_total": round(inet_ms1 + inet_ms1_vat, 2),
+            "subcon_ms1_total": round(subcon_ms1 + subcon_ms1_vat, 2),
+            "total_ms1_total": round(inet_ms1 + subcon_ms1 + total_ms1_vat, 2),
+            "inet_ms2_total": round(inet_ms2 + inet_ms2_vat, 2),
+            "subcon_ms2_total": round(subcon_ms2 + subcon_ms2_vat, 2),
+            "total_ms2_total": round(inet_ms2 + subcon_ms2 + total_ms2_vat, 2),
+            "inet_grand_total": round(inet_ms1 + inet_ms2 + inet_ms1_vat + inet_ms2_vat, 2),
+            "subcon_grand_total": round(subcon_ms1 + subcon_ms2 + subcon_ms1_vat + subcon_ms2_vat, 2),
+            "grand_total_incl_vat": round(
+                inet_ms1 + subcon_ms1 + inet_ms2 + subcon_ms2 + total_ms1_vat + total_ms2_vat, 2
+            ),
         },
         "ms1_rows": [dict(r) for r in ms1_rows],
         "ms2_rows": [dict(r) for r in ms2_rows],
     }
 
 
-# PO Dispatch.tax_rate is a free-text field — almost always "15%", sometimes
-# a raw fraction like "0.15", occasionally blank. Normalize to a fraction for
-# VAT math; default to the standard 15% KSA rate when nothing is recorded.
-_TAX_RATE_FRACTION_SQL = """
-    CASE
-      WHEN {col} IS NULL OR {col} = '' THEN 0.15
-      WHEN LOCATE('%%', {col}) > 0 THEN CAST(REPLACE({col}, '%%', '') AS DECIMAL(10,4)) / 100
-      ELSE CAST({col} AS DECIMAL(10,4))
-    END
-"""
+# PO Dispatch.tax_rate — see _TAX_RATE_FRACTION_SQL above.
 
 
 def _payment_ledger_leg_sql(milestone):
@@ -1458,22 +1513,27 @@ def _monthly_invoicing_rows(fd=None, td=None, order="DESC", limit=36):
     invoice_clause, invoice_params = _invoice_month_clause(fd, td)
     order_sql = "ASC" if str(order).upper() == "ASC" else "DESC"
     limit_sql = f"LIMIT {cint(limit)}" if limit else ""
+    vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
     return frappe.db.sql(
         f"""
         SELECT m AS invoice_month,
                COALESCE(SUM(ms1_inv), 0) AS ms1_invoiced,
                COALESCE(SUM(ms2_inv), 0) AS ms2_invoiced,
-               COALESCE(SUM(ms1_inv + ms2_inv), 0) AS total
+               COALESCE(SUM(ms1_inv + ms2_inv), 0) AS total,
+               COALESCE(SUM(ms1_vat + ms2_vat), 0) AS vat_amount,
+               COALESCE(SUM(ms1_inv + ms2_inv + ms1_vat + ms2_vat), 0) AS total_amount
         FROM (
           SELECT DATE_FORMAT(pd.ms1_invoice_month, '%%Y-%%m') AS m,
-                 IFNULL(pd.ms1_amount, 0) AS ms1_inv, 0 AS ms2_inv
+                 IFNULL(pd.ms1_amount, 0) AS ms1_inv, 0 AS ms2_inv,
+                 IFNULL(pd.ms1_amount, 0) * ({vat_frac}) AS ms1_vat, 0 AS ms2_vat
           FROM `tabPO Dispatch` pd
           WHERE pd.ms1_invoice_month IS NOT NULL
             AND {_MS1_INVOICED_SQL}
             AND {_REPORTING_SCOPE_SQL}
           UNION ALL
           SELECT DATE_FORMAT(pd.ms2_invoice_month, '%%Y-%%m') AS m,
-                 0 AS ms1_inv, IFNULL(pd.ms2_amount, 0) AS ms2_inv
+                 0 AS ms1_inv, IFNULL(pd.ms2_amount, 0) AS ms2_inv,
+                 0 AS ms1_vat, IFNULL(pd.ms2_amount, 0) * ({vat_frac}) AS ms2_vat
           FROM `tabPO Dispatch` pd
           WHERE pd.ms2_invoice_month IS NOT NULL
             AND {_MS2_INVOICED_SQL}
@@ -1656,6 +1716,7 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     monthly = _monthly_invoicing_rows(fd, td, order="DESC", limit=36)
 
     # ── INET vs Subcon split — filtered by invoice month when date range set.
+    vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
     _split = frappe.db.sql(
         f"""
         SELECT
@@ -1670,7 +1731,19 @@ def pic_dashboard_payload(from_date=None, to_date=None):
               THEN IFNULL(pd.ms2_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms2,
           SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
               {split_ms2_cond}
-              THEN IFNULL(pd.ms2_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 ELSE 0 END) AS subcon_ms2
+              THEN IFNULL(pd.ms2_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 ELSE 0 END) AS subcon_ms2,
+          SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              {split_ms1_cond}
+              THEN IFNULL(pd.ms1_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({vat_frac}) ELSE 0 END) AS inet_ms1_vat,
+          SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              {split_ms1_cond}
+              THEN IFNULL(pd.ms1_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 * ({vat_frac}) ELSE 0 END) AS subcon_ms1_vat,
+          SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              {split_ms2_cond}
+              THEN IFNULL(pd.ms2_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({vat_frac}) ELSE 0 END) AS inet_ms2_vat,
+          SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
+              {split_ms2_cond}
+              THEN IFNULL(pd.ms2_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 * ({vat_frac}) ELSE 0 END) AS subcon_ms2_vat
         {_PIC_FROM_JOIN_LEAN}
         WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
           AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
@@ -1681,12 +1754,29 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     _r = (_split[0] if _split else {}) or {}
     _im1  = flt(_r.get("inet_ms1"));  _sm1 = flt(_r.get("subcon_ms1"))
     _im2  = flt(_r.get("inet_ms2"));  _sm2 = flt(_r.get("subcon_ms2"))
+    _im1v = flt(_r.get("inet_ms1_vat")); _sm1v = flt(_r.get("subcon_ms1_vat"))
+    _im2v = flt(_r.get("inet_ms2_vat")); _sm2v = flt(_r.get("subcon_ms2_vat"))
+    _t1v = _im1v + _sm1v; _t2v = _im2v + _sm2v
     inet_subcon = {
         "inet_ms1":    round(_im1,  2), "subcon_ms1":  round(_sm1, 2), "total_ms1":   round(_im1 + _sm1, 2),
         "inet_ms2":    round(_im2,  2), "subcon_ms2":  round(_sm2, 2), "total_ms2":   round(_im2 + _sm2, 2),
         "inet_total":  round(_im1 + _im2, 2),
         "subcon_total": round(_sm1 + _sm2, 2),
         "grand_total": round(_im1 + _sm1 + _im2 + _sm2, 2),
+        "inet_ms1_vat": round(_im1v, 2), "subcon_ms1_vat": round(_sm1v, 2), "total_ms1_vat": round(_t1v, 2),
+        "inet_ms2_vat": round(_im2v, 2), "subcon_ms2_vat": round(_sm2v, 2), "total_ms2_vat": round(_t2v, 2),
+        "inet_total_vat": round(_im1v + _im2v, 2),
+        "subcon_total_vat": round(_sm1v + _sm2v, 2),
+        "grand_total_vat": round(_t1v + _t2v, 2),
+        "inet_ms1_total": round(_im1 + _im1v, 2),
+        "subcon_ms1_total": round(_sm1 + _sm1v, 2),
+        "total_ms1_total": round(_im1 + _sm1 + _t1v, 2),
+        "inet_ms2_total": round(_im2 + _im2v, 2),
+        "subcon_ms2_total": round(_sm2 + _sm2v, 2),
+        "total_ms2_total": round(_im2 + _sm2 + _t2v, 2),
+        "inet_grand_total": round(_im1 + _im2 + _im1v + _im2v, 2),
+        "subcon_grand_total": round(_sm1 + _sm2 + _sm1v + _sm2v, 2),
+        "grand_total_incl_vat": round(_im1 + _sm1 + _im2 + _sm2 + _t1v + _t2v, 2),
     }
 
     # ── Top-line KPIs — scoped by date when set.
@@ -1811,7 +1901,9 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                 {"key": "invoice_month", "label": "Invoicing Month"},
                 {"key": "ms1_invoiced", "label": "MS1 Invoiced", "numeric": True, "money": True},
                 {"key": "ms2_invoiced", "label": "MS2 Invoiced", "numeric": True, "money": True},
-                {"key": "total", "label": "Total", "numeric": True, "money": True},
+                {"key": "total", "label": "Total (excl. VAT)", "numeric": True, "money": True},
+                {"key": "vat_amount", "label": "VAT Amount", "numeric": True, "money": True},
+                {"key": "total_amount", "label": "Total (incl. VAT)", "numeric": True, "money": True},
             ],
             "rows": _monthly_invoicing_rows(fd, td, order="DESC", limit=None),
         }

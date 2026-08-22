@@ -60,7 +60,7 @@ function statusColor(status) {
 function sortByStatus(rows, order) {
   const byStatus = new Map(rows.map((r) => [r.pic_status, r]));
   const known = order.map((status) => byStatus.get(status) || {
-    pic_status: status, row_count: 0, po_amount: 0, invoiced: 0, unbilled: 0, subcon_amt: 0, inet_amt: 0,
+    pic_status: status, row_count: 0, po_amount: 0, invoiced: 0, vat: 0, unbilled: 0, subcon_amt: 0, inet_amt: 0,
   });
   const unknown = rows.filter((r) => !order.includes(r.pic_status));
   return [...known, ...unknown];
@@ -69,9 +69,9 @@ function sortByStatus(rows, order) {
 // ── Sub-components ─────────────────────────────────────────────────────
 function TopSummaryCard({ top }) {
   const rows = [
-    { label: "INET",   ms1: top.inet_ms1,   ms2: top.inet_ms2,   total: top.inet_total,   tone: "blue" },
-    { label: "Subcon", ms1: top.subcon_ms1, ms2: top.subcon_ms2, total: top.subcon_total, tone: "violet" },
-    { label: "Total",  ms1: top.total_ms1,  ms2: top.total_ms2,  total: top.grand_total,  tone: "slate", bold: true },
+    { label: "INET",   ms1: top.inet_ms1,   ms2: top.inet_ms2,   total: top.inet_total,   vat: top.inet_total_vat,   totalIncl: top.inet_grand_total,   tone: "blue" },
+    { label: "Subcon", ms1: top.subcon_ms1, ms2: top.subcon_ms2, total: top.subcon_total, vat: top.subcon_total_vat, totalIncl: top.subcon_grand_total, tone: "violet" },
+    { label: "Total",  ms1: top.total_ms1,  ms2: top.total_ms2,  total: top.grand_total,  vat: top.grand_total_vat,  totalIncl: top.grand_total_incl_vat,  tone: "slate", bold: true },
   ];
   const tones = {
     blue:   { bg: "#eff6ff", bd: "#bfdbfe", fg: "#1e40af", hd: "#dbeafe" },
@@ -90,6 +90,8 @@ function TopSummaryCard({ top }) {
             <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>MS1 (SAR)</th>
             <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>MS2 (SAR)</th>
             <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Total (SAR)</th>
+            <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>VAT (SAR)</th>
+            <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Total incl. VAT</th>
           </tr>
         </thead>
         <tbody>
@@ -106,6 +108,12 @@ function TopSummaryCard({ top }) {
                 </td>
                 <td style={{ padding: "10px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: t.fg }}>
                   {fmt.format(r.total || 0)}
+                </td>
+                <td style={{ padding: "10px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: r.bold ? 700 : 500, color: "#64748b" }}>
+                  {fmt.format(r.vat || 0)}
+                </td>
+                <td style={{ padding: "10px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: t.fg }}>
+                  {fmt.format(r.totalIncl || 0)}
                 </td>
               </tr>
             );
@@ -157,10 +165,11 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
     row_count: acc.row_count + (Number(r.row_count) || 0),
     po_amount: acc.po_amount + (Number(r.po_amount) || 0),
     invoiced:  acc.invoiced  + (Number(r.invoiced)  || 0),
+    vat:       acc.vat       + (Number(r.vat)       || 0),
     unbilled:  acc.unbilled  + (Number(r.unbilled)  || 0),
     subcon_amt: acc.subcon_amt + (Number(r.subcon_amt) || 0),
     inet_amt:   acc.inet_amt  + (Number(r.inet_amt)   || 0),
-  }), { row_count: 0, po_amount: 0, invoiced: 0, unbilled: 0, subcon_amt: 0, inet_amt: 0 });
+  }), { row_count: 0, po_amount: 0, invoiced: 0, vat: 0, unbilled: 0, subcon_amt: 0, inet_amt: 0 });
 
   return (
     <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden", marginBottom: 20 }}>
@@ -175,6 +184,7 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
               <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Count</th>
               <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>PO Amount</th>
               <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Invoiced</th>
+              <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>VAT</th>
               <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Unbilled</th>
               <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Subcon Amt</th>
               <th style={{ padding: "8px 14px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Inet Amt</th>
@@ -203,6 +213,9 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
                 <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>
                   {fmt.format(r.invoiced || 0)}
                 </td>
+                <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>
+                  {(r.vat || 0) > 0 ? fmt.format(r.vat) : <span style={{ color: "#cbd5e1" }}>—</span>}
+                </td>
                 <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.unbilled || 0) > 0 ? "#b45309" : "#94a3b8" }}>
                   {fmt.format(r.unbilled || 0)}
                 </td>
@@ -227,6 +240,9 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
               </td>
               <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>
                 {fmt.format(totals.invoiced)}
+              </td>
+              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>
+                {fmt.format(totals.vat)}
               </td>
               <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>
                 {fmt.format(totals.unbilled)}
@@ -362,16 +378,19 @@ function PaymentLedgerTab({ refreshKey }) {
     }
   }
 
-  if (loading) return <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>Loading…</div>;
-  if (error) return <div className="notice error" style={{ margin: "0 16px" }}><span>!</span> {error}</div>;
-  if (!years.length) return <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>No invoicing dates set yet.</div>;
-
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, alignItems: "start" }}>
-    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
-      <div style={{ background: "#1e3a8a", color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: "0.88rem", letterSpacing: "0.04em" }}>
-        Invoicing Summary
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ background: "#1e3a8a", color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: "0.88rem", letterSpacing: "0.04em" }}>
+          Invoicing Summary
+        </div>
+        {loading ? (
+          <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+        ) : error ? (
+          <div className="notice error" style={{ margin: 12 }}><span>!</span> {error}</div>
+        ) : !years.length ? (
+          <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>No invoicing dates set yet.</div>
+        ) : (
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.84rem" }}>
           <thead>
@@ -451,7 +470,9 @@ function PaymentLedgerTab({ refreshKey }) {
           </tfoot>
         </table>
       </div>
-    </div>
+        )}
+      </div>
+
       <MonthlyRollupCard rows={monthlyRollup} loading={monthlyLoading} error={monthlyError} />
     </div>
   );
@@ -466,7 +487,9 @@ function MonthlyRollupCard({ rows, loading, error }) {
     ms1_invoiced: acc.ms1_invoiced + (Number(r.ms1_invoiced) || 0),
     ms2_invoiced: acc.ms2_invoiced + (Number(r.ms2_invoiced) || 0),
     total: acc.total + (Number(r.total) || 0),
-  }), { ms1_invoiced: 0, ms2_invoiced: 0, total: 0 });
+    vat_amount: acc.vat_amount + (Number(r.vat_amount) || 0),
+    total_amount: acc.total_amount + (Number(r.total_amount) || 0),
+  }), { ms1_invoiced: 0, ms2_invoiced: 0, total: 0, vat_amount: 0, total_amount: 0 });
 
   return (
     <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
@@ -487,6 +510,8 @@ function MonthlyRollupCard({ rows, loading, error }) {
                 <th style={{ padding: "7px 12px", textAlign: "left", borderBottom: "1px solid #e2e8f0" }}>Invoicing Month</th>
                 <th style={{ padding: "7px 12px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>First Payment</th>
                 <th style={{ padding: "7px 12px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Second Payment</th>
+                <th style={{ padding: "7px 12px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Total (excl. VAT)</th>
+                <th style={{ padding: "7px 12px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>VAT Amount</th>
                 <th style={{ padding: "7px 12px", textAlign: "right", borderBottom: "1px solid #e2e8f0" }}>Total Invoice Amount</th>
               </tr>
             </thead>
@@ -497,6 +522,8 @@ function MonthlyRollupCard({ rows, loading, error }) {
                   <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(r.ms1_invoiced || 0) > 0 ? fmt.format(r.ms1_invoiced) : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
                   <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(r.ms2_invoiced || 0) > 0 ? fmt.format(r.ms2_invoiced) : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
                   <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.total || 0)}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(r.vat_amount || 0)}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{fmt.format(r.total_amount || 0)}</td>
                 </tr>
               ))}
             </tbody>
@@ -506,6 +533,8 @@ function MonthlyRollupCard({ rows, loading, error }) {
                 <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_invoiced)}</td>
                 <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_invoiced)}</td>
                 <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.total)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(totals.vat_amount)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.total_amount)}</td>
               </tr>
             </tfoot>
           </table>

@@ -311,7 +311,9 @@ export default function PICDashboard({ showSwitcher = false }) {
                     <th>Invoicing Month</th>
                     <th style={{ textAlign: "right" }}>MS1 Invoiced</th>
                     <th style={{ textAlign: "right" }}>MS2 Invoiced</th>
-                    <th style={{ textAlign: "right" }}>Total</th>
+                    <th style={{ textAlign: "right" }}>Total (excl. VAT)</th>
+                    <th style={{ textAlign: "right" }}>VAT</th>
+                    <th style={{ textAlign: "right" }}>Total (incl. VAT)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -321,6 +323,8 @@ export default function PICDashboard({ showSwitcher = false }) {
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms1_invoiced || 0)}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms2_invoiced || 0)}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmtMoney.format(m.total || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmtMoney.format(m.vat_amount || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{fmtMoney.format(m.total_amount || 0)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -462,8 +466,8 @@ function InetSubconSplitCard({ data: d }) {
   const subconPct = grand > 0 ? Math.round((d.subcon_total / grand) * 100) : 0;
 
   const rows = [
-    { label: "INET",   pct: inetPct,   ms1: d.inet_ms1,   ms2: d.inet_ms2,   total: d.inet_total,   fg: "#1e40af", bar: "#3b82f6", track: "#dbeafe" },
-    { label: "Subcon", pct: subconPct, ms1: d.subcon_ms1, ms2: d.subcon_ms2, total: d.subcon_total, fg: "#6d28d9", bar: "#8b5cf6", track: "#ede9fe" },
+    { label: "INET",   pct: inetPct,   ms1: d.inet_ms1,   ms2: d.inet_ms2,   total: d.inet_total,   vat: d.inet_total_vat,   totalIncl: d.inet_grand_total,   fg: "#1e40af", bar: "#3b82f6", track: "#dbeafe" },
+    { label: "Subcon", pct: subconPct, ms1: d.subcon_ms1, ms2: d.subcon_ms2, total: d.subcon_total, vat: d.subcon_total_vat, totalIncl: d.subcon_grand_total, fg: "#6d28d9", bar: "#8b5cf6", track: "#ede9fe" },
   ];
 
   return (
@@ -475,6 +479,8 @@ function InetSubconSplitCard({ data: d }) {
             <th style={{ textAlign: "right", padding: "0 0 6px 8px", fontWeight: 600 }}>MS1</th>
             <th style={{ textAlign: "right", padding: "0 0 6px 8px", fontWeight: 600 }}>MS2</th>
             <th style={{ textAlign: "right", padding: "0 0 6px 8px", fontWeight: 600 }}>Total</th>
+            <th style={{ textAlign: "right", padding: "0 0 6px 8px", fontWeight: 600 }}>VAT</th>
+            <th style={{ textAlign: "right", padding: "0 0 6px 8px", fontWeight: 600 }}>Total incl. VAT</th>
           </tr>
         </thead>
         <tbody>
@@ -498,6 +504,12 @@ function InetSubconSplitCard({ data: d }) {
               <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: r.fg, verticalAlign: "top" }}>
                 {fmtMoney.format(r.total || 0)}
               </td>
+              <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "#64748b", verticalAlign: "top" }}>
+                {fmtMoney.format(r.vat || 0)}
+              </td>
+              <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: r.fg, verticalAlign: "top" }}>
+                {fmtMoney.format(r.totalIncl || 0)}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -511,7 +523,13 @@ function InetSubconSplitCard({ data: d }) {
               {fmtMoney.format((d.inet_ms2 || 0) + (d.subcon_ms2 || 0))}
             </td>
             <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: "#0f172a" }}>
-              {fmtMoney.format(grand)} <span style={{ fontSize: "0.66rem", fontWeight: 600, color: "#94a3b8" }}>SAR</span>
+              {fmtMoney.format(grand)}
+            </td>
+            <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#64748b" }}>
+              {fmtMoney.format(d.grand_total_vat || 0)}
+            </td>
+            <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: "#0f172a" }}>
+              {fmtMoney.format(d.grand_total_incl_vat || 0)} <span style={{ fontSize: "0.66rem", fontWeight: 600, color: "#94a3b8" }}>SAR</span>
             </td>
           </tr>
         </tfoot>

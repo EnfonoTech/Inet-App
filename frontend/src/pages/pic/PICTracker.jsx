@@ -106,6 +106,7 @@ const CSV_COLUMNS = [
   ["ms1_pct", "MS1 %"],
   ["ms1_amount", "MS1 Amount"],
   ["ms1_invoiced", "MS1 Invoiced"],
+  ["ms1_vat", "MS1 VAT"],
   ["ms1_unbilled", "MS1 Unbilled"],
   ["ms1_invoice_month", "MS1 Invoicing Month"],
   ["ms1_ibuy_inv_date", "MS1 IBUY/INV Date"],
@@ -115,6 +116,7 @@ const CSV_COLUMNS = [
   ["ms2_pct", "MS2 %"],
   ["ms2_amount", "MS2 Amount"],
   ["ms2_invoiced", "MS2 Invoiced"],
+  ["ms2_vat", "MS2 VAT"],
   ["ms2_unbilled", "MS2 Unbilled"],
   ["ms2_invoice_month", "MS2 Invoicing Month"],
   ["ms2_ibuy_inv_date", "MS2 IBUY/INV Date"],
@@ -154,7 +156,7 @@ export default function PICTracker() {
   // the backend, independent of the row-limit cap. Distinct from the
   // `totals` useMemo below, which sums only the currently loaded rows for
   // the table's own footer (a spreadsheet-style "sum of what's visible").
-  const [aggTotals, setAggTotals] = useState({ ms1_amount: 0, ms1_invoiced: 0, ms2_amount: 0, ms2_invoiced: 0 });
+  const [aggTotals, setAggTotals] = useState({ ms1_amount: 0, ms1_invoiced: 0, ms1_vat: 0, ms2_amount: 0, ms2_invoiced: 0, ms2_vat: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(new Set());
@@ -301,8 +303,10 @@ export default function PICTracker() {
         setAggTotals({
           ms1_amount: Number(res?.totals?.ms1_amount) || 0,
           ms1_invoiced: Number(res?.totals?.ms1_invoiced) || 0,
+          ms1_vat: Number(res?.totals?.ms1_vat) || 0,
           ms2_amount: Number(res?.totals?.ms2_amount) || 0,
           ms2_invoiced: Number(res?.totals?.ms2_invoiced) || 0,
+          ms2_vat: Number(res?.totals?.ms2_vat) || 0,
         });
         setSelected(new Set());
         lastFetchRef.current = { signature, limit: rowLimit, rows: fetchedRows };
@@ -366,9 +370,11 @@ export default function PICTracker() {
       line_amount: sum("line_amount"),
       ms1_amount: sum("ms1_amount"),
       ms1_invoiced: sum("ms1_invoiced"),
+      ms1_vat: sum("ms1_vat"),
       ms1_unbilled: sum("ms1_unbilled"),
       ms2_amount: sum("ms2_amount"),
       ms2_invoiced: sum("ms2_invoiced"),
+      ms2_vat: sum("ms2_vat"),
       ms2_unbilled: sum("ms2_unbilled"),
     };
   }, [rows]);
@@ -750,6 +756,7 @@ export default function PICTracker() {
                   <th style={{ textAlign: "right" }}>MS1 %</th>
                   <th style={{ textAlign: "right" }}>MS1 Amt</th>
                   <th style={{ textAlign: "right" }}>MS1 Invoiced</th>
+                  <th style={{ textAlign: "right" }}>MS1 VAT</th>
                   <th style={{ textAlign: "right" }}>MS1 Unbilled</th>
                   <th>PIC Status (MS2)</th>
                   <th>Applied Date (MS2)</th>
@@ -757,6 +764,7 @@ export default function PICTracker() {
                   <th style={{ textAlign: "right" }}>MS2 %</th>
                   <th style={{ textAlign: "right" }}>MS2 Amt</th>
                   <th style={{ textAlign: "right" }}>MS2 Invoiced</th>
+                  <th style={{ textAlign: "right" }}>MS2 VAT</th>
                   <th>Linked Invoice</th>
                   <th>Edit</th>
                 </tr>
@@ -764,7 +772,7 @@ export default function PICTracker() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={37} style={{ padding: 0 }}>
+                    <td colSpan={39} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                       ) : (
@@ -812,6 +820,7 @@ export default function PICTracker() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmtInt.format(r.ms1_pct)}%` : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms1_invoiced || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>{fmt.format(r.ms1_vat || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_unbilled || 0) > 0 ? "#b45309" : "#94a3b8" }}>{fmt.format(r.ms1_unbilled || 0)}</td>
                     <td><PicStatusBadge value={r.pic_status_ms2} /></td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
@@ -819,6 +828,7 @@ export default function PICTracker() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmtInt.format(r.ms2_pct)}%` : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms2_invoiced || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>{fmt.format(r.ms2_vat || 0)}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       {(() => {
                         const csv = r.linked_invoices_csv;
@@ -860,12 +870,12 @@ export default function PICTracker() {
               </tbody>
               {rows.length > 0 && (
               <tfoot>
-                {/* 37 columns: checkbox · Subcontract · Contract Model · POID · PO No · Customer · IM ·
+                {/* 39 columns: checkbox · Subcontract · Contract Model · POID · PO No · Customer · IM ·
                     PO Status · Project Domain · Project · Item · Description · DUID ·
                     Qty · Unit Price · Line Amount · Tax Rate · Payment Terms · IM Status ·
                     PIC Status MS1 · PIC Rejection Reason · ISDP Owner · iBuy Owner ·
-                    Applied MS1 · Invoicing Month MS1 · MS1% · MS1 Amt · MS1 Inv · MS1 Unb ·
-                    PIC Status MS2 · Applied MS2 · Invoicing Month MS2 · MS2% · MS2 Amt · MS2 Inv ·
+                    Applied MS1 · Invoicing Month MS1 · MS1% · MS1 Amt · MS1 Inv · MS1 VAT · MS1 Unb ·
+                    PIC Status MS2 · Applied MS2 · Invoicing Month MS2 · MS2% · MS2 Amt · MS2 Inv · MS2 VAT ·
                     Linked Invoice · Edit */}
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
                   <td></td>{/* checkbox */}
@@ -897,6 +907,7 @@ export default function PICTracker() {
                   <td></td>{/* MS1 % */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms1_invoiced)}</td>{/* MS1 Invoiced */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(totals.ms1_vat)}</td>{/* MS1 VAT */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>{fmt.format(totals.ms1_unbilled)}</td>{/* MS1 Unbilled */}
                   <td></td>{/* PIC Status MS2 */}
                   <td></td>{/* Applied MS2 */}
@@ -904,6 +915,7 @@ export default function PICTracker() {
                   <td></td>{/* MS2 % */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms2_invoiced)}</td>{/* MS2 Invoiced */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(totals.ms2_vat)}</td>{/* MS2 VAT */}
                   <td></td>{/* Linked Invoice */}
                   <td></td>{/* Edit */}
                 </tr>
