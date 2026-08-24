@@ -239,38 +239,27 @@ function MaterialCard({ m, idx, onUpdateQty, onRemove }) {
       borderRadius: 10,
       padding: "12px 14px",
     }}>
-      {/* Item name + status */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
         <div>
           <div style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>{m.item_name}</div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 2 }}>{m.item_code}</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          {m.manually_added ? (
-            <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999, background: "rgba(59,130,246,0.1)", color: "#1d4ed8" }}>From Stock</span>
-          ) : m.transferred ? (
-            <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999, background: "rgba(16,185,129,0.1)", color: "#047857" }}>In Warehouse</span>
-          ) : (
-            <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999, background: "rgba(245,158,11,0.1)", color: "#b45309" }}>Pending</span>
-          )}
-          <button type="button" title="Remove from this execution" onClick={() => onRemove(idx)}
-            style={{
-              background: "rgba(239,68,68,0.1)", border: "none", cursor: "pointer",
-              borderRadius: 999, width: 32, height: 32, padding: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0,
-            }}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M1 1L13 13M13 1L1 13" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
+        <button type="button" title="Remove from this execution" onClick={() => onRemove(idx)}
+          style={{
+            background: "rgba(239,68,68,0.1)", border: "none", cursor: "pointer",
+            borderRadius: 999, width: 32, height: 32, padding: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            flexShrink: 0,
+          }}>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M1 1L13 13M13 1L1 13" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
 
-      {/* Transferred/available qty + used input on same row */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-          {m.manually_added ? "Available" : "Transferred"}: <strong style={{ color: "var(--text)" }}>{m.qty_transferred} {m.uom}</strong>
+          Available: <strong style={{ color: "var(--text)" }}>{m.qty_transferred} {m.uom}</strong>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Used</span>
@@ -278,7 +267,6 @@ function MaterialCard({ m, idx, onUpdateQty, onRemove }) {
             type="number"
             inputMode="decimal"
             min="0"
-            max={m.qty_transferred}
             step="1"
             value={m.qty_used}
             onChange={e => onUpdateQty(idx, e.target.value)}
@@ -300,38 +288,57 @@ function MaterialCard({ m, idx, onUpdateQty, onRemove }) {
   );
 }
 
-function MaterialsSection({ poDispatch, teamId, savedUsage, onUsageChange }) {
+function MaterialsSection({ duid, teamId, executionName, onUsageChange }) {
   const [materials, setMaterials] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [huaweiOptions, setHuaweiOptions] = useState([]);
   const [teamStock, setTeamStock] = useState([]);
+  const [huaweiSearch, setHuaweiSearch] = useState("");
+  const [huaweiFocused, setHuaweiFocused] = useState(false);
   const [addSearch, setAddSearch] = useState("");
   const [addFocused, setAddFocused] = useState(false);
 
+  // Whatever the TL already recorded on this exact execution — pre-fills
+  // the list instead of starting blank, and carries is_huawei/issue status
+  // straight from the backend rather than re-deriving it client-side.
   useEffect(() => {
-    if (!poDispatch) return;
+    if (!executionName) { setMaterials([]); return; }
+    let cancelled = false;
     setLoading(true);
-    pmApi.getPoidMaterials(poDispatch)
-      .then(items => {
-        // Pre-fill qty_used from savedUsage (previous execution's material_usage)
-        const usageMap = {};
-        if (Array.isArray(savedUsage)) {
-          savedUsage.forEach(u => { if (u.item_code) usageMap[u.item_code] = u.qty_used; });
-        }
-        const initialItems = (items || []).map(it => ({
-          ...it,
-          qty_used: usageMap[it.item_code] !== undefined ? usageMap[it.item_code] : it.qty_transferred,
+    pmApi.getExecutionMaterialUsage(executionName)
+      .then(rows => {
+        if (cancelled) return;
+        const list = (Array.isArray(rows) ? rows : []).map(r => ({
+          item_code: r.item_code,
+          item_name: r.item_name || r.item_code,
+          uom: r.uom || "Nos",
+          qty_transferred: r.qty_transferred,
+          qty_used: r.qty_used,
+          is_huawei: !!r.is_huawei,
         }));
-        setMaterials(initialItems);
-        onUsageChange && onUsageChange(initialItems);
+        setMaterials(list);
+        onUsageChange && onUsageChange(list);
         setLoading(false);
       })
       .catch(() => setLoading(false));
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poDispatch]);
+  }, [executionName]);
+
+  // Huawei/customer-provided items relevant to this DUID — for the
+  // select-and-add picker, showing both the DUID's overall remaining
+  // total and what's actually sitting at this team's warehouse right now.
+  useEffect(() => {
+    if (!duid) { setHuaweiOptions([]); return; }
+    let cancelled = false;
+    pmApi.getDuidHuaweiAvailability(duid, teamId || undefined)
+      .then(res => { if (!cancelled) setHuaweiOptions(Array.isArray(res) ? res : []); })
+      .catch(() => { if (!cancelled) setHuaweiOptions([]); });
+    return () => { cancelled = true; };
+  }, [duid, teamId]);
 
   // Additional (company-owned) items the TL's team currently holds in
-  // stock generally — for adding one that wasn't formally transferred
-  // for this exact POID but was genuinely used on the job.
+  // stock generally — not tied to this specific DUID.
   useEffect(() => {
     if (!teamId) { setTeamStock([]); return; }
     let cancelled = false;
@@ -344,6 +351,29 @@ function MaterialsSection({ poDispatch, teamId, savedUsage, onUsageChange }) {
       .catch(() => { if (!cancelled) setTeamStock([]); });
     return () => { cancelled = true; };
   }, [teamId]);
+
+  // Keep already-added rows' "Available" number live once the picker data
+  // (which reflects current, actually-remaining balance) has loaded —
+  // otherwise it would just show whatever was true the moment this
+  // execution was first saved, even after other work has consumed stock.
+  useEffect(() => {
+    if (!huaweiOptions.length && !teamStock.length) return;
+    setMaterials(prev => {
+      let changed = false;
+      const next = prev.map(m => {
+        const live = m.is_huawei
+          ? huaweiOptions.find(o => o.item_code === m.item_code)
+          : teamStock.find(o => o.item_code === m.item_code);
+        const liveQty = live ? (m.is_huawei ? live.team_available : live.qty) : undefined;
+        if (liveQty !== undefined && liveQty !== m.qty_transferred) {
+          changed = true;
+          return { ...m, qty_transferred: liveQty };
+        }
+        return m;
+      });
+      return changed ? next : prev;
+    });
+  }, [huaweiOptions, teamStock]);
 
   function updateQty(idx, val) {
     setMaterials(prev => {
@@ -362,17 +392,33 @@ function MaterialsSection({ poDispatch, teamId, savedUsage, onUsageChange }) {
     });
   }
 
-  function addItem(stockItem) {
+  function addHuaweiItem(opt) {
+    setMaterials(prev => {
+      const next = [...prev, {
+        item_code: opt.item_code,
+        item_name: opt.item_name,
+        uom: opt.uom || "Nos",
+        qty_transferred: opt.team_available,
+        // Default to fully used — the normal case — the TL adjusts down
+        // if only part of it actually went in.
+        qty_used: opt.team_available,
+        is_huawei: true,
+      }];
+      onUsageChange && onUsageChange(next);
+      return next;
+    });
+    setHuaweiSearch("");
+  }
+
+  function addAdditionalItem(stockItem) {
     setMaterials(prev => {
       const next = [...prev, {
         item_code: stockItem.item_code,
         item_name: stockItem.item_name,
         uom: stockItem.uom || "Nos",
         qty_transferred: stockItem.qty,
-        qty_used: 0,
-        transferred: true,
+        qty_used: 1,
         is_huawei: false,
-        manually_added: true,
       }];
       onUsageChange && onUsageChange(next);
       return next;
@@ -380,23 +426,22 @@ function MaterialsSection({ poDispatch, teamId, savedUsage, onUsageChange }) {
     setAddSearch("");
   }
 
-  if (!poDispatch) return null;
-  if (materials.length === 0 && loading) return (
-    <div style={{ padding: "8px 0", color: "var(--text-muted)", fontSize: 13 }}>Loading materials…</div>
-  );
+  if (!duid && !teamId) return null;
 
   const huaweiItems = materials.filter(m => m.is_huawei);
   const additionalItems = materials.filter(m => !m.is_huawei);
   const addedCodes = new Set(materials.map(m => m.item_code));
+
+  const hq = huaweiSearch.trim().toLowerCase();
+  const huaweiAddOptions = huaweiOptions.filter(it =>
+    !addedCodes.has(it.item_code) &&
+    (!hq || it.item_code.toLowerCase().includes(hq) || (it.item_name || "").toLowerCase().includes(hq))
+  );
+
   const q = addSearch.trim().toLowerCase();
   const addOptions = teamStock.filter(it =>
-    // Only Additional (company) items belong in this picker — Huawei/
-    // customer-provided stock is DUID-scoped, so even when an item has
-    // qty elsewhere in the team's warehouse, it can easily have zero
-    // balance for THIS execution's specific DUID. Those already come
-    // through the DUID-based POID materials list above; letting one be
-    // picked here bypasses that scoping and looks like a false "0 in
-    // stock" error when the qty is just sitting under a different DUID.
+    // Only Additional (company) items belong in this picker — Huawei items
+    // have their own DUID-aware picker above.
     it.item_type === "company" &&
     it.qty > 0 && !addedCodes.has(it.item_code) &&
     (!q || it.item_code.toLowerCase().includes(q) || (it.item_name || "").toLowerCase().includes(q))
@@ -405,34 +450,75 @@ function MaterialsSection({ poDispatch, teamId, savedUsage, onUsageChange }) {
   return (
     <div style={{ marginTop: 16 }} className="exec-section" >
       <div className="exec-section-title">
-        Materials
-        {materials.length > 0 && (
-          <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
-            adjust qty used if different
-          </span>
-        )}
+        Materials Used
       </div>
 
-      {materials.length === 0 && !teamId && (
-        <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "6px 0" }}>
-          No materials assigned for this POID yet.
-        </div>
+      {loading && materials.length === 0 && (
+        <div style={{ padding: "8px 0", color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
       )}
 
-      {huaweiItems.length > 0 && (
-        <div style={{ marginBottom: 14, padding: 12, borderRadius: 10, background: "#eff6ff", border: "1px solid #bfdbfe" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <HuaweiBadge />
-            <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#1d4ed8" }}>Huawei Materials</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ marginBottom: 14, padding: 12, borderRadius: 10, background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <HuaweiBadge />
+          <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#1d4ed8" }}>Huawei Materials</span>
+        </div>
+
+        {huaweiItems.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 10 }}>
             {huaweiItems.map((m) => {
               const idx = materials.indexOf(m);
               return <MaterialCard key={`${m.item_code}-${idx}`} m={m} idx={idx} onUpdateQty={updateQty} onRemove={removeItem} />;
             })}
           </div>
-        </div>
-      )}
+        )}
+
+        {duid ? (
+          <div style={{ position: "relative" }}>
+            <input
+              value={huaweiSearch}
+              onChange={(e) => setHuaweiSearch(e.target.value)}
+              onFocus={() => setHuaweiFocused(true)}
+              onBlur={() => setTimeout(() => setHuaweiFocused(false), 150)}
+              placeholder="+ Add a Huawei material for this DUID…"
+              style={{
+                width: "100%", boxSizing: "border-box", padding: "9px 12px",
+                borderRadius: 8, border: "1px solid #bfdbfe", fontSize: "0.86rem",
+                background: "#fff",
+              }}
+            />
+            {huaweiFocused && huaweiAddOptions.length > 0 && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
+                background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto",
+              }}>
+                {huaweiAddOptions.map((opt) => (
+                  <div key={opt.item_code}
+                    onClick={() => addHuaweiItem(opt)}
+                    style={{ padding: "9px 12px", cursor: "pointer", borderBottom: "1px solid #f1f5f9" }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: "0.84rem" }}>{opt.item_code}</div>
+                    <div style={{ fontSize: "0.72rem", color: "#64748b", overflowWrap: "anywhere", marginBottom: 2 }}>{opt.item_name}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: "0.72rem" }}>
+                      <span style={{ color: "#1d4ed8", whiteSpace: "nowrap" }}>DUID total: {opt.duid_available} {opt.uom}</span>
+                      <span style={{ color: "#047857", whiteSpace: "nowrap" }}>My warehouse: {opt.team_available} {opt.uom}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {huaweiFocused && hq && huaweiAddOptions.length === 0 && (
+              <div style={{ marginTop: 6, fontSize: "0.76rem", color: "var(--text-muted)" }}>
+                No matching Huawei material for this DUID.
+              </div>
+            )}
+          </div>
+        ) : huaweiItems.length === 0 && (
+          <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No DUID on this POID.</div>
+        )}
+      </div>
 
       <div style={{ padding: 12, borderRadius: 10, background: "#f0fdf4", border: "1px solid #6ee7b7" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -449,7 +535,7 @@ function MaterialsSection({ poDispatch, teamId, savedUsage, onUsageChange }) {
           </div>
         )}
 
-        {teamId && (
+        {teamId ? (
           <div style={{ position: "relative" }}>
             <input
               value={addSearch}
@@ -471,7 +557,7 @@ function MaterialsSection({ poDispatch, teamId, savedUsage, onUsageChange }) {
               }}>
                 {addOptions.map((opt) => (
                   <div key={opt.item_code}
-                    onClick={() => addItem(opt)}
+                    onClick={() => addAdditionalItem(opt)}
                     style={{ padding: "9px 12px", cursor: "pointer", borderBottom: "1px solid #f1f5f9" }}
                     onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
                     onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
@@ -491,9 +577,7 @@ function MaterialsSection({ poDispatch, teamId, savedUsage, onUsageChange }) {
               </div>
             )}
           </div>
-        )}
-
-        {additionalItems.length === 0 && !teamId && (
+        ) : additionalItems.length === 0 && (
           <div style={{ fontSize: 13, color: "var(--text-muted)" }}>None assigned.</div>
         )}
       </div>
@@ -1397,9 +1481,9 @@ export default function ExecutionForm() {
           {/* Materials transferred for this POID — field team can
               adjust used qtys before final issue. */}
           <MaterialsSection
-            poDispatch={plan?.po_dispatch || ""}
+            duid={plan?.site_code || ""}
             teamId={plan?.my_team || teamId}
-            savedUsage={Array.isArray(existingExec?.material_usage) ? existingExec.material_usage : []}
+            executionName={existingExec?.name || ""}
             onUsageChange={setMaterialUsage}
           />
 

@@ -13,6 +13,7 @@ import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView from "../../components/RecordDetailView";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
+import PoidMaterialsDispatched from "../../components/PoidMaterialsDispatched";
 import DateRangePicker from "../../components/DateRangePicker";
 import RemarksCell from "../../components/RemarksCell";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -833,6 +834,7 @@ export default function IMPlanning() {
                 rolloutPlan={detailRow.name}
                 currentPlanName={detailRow.name}
               />
+              <PoidMaterialsDispatched poDispatch={detailRow.po_dispatch} />
               <AttachmentsSection
                 urls={planDocUrls}
                 onChange={handlePlanDocsChange}

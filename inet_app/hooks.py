@@ -108,6 +108,10 @@ role_home_page = {
 	"INET IM": "pms/im-dashboard",
 	"INET Admin": "pms/dashboard",
 	"INET PIC": "pms/pic-dashboard",
+	# Warehouse Manager — lands straight on Material Requests, their actual
+	# job, rather than Desk's "No App" page or (before this) the Field
+	# portal (get_logged_user() had no branch for Stock Manager either).
+	"Stock Manager": "pms/im-material-request",
 	# Standalone page, deliberately NOT under /pms — separate from the PMS
 	# portal in login flow, UI, and UX. Any user holding INET HR lands here
 	# straight from Frappe's own /login, no PMS involved.

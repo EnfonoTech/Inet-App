@@ -87,6 +87,7 @@ function DefaultRedirect() {
   if (role === "im") return <Navigate to="/im-dashboard" replace />;
   if (role === "field") return <Navigate to="/today" replace />;
   if (role === "pic") return <Navigate to="/pic-dashboard" replace />;
+  if (role === "warehouse") return <Navigate to="/im-material-request" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -211,6 +212,16 @@ function AppContent() {
               <Route path="/pic-subcon-po" element={<SubconPO />} />
               <Route path="/pic-subcon-payout" element={<SubconPayout />} />
               <Route path="/pic-reports" element={<PICReports />} />
+            </>
+          )}
+
+          {/* -- Warehouse Manager routes (Stock Manager role) ------ */}
+          {/* Deliberately minimal: Material Requests is the whole job —
+              approving/rejecting transfers and returns, DUID stock, and
+              stock balance all live inside this one page's tabs. */}
+          {role === "warehouse" && (
+            <>
+              <Route path="/im-material-request" element={<IMMaterialRequest />} />
             </>
           )}
 

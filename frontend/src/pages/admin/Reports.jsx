@@ -160,6 +160,24 @@ const REPORTS = [
     component: TeamIdleDomainReport,
     description: "Daily idle / project-domain matrix per team — the monthly sheet handed to the domains",
   },
+  {
+    key: "site_sign_status",
+    category: "CIAG Site Sign & Verify",
+    title: "Site Sign Status",
+    api: "reportSiteSignStatus",
+    description: "Bills received but not yet fully consumed at site — Normal/Warning/Overdue by days pending",
+    hasFilters: true,
+    filterType: "sitestatus",
+  },
+  {
+    key: "site_verify_status",
+    category: "CIAG Site Sign & Verify",
+    title: "Site Verify Status",
+    api: "reportSiteVerifyStatus",
+    description: "Sites where work is done but client CIAG approval is still pending",
+    hasFilters: true,
+    filterType: "sitestatus",
+  },
 ];
 
 const CATEGORIES = [...new Set(REPORTS.map((r) => r.category))];
@@ -195,6 +213,10 @@ export default function Reports() {
   const [dateRange, setDateRange] = useState(DEFAULT_RANGE);
   const [selectedMonth, setSelectedMonth] = useState(DEFAULT_MONTH);
   const [teamDate, setTeamDate] = useState({ from: DEFAULT_DATE, to: DEFAULT_DATE });
+  // Site Sign/Verify filters — applied client-side over the already-fetched
+  // rows (the dataset is small; no need to round-trip to the server).
+  const [siteStatusFilter, setSiteStatusFilter] = useState("");
+  const [siteSearch, setSiteSearch] = useState("");
 
   const [teamOptions, setTeamOptions] = useState([]);
   const [imOptions, setImOptions] = useState([]);
@@ -294,6 +316,8 @@ export default function Reports() {
     setDateRange(DEFAULT_RANGE);
     setSelectedMonth(DEFAULT_MONTH);
     setTeamDate({ from: DEFAULT_DATE, to: DEFAULT_DATE });
+    setSiteStatusFilter("");
+    setSiteSearch("");
     // Clear the previous report's columns immediately (not just when the new
     // report's fetch resolves) — the <table> below only mounts once columns
     // is non-empty, specifically so DataTablePro never gets a chance to
@@ -330,6 +354,19 @@ export default function Reports() {
 
   const hasFilters = teamFilter.length > 0 || imFilter.length > 0;
 
+  const displayData = useMemo(() => {
+    if (!active || active.filterType !== "sitestatus") return data;
+    const q = siteSearch.trim().toLowerCase();
+    return data.filter((row) => {
+      if (siteStatusFilter && row.status !== siteStatusFilter) return false;
+      if (q) {
+        const hay = `${row.project_name || ""} ${row.du_id || ""} ${row.site_id || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [data, active, siteStatusFilter, siteSearch]);
+
   return (
     <div>
       <div className="page-header">
@@ -353,7 +390,7 @@ export default function Reports() {
           {active && !isCustom && (
             <>
               <ExportExcelButton
-                rows={data}
+                rows={displayData}
                 columns={columns.map((c) => ({ key: c.fieldname || c.name, label: c.label }))}
                 filename={active.key}
               />
@@ -421,6 +458,35 @@ export default function Reports() {
               value={dateRange}
               onChange={({ from, to }) => setDateRange({ from, to })}
             />
+          ) : active.filterType === "sitestatus" ? (
+            <>
+              <select
+                value={siteStatusFilter}
+                onChange={(e) => setSiteStatusFilter(e.target.value)}
+                style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}
+              >
+                <option value="">All Status</option>
+                <option value="NORMAL">Normal</option>
+                <option value="WARNING">Warning</option>
+                <option value="OVERDUE">Overdue</option>
+              </select>
+              <input
+                type="search"
+                placeholder="Search project / DUID / site…"
+                value={siteSearch}
+                onChange={(e) => setSiteSearch(e.target.value)}
+                style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 220 }}
+              />
+              {(siteStatusFilter || siteSearch) && (
+                <button
+                  className="btn-secondary"
+                  style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+                  onClick={() => { setSiteStatusFilter(""); setSiteSearch(""); }}
+                >
+                  Clear
+                </button>
+              )}
+            </>
           ) : (
             <>
               <SearchableSelect
@@ -521,7 +587,7 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {data.length === 0 ? (
+              {displayData.length === 0 ? (
                 <tr>
                   <td colSpan={Math.max(columns.length, 1)} style={{ padding: 0 }}>
                     <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "32px" }}>
@@ -529,7 +595,7 @@ export default function Reports() {
                     </div>
                   </td>
                 </tr>
-              ) : data.map((row, idx) => (
+              ) : displayData.map((row, idx) => (
                 <tr key={idx}>
                   {columns.map((col) => {
                     const key = col.fieldname || col.name;

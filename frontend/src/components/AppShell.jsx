@@ -175,6 +175,10 @@ const picNav = [
   { to: "/pic-reports",            label: "Reports",            icon: "clipboard" },
 ];
 
+const warehouseNav = [
+  { to: "/im-material-request", label: "Material Requests", icon: "package" },
+];
+
 const fieldNav = [
   { to: "/today", label: "Today's Work", shortLabel: "Today", icon: "clipboard" },
   { to: "/field-execute", label: "Execute", shortLabel: "Execute", icon: "tool" },
@@ -291,6 +295,7 @@ export default function AppShell() {
     }
     if (role === "field") return fieldNav;
     if (role === "pic") return picNav;
+    if (role === "warehouse") return warehouseNav;
     return adminNav;
   }, [role, imCanBackend]);
 

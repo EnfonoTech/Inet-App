@@ -196,7 +196,7 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
         {/* DUID — selected first; POID below is filtered by it */}
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 14, minWidth: 0 }}>
           {label("DUID", true)}
           <SearchableSelect
             value={duid}
@@ -216,7 +216,7 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
             management is DUID-scoped and a DUID's stock is usable on any of
             its POIDs. Leaving it blank still shows on the Execution form for
             every POID under this DUID (see get_poid_materials duid_level rows). */}
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 14, minWidth: 0 }}>
           {label("POID (optional)", false)}
           <SearchableSelect
             value={selectedPoid}
@@ -1360,7 +1360,9 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
 
 export default function IMMaterialRequest() {
   const { imName, role } = useAuth();
-  const isAdmin = role === "admin";
+  // Warehouse Manager (Stock Manager role) does the exact same
+  // approve/reject/see-everything job as an admin on this page.
+  const isAdmin = role === "admin" || role === "warehouse";
 
   const [tab, setTab] = useState("requests");
   const [showNew, setShowNew] = useState(false);

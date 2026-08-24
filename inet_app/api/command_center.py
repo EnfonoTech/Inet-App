@@ -5403,7 +5403,13 @@ def update_execution(payload):
     if hasattr(doc, "last_progress_date"):
         doc.last_progress_date = frappe.utils.nowdate()
 
-    # material_usage child table — replace rows with what the field team submitted
+    # material_usage child table — upsert by item_code, NOT a wipe-and-
+    # rebuild: qty_issued/material_issue are set by
+    # issue_material_for_execution, never part of what the TL submits, so
+    # rebuilding every row from scratch here would silently discard them
+    # on every single save — orphaning whatever Material Issue draft was
+    # already staged (or worse, losing the record of what was actually
+    # issued once completed).
     if "material_usage" in payload and hasattr(doc, "material_usage"):
         usage_raw = payload["material_usage"]
         if isinstance(usage_raw, str):
@@ -5411,17 +5417,38 @@ def update_execution(payload):
                 usage_raw = frappe.parse_json(usage_raw)
             except Exception:
                 usage_raw = []
-        if isinstance(usage_raw, list) and usage_raw:  # only replace when non-empty
-            doc.set("material_usage", [])
+        if isinstance(usage_raw, list):
+            existing_by_item = {r.item_code: r for r in doc.material_usage}
+            seen = set()
+            new_rows = []
             for row in usage_raw:
-                doc.append("material_usage", {
-                    "item_code": row.get("item_code") or "",
-                    "item_name": row.get("item_name") or "",
-                    "material_request": row.get("material_request") or "",
-                    "qty_transferred": flt(row.get("qty_transferred", 0)),
-                    "qty_used": flt(row.get("qty_used", 0)),
-                    "uom": row.get("uom") or "",
-                })
+                item_code = row.get("item_code") or ""
+                seen.add(item_code)
+                existing = existing_by_item.get(item_code)
+                if existing:
+                    existing.item_name = row.get("item_name") or existing.item_name
+                    existing.material_request = row.get("material_request") or existing.material_request
+                    existing.qty_transferred = flt(row.get("qty_transferred", 0))
+                    existing.qty_used = flt(row.get("qty_used", 0))
+                    existing.uom = row.get("uom") or existing.uom
+                    new_rows.append(existing)
+                else:
+                    new_rows.append({
+                        "item_code": item_code,
+                        "item_name": row.get("item_name") or "",
+                        "material_request": row.get("material_request") or "",
+                        "qty_transferred": flt(row.get("qty_transferred", 0)),
+                        "qty_used": flt(row.get("qty_used", 0)),
+                        "uom": row.get("uom") or "",
+                    })
+            # A row already actually issued (qty_issued > 0) stays even if
+            # the TL's current payload no longer lists it — that's a real,
+            # completed stock movement; it shouldn't vanish just because
+            # the item isn't currently ticked in the form.
+            for item_code, existing in existing_by_item.items():
+                if item_code not in seen and flt(existing.get("qty_issued") or 0) > 0:
+                    new_rows.append(existing)
+            doc.set("material_usage", new_rows)
 
     if hasattr(doc, "execution_status"):
         doc.execution_status = _normalize_execution_status(doc.execution_status)

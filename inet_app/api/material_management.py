@@ -1692,7 +1692,7 @@ def get_im_teams(im=None):
         im = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
     if not im:
         roles = set(frappe.get_roles(frappe.session.user))
-        if roles & {"System Manager", "INET Admin", "Administrator"}:
+        if roles & {"System Manager", "INET Admin", "Administrator", "Stock Manager"}:
             return frappe.db.get_all(
                 "INET Team",
                 filters={"status": "Active"},
@@ -2313,7 +2313,7 @@ def get_team_material_stock(team_id=None):
       { team_id, team_name, warehouse, items: [{ item_code, item_name, qty, uom }] }
     """
     roles = set(frappe.get_roles(frappe.session.user))
-    is_admin = bool(roles & {"System Manager", "INET Admin", "Administrator"})
+    is_admin = bool(roles & {"System Manager", "INET Admin", "Administrator", "Stock Manager"})
     is_im = "INET IM" in roles
 
     # Determine which teams to fetch
@@ -2811,6 +2811,253 @@ def get_poid_materials(po_dispatch):
     return _poid_material_rows(mrs, duid_level=False) + _poid_material_rows(duid_mrs, duid_level=True)
 
 
+def _duid_item_total_available(duid, item_code):
+    """Total qty of item_code still unconsumed for this DUID, anywhere —
+    main warehouse or any team warehouse. Moving material between
+    warehouses (a Transfer) doesn't change this: it's still the same
+    DUID's material, just relocated. Only a Material Receipt (arriving)
+    or a Material Issue (actually consumed on site) change the total.
+    COALESCEs to_duid/duid on receipts for legacy rows, matching the
+    convention already used in get_duid_stock_summary.
+    """
+    received = flt((frappe.db.sql(
+        """SELECT SUM(sed.qty) FROM `tabStock Entry Detail` sed
+           JOIN `tabStock Entry` se ON se.name = sed.parent
+           WHERE se.docstatus = 1 AND se.stock_entry_type = 'Material Receipt'
+             AND sed.item_code = %s AND (sed.to_duid = %s OR sed.duid = %s)""",
+        (item_code, duid, duid),
+    ) or [[0]])[0][0])
+    issued = flt((frappe.db.sql(
+        """SELECT SUM(sed.qty) FROM `tabStock Entry Detail` sed
+           JOIN `tabStock Entry` se ON se.name = sed.parent
+           WHERE se.docstatus = 1 AND se.stock_entry_type = 'Material Issue'
+             AND sed.item_code = %s AND sed.duid = %s""",
+        (item_code, duid),
+    ) or [[0]])[0][0])
+    return received - issued
+
+
+@frappe.whitelist()
+def get_duid_huawei_availability(duid, team_id=None):
+    """Huawei/customer-provided items relevant to a DUID, for the "select
+    and add" Huawei materials picker on the Execution form — gives the TL
+    both numbers they actually need: how much of this item exists for the
+    DUID overall (duid_available, any warehouse) vs. how much is sitting
+    at their own team's warehouse right now, ready to use
+    (team_available). Candidate items come from Batch (batch = bill), the
+    same mechanism the DUID Stock bill-breakdown popup uses, so it only
+    ever lists items this DUID's bills actually contained.
+    """
+    if not duid:
+        return []
+    item_codes = frappe.db.sql(
+        """SELECT DISTINCT b.item
+           FROM `tabBatch` b
+           JOIN `tabHuawei Outbound Plan` hop ON hop.name = b.reference_name
+           WHERE b.reference_doctype = 'Huawei Outbound Plan'
+             AND (hop.du_id = %s OR hop.duid_master = %s)""",
+        (duid, duid), pluck="item",
+    )
+    if not item_codes:
+        return []
+
+    team_wh = frappe.db.get_value("INET Team", team_id, "warehouse") if team_id else ""
+    items = frappe.db.get_all(
+        "Item", filters={"name": ["in", item_codes]},
+        fields=["name as item_code", "item_name", "stock_uom as uom"],
+    )
+    out = []
+    for it in items:
+        duid_available = _duid_item_total_available(duid, it.item_code)
+        team_available = _team_duid_item_balance(team_wh, duid, it.item_code) if team_wh else 0
+        if duid_available <= 0 and team_available <= 0:
+            continue
+        out.append({
+            "item_code": it.item_code,
+            "item_name": it.item_name or it.item_code,
+            "uom": it.uom or "Nos",
+            "duid_available": duid_available,
+            "team_available": team_available,
+        })
+    return out
+
+
+# ─── CIAG Site Sign & Verify Status Report ─────────────────────────────────────
+# Mirrors the client-facing "CIAG - Site Sign & Verify Status" email report.
+# SLA thresholds (client-defined): 0-3 days Normal, 4-6 Warning, 7+ Overdue.
+
+def _sla_status(pending_days):
+    if pending_days <= 3:
+        return "NORMAL"
+    if pending_days <= 6:
+        return "WARNING"
+    return "OVERDUE"
+
+
+@frappe.whitelist()
+def get_site_sign_status():
+    """Bills received but not yet fully consumed (used/"signed") at their
+    site. Pending Days = days since the bill's outbound (dispatch) date.
+
+    A bill's received/issued qty is reconstructed from Batch (batch = bill)
+    — the same mechanism the DUID Stock "Bills" popup uses — so this only
+    covers bills that went through the batch-tracked flow. Bills received
+    before that existed (or via some other path) have no batch rows and
+    can't be measured here.
+    """
+    plans = frappe.db.get_all(
+        "Huawei Outbound Plan",
+        filters={"subcon": "INET", "outbound_status": "Received"},
+        fields=["bill_no", "project_name", "du_id", "duid_master", "outbound_date"],
+    )
+    if not plans:
+        return []
+
+    bill_nos = [p.bill_no for p in plans]
+    placeholders = ", ".join(["%s"] * len(bill_nos))
+    rows = frappe.db.sql(
+        f"""SELECT b.reference_name AS bill_no,
+                   SUM(CASE WHEN se.stock_entry_type = 'Material Receipt' THEN sed.qty ELSE 0 END) AS received_qty,
+                   SUM(CASE WHEN se.stock_entry_type = 'Material Issue' THEN sed.qty ELSE 0 END) AS issued_qty
+            FROM `tabBatch` b
+            JOIN `tabStock Entry Detail` sed ON sed.batch_no = b.name
+            JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE b.reference_doctype = 'Huawei Outbound Plan'
+              AND b.reference_name IN ({placeholders})
+              AND se.docstatus = 1
+            GROUP BY b.reference_name""",
+        bill_nos, as_dict=True,
+    )
+    balance_map = {r.bill_no: (flt(r.received_qty), flt(r.issued_qty)) for r in rows}
+
+    # DUID Master.site_id is the client's actual site code (e.g. "ER_0016",
+    # "708-14-000") — a genuine dedicated field, unlike Huawei Outbound
+    # Plan.customer_site_id which turned out to hold something else
+    # entirely. Sparsely populated on this install (~3% of DUID Master
+    # records), so a lot of rows will still show a blank Site ID — that's
+    # a data-completeness gap in DUID Master, not a lookup bug.
+    duid_values = list({(p.du_id or p.duid_master) for p in plans if (p.du_id or p.duid_master)})
+    site_id_map = {}
+    if duid_values:
+        site_id_map = {
+            r["duid"]: r["site_id"]
+            for r in frappe.db.get_all("DUID Master", filters={"duid": ["in", duid_values]}, fields=["duid", "site_id"])
+        }
+
+    today = frappe.utils.getdate()
+    out = []
+    for p in plans:
+        received, issued = balance_map.get(p.bill_no, (0.0, 0.0))
+        if received <= 0 or issued >= received:
+            continue
+        pending_days = (today - frappe.utils.getdate(p.outbound_date)).days if p.outbound_date else 0
+        duid = p.du_id or p.duid_master or ""
+        out.append({
+            "bill_no": p.bill_no,
+            "project_name": p.project_name or "",
+            "site_id": site_id_map.get(duid, "") or "",
+            "du_id": duid,
+            "pending_days": pending_days,
+            "status": _sla_status(pending_days),
+        })
+    out.sort(key=lambda r: -r["pending_days"])
+    return out
+
+
+@frappe.whitelist()
+def get_site_verify_status():
+    """Sites where the TL has completed work (material used) but the
+    client hasn't yet approved CIAG. Pending Days = days since
+    ciag_status_date; falls back to execution_date for older records
+    saved before that field existed.
+    """
+    rows = frappe.db.sql(
+        """SELECT de.name, de.system_id, de.execution_date, de.ciag_status_date,
+                  pd.project_code, pd.site_code
+           FROM `tabDaily Execution` de
+           JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
+           WHERE de.tl_status = 'Completed' AND de.ciag_status = 'Open'""",
+        as_dict=True,
+    )
+    if not rows:
+        return []
+
+    project_codes = list({r.project_code for r in rows if r.project_code})
+    project_names = {}
+    if project_codes:
+        project_names = {
+            r["project_code"]: r["project_name"]
+            for r in frappe.db.get_all(
+                "Project Control Center",
+                filters={"project_code": ["in", project_codes]},
+                fields=["project_code", "project_name"],
+            )
+        }
+
+    duids = list({r.site_code for r in rows if r.site_code})
+    site_id_map = {}
+    if duids:
+        site_id_map = {
+            r["duid"]: r["site_id"]
+            for r in frappe.db.get_all("DUID Master", filters={"duid": ["in", duids]}, fields=["duid", "site_id"])
+        }
+
+    today = frappe.utils.getdate()
+    # One row per site (DUID) — the latest pending execution wins if there
+    # happen to be more than one (e.g. a revisit).
+    by_duid = {}
+    for r in rows:
+        ref_date = r.ciag_status_date or r.execution_date
+        pending_days = (today - frappe.utils.getdate(ref_date)).days if ref_date else 0
+        existing = by_duid.get(r.site_code)
+        if existing and existing["pending_days"] >= pending_days:
+            continue
+        by_duid[r.site_code] = {
+            "project_name": project_names.get(r.project_code, ""),
+            "site_id": site_id_map.get(r.site_code, ""),
+            "du_id": r.site_code or "",
+            "pending_days": pending_days,
+            "status": _sla_status(pending_days),
+        }
+
+    out = list(by_duid.values())
+    out.sort(key=lambda r: -r["pending_days"])
+    return out
+
+
+_SIGN_STATUS_COLUMNS = [
+    {"fieldname": "bill_no", "label": "Bill No."},
+    {"fieldname": "project_name", "label": "Project Name"},
+    {"fieldname": "site_id", "label": "Site ID"},
+    {"fieldname": "du_id", "label": "DU ID"},
+    {"fieldname": "status", "label": "Status"},
+    {"fieldname": "pending_days", "label": "Pending Days"},
+]
+
+_VERIFY_STATUS_COLUMNS = [
+    {"fieldname": "project_name", "label": "Project Name"},
+    {"fieldname": "site_id", "label": "Site ID"},
+    {"fieldname": "du_id", "label": "DU ID"},
+    {"fieldname": "status", "label": "Status"},
+    {"fieldname": "pending_days", "label": "Pending Days"},
+]
+
+
+@frappe.whitelist()
+def report_site_sign_status(filters=None):
+    """Standard {columns, data} wrapper over get_site_sign_status for the
+    admin Reports catalog — plain table + DataTablePro's own column
+    filters, same as every other report there."""
+    return {"columns": _SIGN_STATUS_COLUMNS, "data": get_site_sign_status()}
+
+
+@frappe.whitelist()
+def report_site_verify_status(filters=None):
+    """Standard {columns, data} wrapper over get_site_verify_status for the
+    admin Reports catalog."""
+    return {"columns": _VERIFY_STATUS_COLUMNS, "data": get_site_verify_status()}
+
+
 # ─── Material Return Flow ──────────────────────────────────────────────────────
 
 
@@ -2869,24 +3116,112 @@ def _team_duid_item_balance(team_wh, duid, item_code):
     return in_qty - out_qty
 
 
+def _huawei_item_map(item_codes):
+    if not item_codes:
+        return {}
+    return {
+        r["name"]: bool(r["is_customer_provided_item"])
+        for r in frappe.db.get_all("Item", filters={"name": ["in", item_codes]}, fields=["name", "is_customer_provided_item"])
+    }
+
+
+def _material_issue_available(team_wh, duid, item_code, is_huawei):
+    # Additional (company-owned) items aren't DUID-tracked — they're general
+    # team stock, not tied to any one site's bill — so their availability is
+    # the warehouse's plain Bin balance, not the DUID-scoped reconstruction
+    # Huawei/customer-provided items use. Without this split, an Additional
+    # item the TL genuinely has in stock would always show 0 available and
+    # block the save, since it never carries a to_duid on its transfer in.
+    if is_huawei:
+        return _team_duid_item_balance(team_wh, duid, item_code)
+    return flt(frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": team_wh}, "actual_qty") or 0)
+
+
+def _throw_insufficient_stock(row, balance):
+    item_label = row.get("item_name") or row.item_code
+    frappe.throw(
+        f"Only {balance:g} {row.uom or ''} of \"{item_label}\" is in your stock for "
+        f"this site — a transfer may still be pending approval. Check Incoming, or "
+        f"adjust Used Qty."
+    )
+
+
+def _build_issue_se_item(row, qty, team_wh, duid, expense_account):
+    item_row = frappe._dict({
+        "item_code": row.item_code,
+        "qty": qty,
+        "uom": row.uom or "Nos",
+        "s_warehouse": team_wh,
+        "duid": duid,
+        # Deliberately NOT carrying material_request through onto the Issue
+        # row: ERPNext's own validate_with_material_request() looks up a
+        # Material Request Item by (material_request_item, material_request)
+        # whenever material_request is truthy, and crashes with
+        # AttributeError on a None result if material_request_item isn't
+        # also set to a matching child row — which it never was here. A
+        # Material Issue also doesn't correspond 1:1 with the original
+        # transfer request anyway (a TL can use partial/combined qty from
+        # it), so there's nothing meaningful to link back to; traceability
+        # already comes from the DUID + batch stamped below, not from this.
+    })
+    extra_rows = _auto_select_batch_for_row(item_row)
+    items = [dict(item_row)] + extra_rows
+    for it in items:
+        if expense_account:
+            it["expense_account"] = expense_account
+        it[ACCOUNTING_DUID_FIELDNAME] = duid
+    return items
+
+
+def _flush_material_usage(rows):
+    """Persist qty_issued/material_issue directly to each already-existing
+    Daily Execution Material row. Mutating row.qty_issued/row.material_issue
+    on the in-memory doc object alone does nothing — update_execution
+    already called doc.save() before invoking issue_material_for_execution,
+    and nothing calls it again afterward (calling it a second time would
+    double-fire the Daily Execution on_update notification hook). Each
+    child row already has a real name by this point (it was inserted as
+    part of that earlier save), so writing straight to it is safe and
+    doesn't need the parent doc touched at all.
+    """
+    for row in rows:
+        if not row.get("name"):
+            continue
+        frappe.db.set_value(
+            "Daily Execution Material", row.name,
+            {"qty_issued": flt(row.get("qty_issued") or 0), "material_issue": row.get("material_issue") or None},
+            update_modified=False,
+        )
+
+
 def issue_material_for_execution(doc):
-    """Auto-issue whatever new qty_used the TL just recorded on
-    doc.material_usage — this is the "Site Sign" event: stock-out happens
-    the moment the TL reports using material on site, not when the job or
-    its paperwork is later marked complete.
+    """Reflects doc.material_usage into stock, in two phases:
 
-    Idempotent per row via qty_issued: only the increase since last time is
-    issued; lowering qty_used is treated as a correction and never
-    auto-reverses stock that already moved.
+    - While the TL is still working (tl_status != "Completed"): maintain a
+      single DRAFT Material Issue Stock Entry for this execution, rebuilt
+      from the current qty_used values every time this runs. Nothing
+      actually leaves the warehouse yet — the TL is still adjusting
+      numbers, so nothing should move until the work is genuinely done.
+      This still validates against real stock so a TL entering more than
+      the team has gets caught immediately, not just at completion.
+    - The moment tl_status becomes "Completed": that draft (creating one
+      first if this is the very first save already marked Completed) is
+      submitted, actually moving stock. qty_issued is only ever set to
+      match qty_used at this point — before that it stays 0, since nothing
+      has really moved.
+    - If material_usage changes again AFTER the issue was already
+      submitted (a post-completion correction), the old draft can no
+      longer be edited (submitted Stock Entries are immutable) — any
+      further increase is issued immediately as a separate correction
+      entry, same as this function always worked before drafting existed.
+      A decrease is never auto-reversed.
 
-    Raises on insufficient stock — a real business-rule violation (the team
-    can't have used more than they actually have) that the caller should
-    let block the save so the TL corrects the number. Any other error
-    (config, bug) is the caller's call whether to swallow — this function
-    itself doesn't decide that; it just does the work or raises.
+    Raises on insufficient stock — a real business-rule violation the
+    caller should let block the save so the TL corrects the number. Any
+    other error is the caller's call whether to swallow.
 
-    Returns the Material Issue Stock Entry name, or None if there was
-    nothing new to issue.
+    Returns the (draft or submitted) Stock Entry name, or None if there
+    was nothing to do.
     """
     if not doc.get("material_usage") or not doc.get("team") or not doc.get("system_id"):
         return None
@@ -2896,87 +3231,88 @@ def issue_material_for_execution(doc):
     if not team_wh or not duid:
         return None
 
-    to_issue = [
-        (row, flt(row.qty_used) - flt(row.get("qty_issued") or 0))
-        for row in doc.material_usage
-    ]
-    to_issue = [(row, delta) for row, delta in to_issue if delta > 0]
-    if not to_issue:
-        return None
-
+    is_completed = doc.get("tl_status") == "Completed"
     expense_account = frappe.db.get_single_value("INET Settings", "material_issue_expense_account")
 
-    # Additional (company-owned) items aren't DUID-tracked — they're general
-    # team stock, not tied to any one site's bill — so their availability is
-    # the warehouse's plain Bin balance, not the DUID-scoped reconstruction
-    # Huawei/customer-provided items use. Without this split, an Additional
-    # item the TL genuinely has in stock would always show 0 available and
-    # block the save, since it never carries a to_duid on its transfer in.
-    item_codes = list({row.item_code for row, _ in to_issue})
-    is_huawei_map = {
-        r["name"]: bool(r["is_customer_provided_item"])
-        for r in frappe.db.get_all("Item", filters={"name": ["in", item_codes]}, fields=["name", "is_customer_provided_item"])
-    }
+    draft_name = next((r.get("material_issue") for r in doc.material_usage if r.get("material_issue")), None)
+    draft_docstatus = frappe.db.get_value("Stock Entry", draft_name, "docstatus") if draft_name else None
 
+    if draft_docstatus == 1:
+        # Already submitted from a previous Completed save — any further
+        # increase is a post-completion correction, issued immediately
+        # (there's no draft phase left to fold it into).
+        to_issue = [
+            (row, flt(row.qty_used) - flt(row.get("qty_issued") or 0))
+            for row in doc.material_usage
+        ]
+        to_issue = [(row, delta) for row, delta in to_issue if delta > 0]
+        if not to_issue:
+            return draft_name
+
+        is_huawei_map = _huawei_item_map(list({row.item_code for row, _ in to_issue}))
+        se_items = []
+        for row, delta in to_issue:
+            balance = _material_issue_available(team_wh, duid, row.item_code, is_huawei_map.get(row.item_code))
+            if delta > balance:
+                _throw_insufficient_stock(row, balance)
+            se_items.extend(_build_issue_se_item(row, delta, team_wh, duid, expense_account))
+
+        se = frappe.get_doc({"doctype": "Stock Entry", "stock_entry_type": "Material Issue", "items": se_items})
+        se.insert(ignore_permissions=True)
+        se.submit()
+        for row, delta in to_issue:
+            row.qty_issued = flt(row.qty_used)
+            row.material_issue = se.name
+        _flush_material_usage([row for row, _ in to_issue])
+        frappe.db.commit()
+        return se.name
+
+    # Pre-completion: maintain one draft, rebuilt from current qty_used.
+    rows = [r for r in doc.material_usage if flt(r.qty_used) > 0]
+
+    if not rows:
+        if draft_name and draft_docstatus == 0:
+            frappe.delete_doc("Stock Entry", draft_name, ignore_permissions=True, force=True)
+        for row in doc.material_usage:
+            row.material_issue = None
+            row.qty_issued = 0
+        _flush_material_usage(doc.material_usage)
+        frappe.db.commit()
+        return None
+
+    is_huawei_map = _huawei_item_map(list({row.item_code for row in rows}))
     se_items = []
-    for row, delta in to_issue:
-        if is_huawei_map.get(row.item_code):
-            balance = _team_duid_item_balance(team_wh, duid, row.item_code)
-        else:
-            balance = flt(frappe.db.get_value("Bin", {"item_code": row.item_code, "warehouse": team_wh}, "actual_qty") or 0)
-        if delta > balance:
-            item_label = row.get("item_name") or row.item_code
-            frappe.throw(
-                f"Only {balance:g} {row.uom or ''} of \"{item_label}\" is in your stock for "
-                f"this site — a transfer may still be pending approval. Check Incoming, or "
-                f"adjust Used Qty."
-            )
+    for row in rows:
+        balance = _material_issue_available(team_wh, duid, row.item_code, is_huawei_map.get(row.item_code))
+        if flt(row.qty_used) > balance:
+            _throw_insufficient_stock(row, balance)
+        se_items.extend(_build_issue_se_item(row, flt(row.qty_used), team_wh, duid, expense_account))
 
-        item_row = frappe._dict({
-            "item_code": row.item_code,
-            "qty": delta,
-            "uom": row.uom or "Nos",
-            "s_warehouse": team_wh,
-            "duid": duid,
-            # Deliberately NOT carrying material_request through onto the
-            # Issue row: ERPNext's own validate_with_material_request()
-            # looks up a Material Request Item by (material_request_item,
-            # material_request) whenever material_request is truthy, and
-            # crashes with AttributeError on a None result if
-            # material_request_item isn't also set to a matching child row
-            # — which it never was here. A Material Issue also doesn't
-            # correspond 1:1 with the original transfer request anyway (a
-            # TL can use partial/combined qty from it), so there's nothing
-            # meaningful to link back to; traceability already comes from
-            # the DUID + batch stamped below, not from this.
-        })
-        extra_rows = _auto_select_batch_for_row(item_row)
+    if draft_name and draft_docstatus == 0:
+        draft = frappe.get_doc("Stock Entry", draft_name)
+        draft.set("items", [])
+        for it in se_items:
+            draft.append("items", it)
+        draft.save(ignore_permissions=True)
+    else:
+        draft = frappe.get_doc({"doctype": "Stock Entry", "stock_entry_type": "Material Issue", "items": se_items})
+        draft.insert(ignore_permissions=True)
 
-        se_item = dict(item_row)
-        if expense_account:
-            se_item["expense_account"] = expense_account
-        se_item[ACCOUNTING_DUID_FIELDNAME] = duid
-        se_items.append(se_item)
-        for extra in extra_rows:
-            if expense_account:
-                extra["expense_account"] = expense_account
-            extra[ACCOUNTING_DUID_FIELDNAME] = duid
-        se_items.extend(extra_rows)
+    used_codes = {row.item_code for row in rows}
+    for row in doc.material_usage:
+        row.material_issue = draft.name if row.item_code in used_codes else None
+        row.qty_issued = 0
 
-    se = frappe.get_doc({
-        "doctype": "Stock Entry",
-        "stock_entry_type": "Material Issue",
-        "items": se_items,
-    })
-    se.insert(ignore_permissions=True)
-    se.submit()
+    if is_completed:
+        draft.reload()
+        draft.submit()
+        for row in doc.material_usage:
+            if row.item_code in used_codes:
+                row.qty_issued = flt(row.qty_used)
+
+    _flush_material_usage(doc.material_usage)
     frappe.db.commit()
-
-    for row, delta in to_issue:
-        row.qty_issued = flt(row.qty_used)
-        row.material_issue = se.name
-
-    return se.name
+    return draft.name
 
 
 @frappe.whitelist()
@@ -2993,8 +3329,17 @@ def get_execution_material_usage(execution):
         filters={"parent": execution},
         fields=["item_code", "item_name", "qty_transferred", "qty_used", "qty_issued", "uom", "material_issue"],
     )
+    docstatus_map = {}
+    se_names = list({r["material_issue"] for r in rows if r.get("material_issue")})
+    if se_names:
+        docstatus_map = {
+            r["name"]: r["docstatus"]
+            for r in frappe.db.get_all("Stock Entry", filters={"name": ["in", se_names]}, fields=["name", "docstatus"])
+        }
     for r in rows:
         r["is_huawei"] = bool(frappe.get_cached_value("Item", r["item_code"], "is_customer_provided_item"))
+        # 0 = still Draft (TL not yet marked Completed), 1 = actually issued.
+        r["issue_docstatus"] = docstatus_map.get(r.get("material_issue"))
     return rows
 
 

@@ -2,15 +2,22 @@ import { useEffect, useState } from "react";
 import { pmApi } from "../services/api";
 import { HuaweiBadge, CompanyBadge } from "./MaterialItemPicker";
 
-function IssueStatusPill({ qtyUsed, qtyIssued }) {
+function IssueStatusPill({ qtyUsed, qtyIssued, issueDocstatus }) {
   const used = Number(qtyUsed) || 0;
   const issued = Number(qtyIssued) || 0;
   if (used <= 0) return null;
-  if (issued >= used) {
+  if (issued >= used && issued > 0) {
     return <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#ecfdf5", color: "#047857", whiteSpace: "nowrap" }}>Issued</span>;
   }
   if (issued > 0) {
     return <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#fffbeb", color: "#b45309", whiteSpace: "nowrap" }}>Partially Issued</span>;
+  }
+  // Nothing issued yet: normal if a Draft is still staged (TL hasn't
+  // marked the work Completed) — that's expected, not a problem. Only
+  // flag it red when there's no draft at all despite qty_used > 0, which
+  // means something actually went wrong.
+  if (issueDocstatus === 0) {
+    return <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8", whiteSpace: "nowrap" }}>Draft — awaiting completion</span>;
   }
   return <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#fef2f2", color: "#b91c1c", whiteSpace: "nowrap" }}>Not Issued</span>;
 }
@@ -72,7 +79,7 @@ export default function ExecutionMaterialUsage({ execution }) {
                 <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>{r.qty_used} {r.uom || ""}</td>
                 <td style={{ padding: "6px 8px", textAlign: "right", color: "#64748b" }}>{r.qty_issued || 0} {r.uom || ""}</td>
                 <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                  <IssueStatusPill qtyUsed={r.qty_used} qtyIssued={r.qty_issued} />
+                  <IssueStatusPill qtyUsed={r.qty_used} qtyIssued={r.qty_issued} issueDocstatus={r.issue_docstatus} />
                   {r.material_issue && (
                     <div style={{ fontSize: "0.68rem", color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>{r.material_issue}</div>
                   )}

@@ -351,6 +351,11 @@ def get_logged_user():
 
     if user == "Administrator" or "System Manager" in user_roles or "INET Admin" in user_roles:
         app_role = "admin"
+    elif "Stock Manager" in user_roles:
+        # The Warehouse Manager. Without this branch they fell all the way
+        # through to the "field" default, landing on the Field portal
+        # instead of Material Requests — the actual job they need to do.
+        app_role = "warehouse"
     elif "INET PIC" in user_roles:
         app_role = "pic"
     elif "INET IM" in user_roles:

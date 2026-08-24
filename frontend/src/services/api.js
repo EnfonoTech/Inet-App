@@ -193,6 +193,8 @@ export const pmApi = {
   reportTeamPVA:                  (f) => call("inet_app.api.command_center.get_team_utilization_pva",    { from_date: f?.from_date, to_date: f?.to_date, team: JSON.stringify(f?.team || []) }),
   reportWeeklyPerformance:        (f) => call("inet_app.api.command_center.get_weekly_performance_report",   { from_date: f?.from_date, to_date: f?.to_date }),
   reportRevenueForecast:          ()  => call("inet_app.api.command_center.get_revenue_forecast_report",     {}),
+  reportSiteSignStatus:           (f) => call("inet_app.api.material_management.report_site_sign_status",   { filters: JSON.stringify(f || {}) }),
+  reportSiteVerifyStatus:         (f) => call("inet_app.api.material_management.report_site_verify_status", { filters: JSON.stringify(f || {}) }),
 
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
@@ -889,6 +891,7 @@ export const pmApi = {
   getAvailableStock:       (item_code, warehouse)  => call("inet_app.api.material_management.get_available_stock", { item_code, ...(warehouse ? { warehouse } : {}) }),
   getPoidMaterials:        (po_dispatch)           => call("inet_app.api.material_management.get_poid_materials", { po_dispatch }),
   getExecutionMaterialUsage: (execution)            => call("inet_app.api.material_management.get_execution_material_usage", { execution }),
+  getDuidHuaweiAvailability: (duid, team_id)        => call("inet_app.api.material_management.get_duid_huawei_availability", { duid, ...(team_id ? { team_id } : {}) }),
   getTeamMaterialStock:    (team_id)               => call("inet_app.api.material_management.get_team_material_stock", team_id ? { team_id } : {}),
   getMainWarehouseStock:   ()                      => call("inet_app.api.material_management.get_main_warehouse_stock", {}),
   getDuidStockBalance:     ()                      => call("inet_app.api.material_management.get_duid_stock_balance", {}),
