@@ -15,6 +15,10 @@
   --yellow:#d29922;--yellow-dim:rgba(210,153,34,.15);
   --red:#f85149;--red-dim:rgba(248,81,73,.15);
   --purple:#bc8cff;--purple-dim:rgba(188,140,255,.15);
+  --teal:#39c5cf;--teal-dim:rgba(57,197,207,.15);
+  --orange:#f0883e;--orange-dim:rgba(240,136,62,.15);
+  --pink:#db61a2;--pink-dim:rgba(219,97,162,.15);
+  --gray:#8b949e;--gray-dim:rgba(139,148,158,.15);
   --text:#e6edf3;--text2:#8d96a0;--text3:#484f58;
   --nav-w:230px;--hdr-h:56px;--radius:8px;
 }
@@ -129,6 +133,11 @@ input[type=file]::file-selector-button:hover{border-color:var(--blue);background
 .chart-sub{font-size:11px;color:var(--text3);margin-bottom:12px}
 .chart-card .chart-box{height:300px}
 @media (max-width:900px){.grid-2{grid-template-columns:1fr}}
+@media (max-width:760px){
+  .hdr-pills{display:none}
+  :root{--nav-w:190px}
+  .nav-item{font-size:12px;padding:8px 10px}
+}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:20px}
 .panel h3{font-size:13px;margin-bottom:12px;color:var(--text2);font-weight:600}
 .panel .chart-box{position:relative;height:220px}
@@ -159,6 +168,12 @@ tfoot td{padding:8px 12px;border-top:1px solid var(--border2);background:var(--s
 .badge-y{background:var(--yellow-dim);color:var(--yellow)}
 .badge-r{background:var(--red-dim);color:var(--red)}
 .badge-n{background:var(--surface3);color:var(--text3)}
+.badge-blue{background:var(--blue-dim);color:var(--blue)}
+.badge-purple{background:var(--purple-dim);color:var(--purple)}
+.badge-teal{background:var(--teal-dim);color:var(--teal)}
+.badge-orange{background:var(--orange-dim);color:var(--orange)}
+.badge-pink{background:var(--pink-dim);color:var(--pink)}
+.badge-gray{background:var(--gray-dim);color:var(--gray)}
 
 .domain-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
 
@@ -256,8 +271,9 @@ tfoot td{padding:8px 12px;border-top:1px solid var(--border2);background:var(--s
     <div class="nav-item" data-page="dashboard" onclick="nav('dashboard')">📊 Dashboard</div>
     <div class="nav-sep"></div>
     <div class="nav-label">Trackers</div>
-    <div class="nav-item" data-page="resource" onclick="nav('resource')">👥 Resource Tracker<span class="nav-badge b" id="nb-resource">—</span></div>
-    <div class="nav-item" data-page="protech" onclick="nav('protech')">🔧 Protech (WL &amp; MW)<span class="nav-badge b" id="nb-protech">—</span></div>
+    <div class="nav-item" data-page="resource" onclick="nav('resource')">👥 Innovation Team<span class="nav-badge b" id="nb-resource">—</span></div>
+    <div class="nav-item" data-page="protech" onclick="nav('protech')">👥 Protech (WL &amp; MW)<span class="nav-badge b" id="nb-protech">—</span></div>
+    <div id="nav-dynamic-trackers"></div>
     <div class="nav-item" data-page="former" onclick="nav('former')">📁 Former Employees<span class="nav-badge b" id="nb-former">—</span></div>
     <div class="nav-sep"></div>
     <div class="nav-label">Certificates</div>
@@ -360,6 +376,38 @@ tfoot td{padding:8px 12px;border-top:1px solid var(--border2);background:var(--s
   </div>
 </div>
 
+<!-- FULL SYNC (Excel -> Employees + Certificates) MODAL -->
+<div class="modal-overlay" id="sync-overlay">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3>Import / Sync from Excel</h3>
+      <button class="modal-close" onclick="closeModal('sync-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5">
+        Upload the full "INET — Resource Certificate Tracker" workbook (the one with S.NO, Resource Name,
+        Iqama/Passport, Mobile, Nationality, Email, Domain, Region, Position, Company Name, Uniportal,
+        Status, plus a Cert No./Start/Expiry block per certificate type). Matches employees by
+        <strong>Iqama/Passport</strong> — existing employees are updated, unmatched rows create a
+        <strong>brand-new employee</strong>. Domain, Designation and Company values not seen before are
+        created automatically. Certificates with no Cert No. and no Expiry are skipped, same as the sheet
+        leaves them blank.
+      </p>
+      <p style="font-size:12px;color:var(--yellow);margin-bottom:12px;line-height:1.5">
+        ⚠️ New employees have no Gender / Date of Birth / Date of Joining in this sheet — Frappe requires
+        all three, so a minimal random placeholder is filled in for each. Every such employee is listed
+        below after the import so you know exactly who to go correct.
+      </p>
+      <input type="file" id="sync-file" accept=".xlsx,.xls">
+      <div id="sync-result" style="margin-top:14px;font-size:13px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('sync-overlay')">Close</button>
+      <button class="btn btn-primary" id="sync-run-btn" onclick="runFullSync()">Upload &amp; Sync</button>
+    </div>
+  </div>
+</div>
+
 <!-- EMPLOYEE DETAIL MODAL (read-only) -->
 <div class="modal-overlay modal-wide" id="detail-overlay">
   <div class="modal">
@@ -402,7 +450,7 @@ tfoot td{padding:8px 12px;border-top:1px solid var(--border2);background:var(--s
       <div class="form-row-2">
         <div class="form-row"><label>Status</label>
           <select id="ae-status" onchange="document.getElementById('ae-relieving-wrap').style.display = this.value==='Left' ? '' : 'none'">
-            <option value="Active">Active</option><option value="Left">Left</option>
+            <option value="Active">Active</option><option value="Inactive">Inactive</option><option value="Suspended">Suspended</option><option value="Left">Left</option>
           </select>
         </div>
         <div class="form-row"><label>Date of Joining * <span style="color:var(--text3)">(mandatory)</span></label><input type="date" id="ae-doj"></div>
@@ -422,6 +470,7 @@ tfoot td{padding:8px 12px;border-top:1px solid var(--border2);background:var(--s
       <div class="form-row-2">
         <div class="form-row"><label>Certification Domain</label><select id="ae-domain"><option value="">Select…</option></select></div>
         <div class="form-row"><label>Designation</label><select id="ae-designation"><option value="">Select…</option></select></div>
+        <div class="form-row"><label>Company</label><select id="ae-company"><option value="">Select…</option></select></div>
       </div>
       <div id="ae-certs-wrap" style="display:none">
         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 8px">Certificates</div>
@@ -477,6 +526,29 @@ const STATUS = {
 };
 function statusBadge(s) { const st = STATUS[s] || STATUS["Not Issued"]; return `<span class="badge badge-${st.cls}">${st.dot} ${s}</span>`; }
 function statusDot(s) { const st = STATUS[s] || STATUS["Not Issued"]; return st.dot; }
+/* Employee.status (Active/Inactive/Suspended/Left) — distinct from the cert
+ * status badges above. Handles all 4 real values instead of the earlier
+ * "Left vs. everything else is Active" shortcut, which mislabeled Suspended
+ * employees as Active once the tracker sync started producing them. */
+function employeeStatusBadge(s) {
+  const map = { Active: "g", Suspended: "y", Inactive: "n", Left: "n" };
+  return `<span class="badge badge-${map[s] || "n"}">${escapeHtml(s || "Active")}</span>`;
+}
+/* Small colored 2-letter company badge on multi-company drill-down rows —
+ * matches the reference tool's per-row RT/PT/MB/WB/AL/SH/SC pills. Color
+ * and 2-letter code are both derived from the company name (not a
+ * hardcoded map), so any Certificate Tracker Company — including ones
+ * created later by an Excel sync — gets a stable, distinct badge for free. */
+const COMPANY_BADGE_COLORS = ["blue", "purple", "teal", "orange", "pink", "gray", "red", "yellow", "green"];
+function companyBadgeHtml(name) {
+  if (!name) return "";
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  const color = COMPANY_BADGE_COLORS[hash % COMPANY_BADGE_COLORS.length];
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const code = words.length > 1 ? (words[0][0] + words[words.length - 1][0]) : name.slice(0, 2);
+  return `<span class="badge badge-${color}" style="font-size:9px;padding:1px 5px" title="${escapeHtml(name)}">${escapeHtml(code.toUpperCase())}</span>`;
+}
 function fmtDate(s) { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return s; return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); }
 function fmtSAR(v) { return "SAR " + Math.round(v || 0).toLocaleString("en-US"); }
 function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -701,8 +773,56 @@ async function loadNavBadges() {
     expEl.textContent = c.expiring_90;
     expEl.className = "nav-badge " + (c.expiring_90 > 0 ? "y" : "b");
   } catch (e) { /* non-fatal */ }
+  refreshDynamicTrackerBadges();
 }
 function refreshBadges() { loadHeaderPills(); loadNavBadges(); }
+
+/* ── Dynamic per-company trackers (Mabran, Wabranco, ...) ─────
+ * One tracker item per Certificate Tracker Company that actually has
+ * Active employees, matching the reference tool's flat TRACKERS list —
+ * each behaves exactly like Innovation Team/Protech (own dashboard, table,
+ * Add Employee, export), reusing renderEmployeeList/COHORT_META's fallback.
+ * Built once at startup; the badge counts alone refresh on every
+ * refreshBadges() call. A company created *after* this page loaded (e.g.
+ * by a fresh Excel sync in another tab) needs a page reload to appear as
+ * its own tracker — same limitation the built-in Resource/Protech/Former
+ * list already has. */
+let DYNAMIC_TRACKER_BADGES = {};
+async function initDynamicTrackers() {
+  try {
+    const companies = await apiGet("list_tracker_companies");
+    const container = document.getElementById("nav-dynamic-trackers");
+    const main = document.querySelector(".main");
+    companies.forEach((c) => {
+      const item = document.createElement("div");
+      item.className = "nav-item";
+      item.dataset.page = c.name;
+      item.addEventListener("click", () => nav(c.name));
+      const label = document.createElement("span");
+      label.textContent = `👥 ${c.name}`;
+      const badge = document.createElement("span");
+      badge.className = "nav-badge b";
+      badge.textContent = c.employees;
+      item.appendChild(label);
+      item.appendChild(badge);
+      container.appendChild(item);
+      DYNAMIC_TRACKER_BADGES[c.name] = badge;
+
+      const page = document.createElement("div");
+      page.className = "page";
+      page.id = "page-" + c.name;
+      main.appendChild(page);
+
+      RENDERERS[c.name] = () => renderEmployeeList(c.name);
+    });
+  } catch (e) { /* dynamic company trackers are additive — Innovation Team/Protech/Former still work without them */ }
+}
+async function refreshDynamicTrackerBadges() {
+  try {
+    const companies = await apiGet("list_tracker_companies");
+    companies.forEach((c) => { if (DYNAMIC_TRACKER_BADGES[c.name]) DYNAMIC_TRACKER_BADGES[c.name].textContent = c.employees; });
+  } catch (e) { /* non-fatal */ }
+}
 
 /* ── Dashboard ────────────────────────────────────────────── */
 async function renderDashboard() {
@@ -716,7 +836,7 @@ async function renderDashboard() {
     ]);
     const sc = stats.status_counts || {}, dc = stats.domain_counts || {};
     const links = [
-      ["resource", "👥 Resource Tracker"], ["protech", "🔧 Protech (WL & MW)"], ["former", "📁 Former Employees"],
+      ["resource", "👥 Innovation Team"], ["protech", "👥 Protech (WL & MW)"], ["former", "📁 Former Employees"],
       ["cert-status-summary", "📋 Certificate Status Summary"], ["cert-overview", "🏅 Certificate Overview"],
       ["cert-expiring", "⏳ Expiring in 90 Days"], ["cert-cost", "💰 Certificate Cost"], ["by-domain", "🌐 By Domain"],
     ];
@@ -724,6 +844,7 @@ async function renderDashboard() {
       <div class="ph">
         <div class="ph-left"><h1>Certificate Tracker</h1><p>Employee certification status across all active staff</p></div>
         <div class="ph-right">
+          <button class="btn" onclick="openFullSync()">📥 Import / Sync from Excel</button>
           <button class="btn" onclick="openBulkRenew()">⬆️ Bulk Renew</button>
           <button class="btn" onclick="printComplianceReport()">🖨 Compliance Report</button>
         </div>
@@ -802,9 +923,9 @@ function renderDashEmpModalTable(title, color, employees) {
     <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Click a row to view full details</div>
     <table><thead><tr><th>#</th><th>Employee</th><th>Iqama</th><th>Domain</th><th>Designation</th><th>Mobile</th><th>Status</th></tr></thead>
     <tbody>${employees.map((e, i) => `<tr style="cursor:pointer" onclick="openDashEmpDetail('${e.name}')">
-      <td class="mono">${i + 1}</td><td><strong>${escapeHtml(e.employee_name)}</strong></td><td>${escapeHtml(e.iqama_number) || "—"}</td>
+      <td class="mono">${i + 1}</td><td><div style="display:flex;align-items:center;gap:6px">${companyBadgeHtml(e.tracker_company)}<strong>${escapeHtml(e.employee_name)}</strong></div></td><td>${escapeHtml(e.iqama_number) || "—"}</td>
       <td>${escapeHtml(e.certification_domain) || "—"}</td><td>${escapeHtml(e.designation) || "—"}</td><td>${escapeHtml(e.cell_number) || "—"}</td>
-      <td>${e.status === "Left" ? '<span class="badge badge-n">Left</span>' : '<span class="badge badge-g">Active</span>'}</td>
+      <td>${employeeStatusBadge(e.status)}</td>
     </tr>`).join("") || `<tr class="empty-row"><td colspan="7">No employees</td></tr>`}</tbody></table>
   `;
 }
@@ -841,13 +962,13 @@ function renderDashCertModalTable(title, color, rows, showDays) {
   document.getElementById("drill-title").innerHTML = `<span style="color:${color}">${title}</span> <span style="color:var(--text3);font-size:13px;font-weight:400">(${rows.length})</span>`;
   document.getElementById("drill-body").innerHTML = `
     <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Click a row to view full details</div>
-    <table><thead><tr><th>#</th><th>Employee</th><th>Domain</th><th>Certificate</th><th>Cert No</th><th>Expiry</th>${showDays ? "<th>Days</th>" : ""}</tr></thead>
+    <table><thead><tr><th>#</th><th>Employee</th><th>Iqama</th><th>Domain</th><th>Certificate</th><th>Cert No</th><th>Expiry</th>${showDays ? "<th>Days</th>" : ""}</tr></thead>
     <tbody>${rows.map((r, i) => `<tr style="cursor:pointer" onclick="openDashCertRowDetail('${r.employee}')">
-      <td class="mono">${i + 1}</td><td><strong>${escapeHtml(r.employee_name)}</strong></td><td>${escapeHtml(r.certification_domain) || "—"}</td>
-      <td><span class="badge badge-g" style="background:var(--blue-dim);color:var(--blue)">${r.certificate_type}</span></td>
+      <td class="mono">${i + 1}</td><td><div style="display:flex;align-items:center;gap:6px">${companyBadgeHtml(r.tracker_company)}<strong>${escapeHtml(r.employee_name)}</strong></div></td><td class="mono">${escapeHtml(r.iqama_number) || "—"}</td><td>${escapeHtml(r.certification_domain) || "—"}</td>
+      <td><span class="badge badge-blue">${escapeHtml(r.certificate_type)}</span></td>
       <td>${escapeHtml(r.certificate_no) || "—"}</td><td>${fmtDate(r.expiry_date)}</td>
       ${showDays ? `<td style="color:${r.days_to_expiry < 0 ? "var(--red)" : "var(--yellow)"};font-weight:700">${r.days_to_expiry ?? "—"}</td>` : ""}
-    </tr>`).join("") || `<tr class="empty-row"><td colspan="${showDays ? 7 : 6}">No matching certificates</td></tr>`}</tbody></table>
+    </tr>`).join("") || `<tr class="empty-row"><td colspan="${showDays ? 8 : 7}">No matching certificates</td></tr>`}</tbody></table>
   `;
 }
 async function openDashCertRowDetail(employeeName) {
@@ -887,12 +1008,17 @@ async function renderEmployeeList(cohort) {
     const certTypes = [...new Set(employees.flatMap((e) => Object.keys(e.certs || {})))].sort();
     const domains = [...new Set(employees.map((e) => e.certification_domain).filter(Boolean))].sort();
     const designations = [...new Set(employees.map((e) => e.designation).filter(Boolean))].sort();
-    const meta = COHORT_META[cohort];
+    const companies = [...new Set(employees.map((e) => e.tracker_company).filter(Boolean))].sort();
+    // A dynamic per-company tracker (Mabran, Wabranco, ...) has no entry in
+    // COHORT_META — every employee on that page already shares the same
+    // Company, so the Company filter/column would be pure redundancy there.
+    const isCompanyCohort = !COHORT_META[cohort];
+    const meta = COHORT_META[cohort] || { title: cohort, subtitle: `${cohort} — Company Tracker` };
     cohortPage[cohort] = 1;
     delete cohortCertFilter[cohort];
     el.innerHTML = `
       <div class="ph">
-        <div class="ph-left"><h1>${meta.title}</h1><p>${meta.subtitle} — ${employees.length} employee${employees.length === 1 ? "" : "s"}</p></div>
+        <div class="ph-left"><h1>${escapeHtml(meta.title)}</h1><p>${escapeHtml(meta.subtitle)} — ${employees.length} employee${employees.length === 1 ? "" : "s"}</p></div>
         <div class="ph-right">
           <button class="btn btn-primary" onclick="openAddEmployee('${cohort}')">➕ Add Employee</button>
           <button class="btn" onclick="exportEmployeeTable('${cohort}')">⬇️ Export</button>
@@ -903,6 +1029,7 @@ async function renderEmployeeList(cohort) {
         <input type="search" id="search-${cohort}" placeholder="Search name, iqama, mobile…" oninput="renderEmployeeTableBody('${cohort}')">
         <select id="filter-domain-${cohort}" onchange="renderEmployeeTableBody('${cohort}')"><option value="">All Domains</option>${domains.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join("")}</select>
         <select id="filter-designation-${cohort}" onchange="renderEmployeeTableBody('${cohort}')"><option value="">All Designations</option>${designations.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join("")}</select>
+        ${!isCompanyCohort && companies.length ? `<select id="filter-company-${cohort}" onchange="renderEmployeeTableBody('${cohort}')"><option value="">All Companies</option>${companies.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>` : ""}
         <select id="filter-certstatus-${cohort}" onchange="renderEmployeeTableBody('${cohort}')">
           <option value="">Any Cert Status</option><option value="valid">🟢 All Valid</option><option value="expiring">🟡 Has Expiring</option><option value="expired">🔴 Has Expired</option>
         </select>
@@ -911,7 +1038,7 @@ async function renderEmployeeList(cohort) {
       <div class="table-wrap"><div class="table-scroll">
         <div style="padding:8px 12px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border)">🟢 Valid &nbsp;🟡 ≤90d &nbsp;🔴 Expired &nbsp;⚪ Not Issued — click a cert cell to add/renew</div>
         <table id="tbl-${cohort}">
-          <thead><tr><th>#</th><th>Employee</th><th>Iqama / ID</th><th>Domain</th><th>Designation</th><th>Mobile</th>
+          <thead><tr><th>#</th><th>Employee</th><th>Iqama / ID</th><th>Domain</th><th>Designation</th>${isCompanyCohort ? "" : "<th>Company</th>"}<th>Mobile</th>
             ${certTypes.map((c) => `<th style="text-align:center" title="${c}">${c}</th>`).join("")}<th>Actions</th></tr></thead>
           <tbody id="tbody-${cohort}"></tbody>
         </table>
@@ -920,6 +1047,7 @@ async function renderEmployeeList(cohort) {
     `;
     el.dataset.raw = JSON.stringify(employees);
     el.dataset.certTypes = JSON.stringify(certTypes);
+    el.dataset.companyCohort = isCompanyCohort ? "1" : "";
     if (employees.length) {
       const { stats, totalValid, totalExpiring, totalExpired } = computeCohortCertStats(employees, certTypes);
       mkStatusDoughnut(`ch-${cohort}-status`, totalValid, totalExpiring, totalExpired);
@@ -995,7 +1123,8 @@ function applyCertFilter(cohort, certType, status) {
     .map((e) => {
       const cert = (e.certs || {})[certType] || {};
       return {
-        employee: e.name, employee_name: e.employee_name, certification_domain: e.certification_domain,
+        employee: e.name, employee_name: e.employee_name, iqama_number: e.iqama_number,
+        certification_domain: e.certification_domain, tracker_company: e.tracker_company,
         certificate_type: certType, certificate_no: cert.certificate_no,
         expiry_date: cert.expiry_date, days_to_expiry: cert.days_to_expiry,
       };
@@ -1021,6 +1150,7 @@ function filterEmployeesForCohort(cohort) {
   const q = (document.getElementById(`search-${cohort}`)?.value || "").toLowerCase();
   const domainF = document.getElementById(`filter-domain-${cohort}`)?.value || "";
   const desigF = document.getElementById(`filter-designation-${cohort}`)?.value || "";
+  const companyF = document.getElementById(`filter-company-${cohort}`)?.value || "";
   const certstatusF = document.getElementById(`filter-certstatus-${cohort}`)?.value || "";
   const cf = cohortCertFilter[cohort];
 
@@ -1028,6 +1158,7 @@ function filterEmployeesForCohort(cohort) {
     if (q && !JSON.stringify(e).toLowerCase().includes(q)) return false;
     if (domainF && e.certification_domain !== domainF) return false;
     if (desigF && e.designation !== desigF) return false;
+    if (companyF && e.tracker_company !== companyF) return false;
     if (certstatusF) {
       const statuses = certTypes.map((c) => (e.certs || {})[c]?.status || "Not Issued");
       if (certstatusF === "expired" && !statuses.includes("Expired")) return false;
@@ -1045,13 +1176,14 @@ function filterEmployeesForCohort(cohort) {
 function paintEmployeeTableBody(cohort) {
   const el = document.getElementById("page-" + cohort);
   const certTypes = JSON.parse(el.dataset.certTypes || "[]");
+  const isCompanyCohort = !!el.dataset.companyCohort;
   const filtered = filterEmployeesForCohort(cohort);
   const pg = cohortPage[cohort] || 1;
   const start = (pg - 1) * COHORT_PAGE_SIZE;
   const paged = filtered.slice(start, start + COHORT_PAGE_SIZE);
   document.getElementById(`tbody-${cohort}`).innerHTML =
-    paged.map((e, i) => employeeRow(e, certTypes, cohort, start + i + 1)).join("")
-    || `<tr class="empty-row"><td colspan="${7 + certTypes.length}">No employees found</td></tr>`;
+    paged.map((e, i) => employeeRow(e, certTypes, cohort, start + i + 1, isCompanyCohort)).join("")
+    || `<tr class="empty-row"><td colspan="${(isCompanyCohort ? 7 : 8) + certTypes.length}">No employees found</td></tr>`;
   renderCohortPagination(cohort, filtered.length);
 }
 function renderCohortPagination(cohort, total) {
@@ -1069,13 +1201,14 @@ function renderCohortPagination(cohort, total) {
 }
 function goToCohortPage(cohort, pg) { cohortPage[cohort] = pg; paintEmployeeTableBody(cohort); }
 
-function employeeRow(e, certTypes, cohort, rowNum) {
+function employeeRow(e, certTypes, cohort, rowNum, isCompanyCohort) {
   return `<tr>
     <td class="mono">${rowNum}</td>
     <td><strong style="cursor:pointer;color:var(--blue)" onclick="openDetail('${e.name}','${cohort}')" title="View details">${escapeHtml(e.employee_name)}</strong></td>
     <td>${escapeHtml(e.iqama_number) || "—"}</td>
     <td>${escapeHtml(e.certification_domain) || "—"}</td>
     <td>${escapeHtml(e.designation) || "—"}</td>
+    ${isCompanyCohort ? "" : `<td>${escapeHtml(e.tracker_company) || "—"}</td>`}
     <td>${escapeHtml(e.cell_number) || "—"}</td>
     ${certTypes.map((c) => {
       const cert = (e.certs || {})[c];
@@ -1104,7 +1237,7 @@ function exportEmployeeTable(cohort) {
   const employees = filterEmployeesForCohort(cohort);
   const certTypes = JSON.parse(el.dataset.certTypes || "[]");
   const rows = employees.map((e) => {
-    const row = { Employee: e.employee_name, "Iqama / ID": e.iqama_number || "", Domain: e.certification_domain || "", Designation: e.designation || "", Mobile: e.cell_number || "" };
+    const row = { Employee: e.employee_name, "Iqama / ID": e.iqama_number || "", Domain: e.certification_domain || "", Designation: e.designation || "", Company: e.tracker_company || "", Mobile: e.cell_number || "" };
     certTypes.forEach((c) => { row[c] = (e.certs || {})[c]?.status || "Not Issued"; });
     return row;
   });
@@ -1271,7 +1404,127 @@ function normalizeSheetDate(v) {
   if (!v) return "";
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   if (typeof v === "number") { const d = XLSX.SSF.parse_date_code(v); return d ? `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}` : ""; }
-  return String(v).trim();
+  const s = String(v).trim();
+  // Some cert date cells in the tracker sheets are stored as plain text
+  // rather than real Excel dates. YYYY-MM-DD is already fine as-is; a
+  // cleanly-formatted DD/MM/YYYY string (the format used throughout this
+  // tracker's data) gets converted to ISO. Anything else (typos like
+  // "20-072026" or "01/06//2027") is passed through unchanged — the
+  // backend will flag it as an error for that one row rather than guess.
+  if (/^\d{4}-\d{1,2}-\d{1,2}/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const day = Number(m[1]), month = Number(m[2]), year = Number(m[3]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+  return s;
+}
+
+/* ── Full sync (whole tracker Excel -> Employees + Certificates) ─────────
+ * Column layout matches the reference "INET — Resource Certificate
+ * Tracker" workbook exactly: S.NO, Resource Name, Iqama/Passport, Mobile,
+ * Nationality, Email, Domain, Region, Position, Driver, Subcon, Company
+ * Name, Uniportal, Status, Remarks, then one Cert No./Start/Expiry block
+ * per certificate type below. Region/Driver/Subcon/Remarks are read but
+ * not stored — same fields the original historical import deliberately
+ * dropped (see the build plan). */
+const SYNC_CERT_COLUMNS = ["EHS", "First Aid", "Electrical", "Defensive Driving", "WAH", "Cyber Security", "Access TL", "Optical TL", "Wireless TL", "Microwave TL", "DL"];
+const SYNC_FIRST_CERT_COL = 15;
+
+function cellText(v) {
+  if (v === null || v === undefined) return "";
+  const s = String(v).trim();
+  return (s === "" || s === "—" || s === "-") ? "" : s;
+}
+function cellDate(v) {
+  return cellText(v) ? normalizeSheetDate(v) : "";
+}
+function findSyncHeaderRow(grid) {
+  for (let i = 0; i < grid.length; i++) {
+    if (String(grid[i][0] || "").trim().toUpperCase() === "S.NO") return i;
+  }
+  return -1;
+}
+
+function openFullSync() {
+  document.getElementById("sync-file").value = "";
+  document.getElementById("sync-result").innerHTML = "";
+  openModal("sync-overlay");
+}
+async function runFullSync() {
+  const fileInput = document.getElementById("sync-file");
+  const file = fileInput.files[0];
+  const resultEl = document.getElementById("sync-result");
+  if (!file) { resultEl.innerHTML = `<div class="notice">Choose a file first</div>`; return; }
+
+  const btn = document.getElementById("sync-run-btn");
+  btn.disabled = true; btn.textContent = "Processing…";
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+    const headerIdx = findSyncHeaderRow(grid);
+    if (headerIdx === -1) {
+      resultEl.innerHTML = `<div class="notice">Couldn't find the header row (expected a column named "S.NO") — is this the right file?</div>`;
+      return;
+    }
+    const rows = grid.slice(headerIdx + 2)
+      .filter((r) => cellText(r[1]) || cellText(r[2]))
+      .map((r) => {
+        const certs = {};
+        SYNC_CERT_COLUMNS.forEach((certName, idx) => {
+          const base = SYNC_FIRST_CERT_COL + idx * 3;
+          const no = cellText(r[base]);
+          const start = cellDate(r[base + 1]);
+          const expiry = cellDate(r[base + 2]);
+          if (no || start || expiry) certs[certName] = { no, start, expiry };
+        });
+        return {
+          employee_name: cellText(r[1]),
+          iqama: cellText(r[2]),
+          cell_number: cellText(r[3]),
+          nationality: cellText(r[4]),
+          personal_email: cellText(r[5]),
+          certification_domain: cellText(r[6]),
+          designation: cellText(r[8]),
+          tracker_company: cellText(r[11]),
+          uniportal_id: cellText(r[12]),
+          status: cellText(r[13]),
+          certs,
+        };
+      });
+    if (!rows.length) {
+      resultEl.innerHTML = `<div class="notice">No data rows found under the header.</div>`;
+      return;
+    }
+    const summary = await apiPost("sync_employees_from_tracker_sheet", { rows: JSON.stringify(rows) });
+    resultEl.innerHTML = `
+      <div style="margin-bottom:8px">
+        <strong style="color:var(--green)">${summary.employees_created}</strong> employees created,
+        <strong style="color:var(--blue)">${summary.employees_updated}</strong> updated,
+        <strong style="color:var(--text3)">${summary.employees_skipped}</strong> skipped &nbsp;·&nbsp;
+        <strong style="color:var(--green)">${summary.certs_created}</strong> certs created,
+        <strong style="color:var(--blue)">${summary.certs_updated}</strong> certs updated
+      </div>
+      ${summary.placeholder_personal_data.length ? `
+        <div class="notice" style="margin-bottom:8px">
+          <strong>${summary.placeholder_personal_data.length}</strong> new employee${summary.placeholder_personal_data.length === 1 ? "" : "s"} got a random placeholder Gender / DOB / Date of Joining — please correct from the Employee list:
+          <div style="margin-top:4px;max-height:120px;overflow:auto">${summary.placeholder_personal_data.map(escapeHtml).join(", ")}</div>
+        </div>` : ""}
+      ${summary.errors.length ? `<div style="max-height:160px;overflow:auto;font-size:12px;color:var(--red)">${summary.errors.map((e) => `Row ${e.row}: ${escapeHtml(e.error)}`).join("<br>")}</div>` : ""}
+    `;
+    if (summary.employees_created || summary.employees_updated) {
+      nav(CURRENT_PAGE); refreshBadges();
+      toast(`${summary.employees_created} created, ${summary.employees_updated} updated`, "success");
+    }
+  } catch (e) {
+    resultEl.innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = "Upload & Sync";
+  }
 }
 
 /* ── Add / Edit Employee (shared form) ────────────────────────
@@ -1284,12 +1537,13 @@ let ALL_CERT_TYPES_CACHE = null;
 async function loadAddEmployeeOptions() {
   if (ADD_EMP_OPTIONS_LOADED) return;
   try {
-    const [genders, domains, designations, certTypes] = await Promise.all([
-      apiGet("list_genders"), apiGet("list_certification_domains"), apiGet("list_designations"), apiGet("list_certificate_types"),
+    const [genders, domains, designations, certTypes, companies] = await Promise.all([
+      apiGet("list_genders"), apiGet("list_certification_domains"), apiGet("list_designations"), apiGet("list_certificate_types"), apiGet("list_certificate_tracker_companies"),
     ]);
     document.getElementById("ae-gender").innerHTML = `<option value="">Select…</option>` + genders.map((g) => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)}</option>`).join("");
     document.getElementById("ae-domain").innerHTML = `<option value="">Select…</option>` + domains.map((d) => `<option value="${escapeHtml(d.name)}">${escapeHtml(d.domain_name)}</option>`).join("");
     document.getElementById("ae-designation").innerHTML = `<option value="">Select…</option>` + designations.map((d) => `<option value="${escapeHtml(d.name)}">${escapeHtml(d.name)}</option>`).join("");
+    document.getElementById("ae-company").innerHTML = `<option value="">Select…</option>` + companies.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.company_name)}</option>`).join("");
     ALL_CERT_TYPES_CACHE = certTypes;
     ADD_EMP_OPTIONS_LOADED = true;
   } catch (e) { /* fields just stay as "Select…" — save will surface any real error */ }
@@ -1329,6 +1583,7 @@ async function openEmployeeForm(mode, cohort, emp) {
   document.getElementById("ae-relieving-wrap").style.display = status === "Left" ? "" : "none";
   document.getElementById("ae-domain").value = emp?.certification_domain || (cohort === "protech" ? PROTECH_DOMAIN : "");
   document.getElementById("ae-designation").value = emp?.designation || "";
+  document.getElementById("ae-company").value = emp?.tracker_company || (COHORT_META[cohort] ? "" : cohort);
   document.getElementById("add-emp-error").style.display = "none";
 
   const certTypes = certTypesForCohort(cohort);
@@ -1393,6 +1648,7 @@ async function saveEmployeeForm() {
       personal_email: document.getElementById("ae-email").value.trim(),
       uniportal_id: document.getElementById("ae-uniportal").value.trim(),
       certification_domain: document.getElementById("ae-domain").value,
+      tracker_company: document.getElementById("ae-company").value,
       designation: document.getElementById("ae-designation").value,
     };
 
@@ -1469,8 +1725,8 @@ function openDetail(employeeName, cohortOrEmployees) {
   document.getElementById("detail-title").textContent = emp.employee_name;
   const infoFields = [
     ["Iqama / National ID", emp.iqama_number], ["Mobile", emp.cell_number], ["Nationality", emp.nationality],
-    ["Email", emp.personal_email], ["Domain", emp.certification_domain], ["Designation", emp.designation],
-    ["Status", emp.status], ["UniPortal ID", emp.uniportal_id],
+    ["Email", emp.personal_email], ["Domain", emp.certification_domain], ["Company", emp.tracker_company],
+    ["Designation", emp.designation], ["Status", emp.status], ["UniPortal ID", emp.uniportal_id],
   ];
   document.getElementById("detail-info").innerHTML = infoFields.map(([l, v]) => `<div class="di-item"><label>${l}</label><span>${escapeHtml(v) || "—"}</span></div>`).join("")
     + `<div class="di-item"><label>Desk Record</label><span><a href="/app/employee/${emp.name}" target="_blank">Open in Desk ↗</a></span></div>`;
@@ -1565,15 +1821,29 @@ function exportCertStatusSummary() {
   })));
 }
 async function openDrill(certType, status, cohort) {
-  document.getElementById("drill-title").textContent = `${certType} — ${status}`;
+  const st = STATUS[status] || STATUS["Not Issued"];
+  const color = { g: "var(--green)", y: "var(--yellow)", r: "var(--red)", n: "var(--text3)" }[st.cls];
+  document.getElementById("drill-title").innerHTML = `<span style="color:var(--text2)">${escapeHtml(certType)}</span> — <span style="color:${color}">${st.dot} ${escapeHtml(status)}</span>`;
   document.getElementById("drill-body").innerHTML = `<div class="loading">Loading…</div>`;
   openModal("drill-overlay");
   try {
     const rows = await apiGet("list_employees_for_certificate", { certificate_type: certType, status, cohort: cohort || "" });
+    document.getElementById("drill-title").innerHTML += ` <span style="color:var(--text3);font-size:13px;font-weight:400">(${rows.length} employee${rows.length !== 1 ? "s" : ""})</span>`;
+    const showDays = status === "Expiring Soon" || status === "Expired";
     document.getElementById("drill-body").innerHTML = `
-      <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Click a name to open the full Employee record</div>
-      <table><thead><tr><th>Employee</th><th>Designation</th><th>Domain</th><th>Certificate No</th><th>Expiry</th><th>Status</th></tr></thead>
-      <tbody>${rows.map((r) => `<tr><td><a href="/app/employee/${r.employee}" target="_blank">${escapeHtml(r.employee_name)}</a></td><td>${r.designation || "—"}</td><td>${r.certification_domain || "—"}</td><td>${r.certificate_no || "—"}</td><td>${fmtDate(r.expiry_date)}</td><td>${statusBadge(r.status)}</td></tr>`).join("") || `<tr class="empty-row"><td colspan="6">No employees</td></tr>`}</tbody></table>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Click a row to view full employee details</div>
+      <table><thead><tr><th>#</th><th>Employee</th><th>Iqama</th><th>Domain</th><th>Position</th><th>Cert No</th><th>Start</th><th>Expiry</th>${showDays ? "<th>Days</th>" : ""}</tr></thead>
+      <tbody>${rows.map((r, i) => `<tr style="cursor:pointer" onclick="openDashCertRowDetail('${r.employee}')">
+        <td class="mono">${i + 1}</td>
+        <td><div style="display:flex;align-items:center;gap:6px">${companyBadgeHtml(r.tracker_company)}<strong>${escapeHtml(r.employee_name)}</strong></div></td>
+        <td class="mono">${escapeHtml(r.iqama_number) || "—"}</td>
+        <td>${escapeHtml(r.certification_domain) || "—"}</td>
+        <td>${escapeHtml(r.designation) || "—"}</td>
+        <td>${escapeHtml(r.certificate_no) || "—"}</td>
+        <td>${fmtDate(r.issue_date)}</td>
+        <td>${fmtDate(r.expiry_date)}</td>
+        ${showDays ? `<td style="color:${r.days_to_expiry < 0 ? "var(--red)" : "var(--yellow)"};font-weight:700">${r.days_to_expiry ?? "—"}</td>` : ""}
+      </tr>`).join("") || `<tr class="empty-row"><td colspan="${showDays ? 9 : 8}">No employees</td></tr>`}</tbody></table>
     `;
   } catch (e) { document.getElementById("drill-body").innerHTML = `<div class="notice">${escapeHtml(e.message)}</div>`; }
 }
@@ -1791,6 +2061,7 @@ async function renderCertCostView() {
       <div class="panel" style="background:linear-gradient(135deg,var(--purple-dim),transparent);border-color:var(--purple)">
         <div style="font-size:12px;color:var(--text2)">Total Renewal Cost — ${data.employees_count} employee${data.employees_count === 1 ? "" : "s"} in scope</div>
         <div style="font-size:28px;font-weight:800;font-family:monospace;color:var(--purple)">${fmtSAR(data.grand_total)}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">📋 Total Cost (All Holders, if everyone were renewed): <strong style="color:var(--text)">${fmtSAR(data.grand_total_all_holders)}</strong></div>
       </div>
       <div class="stat-grid">
         <div class="stat-card purple"><div class="sc-num">${fmtSAR(data.grand_total)}</div><div class="sc-label">Total Cost</div></div>
@@ -1804,14 +2075,15 @@ async function renderCertCostView() {
         <table><thead><tr>
           <th>Certificate Type</th><th style="text-align:center">Unit Cost</th><th style="text-align:center">Holders</th>
           <th style="text-align:center">🟢 Valid</th><th style="text-align:center">🟡 Expiring</th><th style="text-align:center">🔴 Expired</th>
-          <th style="text-align:center">Renewal Needed</th><th style="text-align:right">Total Cost</th>
+          <th style="text-align:center">Renewal Needed</th><th style="text-align:right">Renewal Cost</th><th style="text-align:right;background:var(--surface3)">Total Cost (All Holders)</th>
         </tr></thead>
         <tbody>${typeRows.map((r) => `<tr>
           <td><strong>${r.certificate_type}</strong></td><td style="text-align:center">${fmtSAR(r.unit_cost)}</td><td style="text-align:center">${r.holders}</td>
           <td style="text-align:center">${r.valid}</td><td style="text-align:center">${r.expiring}</td><td style="text-align:center">${r.expired}</td>
-          <td style="text-align:center">${r.renewal_needed}</td><td style="text-align:right;font-weight:700;color:${r.total_cost ? "var(--blue)" : "var(--text3)"}">${fmtSAR(r.total_cost)}</td>
+          <td style="text-align:center">${r.renewal_needed}</td><td style="text-align:right;font-weight:700;color:${r.total_cost ? "var(--yellow)" : "var(--text3)"}">${fmtSAR(r.total_cost)}</td>
+          <td style="text-align:right;font-weight:700;color:${r.all_holders_cost ? "var(--blue)" : "var(--text3)"};background:var(--surface3)">${fmtSAR(r.all_holders_cost)}</td>
         </tr>`).join("")}</tbody>
-        <tfoot><tr><td colspan="6"></td><td style="text-align:center"><strong>${renewalCount}</strong></td><td style="text-align:right"><strong>${fmtSAR(data.grand_total)}</strong></td></tr></tfoot>
+        <tfoot><tr><td colspan="6"></td><td style="text-align:center"><strong>${renewalCount}</strong></td><td style="text-align:right"><strong style="color:var(--yellow)">${fmtSAR(data.grand_total)}</strong></td><td style="text-align:right;background:var(--surface3)"><strong style="color:var(--blue)">${fmtSAR(data.grand_total_all_holders)}</strong></td></tr></tfoot>
         </table>
       </div></div>
 
@@ -2005,7 +2277,7 @@ async function renderByDomain() {
       </div>
       <div class="table-wrap"><div class="table-scroll">
         <table id="tbl-domain">
-          <thead><tr><th>#</th><th>Employee</th><th>Designation</th>${certTypes.map((c) => `<th style="text-align:center" title="${c}">${c}</th>`).join("")}<th>Actions</th></tr></thead>
+          <thead><tr><th>#</th><th>Employee</th><th>Designation</th><th>Company</th>${certTypes.map((c) => `<th style="text-align:center" title="${c}">${c}</th>`).join("")}<th>Actions</th></tr></thead>
           <tbody id="tbody-domain"></tbody>
         </table>
       </div></div>
@@ -2051,12 +2323,13 @@ function paintDomainTableBody() {
       <td class="mono">${start + i + 1}</td>
       <td><strong style="cursor:pointer;color:var(--blue)" onclick="openDetail('${e.name}','by-domain')">${escapeHtml(e.employee_name)}</strong></td>
       <td>${escapeHtml(e.designation) || "—"}</td>
+      <td>${escapeHtml(e.tracker_company) || "—"}</td>
       ${certTypes.map((c) => {
         const cert = (e.certs || {})[c];
         return `<td style="text-align:center" title="${c}: ${cert ? cert.status : "Not Issued"}">${statusDot(cert ? cert.status : null)}</td>`;
       }).join("")}
       <td><button class="dot-btn" title="View" onclick="openDetail('${e.name}','by-domain')">👁</button></td>
-    </tr>`).join("") || `<tr class="empty-row"><td colspan="${3 + certTypes.length}">No employees found</td></tr>`;
+    </tr>`).join("") || `<tr class="empty-row"><td colspan="${4 + certTypes.length}">No employees found</td></tr>`;
   const pel = document.getElementById("pagination-domain");
   const totalPages = Math.ceil(filtered.length / COHORT_PAGE_SIZE);
   if (totalPages <= 1) { pel.innerHTML = ""; return; }
@@ -2071,7 +2344,7 @@ function goToDomainPage(pg) { domainPage = pg; paintDomainTableBody(); }
 function exportDomainTable() {
   const certTypes = JSON.parse(document.getElementById("page-by-domain").dataset.certTypes || "[]");
   const rows = filterDomainEmployees().map((e) => {
-    const row = { Employee: e.employee_name, Domain: e.certification_domain || "", Designation: e.designation || "" };
+    const row = { Employee: e.employee_name, Domain: e.certification_domain || "", Designation: e.designation || "", Company: e.tracker_company || "" };
     certTypes.forEach((c) => { row[c] = (e.certs || {})[c]?.status || "Not Issued"; });
     return row;
   });
@@ -2122,7 +2395,7 @@ async function exportAllToExcel() {
  * Searches across ALL cohorts (Resource + Protech + Former) at once — this
  * is a standalone page, not Desk, so there's no Ctrl+G to fall back on. */
 let globalSearchTimer;
-function renderGlobalSearch() {
+async function renderGlobalSearch() {
   const el = document.getElementById("page-search");
   el.innerHTML = `
     <div class="ph"><div class="ph-left"><h1>Global Search</h1><p>Search every employee across all cohorts at once</p></div></div>
@@ -2137,6 +2410,13 @@ function renderGlobalSearch() {
     </div>
     <div id="gs-results"><div style="text-align:center;padding:40px;color:var(--text3)">Start typing, or pick a filter, to search…</div></div>
   `;
+  try {
+    const companies = await apiGet("list_tracker_companies");
+    if (companies.length) {
+      document.getElementById("gs-cohort").insertAdjacentHTML("beforeend",
+        companies.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join(""));
+    }
+  } catch (e) { /* company list is a nice-to-have filter option — search still works without it */ }
 }
 function debouncedGlobalSearch() {
   clearTimeout(globalSearchTimer);
@@ -2158,13 +2438,14 @@ async function runGlobalSearch() {
     if (!employees.length) { resultsEl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text3)">No results found</div>`; return; }
     resultsEl.innerHTML = `
       <div class="table-wrap"><div class="table-scroll">
-        <table><thead><tr><th>Employee</th><th>Iqama / ID</th><th>Domain</th><th>Designation</th><th>Status</th><th>Overall Cert Status</th><th>Actions</th></tr></thead>
+        <table><thead><tr><th>Employee</th><th>Iqama / ID</th><th>Domain</th><th>Designation</th><th>Company</th><th>Status</th><th>Overall Cert Status</th><th>Actions</th></tr></thead>
         <tbody>${employees.map((e) => `<tr>
           <td><strong style="cursor:pointer;color:var(--blue)" onclick="openGlobalSearchDetail('${e.name}')">${escapeHtml(e.employee_name)}</strong></td>
           <td>${escapeHtml(e.iqama_number) || "—"}</td>
           <td>${escapeHtml(e.certification_domain) || "—"}</td>
           <td>${escapeHtml(e.designation) || "—"}</td>
-          <td>${e.status === "Left" ? '<span class="badge badge-n">Left</span>' : '<span class="badge badge-g">Active</span>'}</td>
+          <td>${escapeHtml(e.tracker_company) || "—"}</td>
+          <td>${employeeStatusBadge(e.status)}</td>
           <td>${statusBadge(e.overall_status)}</td>
           <td><button class="dot-btn" title="View" onclick="openGlobalSearchDetail('${e.name}')">👁</button></td>
         </tr>`).join("")}</tbody></table>
@@ -2180,12 +2461,20 @@ function openGlobalSearchDetail(employeeName) { openDetail(employeeName, "search
 /* ── Init ─────────────────────────────────────────────────────── */
 document.addEventListener("DOMContentLoaded", () => {
   updateHeaderDate();
+  initDynamicTrackers();
   refreshBadges();
   nav("dashboard");
   // Click the dimmed backdrop (not the modal itself) to close — every
   // modal-overlay in the page gets this for free.
   document.querySelectorAll(".modal-overlay").forEach((o) => {
     o.addEventListener("click", (e) => { if (e.target === o) o.classList.remove("open"); });
+  });
+  // Escape closes whichever modal is open — the topmost one only, in the
+  // (rare) case of a modal opened from within another.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const open = document.querySelectorAll(".modal-overlay.open");
+    if (open.length) open[open.length - 1].classList.remove("open");
   });
 });
 </script>

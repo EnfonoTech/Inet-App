@@ -6,6 +6,8 @@ workflow doctype (PO Dispatch, Rollout Plan, Daily Execution, Work Done, ...)
 — see apps/inet_app/CLAUDE.md guardrail notes in the build plan.
 """
 
+import random
+
 import frappe
 from frappe import _
 from frappe.utils import cint, flt
@@ -36,6 +38,20 @@ def list_certification_domains():
 		filters={"status": "Active"},
 		fields=["name", "domain_name"],
 		order_by="domain_name asc",
+	)
+
+
+@frappe.whitelist()
+def list_certificate_tracker_companies():
+	"""Every active Certificate Tracker Company, regardless of whether it
+	currently has any employees — backs the Add/Edit Employee form's Company
+	dropdown. (Contrast list_tracker_companies(), which only returns
+	companies that actually have Active employees, for the By Company nav.)"""
+	return frappe.get_all(
+		"Certificate Tracker Company",
+		filters={"status": "Active"},
+		fields=["name", "company_name"],
+		order_by="company_name asc",
 	)
 
 
@@ -86,7 +102,11 @@ def get_nav_badge_counts():
 def _cohort_filters(cohort):
 	"""Map the UI's cohort tabs onto Employee filters. certification_domain ==
 	"WL & MW" is the Protech cohort; everything else Active is Resource;
-	Former is purely Employee.status, independent of domain."""
+	Former is purely Employee.status, independent of domain. Any other
+	cohort value that matches a real Certificate Tracker Company name (the
+	By Company page's tabs — Mabran, Wabranco, etc.) filters on that
+	instead, independent of domain — a subcontractor's resources aren't
+	further split by Resource/Protech."""
 	filters = {}
 	if cohort == "former":
 		filters["status"] = "Left"
@@ -98,6 +118,9 @@ def _cohort_filters(cohort):
 	elif cohort == "resource":
 		filters["status"] = "Active"
 		filters["certification_domain"] = ["!=", PROTECH_DOMAIN]
+	elif cohort and frappe.db.exists("Certificate Tracker Company", cohort):
+		filters["status"] = "Active"
+		filters["tracker_company"] = cohort
 	return filters
 
 
@@ -116,7 +139,7 @@ def list_employee_certificates(cohort=None, domain=None, search=None, limit=0):
 		fields=[
 			"name", "employee_name", "iqama_number", "nationality",
 			"cell_number", "personal_email", "designation",
-			"certification_domain", "status",
+			"certification_domain", "tracker_company", "status", "uniportal_id",
 		],
 		order_by="employee_name asc",
 	)
@@ -157,7 +180,7 @@ def _active_employees():
 	return frappe.get_all(
 		"Employee",
 		filters={"status": "Active"},
-		fields=["name", "certification_domain"],
+		fields=["name", "certification_domain", "tracker_company"],
 	)
 
 
@@ -285,15 +308,84 @@ def get_certificate_domain_summary():
 	return sorted(by_domain.values(), key=lambda d: d["employees"], reverse=True)
 
 
+# INET and Protech aren't separate subcontractor firms — they're already
+# fully represented by the domain-based Innovation Team / Protech (WL & MW)
+# trackers (certification_domain, not Company). Listing them again as their
+# own dynamic tracker would double-count the same people from two angles
+# (e.g. an INET-company, Fixed-Network employee shows up in both "Innovation
+# Team" and a standalone "INET" tracker). Matches the reference tool's own
+# SHEET_INFO, which likewise has no entry for either name.
+NON_SUBCONTRACTOR_COMPANIES = {"INET", "PROTECH"}
+
+
+@frappe.whitelist()
+def list_tracker_companies():
+	"""Active Certificate Tracker Company records (excluding INET/Protech —
+	see NON_SUBCONTRACTOR_COMPANIES) + how many Active employees are on each
+	— backs the sidebar's dynamic per-company trackers (one per subcontractor
+	that actually has people, no hardcoded list)."""
+	companies = frappe.get_all(
+		"Certificate Tracker Company",
+		filters={"status": "Active", "name": ["not in", list(NON_SUBCONTRACTOR_COMPANIES)]},
+		fields=["name"], order_by="name asc",
+	)
+	counts = {c.name: c.count for c in frappe.get_all(
+		"Employee", filters={"status": "Active", "tracker_company": ["is", "set"]},
+		fields=["tracker_company as name", "count(name) as count"], group_by="tracker_company",
+	)}
+	return [{"name": c.name, "employees": counts.get(c.name, 0)} for c in companies if counts.get(c.name)]
+
+
+@frappe.whitelist()
+def get_certificate_company_summary():
+	"""One row per Certificate Tracker Company (Mabran, Wabranco, ...): how
+	many Active employees, and the status breakdown across all of their
+	*eligible* certificate types combined. Same shape/eligibility rule as
+	get_certificate_domain_summary, just grouped by company instead of
+	domain — employees with no company set are excluded rather than lumped
+	into an "Unassigned" bucket, since not every historical record has one."""
+	employees = frappe.get_all(
+		"Employee", filters={"status": "Active", "tracker_company": ["is", "set"]},
+		fields=["name", "certification_domain", "tracker_company"],
+	)
+	if not employees:
+		return []
+	company_by_emp = {e.name: e.tracker_company for e in employees}
+	domain_by_emp = {e.name: e.certification_domain for e in employees}
+
+	cert_types = frappe.get_all("Certificate Type", filters={"is_active": 1}, fields=["name", "applies_to"])
+	certs = frappe.get_all(
+		"Employee Certificate",
+		filters={"employee": ["in", list(company_by_emp.keys())]},
+		fields=["employee", "certificate_type", "status"],
+	)
+	status_by_emp_cert = {(c.employee, c.certificate_type): c.status for c in certs}
+
+	by_company = {}
+	for emp_name, company in company_by_emp.items():
+		c = by_company.setdefault(company, {"company": company, "employees": 0, "counts": {s: 0 for s in ALL_STATUSES}})
+		c["employees"] += 1
+		domain = domain_by_emp.get(emp_name)
+		for ct in cert_types:
+			if not _is_eligible(ct.applies_to, domain):
+				continue
+			status = status_by_emp_cert.get((emp_name, ct.name), "Not Issued")
+			c["counts"][status] += 1
+
+	return sorted(by_company.values(), key=lambda c: c["employees"], reverse=True)
+
+
 @frappe.whitelist()
 def list_employees_for_certificate(certificate_type, status=None, cohort=None):
 	"""Drill-down for the Certificate Status Summary / Overview pages: every
 	currently-Active, eligible employee for `certificate_type`, optionally
 	narrowed to one status (a row missing entirely means "Not Issued") and to
-	one cohort ("resource"/"protech") so a scoped summary page's drill-through
-	doesn't pull in employees outside the sheet the user is looking at."""
-	if cohort in ("resource", "protech"):
-		employees = frappe.get_all("Employee", filters=_cohort_filters(cohort), fields=["name", "certification_domain"])
+	one cohort ("resource"/"protech"/a Certificate Tracker Company name) so a
+	scoped summary page's drill-through doesn't pull in employees outside the
+	sheet the user is looking at."""
+	cohort_filters = _cohort_filters(cohort) if cohort else {}
+	if cohort_filters:
+		employees = frappe.get_all("Employee", filters=cohort_filters, fields=["name", "certification_domain", "tracker_company"])
 	else:
 		employees = _active_employees()
 	cert_type = frappe.db.get_value("Certificate Type", certificate_type, "applies_to")
@@ -304,14 +396,14 @@ def list_employees_for_certificate(certificate_type, status=None, cohort=None):
 	certs = frappe.get_all(
 		"Employee Certificate",
 		filters={"employee": ["in", list(eligible.keys())], "certificate_type": certificate_type},
-		fields=["employee", "certificate_no", "expiry_date", "status", "days_to_expiry"],
+		fields=["employee", "certificate_no", "issue_date", "expiry_date", "status", "days_to_expiry"],
 	)
 	cert_by_emp = {c.employee: c for c in certs}
 
 	emp_names = frappe.get_all(
 		"Employee",
 		filters={"name": ["in", list(eligible.keys())]},
-		fields=["name", "employee_name", "designation"],
+		fields=["name", "employee_name", "iqama_number", "designation", "tracker_company"],
 	)
 
 	rows = []
@@ -323,9 +415,12 @@ def list_employees_for_certificate(certificate_type, status=None, cohort=None):
 		rows.append({
 			"employee": e.name,
 			"employee_name": e.employee_name,
+			"iqama_number": e.iqama_number,
 			"designation": e.designation,
 			"certification_domain": eligible.get(e.name),
+			"tracker_company": e.tracker_company,
 			"certificate_no": cert.certificate_no if cert else None,
+			"issue_date": cert.issue_date if cert else None,
 			"expiry_date": cert.expiry_date if cert else None,
 			"status": row_status,
 			"days_to_expiry": cert.days_to_expiry if cert else None,
@@ -420,16 +515,20 @@ def get_cost_page_data(cohort=None):
 			status = status_by_emp_cert.get((emp_name, ct.name), "Not Issued")
 			counts[status] += 1
 		renewal_needed = counts["Expiring Soon"] + counts["Expired"]
+		holders = counts["Valid"] + counts["Expiring Soon"] + counts["Expired"]
 		unit_cost = flt(ct.renewal_cost)
 		type_rows.append({
 			"certificate_type": ct.name,
 			"unit_cost": unit_cost,
-			"holders": counts["Valid"] + counts["Expiring Soon"] + counts["Expired"],
+			"holders": holders,
 			"valid": counts["Valid"], "expiring": counts["Expiring Soon"], "expired": counts["Expired"],
 			"renewal_needed": renewal_needed,
 			"expiring_cost": counts["Expiring Soon"] * unit_cost,
 			"expired_cost": counts["Expired"] * unit_cost,
 			"total_cost": renewal_needed * unit_cost,
+			# Cost if every current holder (not just those due for renewal)
+			# were renewed — a second, larger figure for budgeting purposes.
+			"all_holders_cost": holders * unit_cost,
 		})
 
 	cost_by_cohort = {}
@@ -486,6 +585,7 @@ def get_cost_page_data(cohort=None):
 		"employee_rows": employee_rows,
 		"priced_cert_types": [ct.name for ct in priced_types],
 		"grand_total": sum(r["total_cost"] for r in type_rows),
+		"grand_total_all_holders": sum(r["all_holders_cost"] for r in type_rows),
 	}
 
 
@@ -518,7 +618,7 @@ def get_certificates_by_status(status):
 	return frappe.db.sql(
 		"""
 		SELECT
-			ec.name, ec.employee, emp.employee_name, emp.certification_domain,
+			ec.name, ec.employee, emp.employee_name, emp.certification_domain, emp.tracker_company,
 			emp.designation, emp.iqama_number, emp.cell_number, ec.certificate_type,
 			ec.certificate_no, ec.expiry_date, ec.status, ec.days_to_expiry
 		FROM `tabEmployee Certificate` ec
@@ -585,6 +685,7 @@ def create_employee(payload):
 	doc.nationality = payload.get("nationality")
 	doc.uniportal_id = payload.get("uniportal_id")
 	doc.certification_domain = payload.get("certification_domain")
+	doc.tracker_company = payload.get("tracker_company")
 	doc.designation = payload.get("designation")
 	doc.insert()
 	return doc.as_dict()
@@ -613,7 +714,7 @@ def update_employee(name, payload):
 
 	for field in ("status", "gender", "date_of_birth", "date_of_joining", "relieving_date",
 	              "cell_number", "personal_email", "nationality", "uniportal_id",
-	              "certification_domain", "designation"):
+	              "certification_domain", "tracker_company", "designation"):
 		if field in payload:
 			doc.set(field, payload.get(field) or None)
 	if "iqama_number" in payload:
@@ -640,19 +741,12 @@ def delete_employee(name):
 def global_search_employees(query=None, status_filter=None, cohort=None):
 	"""Search across ALL employees (Active + Left) at once — the tracker is
 	a standalone page, not Desk, so there's no Ctrl+G fallback to lean on
-	the way the PMS portal can."""
-	filters = {}
-	if cohort == "former":
-		filters["status"] = "Left"
-	elif cohort == "protech":
-		filters["status"] = "Active"
-		filters["certification_domain"] = PROTECH_DOMAIN
-	elif cohort == "resource":
-		filters["status"] = "Active"
-		filters["certification_domain"] = ["!=", PROTECH_DOMAIN]
+	the way the PMS portal can. `cohort` accepts "resource"/"protech"/
+	"former" or any Certificate Tracker Company name (see _cohort_filters)."""
+	filters = _cohort_filters(cohort) if cohort else {}
 
 	fields = ["name", "employee_name", "iqama_number", "cell_number", "certification_domain",
-	          "designation", "status"]
+	          "tracker_company", "designation", "status"]
 	query = (query or "").strip()
 	if query:
 		# frappe.get_all doesn't do OR directly — search name/iqama/mobile separately and merge.
@@ -821,6 +915,232 @@ def bulk_upsert_employee_certificates(rows):
 				doc.expiry_date = row["expiry_date"]
 			doc.save()
 			summary["updated" if existing else "created"] += 1
+		except Exception as e:
+			summary["errors"].append({"row": row_no, "error": str(e)})
+
+	frappe.db.commit()
+	return summary
+
+
+# ---------------------------------------------------------------------------
+# Full sync from the reference tracker's Excel layout — unlike
+# bulk_upsert_employee_certificates above (cert-only renewals for employees
+# that already exist), this can create brand-new Employees too, so the
+# whole sheet can be uploaded directly and this bench ends up matching it.
+# ---------------------------------------------------------------------------
+
+_SHEET_STATUS_MAP = {
+	"current employee": "Active",
+	"former employee": "Left",
+	"blocked": "Suspended",
+	# ERPNext's Employee.validate() hardcodes its valid status list in Python
+	# (Active/Inactive/Suspended/Left) independent of the Select field's
+	# options, so a Property Setter alone can't add a real "Pending" status
+	# — it would just fail validation on every save. Pending resources are
+	# presumably still working, so they're treated as Active; nothing else
+	# in the sheet is lost since this cohort is otherwise fully captured by
+	# Certificate Tracker Company + Certification Domain.
+	"pending": "Active",
+	"active": "Active",
+	"inactive": "Inactive",
+	"suspended": "Suspended",
+	"left": "Left",
+}
+
+_TRACKER_DESIGNATION_ALIASES = {
+	"document": "Document Controller",
+	"team leader": "Team Leader",  # normalizes the sheet's "Team leader" casing variant
+}
+
+
+def _ensure_tracker_domain(name):
+	name = (name or "").strip()
+	if not name:
+		return None
+	if not frappe.db.exists("Certification Domain", name):
+		frappe.get_doc({"doctype": "Certification Domain", "domain_name": name}).insert(ignore_permissions=True)
+	return name
+
+
+def _ensure_tracker_company_master(name):
+	name = (name or "").strip()
+	if not name:
+		return None
+	if not frappe.db.exists("Certificate Tracker Company", name):
+		frappe.get_doc({"doctype": "Certificate Tracker Company", "company_name": name}).insert(ignore_permissions=True)
+	return name
+
+
+def _ensure_tracker_designation(name):
+	name = (name or "").strip()
+	if not name:
+		return None
+	name = _TRACKER_DESIGNATION_ALIASES.get(name.lower(), name)
+	if not frappe.db.exists("Designation", name):
+		frappe.get_doc({"doctype": "Designation", "designation_name": name}).insert(ignore_permissions=True)
+	return name
+
+
+def _random_placeholder_gender():
+	genders = frappe.get_all("Gender", pluck="name") or ["Male"]
+	return random.choice(genders)
+
+
+def _random_placeholder_dob():
+	"""A plausible working-age adult (20-55 years old) — only used when a
+	brand-new employee's sheet row has no DOB at all, so Frappe's mandatory
+	field validation passes with a real value instead of either being
+	bypassed (as the one-off historical import did) or blocking the row."""
+	years_ago = random.randint(20, 55)
+	days_jitter = random.randint(0, 364)
+	return frappe.utils.add_days(frappe.utils.add_years(frappe.utils.nowdate(), -years_ago), -days_jitter)
+
+
+@frappe.whitelist()
+def sync_employees_from_tracker_sheet(rows):
+	"""Upload the full reference tracker Excel (S.NO / Name / Iqama / Mobile /
+	Nationality / Email / Domain / Region / Position / Driver / Subcon /
+	Company Name / Uniportal / Status / Remarks, then Cert No./Start/Expiry
+	per certificate type) and sync it straight into Employee + Employee
+	Certificate — creating brand-new employees, not just renewing certs for
+	ones that already exist (see bulk_upsert_employee_certificates for that
+	narrower case). Domain / Designation / Certificate Tracker Company
+	values are auto-created if the sheet names one that doesn't exist yet,
+	so re-running this after the sheet changes keeps the bench in sync with
+	it. Dedupes Employees by Iqama/National ID, same as the one-off
+	historical import.
+
+	A brand-new employee's sheet row never has gender/date_of_birth/
+	date_of_joining (the sheet has no such columns) — Frappe's Employee
+	doctype requires all three. Rather than bypass that validation, a new
+	employee gets minimal random-but-valid placeholder values so the row
+	imports cleanly; every such employee is listed back in the summary so
+	HR knows exactly who to go correct."""
+	if isinstance(rows, str):
+		rows = frappe.parse_json(rows)
+
+	company = _default_company()
+	if not company:
+		frappe.throw(_("No Company found on this site — create one before running this import."))
+
+	summary = {
+		"employees_created": 0, "employees_updated": 0, "employees_skipped": 0,
+		"certs_created": 0, "certs_updated": 0,
+		"placeholder_personal_data": [],
+		"errors": [],
+	}
+
+	for i, row in enumerate(rows or []):
+		row_no = i + 6  # +1 for 0-index, +5 for this sheet's title/subtitle/header/subheader rows
+		try:
+			iqama = str(row.get("iqama") or "").strip()
+			employee_name = (row.get("employee_name") or "").strip()
+			if not iqama:
+				summary["errors"].append({"row": row_no, "error": "No Iqama/National ID to dedupe on — skipped"})
+				summary["employees_skipped"] += 1
+				continue
+
+			existing = frappe.db.get_value("Employee", {"iqama_number": iqama}, "name")
+			is_new = not existing
+			doc = frappe.get_doc("Employee", existing) if existing else frappe.new_doc("Employee")
+
+			if is_new:
+				parts = employee_name.split()
+				doc.first_name = parts[0] if parts else (employee_name or iqama)
+				if len(parts) > 1:
+					doc.last_name = " ".join(parts[1:])
+				doc.company = company
+				doc.status = "Active"
+
+			doc.employee_name = employee_name or doc.employee_name or iqama
+			doc.iqama_number = iqama
+			if row.get("cell_number"):
+				doc.cell_number = row["cell_number"]
+			if row.get("nationality"):
+				doc.nationality = row["nationality"]
+			if row.get("personal_email"):
+				doc.personal_email = row["personal_email"]
+			if row.get("uniportal_id"):
+				doc.uniportal_id = row["uniportal_id"]
+
+			domain_name = _ensure_tracker_domain(row.get("certification_domain"))
+			if domain_name:
+				doc.certification_domain = domain_name
+
+			company_name = _ensure_tracker_company_master(row.get("tracker_company"))
+			if company_name:
+				doc.tracker_company = company_name
+
+			designation_name = _ensure_tracker_designation(row.get("designation"))
+			if designation_name:
+				doc.designation = designation_name
+
+			mapped_status = _SHEET_STATUS_MAP.get(str(row.get("status") or "").strip().lower())
+			if mapped_status:
+				doc.status = mapped_status
+			if doc.status == "Left" and not doc.relieving_date:
+				# ERPNext requires a relieving_date for status=Left; the sheet
+				# has no real termination date, so today's date is flagged as
+				# an explicit placeholder for HR to correct per person.
+				doc.relieving_date = frappe.utils.nowdate()
+
+			# Whether brand-new or an existing record from the earlier
+			# historical import (which deliberately left these blank —
+			# ignore_mandatory was used there since the data genuinely didn't
+			# exist), a full doc.save() re-validates every mandatory field,
+			# not just the ones this sync touches. Backfilling a minimal
+			# random placeholder here — rather than leaving it blank — is
+			# what keeps this sync from failing on every such row. Resolved
+			# AFTER status/relieving_date above so a placeholder Date of
+			# Joining for an already-Left employee lands before their
+			# relieving date, not after it.
+			needs_placeholder = not (doc.gender and doc.date_of_birth and doc.date_of_joining)
+			if needs_placeholder:
+				doc.gender = doc.gender or _random_placeholder_gender()
+				doc.date_of_birth = doc.date_of_birth or _random_placeholder_dob()
+				if not doc.date_of_joining:
+					doc.date_of_joining = (
+						frappe.utils.add_days(doc.relieving_date, -random.randint(30, 730))
+						if doc.relieving_date else frappe.utils.nowdate()
+					)
+				summary["placeholder_personal_data"].append(employee_name or iqama)
+
+			if is_new:
+				doc.insert(ignore_permissions=True)
+			else:
+				doc.save(ignore_permissions=True)
+			summary["employees_" + ("created" if is_new else "updated")] += 1
+
+			for cert_type, cert in (row.get("certs") or {}).items():
+				if not (cert.get("no") or cert.get("expiry")):
+					continue
+				if not frappe.db.exists("Certificate Type", cert_type):
+					summary["errors"].append({"row": row_no, "error": f"Unknown Certificate Type: {cert_type!r}"})
+					continue
+				try:
+					cert_existing = frappe.db.get_value(
+						"Employee Certificate", {"employee": doc.name, "certificate_type": cert_type}, "name"
+					)
+					cdoc = frappe.get_doc("Employee Certificate", cert_existing) if cert_existing else frappe.new_doc("Employee Certificate")
+					cdoc.employee = doc.name
+					cdoc.certificate_type = cert_type
+					if cert.get("no"):
+						cdoc.certificate_no = cert["no"]
+					if cert.get("start"):
+						cdoc.issue_date = cert["start"]
+					if cert.get("expiry"):
+						cdoc.expiry_date = cert["expiry"]
+					if cert_existing:
+						cdoc.save(ignore_permissions=True)
+					else:
+						cdoc.insert(ignore_permissions=True)
+					summary["certs_" + ("updated" if cert_existing else "created")] += 1
+				except Exception as e:
+					# A malformed date in just this one certificate shouldn't
+					# block the employee's other certificates in the same row
+					# (a few rows in the source sheet have typos like
+					# "20-072026" or "01/06//2027") — flag it and move on.
+					summary["errors"].append({"row": row_no, "error": f"{cert_type}: {e}"})
 		except Exception as e:
 			summary["errors"].append({"row": row_no, "error": str(e)})
 

@@ -1051,9 +1051,20 @@ def _ensure_certificate_tracker_setup():
         "in_standard_filter": 1,
         "module": "Inet App",
     })
+    _add_field("Employee", "Employee-tracker_company", {
+        "fieldname": "tracker_company",
+        "label": "Tracker Company",
+        "description": "Which firm this resource is actually employed/subcontracted by (INET, Protech, or a subcontractor like Mabran/Wabranco) — independent of Certification Domain, which is the functional work area.",
+        "fieldtype": "Link",
+        "options": "Certificate Tracker Company",
+        "insert_after": "certification_domain",
+        "in_standard_filter": 1,
+        "module": "Inet App",
+    })
     _ensure_certification_domains()
     _ensure_certificate_types()
     _ensure_certificate_tracker_designations()
+    _ensure_tracker_companies()
 
 
 def _ensure_certification_domains():
@@ -1069,6 +1080,27 @@ def _ensure_certification_domains():
             }).insert(ignore_permissions=True)
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Certification Domain {domain_name} setup failed")
+    frappe.db.commit()
+
+
+def _ensure_tracker_companies():
+    """Seed the subcontractor/company names seen in the latest reference
+    tracker update's "Company Name" column, so the By Company page has
+    something to show even before the first Excel sync runs. The sync
+    endpoint (sync_employees_from_tracker_sheet) also auto-creates any new
+    company name it encounters, so this list isn't exhaustive by design."""
+    if not frappe.db.exists("DocType", "Certificate Tracker Company"):
+        return
+    for company_name in ["INET", "PROTECH", "MABRAN", "WABRANCO", "ALIM UR RASHEED", "SHIHAB", "SHASCO", "SOLCOM", "JEERESH"]:
+        if frappe.db.exists("Certificate Tracker Company", company_name):
+            continue
+        try:
+            frappe.get_doc({
+                "doctype": "Certificate Tracker Company",
+                "company_name": company_name,
+            }).insert(ignore_permissions=True)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"Certificate Tracker Company {company_name} setup failed")
     frappe.db.commit()
 
 
