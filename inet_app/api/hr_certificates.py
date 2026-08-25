@@ -982,40 +982,50 @@ _TRACKER_DESIGNATION_ALIASES = {
 }
 
 
-def _ensure_tracker_domain(name):
+def _ensure_master(doctype, name_field, name, cache=None):
+	"""Find-or-create a lightweight master record by name. `cache`, when
+	given, is a set shared across every call for the SAME doctype within
+	one batch (e.g. one tracker sync) — most rows repeat the same handful
+	of domain/company/designation values, so without it this is a wasted
+	`frappe.db.exists()` round trip on every single row."""
 	name = (name or "").strip()
 	if not name:
 		return None
-	if not frappe.db.exists("Certification Domain", name):
-		frappe.get_doc({"doctype": "Certification Domain", "domain_name": name}).insert(ignore_permissions=True)
+	if cache is not None and name in cache:
+		return name
+	if not frappe.db.exists(doctype, name):
+		frappe.get_doc({"doctype": doctype, name_field: name}).insert(ignore_permissions=True)
+	if cache is not None:
+		cache.add(name)
 	return name
 
 
-def _ensure_tracker_company_master(name):
-	name = (name or "").strip()
-	if not name:
-		return None
-	if not frappe.db.exists("Certificate Tracker Company", name):
-		frappe.get_doc({"doctype": "Certificate Tracker Company", "company_name": name}).insert(ignore_permissions=True)
-	return name
+def _ensure_tracker_domain(name, cache=None):
+	return _ensure_master("Certification Domain", "domain_name", name, cache)
 
 
-def _ensure_tracker_designation(name):
+def _ensure_tracker_company_master(name, cache=None):
+	return _ensure_master("Certificate Tracker Company", "company_name", name, cache)
+
+
+def _ensure_tracker_designation(name, cache=None):
 	name = (name or "").strip()
 	if not name:
 		return None
 	name = _TRACKER_DESIGNATION_ALIASES.get(name.lower(), name)
-	if not frappe.db.exists("Designation", name):
-		frappe.get_doc({"doctype": "Designation", "designation_name": name}).insert(ignore_permissions=True)
-	return name
+	return _ensure_master("Designation", "designation_name", name, cache)
 
 
-def _ensure_employment_type(name):
+def _ensure_employment_type(name, cache=None):
 	name = (name or "").strip()
 	if not name:
 		return None
+	if cache is not None and name in cache:
+		return name
 	if not frappe.db.exists("Employment Type", name):
 		frappe.get_doc({"doctype": "Employment Type", "employee_type_name": name}).insert(ignore_permissions=True)
+	if cache is not None:
+		cache.add(name)
 	return name
 
 
@@ -1061,6 +1071,27 @@ def sync_employees_from_tracker_sheet(rows):
 	if not company:
 		frappe.throw(_("No Company found on this site — create one before running this import."))
 
+	# Bulk pre-fetch instead of a handful of lookup queries PER ROW — a
+	# ~150-row sheet was otherwise issuing 1,500+ individual `db.get_value`/
+	# `db.exists` round trips before a single document even got saved, slow
+	# enough to blow past the webserver's own request timeout (504) even
+	# before this got moved to a background job.
+	existing_by_iqama = dict(frappe.db.sql(
+		"SELECT iqama_number, name FROM `tabEmployee` WHERE IFNULL(iqama_number, '') != ''"
+	))
+	existing_by_empnum = dict(frappe.db.sql(
+		"SELECT employee_number, name FROM `tabEmployee` WHERE IFNULL(employee_number, '') != ''"
+	))
+	existing_employee_names = set(frappe.db.sql_list("SELECT name FROM `tabEmployee`"))
+	valid_cert_types = set(frappe.db.sql_list("SELECT name FROM `tabCertificate Type`"))
+	existing_certs = {
+		(c.employee, c.certificate_type): c.name
+		for c in frappe.db.sql(
+			"SELECT employee, certificate_type, name FROM `tabEmployee Certificate`", as_dict=True
+		)
+	}
+	domain_cache, company_cache, designation_cache, employment_type_cache = set(), set(), set(), set()
+
 	summary = {
 		"employees_created": 0, "employees_updated": 0, "employees_skipped": 0,
 		"certs_created": 0, "certs_updated": 0,
@@ -1085,9 +1116,9 @@ def sync_employees_from_tracker_sheet(rows):
 			# means this dedupe still finds them correctly instead of trying
 			# to insert a duplicate that collides with the existing ID.
 			existing = (
-				frappe.db.get_value("Employee", {"iqama_number": iqama}, "name")
-				or frappe.db.get_value("Employee", {"employee_number": iqama}, "name")
-				or (iqama if frappe.db.exists("Employee", iqama) else None)
+				existing_by_iqama.get(iqama)
+				or existing_by_empnum.get(iqama)
+				or (iqama if iqama in existing_employee_names else None)
 			)
 			is_new = not existing
 			doc = frappe.get_doc("Employee", existing) if existing else frappe.new_doc("Employee")
@@ -1116,11 +1147,11 @@ def sync_employees_from_tracker_sheet(rows):
 			if row.get("uniportal_id"):
 				doc.uniportal_id = row["uniportal_id"]
 
-			domain_name = _ensure_tracker_domain(row.get("certification_domain"))
+			domain_name = _ensure_tracker_domain(row.get("certification_domain"), cache=domain_cache)
 			if domain_name:
 				doc.certification_domain = domain_name
 
-			company_name = _ensure_tracker_company_master(row.get("tracker_company"))
+			company_name = _ensure_tracker_company_master(row.get("tracker_company"), cache=company_cache)
 			if company_name:
 				doc.tracker_company = company_name
 				# Business rule from HR: every subcontractor firm's resource is
@@ -1129,9 +1160,9 @@ def sync_employees_from_tracker_sheet(rows):
 				# employment_type, since no replacement value was specified
 				# for that side of the rule.
 				if company_name.strip().upper() != "INET":
-					doc.employment_type = _ensure_employment_type("Contract")
+					doc.employment_type = _ensure_employment_type("Contract", cache=employment_type_cache)
 
-			designation_name = _ensure_tracker_designation(row.get("designation"))
+			designation_name = _ensure_tracker_designation(row.get("designation"), cache=designation_cache)
 			if designation_name:
 				doc.designation = designation_name
 
@@ -1167,20 +1198,29 @@ def sync_employees_from_tracker_sheet(rows):
 
 			if is_new:
 				doc.insert(ignore_permissions=True)
+				# Keep the pre-fetched lookup maps current in case the same
+				# Iqama appears twice in one upload (a duplicate row) — the
+				# second occurrence should update this same record, not try
+				# to insert another one.
+				existing_by_iqama[iqama] = doc.name
+				existing_employee_names.add(doc.name)
 			else:
-				doc.save(ignore_permissions=True)
+				# ignore_version: this bulk sync can touch hundreds of
+				# documents in one run — skipping the audit-trail Version
+				# snapshot on each update meaningfully cuts save() overhead
+				# and isn't needed for HR data re-synced straight from the
+				# source spreadsheet.
+				doc.save(ignore_permissions=True, ignore_version=True)
 			summary["employees_" + ("created" if is_new else "updated")] += 1
 
 			for cert_type, cert in (row.get("certs") or {}).items():
 				if not (cert.get("no") or cert.get("expiry")):
 					continue
-				if not frappe.db.exists("Certificate Type", cert_type):
+				if cert_type not in valid_cert_types:
 					summary["errors"].append({"row": row_no, "error": f"Unknown Certificate Type: {cert_type!r}"})
 					continue
 				try:
-					cert_existing = frappe.db.get_value(
-						"Employee Certificate", {"employee": doc.name, "certificate_type": cert_type}, "name"
-					)
+					cert_existing = existing_certs.get((doc.name, cert_type))
 					cdoc = frappe.get_doc("Employee Certificate", cert_existing) if cert_existing else frappe.new_doc("Employee Certificate")
 					cdoc.employee = doc.name
 					cdoc.certificate_type = cert_type
@@ -1191,9 +1231,10 @@ def sync_employees_from_tracker_sheet(rows):
 					if cert.get("expiry"):
 						cdoc.expiry_date = cert["expiry"]
 					if cert_existing:
-						cdoc.save(ignore_permissions=True)
+						cdoc.save(ignore_permissions=True, ignore_version=True)
 					else:
 						cdoc.insert(ignore_permissions=True)
+						existing_certs[(doc.name, cert_type)] = cdoc.name
 					summary["certs_" + ("updated" if cert_existing else "created")] += 1
 				except Exception as e:
 					# A malformed date in just this one certificate shouldn't
@@ -1204,8 +1245,53 @@ def sync_employees_from_tracker_sheet(rows):
 		except Exception as e:
 			summary["errors"].append({"row": row_no, "error": str(e)})
 
+		if (i + 1) % 20 == 0:
+			# Commit periodically rather than once at the very end — a large
+			# sheet holding one huge open transaction for the whole run is
+			# needless lock contention, and this way a worker restart or
+			# crash partway through doesn't lose everything already done.
+			frappe.db.commit()
+
 	frappe.db.commit()
 	return summary
+
+
+@frappe.whitelist()
+def enqueue_tracker_sync(rows):
+	"""Runs sync_employees_from_tracker_sheet in the background instead of
+	inline. Syncing 150+ employees and several hundred certificates in one
+	HTTP request routinely takes long enough to hit the webserver's own
+	request timeout (a 504, not a real failure — the frontend has no way
+	to tell the difference). This just queues the work and hands back a
+	job_id; the frontend polls check_tracker_sync_status() until it's
+	done, however long that actually takes."""
+	if isinstance(rows, str):
+		rows = frappe.parse_json(rows)
+	job_id = frappe.generate_hash(length=12)
+	frappe.enqueue(
+		"inet_app.api.hr_certificates.sync_employees_from_tracker_sheet",
+		queue="long",
+		timeout=3600,
+		job_id=job_id,
+		rows=rows,
+	)
+	return {"job_id": job_id}
+
+
+@frappe.whitelist()
+def check_tracker_sync_status(job_id):
+	from frappe.utils.background_jobs import get_job
+
+	job = get_job(job_id)
+	if job is None:
+		return {"status": "unknown"}
+	status = job.get_status(refresh=True)
+	if status == "finished":
+		return {"status": "finished", "result": job.result}
+	if status == "failed":
+		exc = job.exc_info or "Unknown error"
+		return {"status": "failed", "error": str(exc)[-2000:]}
+	return {"status": status or "queued"}
 
 
 # ---------------------------------------------------------------------------

@@ -1500,22 +1500,17 @@ async function runFullSync() {
       resultEl.innerHTML = `<div class="notice">No data rows found under the header.</div>`;
       return;
     }
-    const summary = await apiPost("sync_employees_from_tracker_sheet", { rows: JSON.stringify(rows) });
-    resultEl.innerHTML = `
-      <div style="margin-bottom:8px">
-        <strong style="color:var(--green)">${summary.employees_created}</strong> employees created,
-        <strong style="color:var(--blue)">${summary.employees_updated}</strong> updated,
-        <strong style="color:var(--text3)">${summary.employees_skipped}</strong> skipped &nbsp;·&nbsp;
-        <strong style="color:var(--green)">${summary.certs_created}</strong> certs created,
-        <strong style="color:var(--blue)">${summary.certs_updated}</strong> certs updated
-      </div>
-      ${summary.placeholder_personal_data.length ? `
-        <div class="notice" style="margin-bottom:8px">
-          <strong>${summary.placeholder_personal_data.length}</strong> new employee${summary.placeholder_personal_data.length === 1 ? "" : "s"} got a random placeholder Gender / DOB / Date of Joining — please correct from the Employee list:
-          <div style="margin-top:4px;max-height:120px;overflow:auto">${summary.placeholder_personal_data.map(escapeHtml).join(", ")}</div>
-        </div>` : ""}
-      ${summary.errors.length ? `<div style="max-height:160px;overflow:auto;font-size:12px;color:var(--red)">${summary.errors.map((e) => `Row ${e.row}: ${escapeHtml(e.error)}`).join("<br>")}</div>` : ""}
-    `;
+    // Syncing 150+ employees and several hundred certificates in one HTTP
+    // request routinely takes long enough to hit the webserver's own
+    // timeout (a 504 — the request keeps running server-side, but the
+    // browser gives up and the frontend has no result to show). This runs
+    // it as a background job instead and polls for the result, so however
+    // long the actual work takes, the upload itself can't time out.
+    const { job_id } = await apiPost("enqueue_tracker_sync", { rows: JSON.stringify(rows) });
+    const startedAt = Date.now();
+    resultEl.innerHTML = `<div class="notice" id="sync-progress">Queued — processing ${rows.length} rows in the background…</div>`;
+    const summary = await pollTrackerSync(job_id, startedAt);
+    renderSyncSummary(summary, resultEl);
     if (summary.employees_created || summary.employees_updated) {
       nav(CURRENT_PAGE); refreshBadges();
       toast(`${summary.employees_created} created, ${summary.employees_updated} updated`, "success");
@@ -1525,6 +1520,49 @@ async function runFullSync() {
   } finally {
     btn.disabled = false; btn.textContent = "Upload & Sync";
   }
+}
+
+function pollTrackerSync(jobId, startedAt) {
+  const progressEl = () => document.getElementById("sync-progress");
+  return new Promise((resolve, reject) => {
+    const tick = async () => {
+      let status;
+      try {
+        status = await apiGet("check_tracker_sync_status", { job_id: jobId });
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      if (status.status === "finished") { resolve(status.result); return; }
+      if (status.status === "failed") { reject(new Error(status.error || "Background sync failed")); return; }
+      if (status.status === "unknown") { reject(new Error("Lost track of the background job — check the Employee list directly to see what landed.")); return; }
+      const el = progressEl();
+      if (el) {
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        el.textContent = `Still processing… (${secs}s so far — large sheets can take a few minutes)`;
+      }
+      setTimeout(tick, 3000);
+    };
+    tick();
+  });
+}
+
+function renderSyncSummary(summary, resultEl) {
+  resultEl.innerHTML = `
+    <div style="margin-bottom:8px">
+      <strong style="color:var(--green)">${summary.employees_created}</strong> employees created,
+      <strong style="color:var(--blue)">${summary.employees_updated}</strong> updated,
+      <strong style="color:var(--text3)">${summary.employees_skipped}</strong> skipped &nbsp;·&nbsp;
+      <strong style="color:var(--green)">${summary.certs_created}</strong> certs created,
+      <strong style="color:var(--blue)">${summary.certs_updated}</strong> certs updated
+    </div>
+    ${summary.placeholder_personal_data.length ? `
+      <div class="notice" style="margin-bottom:8px">
+        <strong>${summary.placeholder_personal_data.length}</strong> new employee${summary.placeholder_personal_data.length === 1 ? "" : "s"} got a random placeholder Gender / DOB / Date of Joining — please correct from the Employee list:
+        <div style="margin-top:4px;max-height:120px;overflow:auto">${summary.placeholder_personal_data.map(escapeHtml).join(", ")}</div>
+      </div>` : ""}
+    ${summary.errors.length ? `<div style="max-height:160px;overflow:auto;font-size:12px;color:var(--red)">${summary.errors.map((e) => `Row ${e.row}: ${escapeHtml(e.error)}`).join("<br>")}</div>` : ""}
+  `;
 }
 
 /* ── Add / Edit Employee (shared form) ────────────────────────
