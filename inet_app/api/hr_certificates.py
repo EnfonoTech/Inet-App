@@ -17,6 +17,20 @@ PROTECH_DOMAIN = "WL & MW"
 ALL_STATUSES = ["Valid", "Expiring Soon", "Expired", "Not Issued"]
 
 
+def set_employee_autoname(doc, method=None):
+	"""doc_events hook (Employee.autoname) — names a new Employee by its
+	Employee Number (== Iqama/National ID for everyone this tracker touches)
+	instead of the HR-EMP- series, matching production's actual convention:
+	an employee's ID *is* their employee number there. Only sets doc.name
+	when it actually has a value to use — an Employee created elsewhere on
+	this bench without one (e.g. an unrelated Desk flow) is untouched here,
+	and Frappe's own naming_series fallback in set_new_name() takes over
+	exactly as before."""
+	value = (doc.employee_number or doc.iqama_number or "").strip()
+	if value:
+		doc.name = value
+
+
 # ---------------------------------------------------------------------------
 # Catalog
 # ---------------------------------------------------------------------------
@@ -660,7 +674,12 @@ def create_employee(payload):
 		frappe.throw(_("Employee Name is required."))
 
 	iqama = (payload.get("iqama_number") or "").strip()
-	if iqama and frappe.db.exists("Employee", {"iqama_number": iqama}):
+	if not iqama:
+		# Employee Number is mandatory on this site (Property Setter) and
+		# doubles as the Employee ID (see set_employee_autoname) — without
+		# an Iqama there's nothing to name the record by.
+		frappe.throw(_("Iqama / National ID is required."))
+	if frappe.db.exists("Employee", {"iqama_number": iqama}):
 		frappe.throw(_("An employee with Iqama/National ID {0} already exists.").format(iqama))
 
 	company = _default_company()
@@ -682,6 +701,10 @@ def create_employee(payload):
 	doc.cell_number = payload.get("cell_number")
 	doc.personal_email = payload.get("personal_email")
 	doc.iqama_number = iqama or None
+	# Employee Number doubles as the actual Employee ID on this site (see
+	# set_employee_autoname) — matches production's convention, where an
+	# employee's ID *is* their employee number.
+	doc.employee_number = iqama or None
 	doc.nationality = payload.get("nationality")
 	doc.uniportal_id = payload.get("uniportal_id")
 	doc.certification_domain = payload.get("certification_domain")
@@ -719,6 +742,12 @@ def update_employee(name, payload):
 			doc.set(field, payload.get(field) or None)
 	if "iqama_number" in payload:
 		doc.iqama_number = iqama or None
+		# Keep Employee Number in sync with Iqama (see set_employee_autoname)
+		# — a corrected Iqama should carry through, though correcting it
+		# after the fact does NOT rename the already-created record itself
+		# (autoname only runs once, on insert).
+		if iqama:
+			doc.employee_number = iqama
 
 	doc.save()
 	return doc.as_dict()
@@ -981,6 +1010,15 @@ def _ensure_tracker_designation(name):
 	return name
 
 
+def _ensure_employment_type(name):
+	name = (name or "").strip()
+	if not name:
+		return None
+	if not frappe.db.exists("Employment Type", name):
+		frappe.get_doc({"doctype": "Employment Type", "employee_type_name": name}).insert(ignore_permissions=True)
+	return name
+
+
 def _random_placeholder_gender():
 	genders = frappe.get_all("Gender", pluck="name") or ["Male"]
 	return random.choice(genders)
@@ -1040,7 +1078,17 @@ def sync_employees_from_tracker_sheet(rows):
 				summary["employees_skipped"] += 1
 				continue
 
-			existing = frappe.db.get_value("Employee", {"iqama_number": iqama}, "name")
+			# Some sites (e.g. production, before this app's custom fields
+			# existed there) already name/number their Employees by Iqama
+			# without the iqama_number field itself ever being populated.
+			# Falling back through employee_number and the docname itself
+			# means this dedupe still finds them correctly instead of trying
+			# to insert a duplicate that collides with the existing ID.
+			existing = (
+				frappe.db.get_value("Employee", {"iqama_number": iqama}, "name")
+				or frappe.db.get_value("Employee", {"employee_number": iqama}, "name")
+				or (iqama if frappe.db.exists("Employee", iqama) else None)
+			)
 			is_new = not existing
 			doc = frappe.get_doc("Employee", existing) if existing else frappe.new_doc("Employee")
 
@@ -1054,6 +1102,11 @@ def sync_employees_from_tracker_sheet(rows):
 
 			doc.employee_name = employee_name or doc.employee_name or iqama
 			doc.iqama_number = iqama
+			# Production names Employees off employee_number (its Employee ID
+			# is the Iqama Number, not this bench's HR-EMP- series) — keep
+			# that field populated to match regardless of which naming
+			# scheme is actually active on the site this runs against.
+			doc.employee_number = iqama
 			if row.get("cell_number"):
 				doc.cell_number = row["cell_number"]
 			if row.get("nationality"):
@@ -1070,6 +1123,13 @@ def sync_employees_from_tracker_sheet(rows):
 			company_name = _ensure_tracker_company_master(row.get("tracker_company"))
 			if company_name:
 				doc.tracker_company = company_name
+				# Business rule from HR: every subcontractor firm's resource is
+				# on a Contract; only INET's own staff aren't. Only ever sets
+				# "Contract" — never clears/overwrites an INET employee's
+				# employment_type, since no replacement value was specified
+				# for that side of the rule.
+				if company_name.strip().upper() != "INET":
+					doc.employment_type = _ensure_employment_type("Contract")
 
 			designation_name = _ensure_tracker_designation(row.get("designation"))
 			if designation_name:

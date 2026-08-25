@@ -195,6 +195,12 @@ role_home_page = {
 # Hook on document methods and events
 
 doc_events = {
+	"Employee": {
+		# Names a new Employee by Employee Number (== Iqama/National ID here)
+		# instead of the HR-EMP- series, matching production's convention.
+		# See set_employee_autoname's docstring for the fallback behavior.
+		"autoname": "inet_app.api.hr_certificates.set_employee_autoname",
+	},
 	"Sales Invoice": {
 		"before_submit": "inet_app.api.pic.before_sales_invoice_submit",
 		"on_submit": "inet_app.api.pic.on_sales_invoice_submit",

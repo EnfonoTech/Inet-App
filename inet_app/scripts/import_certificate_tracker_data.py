@@ -71,6 +71,11 @@ def _find_or_create_employee(entry, company):
 	doc.cell_number = entry.get("mobile") or doc.cell_number
 	doc.personal_email = entry.get("email") or doc.personal_email
 	doc.iqama_number = iqama
+	# Production names Employees off employee_number (its Employee ID is the
+	# Iqama Number, not this bench's HR-EMP- series) — keep that field
+	# populated to match regardless of which naming scheme is actually
+	# active on the site this runs against.
+	doc.employee_number = iqama
 	doc.nationality = entry.get("nationality") or doc.nationality
 	doc.uniportal_id = entry.get("uniportal") or doc.uniportal_id
 	doc.certification_domain = entry.get("domain") or doc.certification_domain

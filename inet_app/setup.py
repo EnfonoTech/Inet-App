@@ -1090,7 +1090,6 @@ def _ensure_certificate_tracker_setup():
     _add_field("Employee", "Employee-tracker_company", {
         "fieldname": "tracker_company",
         "label": "Tracker Company",
-        "description": "Which firm this resource is actually employed/subcontracted by (INET, Protech, or a subcontractor like Mabran/Wabranco) — independent of Certification Domain, which is the functional work area.",
         "fieldtype": "Link",
         "options": "Certificate Tracker Company",
         "insert_after": "certification_domain",
@@ -1101,6 +1100,8 @@ def _ensure_certificate_tracker_setup():
     _ensure_certificate_types()
     _ensure_certificate_tracker_designations()
     _ensure_tracker_companies()
+    _backfill_employment_type_from_tracker_company()
+    _backfill_employee_number_from_iqama()
 
 
 def _ensure_certification_domains():
@@ -1116,6 +1117,24 @@ def _ensure_certification_domains():
             }).insert(ignore_permissions=True)
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Certification Domain {domain_name} setup failed")
+    frappe.db.commit()
+
+
+def _backfill_employee_number_from_iqama():
+    """Production names Employees off employee_number (its Employee ID is
+    the Iqama Number, not this bench's HR-EMP- series) — some employees
+    there already have employee_number == iqama_number == their ID. Every
+    Employee imported/synced by this app so far predates that being set
+    (the sync endpoint now sets it going forward). Idempotent — only fills
+    employee_number where it's currently blank."""
+    frappe.db.sql(
+        """
+        UPDATE `tabEmployee`
+        SET employee_number = iqama_number
+        WHERE IFNULL(employee_number, '') = ''
+          AND IFNULL(iqama_number, '') != ''
+        """
+    )
     frappe.db.commit()
 
 
@@ -1137,6 +1156,33 @@ def _ensure_tracker_companies():
             }).insert(ignore_permissions=True)
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Certificate Tracker Company {company_name} setup failed")
+    frappe.db.commit()
+
+
+def _backfill_employment_type_from_tracker_company():
+    """HR business rule: every subcontractor firm's resource is on a
+    Contract; only INET's own staff aren't. The Excel sync applies this to
+    new/updated rows going forward, but the ~150 employees already synced
+    before this rule existed need a one-time backfill. Idempotent — only
+    touches employees whose Tracker Company says "not INET" and whose
+    employment_type isn't already Contract; never touches INET employees
+    (no replacement value was specified for that side of the rule)."""
+    if not frappe.db.exists("DocType", "Certificate Tracker Company"):
+        return
+    if not frappe.db.exists("Employment Type", "Contract"):
+        try:
+            frappe.get_doc({"doctype": "Employment Type", "employee_type_name": "Contract"}).insert(ignore_permissions=True)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "Employment Type Contract setup failed")
+            return
+    frappe.db.sql(
+        """
+        UPDATE `tabEmployee`
+        SET employment_type = 'Contract'
+        WHERE IFNULL(UPPER(tracker_company), '') NOT IN ('', 'INET')
+          AND (employment_type IS NULL OR employment_type != 'Contract')
+        """
+    )
     frappe.db.commit()
 
 
