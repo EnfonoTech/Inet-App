@@ -168,6 +168,7 @@ const picNav = [
   { to: "/pic-tracker",            label: "PIC Tracker",        icon: "barChart" },
   { to: "/pic-closed",             label: "Closed",             icon: "checkCircle" },
   { to: "/pic-cancelled",          label: "Cancelled",          icon: "folder" },
+  { to: "/pic-invoice-detail",     label: "Invoice Detail",     icon: "eye" },
   { to: "/pic-invoicing-summary",  label: "Invoicing Summary",  icon: "barChart" },
   // Supplier side — Purchase Orders to subcontractors (subcon_po.py)
   { to: "/pic-subcon-po",          label: "Subcon PO",          icon: "package" },

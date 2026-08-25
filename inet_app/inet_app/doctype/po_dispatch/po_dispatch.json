@@ -90,6 +90,11 @@
   "subcon_pct_ms2",
   "inet_pct_ms2",
   "direct_close_by",
+  "section_legacy_invoice",
+  "legacy_ms1_invoice_no",
+  "legacy_ms2_invoice_no",
+  "column_break_legacy",
+  "legacy_po_type",
   "section_subcon_po",
   "sub_po_supplier",
   "column_break_subpo1",
@@ -616,6 +621,33 @@
    "label": "Direct Closed By",
    "options": "IM Master",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_legacy_invoice",
+   "fieldtype": "Section Break",
+   "label": "Legacy Invoice Data (Historical Import)"
+  },
+  {
+   "fieldname": "legacy_ms1_invoice_no",
+   "fieldtype": "Data",
+   "label": "Legacy Invoice No. (MS1)",
+   "search_index": 1
+  },
+  {
+   "fieldname": "legacy_ms2_invoice_no",
+   "fieldtype": "Data",
+   "label": "Legacy Invoice No. (MS2)",
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_legacy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "legacy_po_type",
+   "fieldtype": "Data",
+   "label": "Legacy PO Type"
   },
   {
    "collapsible": 1,

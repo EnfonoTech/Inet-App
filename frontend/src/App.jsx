@@ -57,6 +57,7 @@ const PICClosed           = lazy(() => import("./pages/pic/PICClosed"));
 const PICCancelled        = lazy(() => import("./pages/pic/PICCancelled"));
 const PICReports          = lazy(() => import("./pages/pic/PICReports"));
 const PICInvoicingSummary = lazy(() => import("./pages/pic/PICInvoicingSummary"));
+const PICInvoiceDetail    = lazy(() => import("./pages/pic/PICInvoiceDetail"));
 const SubconPO            = lazy(() => import("./pages/pic/SubconPO"));
 const SubconPayout        = lazy(() => import("./pages/pic/SubconPayout"));
 
@@ -193,6 +194,7 @@ function AppContent() {
               <Route path="/pic-tracker" element={<PICTracker />} />
               <Route path="/pic-closed" element={<PICClosed />} />
               <Route path="/pic-cancelled" element={<PICCancelled />} />
+              <Route path="/pic-invoice-detail" element={<PICInvoiceDetail />} />
               <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
               <Route path="/pic-subcon-po" element={<SubconPO />} />
               <Route path="/pic-subcon-payout" element={<SubconPayout />} />
@@ -208,6 +210,7 @@ function AppContent() {
               <Route path="/pic-tracker" element={<PICTracker />} />
               <Route path="/pic-closed" element={<PICClosed />} />
               <Route path="/pic-cancelled" element={<PICCancelled />} />
+              <Route path="/pic-invoice-detail" element={<PICInvoiceDetail />} />
               <Route path="/pic-invoicing-summary" element={<PICInvoicingSummary />} />
               <Route path="/pic-subcon-po" element={<SubconPO />} />
               <Route path="/pic-subcon-payout" element={<SubconPayout />} />

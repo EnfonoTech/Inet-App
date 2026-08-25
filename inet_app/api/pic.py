@@ -627,6 +627,256 @@ def _vat_on_sql(amount_expr, tax_col="pd.tax_rate"):
     return f"IFNULL({amount_expr}, 0) * ({frac})"
 
 
+def _invoice_detail_milestone_sql(ms, where_extra):
+    """SELECT block for one milestone (1 or 2) of the Invoice Detail report.
+
+    Row grain is (PO Dispatch, milestone) — one row per milestone that was
+    actually invoiced, matching the historical "Invoices Data" Excel import
+    exactly: a POID with both AC1 and AC2 legacy invoices is 2 rows there,
+    so it's 2 rows here too. list_invoice_detail_rows UNIONs the MS1 and MS2
+    blocks together.
+
+    Invoice No. is the one column that has to serve both eras: a stored
+    legacy_ms{n}_invoice_no (pre-system, not a real document) when present,
+    else whatever real, submitted Sales Invoice(s) cover this POID/milestone
+    (Sales Invoice Item.poid stores the PO Dispatch *name*, not its poid
+    field — see create_sales_invoice_from_pic). PO Type is the only other
+    column with no live equivalent anywhere — everything else below
+    (Contract, Sub Contract, Sub Contract No., Invoice Date) resolves from
+    existing, already ~100%-populated links; a legacy field was tried for
+    each of those first and dropped once the live source proved better:
+    Contract/Sub Contract == Subcontract Master.contract_model/
+    subcontractor_name via pd.contract (99.9% filled — confirmed exact
+    value match against the historical Excel, e.g. "INet Telecom F&C"),
+    Sub Contract No. == PO Intake Line.sub_contract_no via po_intake/
+    po_line_no (100% filled), Invoice Date == pd.ms{n}_ibuy_inv_date (the
+    "IBUY / INV date" column PIC already fills in — ~99% filled for MS1),
+    falling back to the real Sales Invoice's posting_date when that's blank.
+    """
+    n = str(ms)
+    acc = "MS1" if n == "1" else "MS2"
+    invoiced_col = f"pd.ms{n}_invoiced"
+    legacy_no_col = f"pd.legacy_ms{n}_invoice_no"
+    ibuy_date_col = f"pd.ms{n}_ibuy_inv_date"
+    vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
+    vat_frac_p2 = _TAX_RATE_FRACTION_SQL.format(col="p2.tax_rate")
+    where = [
+        "IFNULL(pd.is_internal_work, 0) = 0",
+        f"(IFNULL({invoiced_col}, 0) > 0 OR (IFNULL({legacy_no_col}, '') != ''))",
+    ] + where_extra
+    # project_domain/im are usually blank directly on PO Dispatch for older
+    # dispatches (verified: 0% and 0.4% fill rate respectively on invoiced
+    # rows) — fall back to the linked Project Control Center, same
+    # resolution PIC already relies on elsewhere (see line ~2462).
+    return f"""
+    SELECT
+      pd.name AS po_dispatch,
+      '{acc}' AS acceptance,
+      sm.contract_model AS contract,
+      sm.subcontractor_name AS sub_contract,
+      COALESCE(NULLIF(pd.project_domain, ''), pcc.project_domain) AS project_domain,
+      pd.poid,
+      pd.site_code AS duid,
+      COALESCE(
+        NULLIF({legacy_no_col}, ''),
+        (SELECT GROUP_CONCAT(DISTINCT si.name ORDER BY si.name SEPARATOR ', ')
+         FROM `tabSales Invoice Item` sii
+         JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus = 1
+         WHERE sii.poid = pd.name AND UPPER(IFNULL(sii.milestone,'')) = '{acc}')
+      ) AS invoice_no,
+      IF(IFNULL({legacy_no_col}, '') != '', 'Legacy', 'System') AS source,
+      COALESCE(
+        {ibuy_date_col},
+        (SELECT MIN(si.posting_date)
+         FROM `tabSales Invoice Item` sii
+         JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus = 1
+         WHERE sii.poid = pd.name AND UPPER(IFNULL(sii.milestone,'')) = '{acc}')
+      ) AS invoice_date,
+      pd.customer,
+      pd.legacy_po_type AS po_type,
+      pd.po_no,
+      pd.item_code,
+      pd.item_description,
+      pd.qty,
+      pd.rate,
+      {invoiced_col} AS invoiced_amount,
+      pd.project_code,
+      pil.sub_contract_no AS subcontract_no,
+      ROUND(IFNULL({invoiced_col}, 0) * ({vat_frac}), 2) AS vat_amount,
+      ROUND(IFNULL({invoiced_col}, 0) * (1 + ({vat_frac})), 2) AS grand_total,
+      COALESCE(NULLIF(pd.im, ''), pcc.implementation_manager) AS im,
+      pd.payment_terms,
+      pd.dispatch_status,
+      CASE WHEN IFNULL({legacy_no_col}, '') != '' THEN
+        (SELECT ROUND(SUM(IFNULL(p2.ms{n}_invoiced, 0) * ({vat_frac_p2})), 2)
+         FROM `tabPO Dispatch` p2
+         WHERE p2.legacy_ms{n}_invoice_no = {legacy_no_col})
+      ELSE NULL END AS invoice_tax_amount,
+      CASE WHEN IFNULL({legacy_no_col}, '') != '' THEN
+        (SELECT ROUND(SUM(IFNULL(p2.ms{n}_invoiced, 0) * (1 + ({vat_frac_p2}))), 2)
+         FROM `tabPO Dispatch` p2
+         WHERE p2.legacy_ms{n}_invoice_no = {legacy_no_col})
+      ELSE NULL END AS invoice_amount_incl_tax
+    FROM `tabPO Dispatch` pd
+    LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+    LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
+    LEFT JOIN `tabPO Intake Line` pil ON pil.parent = pd.po_intake AND pil.po_line_no = pd.po_line_no
+    WHERE {' AND '.join(where)}
+    """
+
+
+@frappe.whitelist()
+def list_invoice_detail_rows(portal_filters=None, limit=500):
+    """Row-level Invoice Detail report — mirrors the historical "Invoices
+    Data" Excel sheet 1:1 (same columns, same order, same sort). Only
+    legacy_ms{1,2}_invoice_no/legacy_po_type have no live equivalent and
+    need the one-time historical import; everything else resolves from
+    existing links (see _invoice_detail_milestone_sql). One row per
+    (PO Dispatch, milestone) actually invoiced.
+
+    portal_filters: search, project_code, site_code, im (all multi/single),
+    invoice_month (YYYY-MM, multi), acceptance ("MS1"/"MS2", multi),
+    source ("Legacy"/"System", multi).
+    """
+    _pic_role_or_throw()
+    pf = _portal_filters_dict(portal_filters)
+    limit_page_length = _portal_row_limit(limit, 500)
+
+    where_extra = []
+    params_extra = []
+    for col, key in (
+        ("pd.project_code", "project_code"),
+        ("pd.site_code", "site_code"),
+        ("pd.im", "im"),
+    ):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            where_extra.append(c)
+            params_extra.extend(p)
+
+    search = pf.get("search") or pf.get("q") or ""
+    search_clause, search_params = (None, [])
+    if search:
+        search_clause, search_params = _sql_search_clause(
+            "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''), IFNULL(pd.item_code,''),"
+            " IFNULL(pd.item_description,''), IFNULL(pd.project_code,''), IFNULL(pd.site_code,''),"
+            " IFNULL(pd.customer,''), IFNULL(pd.legacy_ms1_invoice_no,''), IFNULL(pd.legacy_ms2_invoice_no,''))",
+            search,
+            exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
+        )
+
+    acceptance_vals = set(_ensure_list(pf.get("acceptance")))
+    source_vals = _ensure_list(pf.get("source"))
+    invoice_month_vals = _ensure_list(pf.get("invoice_month"))
+
+    def _block_where(n):
+        w = list(where_extra)
+        p = list(params_extra)
+        if search_clause:
+            w.append(search_clause)
+            p.extend(search_params)
+        if source_vals:
+            legacy_col = f"pd.legacy_ms{n}_invoice_no"
+            parts = []
+            if "Legacy" in source_vals:
+                parts.append(f"IFNULL({legacy_col}, '') != ''")
+            if "System" in source_vals:
+                parts.append(f"IFNULL({legacy_col}, '') = ''")
+            if parts:
+                w.append("(" + " OR ".join(parts) + ")")
+        if invoice_month_vals:
+            ph = ", ".join(["%s"] * len(invoice_month_vals))
+            w.append(f"DATE_FORMAT(pd.ms{n}_invoice_month, '%%Y-%%m') IN ({ph})")
+            p.extend(invoice_month_vals)
+        return w, p
+
+    blocks = []
+    all_params = []
+    for n in ("1", "2"):
+        acc = "MS1" if n == "1" else "MS2"
+        if acceptance_vals and acc not in acceptance_vals:
+            continue
+        w, p = _block_where(n)
+        blocks.append(_invoice_detail_milestone_sql(n, w))
+        all_params.extend(p)
+
+    if not blocks:
+        return {"rows": [], "total_count": 0}
+
+    union_sql = "\nUNION ALL\n".join(blocks)
+    # A row with no resolved invoice_no (neither a legacy number nor a real
+    # submitted Sales Invoice) isn't actually invoiced yet — ms{n}_invoiced
+    # can be set from a PIC status change alone, with no invoice document
+    # behind it — so it doesn't belong on an Invoice Detail report at all.
+    # params appear twice per block due to the WHERE clause being reused
+    # verbatim by both the data query and the count query below.
+    full_sql = f"""
+    SELECT * FROM ({union_sql}) u
+    WHERE u.invoice_no IS NOT NULL AND u.invoice_no != ''
+    ORDER BY u.invoice_no ASC, u.poid ASC
+    {_sql_limit_suffix(limit_page_length)}
+    """
+    rows = frappe.db.sql(full_sql, tuple(all_params), as_dict=True)
+
+    count_sql = f"SELECT COUNT(*) AS total FROM ({union_sql}) u WHERE u.invoice_no IS NOT NULL AND u.invoice_no != ''"
+    total_count = cint((frappe.db.sql(count_sql, tuple(all_params), as_dict=True) or [{}])[0].get("total") or 0)
+
+    if rows:
+        im_ids = list({r["im"] for r in rows if r.get("im")})
+        im_names = {}
+        if im_ids:
+            im_names = {
+                d.name: d.full_name
+                for d in frappe.db.get_all("IM Master", filters={"name": ["in", im_ids]}, fields=["name", "full_name"])
+            }
+        for r in rows:
+            r["im_full_name"] = im_names.get(r.get("im"))
+
+    return {"rows": rows, "total_count": total_count}
+
+
+def _admin_role_or_throw():
+    roles = set(frappe.get_roles(frappe.session.user))
+    required = {"Administrator", "System Manager", "INET Admin"}
+    if not roles & required:
+        frappe.throw("Not permitted.", frappe.PermissionError)
+
+
+_LEGACY_INVOICE_IMPORT_CACHE_KEY = "inet_app:legacy_invoice_import_result"
+
+
+@frappe.whitelist()
+def run_legacy_invoice_import():
+    """Kick off the one-time legacy invoice data import (see
+    inet_app.patches.import_legacy_invoice_data) as a background job — ~15k
+    individual row lookups take a few minutes, too long for a synchronous
+    request/response. The Settings page polls get_legacy_invoice_import_status
+    for the result. Safe to click more than once; re-running just re-applies
+    the same CSV.
+    """
+    _admin_role_or_throw()
+    frappe.cache().delete_value(_LEGACY_INVOICE_IMPORT_CACHE_KEY)
+    frappe.enqueue(
+        "inet_app.api.pic._run_legacy_invoice_import_job",
+        queue="long",
+        timeout=1800,
+    )
+    return {"queued": True}
+
+
+def _run_legacy_invoice_import_job():
+    from inet_app.patches.import_legacy_invoice_data import execute
+    result = execute()
+    frappe.cache().set_value(_LEGACY_INVOICE_IMPORT_CACHE_KEY, result, expires_in_sec=86400)
+
+
+@frappe.whitelist()
+def get_legacy_invoice_import_status():
+    _admin_role_or_throw()
+    result = frappe.cache().get_value(_LEGACY_INVOICE_IMPORT_CACHE_KEY)
+    return {"done": result is not None, "result": result}
+
+
 @frappe.whitelist()
 def pic_invoicing_summary(portal_filters=None):
     """Aggregate invoicing summary grouped by PIC status — INET vs Subcon split.

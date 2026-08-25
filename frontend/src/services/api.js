@@ -713,6 +713,14 @@ export const pmApi = {
     // 0 = "All" (no LIMIT). Anything else is a positive cap.
     limit: Number.isFinite(Number(limit)) ? Number(limit) : 500,
   }),
+  // Row-level Invoice Detail report — mirrors the historical "Invoices Data"
+  // Excel import 1:1; see list_invoice_detail_rows in pic.py.
+  listInvoiceDetailRows: (portalFilters, limit) => call("inet_app.api.pic.list_invoice_detail_rows", {
+    portal_filters: JSON.stringify(portalFilters || {}),
+    limit: Number.isFinite(Number(limit)) ? Number(limit) : 500,
+  }),
+  runLegacyInvoiceImport: () => call("inet_app.api.pic.run_legacy_invoice_import"),
+  getLegacyInvoiceImportStatus: () => call("inet_app.api.pic.get_legacy_invoice_import_status"),
   updatePicRow: (po_dispatch, fields) => call("inet_app.api.pic.update_pic_row", {
     po_dispatch,
     fields: JSON.stringify(fields || {}),
