@@ -26,7 +26,10 @@ fixtures = [
 		"dt": "Role",
 		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR"]]],
 	},
-	{"dt": "Report", "filters": [["name", "=", "Huawei Outbound Analytics"]]},
+	{
+		"dt": "Report",
+		"filters": [["name", "in", ["Huawei Outbound Analytics", "Bill Wise Material Status", "DUID Wise Material Status"]]],
+	},
 	{
 		"dt": "Notification",
 		"filters": [["name", "like", "INET Certificate%"]],

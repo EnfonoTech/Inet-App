@@ -345,17 +345,23 @@ def get_logged_user():
     full_name = frappe.db.get_value("User", user, "full_name") or user.split("@")[0]
     user_roles = frappe.get_roles(user)
 
+    # Warehouse Manager (Stock Manager) portal view is removed for now.
+    # Without this, a Stock-Manager-only account (no other recognized
+    # portal role) would fall through to the "field" default below and land
+    # on the Field portal — worse than no access at all — so it's explicitly
+    # treated as unauthenticated for the portal instead, same as Guest.
+    if "Stock Manager" in user_roles and not (
+        user == "Administrator"
+        or set(user_roles) & {"System Manager", "INET Admin", "INET PIC", "INET IM", "INET Field Team"}
+    ):
+        return {"user": user, "full_name": full_name, "authenticated": False, "app_role": None}
+
     app_role = "field"
     im_name = None
     team_id = None
 
     if user == "Administrator" or "System Manager" in user_roles or "INET Admin" in user_roles:
         app_role = "admin"
-    elif "Stock Manager" in user_roles:
-        # The Warehouse Manager. Without this branch they fell all the way
-        # through to the "field" default, landing on the Field portal
-        # instead of Material Requests — the actual job they need to do.
-        app_role = "warehouse"
     elif "INET PIC" in user_roles:
         app_role = "pic"
     elif "INET IM" in user_roles:

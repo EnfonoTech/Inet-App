@@ -6,6 +6,7 @@ def execute(filters=None):
     f = filters or {}
     from_date = f.get("from_date")
     to_date = f.get("to_date")
+    subcon = f.get("subcon")
 
     columns = [
         {"label": _("Subcontractor"), "fieldname": "subcon", "fieldtype": "Data", "width": 160},
@@ -22,6 +23,9 @@ def execute(filters=None):
     if to_date:
         where += " AND outbound_date <= %s"
         params.append(to_date)
+    if subcon:
+        where += " AND subcon = %s"
+        params.append(subcon)
 
     rows = frappe.db.sql(f"""
         SELECT subcon, COUNT(*) AS shipments, COALESCE(SUM(total_volume),0) AS total_volume

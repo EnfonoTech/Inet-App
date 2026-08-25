@@ -231,7 +231,7 @@ function TlRemarkPicker({ templates, picked, creating, onPick, onCreate }) {
   );
 }
 
-function MaterialCard({ m, idx, onUpdateQty, onRemove }) {
+function MaterialCard({ m, idx, onUpdateQty, onRemove, candidates, preferredBatch, onPickBatch }) {
   return (
     <div style={{
       background: "var(--surface, #f8fafc)",
@@ -284,6 +284,21 @@ function MaterialCard({ m, idx, onUpdateQty, onRemove }) {
           />
         </div>
       </div>
+
+      {candidates?.length > 1 && (
+        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 12, color: "#78350f", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "6px 8px" }}>
+          <span>More than one bill has this item — drawing from:</span>
+          <select
+            value={preferredBatch || candidates[0].batch_no}
+            onChange={(e) => onPickBatch(idx, e.target.value)}
+            style={{ padding: "3px 6px", borderRadius: 6, border: "1px solid #fde68a", fontSize: 12, background: "#fff" }}
+          >
+            {candidates.map((c) => (
+              <option key={c.batch_no} value={c.batch_no}>{c.bill_no} — {c.available_qty} available</option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }
@@ -297,6 +312,10 @@ function MaterialsSection({ duid, teamId, executionName, onUsageChange }) {
   const [huaweiFocused, setHuaweiFocused] = useState(false);
   const [addSearch, setAddSearch] = useState("");
   const [addFocused, setAddFocused] = useState(false);
+  // Which bill each Huawei item would draw from — only populated for items
+  // where 2+ bills genuinely exist in this team's warehouse (the common,
+  // single-bill case never shows anything here).
+  const [billCandidates, setBillCandidates] = useState({});
 
   // Whatever the TL already recorded on this exact execution — pre-fills
   // the list instead of starting blank, and carries is_huawei/issue status
@@ -315,6 +334,7 @@ function MaterialsSection({ duid, teamId, executionName, onUsageChange }) {
           qty_transferred: r.qty_transferred,
           qty_used: r.qty_used,
           is_huawei: !!r.is_huawei,
+          preferred_batch_no: r.preferred_batch_no || "",
         }));
         setMaterials(list);
         onUsageChange && onUsageChange(list);
@@ -336,6 +356,22 @@ function MaterialsSection({ duid, teamId, executionName, onUsageChange }) {
       .catch(() => { if (!cancelled) setHuaweiOptions([]); });
     return () => { cancelled = true; };
   }, [duid, teamId]);
+
+  // Check whether any added Huawei item actually has 2+ bills to choose
+  // from at this team's warehouse — rare, so this comes back empty ({}) the
+  // overwhelming majority of the time.
+  const huaweiItemCodes = materials.filter(m => m.is_huawei).map(m => m.item_code).sort().join(",");
+  useEffect(() => {
+    setBillCandidates({});
+    const codes = huaweiItemCodes ? huaweiItemCodes.split(",") : [];
+    if (!duid || !teamId || codes.length === 0) return;
+    let cancelled = false;
+    pmApi.getBillCandidatesBulk(codes, duid, { team_id: teamId })
+      .then(res => { if (!cancelled) setBillCandidates(res && typeof res === "object" ? res : {}); })
+      .catch(() => { if (!cancelled) setBillCandidates({}); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duid, teamId, huaweiItemCodes]);
 
   // Additional (company-owned) items the TL's team currently holds in
   // stock generally — not tied to this specific DUID.
@@ -387,6 +423,15 @@ function MaterialsSection({ duid, teamId, executionName, onUsageChange }) {
   function removeItem(idx) {
     setMaterials(prev => {
       const next = prev.filter((_, i) => i !== idx);
+      onUsageChange && onUsageChange(next);
+      return next;
+    });
+  }
+
+  function pickBatch(idx, batchNo) {
+    setMaterials(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], preferred_batch_no: batchNo };
       onUsageChange && onUsageChange(next);
       return next;
     });
@@ -467,7 +512,15 @@ function MaterialsSection({ duid, teamId, executionName, onUsageChange }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 10 }}>
             {huaweiItems.map((m) => {
               const idx = materials.indexOf(m);
-              return <MaterialCard key={`${m.item_code}-${idx}`} m={m} idx={idx} onUpdateQty={updateQty} onRemove={removeItem} />;
+              return (
+                <MaterialCard
+                  key={`${m.item_code}-${idx}`}
+                  m={m} idx={idx} onUpdateQty={updateQty} onRemove={removeItem}
+                  candidates={billCandidates[m.item_code]}
+                  preferredBatch={m.preferred_batch_no}
+                  onPickBatch={pickBatch}
+                />
+              );
             })}
           </div>
         )}

@@ -5,6 +5,7 @@ import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import useFilterOptions from "../../hooks/useFilterOptions";
 
 // ≥90 green, ≥75 light-green, ≥60 yellow, <60 red, 0 neutral
 function pctCellStyle(value) {
@@ -178,6 +179,24 @@ const REPORTS = [
     hasFilters: true,
     filterType: "sitestatus",
   },
+  {
+    key: "bill_wise_status",
+    category: "Material Reports",
+    title: "Bill Wise Material Status",
+    api: "reportBillWiseStatus",
+    description: "Per bill and item — received vs. used vs. remaining, with SLA status. Also in Desk as a Script Report.",
+    hasFilters: true,
+    filterType: "sitestatus",
+  },
+  {
+    key: "huawei_outbound_analytics",
+    category: "Material Reports",
+    title: "Huawei Outbound Analytics",
+    api: "reportHuaweiOutboundAnalytics",
+    description: "Shipment count and volume by subcontractor. Also in Desk as a Script Report.",
+    hasFilters: true,
+    filterType: "subcondate",
+  },
 ];
 
 const CATEGORIES = [...new Set(REPORTS.map((r) => r.category))];
@@ -217,6 +236,13 @@ export default function Reports() {
   // rows (the dataset is small; no need to round-trip to the server).
   const [siteStatusFilter, setSiteStatusFilter] = useState("");
   const [siteSearch, setSiteSearch] = useState("");
+  // Huawei Outbound Analytics — subcontractor filter, alongside the shared
+  // dateRange state. Options come from Huawei Outbound Plan's own subcon
+  // values rather than the Huawei Subcon Master list, so only subcons that
+  // actually appear in outbound data show up.
+  const [subconFilter, setSubconFilter] = useState("");
+  const { options: subconFilterOptions } = useFilterOptions("Huawei Outbound Plan", ["subcon"]);
+  const subconOptions = subconFilterOptions.subcon || [];
 
   const [teamOptions, setTeamOptions] = useState([]);
   const [imOptions, setImOptions] = useState([]);
@@ -318,6 +344,7 @@ export default function Reports() {
     setTeamDate({ from: DEFAULT_DATE, to: DEFAULT_DATE });
     setSiteStatusFilter("");
     setSiteSearch("");
+    setSubconFilter("");
     // Clear the previous report's columns immediately (not just when the new
     // report's fetch resolves) — the <table> below only mounts once columns
     // is non-empty, specifically so DataTablePro never gets a chance to
@@ -347,10 +374,11 @@ export default function Reports() {
         if (dateRange.from) f.from_date = dateRange.from;
         if (dateRange.to) f.to_date = dateRange.to;
       }
+      if (active.filterType === "subcondate" && subconFilter) f.subcon = subconFilter;
     }
     loadReport(f);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeKey, teamFilter, imFilter, dateRange, selectedMonth, teamDate]);
+  }, [activeKey, teamFilter, imFilter, dateRange, selectedMonth, teamDate, subconFilter]);
 
   const hasFilters = teamFilter.length > 0 || imFilter.length > 0;
 
@@ -360,7 +388,7 @@ export default function Reports() {
     return data.filter((row) => {
       if (siteStatusFilter && row.status !== siteStatusFilter) return false;
       if (q) {
-        const hay = `${row.project_name || ""} ${row.du_id || ""} ${row.site_id || ""}`.toLowerCase();
+        const hay = `${row.project_name || ""} ${row.du_id || ""} ${row.site_id || ""} ${row.bill_no || ""} ${row.item_code || ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -469,10 +497,11 @@ export default function Reports() {
                 <option value="NORMAL">Normal</option>
                 <option value="WARNING">Warning</option>
                 <option value="OVERDUE">Overdue</option>
+                <option value="COMPLETE">Complete</option>
               </select>
               <input
                 type="search"
-                placeholder="Search project / DUID / site…"
+                placeholder="Search project / DUID / site / bill…"
                 value={siteSearch}
                 onChange={(e) => setSiteSearch(e.target.value)}
                 style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 220 }}
@@ -482,6 +511,29 @@ export default function Reports() {
                   className="btn-secondary"
                   style={{ fontSize: "0.78rem", padding: "5px 12px" }}
                   onClick={() => { setSiteStatusFilter(""); setSiteSearch(""); }}
+                >
+                  Clear
+                </button>
+              )}
+            </>
+          ) : active.filterType === "subcondate" ? (
+            <>
+              <DateRangePicker
+                value={dateRange}
+                onChange={({ from, to }) => setDateRange({ from, to })}
+              />
+              <SearchableSelect
+                value={subconFilter}
+                onChange={setSubconFilter}
+                options={subconOptions.map((s) => ({ id: s, label: s }))}
+                placeholder="All Subcontractors"
+                minWidth={170}
+              />
+              {subconFilter && (
+                <button
+                  className="btn-secondary"
+                  style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+                  onClick={() => setSubconFilter("")}
                 >
                   Clear
                 </button>

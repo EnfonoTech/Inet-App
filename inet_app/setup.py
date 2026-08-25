@@ -29,6 +29,7 @@ def after_migrate():
     _ensure_material_permissions()
     _ensure_material_return_field()
     _ensure_material_confirmation_fields()
+    _ensure_preferred_batch_field()
     _declutter_stock_entry_list_view()
     _ensure_certificate_tracker_setup()
     _ensure_certificate_expiry_notifications()
@@ -65,50 +66,61 @@ def _resync_warehouse_workspace():
 
     Both the content JSON and the shortcuts child table must match —
     content references shortcuts by label, child table holds link_to.
+    This function owns the workspace outright: it rewrites it on every
+    migrate, so the on-disk workspace JSON is not the source of truth —
+    edit `_groups` below instead, or changes there will just get clobbered
+    back on the next migrate.
     """
     import json
 
     workspace_name = "Warehouse Management"
 
-    _shortcuts = [
-        # (label, link_to, color)
-        ("Huawei Outbound Plan",   "Huawei Outbound Plan",   "Blue"),
-        ("Huawei Outbound Import", "Huawei Outbound Import", "Blue"),
-        ("Material Request",       "Material Request",       "Green"),
-        ("Stock Entry",            "Stock Entry",            "Green"),
-        ("Item",                   "Item",                   "Grey"),
-        ("Warehouse",              "Warehouse",              "Grey"),
-        ("DUID Master",            "DUID Master",            "Orange"),
-        ("Huawei Subcon Master",   "Huawei Subcon Master",   "Orange"),
-        ("INET Team",              "INET Team",              "Purple"),
-        ("INET Settings",          "INET Settings",          "Red"),
+    # (heading, [(label, link_to, color, shortcut_type), ...])
+    _groups = [
+        ("Inbound", [
+            ("Huawei Outbound Plan",   "Huawei Outbound Plan",   "Blue", "DocType"),
+            ("Huawei Outbound Import", "Huawei Outbound Import", "Blue", "DocType"),
+        ]),
+        ("Stock", [
+            ("Material Request", "Material Request", "Green", "DocType"),
+            ("Stock Entry",      "Stock Entry",       "Green", "DocType"),
+            ("Item",             "Item",              "Grey",  "DocType"),
+            ("Warehouse",        "Warehouse",         "Grey",  "DocType"),
+        ]),
+        ("Masters", [
+            ("DUID Master",          "DUID Master",          "Orange", "DocType"),
+            ("Huawei Subcon Master", "Huawei Subcon Master", "Orange", "DocType"),
+            ("INET Team",            "INET Team",            "Purple", "DocType"),
+            ("INET Settings",        "INET Settings",        "Red",    "DocType"),
+        ]),
+        ("Reports", [
+            ("Bill Wise Material Status", "Bill Wise Material Status", "Yellow", "Report"),
+            ("DUID Wise Material Status", "DUID Wise Material Status", "Yellow", "Report"),
+            ("Huawei Outbound Analytics", "Huawei Outbound Analytics", "Yellow", "Report"),
+        ]),
     ]
 
-    content = [
-        {"id": "h-inbound", "type": "header", "data": {"text": '<span class="h4">Inbound</span>', "col": 12}},
-    ]
-    for i, (lbl, _link, _color) in enumerate(_shortcuts[:2], 1):
-        content.append({"id": f"s{i}", "type": "shortcut", "data": {"shortcut_name": lbl, "col": 3}})
-
-    content.append({"id": "h-stock", "type": "header", "data": {"text": '<span class="h4">Stock</span>', "col": 12}})
-    for i, (lbl, _link, _color) in enumerate(_shortcuts[2:6], 3):
-        content.append({"id": f"s{i}", "type": "shortcut", "data": {"shortcut_name": lbl, "col": 3}})
-
-    content.append({"id": "h-masters", "type": "header", "data": {"text": '<span class="h4">Masters</span>', "col": 12}})
-    for i, (lbl, _link, _color) in enumerate(_shortcuts[6:], 7):
-        content.append({"id": f"s{i}", "type": "shortcut", "data": {"shortcut_name": lbl, "col": 3}})
-
-    shortcut_rows = [
-        {
-            "doctype": "Workspace Shortcut",
-            "type": "DocType",
-            "link_to": link,
-            "label": lbl,
-            "color": color,
-            "doc_view": "List",
-        }
-        for lbl, link, color in _shortcuts
-    ]
+    content = []
+    shortcut_rows = []
+    idx = 0
+    for heading, items in _groups:
+        content.append({
+            "id": f"h-{heading.lower()}", "type": "header",
+            "data": {"text": f'<span class="h4">{heading}</span>', "col": 12},
+        })
+        for lbl, link, color, shortcut_type in items:
+            idx += 1
+            content.append({"id": f"s{idx}", "type": "shortcut", "data": {"shortcut_name": lbl, "col": 3}})
+            row = {
+                "doctype": "Workspace Shortcut",
+                "type": shortcut_type,
+                "link_to": link,
+                "label": lbl,
+                "color": color,
+            }
+            if shortcut_type == "DocType":
+                row["doc_view"] = "List"
+            shortcut_rows.append(row)
 
     if frappe.db.exists("Workspace", workspace_name):
         doc = frappe.get_doc("Workspace", workspace_name)
@@ -718,6 +730,30 @@ def _ensure_material_confirmation_fields():
         "insert_after": "pending_transfer_se",
         "read_only": 1,
         "hidden": 1,
+    })
+    frappe.db.commit()
+
+
+def _ensure_preferred_batch_field():
+    """Optional manual override for which bill's batch a Transfer request
+    item is drawn from, when the automatic FIFO pick
+    (material_management._auto_select_batch_for_row) would otherwise have
+    to choose between 2+ bills for the same item+DUID+warehouse. Left blank
+    in the overwhelming majority of requests (single bill, or FIFO is fine)
+    — the portal only shows this control when it detects a genuine choice
+    exists, so the automated flow is unaffected when it's blank.
+
+    Not needed on the Return side — a return request never knows its DUID
+    (and therefore which bills are even candidates) until approval time, so
+    that override is passed as a transient parameter to
+    approve_material_return_request instead of stored here."""
+    _add_field("Material Request Item", "Material Request Item-preferred_batch_no", {
+        "fieldname": "preferred_batch_no",
+        "label": "Preferred Batch (Bill)",
+        "fieldtype": "Link",
+        "options": "Batch",
+        "insert_after": "warehouse",
+        "print_hide": 1,
     })
     frappe.db.commit()
 

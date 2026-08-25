@@ -195,6 +195,8 @@ export const pmApi = {
   reportRevenueForecast:          ()  => call("inet_app.api.command_center.get_revenue_forecast_report",     {}),
   reportSiteSignStatus:           (f) => call("inet_app.api.material_management.report_site_sign_status",   { filters: JSON.stringify(f || {}) }),
   reportSiteVerifyStatus:         (f) => call("inet_app.api.material_management.report_site_verify_status", { filters: JSON.stringify(f || {}) }),
+  reportBillWiseStatus:           (f) => call("inet_app.api.material_management.report_bill_wise_status",   { filters: JSON.stringify(f || {}) }),
+  reportHuaweiOutboundAnalytics:  (f) => call("inet_app.api.material_management.report_huawei_outbound_analytics", { filters: JSON.stringify(f || {}) }),
 
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
@@ -903,10 +905,14 @@ export const pmApi = {
   getTeamMaterialStock:    (team_id)               => call("inet_app.api.material_management.get_team_material_stock", team_id ? { team_id } : {}),
   getMainWarehouseStock:   ()                      => call("inet_app.api.material_management.get_main_warehouse_stock", {}),
   getDuidStockBalance:     ()                      => call("inet_app.api.material_management.get_duid_stock_balance", {}),
+  getBillWiseMaterial:     (filters)                => call("inet_app.api.material_management.get_bill_wise_material", { filters: JSON.stringify(filters || {}) }),
+  getBillCandidates:       (item_code, duid, warehouse) => call("inet_app.api.material_management.get_bill_candidates", { item_code, duid, warehouse }),
+  getBillCandidatesBulk:   (item_codes, duid, opts)     => call("inet_app.api.material_management.get_bill_candidates_bulk", { item_codes: JSON.stringify(item_codes || []), duid, ...(opts || {}) }),
   // ── Material Return Flow ────────────────────────────────────
   createReturnRequest:     (payload) => call("inet_app.api.material_management.create_material_return_request", { payload: JSON.stringify(payload) }),
   listReturnRequests:      (args)    => call("inet_app.api.material_management.list_return_requests", args || {}),
-  approveReturnRequest:    (name)    => call("inet_app.api.material_management.approve_material_return_request", { name }),
+  getReturnBillCandidates: (name)    => call("inet_app.api.material_management.get_return_bill_candidates", { name }),
+  approveReturnRequest:    (name, preferred_batches)    => call("inet_app.api.material_management.approve_material_return_request", { name, ...(preferred_batches ? { preferred_batches: JSON.stringify(preferred_batches) } : {}) }),
   rejectReturnRequest:     (name, reason) => call("inet_app.api.material_management.reject_material_request", { name, reason: reason || "" }),
   confirmMaterialReturn:   (name)    => call("inet_app.api.material_management.confirm_material_return", { name }),
   rejectMaterialReturnConfirmation: (name, reason) => call("inet_app.api.material_management.reject_material_return_confirmation", { name, reason: reason || "" }),

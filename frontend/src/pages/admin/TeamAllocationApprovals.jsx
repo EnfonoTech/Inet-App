@@ -68,8 +68,23 @@ export default function TeamAllocationApprovals() {
     setErr(null);
     try {
       if (decideTarget._type === "cancel") {
-        await pmApi.pmDecideCancelPlan(decideTarget.name, decideAction, decideRemark);
-        setMsg(`Plan cancellation ${decideAction === "approve" ? "approved" : "rejected"}.`);
+        const res = await pmApi.pmDecideCancelPlan(decideTarget.name, decideAction, decideRemark);
+        if (decideAction === "approve") {
+          const parts = [`Plan cancellation approved.`];
+          if (res?.auto_cancelled?.length) {
+            parts.push(`Auto-rejected ${res.auto_cancelled.length} pending request(s) for this DUID that hadn't moved yet: ${res.auto_cancelled.join(", ")}.`);
+          }
+          if (res?.unconsumed_material?.length) {
+            const items = res.unconsumed_material.map(m => `${m.qty} ${m.uom} of ${m.item_name || m.item_code} in ${m.warehouse}`).join("; ");
+            parts.push(`⚠ Material already at the team's warehouse for this DUID was NOT auto-returned — review and return it manually if no longer needed: ${items}.`);
+          }
+          if (res?.needs_attention?.length && !res?.unconsumed_material?.length) {
+            parts.push(`⚠ ${res.needs_attention.length} request(s) already have a transfer staged/completed and were left as-is: ${res.needs_attention.join(", ")}.`);
+          }
+          setMsg(parts.join(" "));
+        } else {
+          setMsg("Plan cancellation rejected.");
+        }
       } else if (decideTarget._type === "transfer") {
         await pmApi.pmDecidePoTransfer(decideTarget.name, decideAction, decideRemark);
         setMsg(`Transfer ${decideAction === "approve" ? "approved — POIDs moved" : "rejected"}.`);

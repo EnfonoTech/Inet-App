@@ -6,6 +6,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import { useDebounced } from "../../hooks/useDebounced";
 import MaterialItemPicker, { HuaweiBadge, CompanyBadge } from "../../components/MaterialItemPicker";
 import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
+import DateRangePicker from "../../components/DateRangePicker";
 
 // ─── Status ───────────────────────────────────────────────────────────────────
 
@@ -363,9 +364,7 @@ function RequestDetail({ row, isAdmin, onClose, onActioned }) {
                       <td style={{ padding: "6px 10px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontWeight: 600 }}>{item.item_code}</span>
-                          {item.valuation_rate === 0 || item.valuation_rate == null
-                            ? <HuaweiBadge />
-                            : <CompanyBadge />}
+                          {item.item_type === "customer" ? <HuaweiBadge /> : <CompanyBadge />}
                         </div>
                         {item.item_name && item.item_name !== item.item_code && (
                           <div style={{ fontSize: "0.73rem", color: "#64748b" }}>{item.item_name}</div>
@@ -443,6 +442,8 @@ function DuidStockTab({ onRequest }) {
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState(""); // "" | "received" | "pending"
+  const [duidFilter, setDuidFilter] = useState([]); // multi-select of specific DUIDs
+  const [dateRange, setDateRange] = useState({ from: "", to: "" }); // against latest_date
   const [viewDuid, setViewDuid] = useState("");
 
   const load = useCallback(async (isRefresh = false) => {
@@ -463,6 +464,7 @@ function DuidStockTab({ onRequest }) {
   useEffect(() => { load(); }, [load]);
 
   const projects = [...new Set(rows.map((r) => r.project_name).filter(Boolean))].sort();
+  const duidOptions = [...new Set(rows.map((r) => r.duid).filter(Boolean))].sort().map((d) => ({ id: d, label: d }));
 
   const visible = rows.filter((r) => {
     if (search.trim()) {
@@ -472,10 +474,13 @@ function DuidStockTab({ onRequest }) {
     if (projectFilter && r.project_name !== projectFilter) return false;
     if (statusFilter === "received" && r.received_count === 0) return false;
     if (statusFilter === "pending" && r.prepared_count === 0) return false;
+    if (duidFilter.length && !duidFilter.includes(r.duid)) return false;
+    if (dateRange.from && (!r.latest_date || r.latest_date < dateRange.from)) return false;
+    if (dateRange.to && (!r.latest_date || r.latest_date > dateRange.to)) return false;
     return true;
   });
 
-  const hasFilters = search.trim() || projectFilter || statusFilter;
+  const hasFilters = search.trim() || projectFilter || statusFilter || duidFilter.length || dateRange.from || dateRange.to;
 
   return (
     <>
@@ -496,9 +501,19 @@ function DuidStockTab({ onRequest }) {
           <option value="received">Received</option>
           <option value="pending">Pending</option>
         </select>
+        <SearchableSelect
+          multi
+          value={duidFilter}
+          onChange={setDuidFilter}
+          options={duidOptions}
+          placeholder="All DUIDs"
+          allLabel="All DUIDs"
+          triggerStyle={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff", minWidth: 140 }}
+        />
+        <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} />
         {hasFilters && (
           <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setProjectFilter(""); setStatusFilter(""); }}>
+            onClick={() => { setSearch(""); setProjectFilter(""); setStatusFilter(""); setDuidFilter([]); setDateRange({ from: "", to: "" }); }}>
             Clear
           </button>
         )}
@@ -513,13 +528,15 @@ function DuidStockTab({ onRequest }) {
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
-          <table className="data-table" data-table-key="im-duid-stock-v2">
+          <table className="data-table" data-table-key="im-duid-stock-v3">
             <thead>
               <tr>
                 <th>DUID</th>
                 <th>Project</th>
-                <th style={{ textAlign: "center" }}>Received</th>
                 <th style={{ textAlign: "center" }}>Pending</th>
+                <th style={{ textAlign: "center" }}>Received</th>
+                <th style={{ textAlign: "center" }}>Transferred</th>
+                <th style={{ textAlign: "center" }}>Completed</th>
                 <th style={{ textAlign: "right" }}>Volume (m³)</th>
                 <th>Latest Date</th>
                 <th />
@@ -528,7 +545,7 @@ function DuidStockTab({ onRequest }) {
             <tbody>
               {visible.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: 0 }}>
+                  <td colSpan={9} style={{ padding: 0 }}>
                     {loading ? (
                       <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
                     ) : (
@@ -545,6 +562,13 @@ function DuidStockTab({ onRequest }) {
                   <td style={{ fontFamily: "monospace", fontSize: "0.8rem", fontWeight: 600 }}>{row.duid}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.project_name}>{row.project_name || "—"}</td>
                   <td style={{ textAlign: "center" }}>
+                    {row.prepared_count > 0 ? (
+                      <span style={{ padding: "2px 10px", borderRadius: 999, background: "#fffbeb", color: "#b45309", fontSize: "0.74rem", fontWeight: 700 }}>
+                        {row.prepared_count}
+                      </span>
+                    ) : <span style={{ color: "#cbd5e1" }}>0</span>}
+                  </td>
+                  <td style={{ textAlign: "center" }}>
                     {row.received_count > 0 ? (
                       <span style={{ padding: "2px 10px", borderRadius: 999, background: "#ecfdf5", color: "#047857", fontSize: "0.74rem", fontWeight: 700 }}>
                         {row.received_count}
@@ -552,9 +576,16 @@ function DuidStockTab({ onRequest }) {
                     ) : <span style={{ color: "#cbd5e1" }}>0</span>}
                   </td>
                   <td style={{ textAlign: "center" }}>
-                    {row.prepared_count > 0 ? (
-                      <span style={{ padding: "2px 10px", borderRadius: 999, background: "#fffbeb", color: "#b45309", fontSize: "0.74rem", fontWeight: 700 }}>
-                        {row.prepared_count}
+                    {row.transferred_count > 0 ? (
+                      <span style={{ padding: "2px 10px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8", fontSize: "0.74rem", fontWeight: 700 }}>
+                        {row.transferred_count}
+                      </span>
+                    ) : <span style={{ color: "#cbd5e1" }}>0</span>}
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    {row.completed_count > 0 ? (
+                      <span style={{ padding: "2px 10px", borderRadius: 999, background: "#f0fdf4", color: "#15803d", fontSize: "0.74rem", fontWeight: 700 }}>
+                        {row.completed_count}
                       </span>
                     ) : <span style={{ color: "#cbd5e1" }}>0</span>}
                   </td>
@@ -577,9 +608,9 @@ function DuidStockTab({ onRequest }) {
             </tbody>
             {visible.length > 0 && (
               <tfoot>
-                {/* DUID·Project·Received·Pending = 4 columns, then Volume (m³), then Latest Date·(actions) = 2 columns */}
+                {/* DUID·Project·Pending·Received·Transferred·Completed = 6 columns, then Volume (m³), then Latest Date·(actions) = 2 columns */}
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                  <td colSpan={4} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                  <td colSpan={6} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                     {visible.length} DUID{visible.length !== 1 ? "s" : ""}
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", fontFamily: "monospace" }}>
@@ -609,6 +640,9 @@ function StockBalanceTab() {
   const [warehouseFilter, setWarehouseFilter] = useState(""); // "" | "Main" | "Team"
   const [typeFilter, setTypeFilter] = useState("");           // "" | "customer" | "company"
   const [duidFilter, setDuidFilter] = useState("");           // "" | "assigned" | "none"
+  const [duidMultiFilter, setDuidMultiFilter] = useState([]); // specific DUIDs
+  const [teamFilter, setTeamFilter] = useState("");           // "" | team_id
+  const [viewDuid, setViewDuid] = useState("");
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -637,11 +671,15 @@ function StockBalanceTab() {
     if (typeFilter && r.item_type !== typeFilter) return false;
     if (duidFilter === "assigned" && !r.duid) return false;
     if (duidFilter === "none" && r.duid) return false;
+    if (duidMultiFilter.length && !duidMultiFilter.includes(r.duid)) return false;
+    if (teamFilter && r.team_id !== teamFilter) return false;
     return true;
   });
 
+  const teamOptions = [...new Map(rows.filter((r) => r.team_id).map((r) => [r.team_id, r.warehouse_label])).entries()];
+  const duidSelectOptions = [...new Set(rows.map((r) => r.duid).filter(Boolean))].sort().map((d) => ({ id: d, label: d }));
   const duidCount = new Set(visible.filter((r) => r.duid).map((r) => r.duid)).size;
-  const hasFilters = search.trim() || warehouseFilter || typeFilter || duidFilter;
+  const hasFilters = search.trim() || warehouseFilter || typeFilter || duidFilter || duidMultiFilter.length || teamFilter;
 
   let prevDuid = null;
 
@@ -669,9 +707,27 @@ function StockBalanceTab() {
           <option value="assigned">DUID: Assigned only</option>
           <option value="none">DUID: Unassigned only</option>
         </select>
+        <SearchableSelect
+          multi
+          value={duidMultiFilter}
+          onChange={setDuidMultiFilter}
+          options={duidSelectOptions}
+          placeholder="All DUIDs"
+          allLabel="All DUIDs"
+          triggerStyle={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff", minWidth: 140 }}
+        />
+        {teamOptions.length > 0 && (
+          <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}>
+            <option value="">All Teams</option>
+            {teamOptions.map(([id, label]) => (
+              <option key={id} value={id}>{label || id}</option>
+            ))}
+          </select>
+        )}
         {hasFilters && (
           <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setWarehouseFilter(""); setTypeFilter(""); setDuidFilter(""); }}>
+            onClick={() => { setSearch(""); setWarehouseFilter(""); setTypeFilter(""); setDuidFilter(""); setDuidMultiFilter([]); setTeamFilter(""); }}>
             Clear
           </button>
         )}
@@ -718,7 +774,11 @@ function StockBalanceTab() {
                 prevDuid = row.duid;
                 return (
                   <tr key={`${row.duid}-${row.warehouse}-${row.item_code}-${i}`}
-                    style={newGroup && i > 0 ? { borderTop: "2px solid #e2e8f0" } : undefined}>
+                    onClick={() => row.duid && setViewDuid(row.duid)}
+                    style={{
+                      ...(newGroup && i > 0 ? { borderTop: "2px solid #e2e8f0" } : undefined),
+                      cursor: row.duid ? "pointer" : "default",
+                    }}>
                     <td style={{ fontFamily: "monospace", fontSize: "0.8rem", fontWeight: 600 }}>
                       {row.duid
                         ? row.duid
@@ -760,6 +820,188 @@ function StockBalanceTab() {
           </table>
       </DataTableWrapper>
       </div>
+
+      <DuidBillMaterialsModal duid={viewDuid} onClose={() => setViewDuid("")} />
+    </>
+  );
+}
+
+// ─── Bill Wise Material Tab (batch-level, same logic as the Desk report) ─────
+
+function BillStatusBadge({ status }) {
+  const colors = {
+    OVERDUE:  { bg: "#fef2f2", fg: "#dc2626" },
+    WARNING:  { bg: "#fffbeb", fg: "#b45309" },
+    NORMAL:   { bg: "#eff6ff", fg: "#1d4ed8" },
+    COMPLETE: { bg: "#f0fdf4", fg: "#15803d" },
+  };
+  const c = colors[status] || { bg: "#f1f5f9", fg: "#475569" };
+  return (
+    <span style={{ padding: "2px 10px", borderRadius: 999, background: c.bg, color: c.fg, fontSize: "0.72rem", fontWeight: 700 }}>
+      {status || "—"}
+    </span>
+  );
+}
+
+function BillWiseMaterialTab() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [warehouseFilter, setWarehouseFilter] = useState("");
+  const [itemFilter, setItemFilter] = useState("");
+  const [duidFilter, setDuidFilter] = useState("");
+  const [dateRange, setDateRange] = useState({ from: "", to: "" });
+  const [viewDuid, setViewDuid] = useState("");
+
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError("");
+    try {
+      const res = await pmApi.getBillWiseMaterial();
+      setRows(Array.isArray(res) ? res : []);
+    } catch (e) {
+      setError(e.message || "Failed to load");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const warehouseOptions = [...new Set(rows.map((r) => r.warehouse).filter(Boolean))].sort();
+  const itemOptions = [...new Map(rows.map((r) => [r.item_code, r.item_name])).entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  const duidOptions = [...new Set(rows.map((r) => r.du_id).filter(Boolean))].sort().map((d) => ({ id: d, label: d }));
+
+  const visible = rows.filter((r) => {
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      const hay = `${r.bill_no} ${r.du_id} ${r.item_code} ${r.item_name} ${r.project_name || ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (warehouseFilter && r.warehouse !== warehouseFilter) return false;
+    if (itemFilter && r.item_code !== itemFilter) return false;
+    if (duidFilter && r.du_id !== duidFilter) return false;
+    if (dateRange.from && (!r.outbound_date || r.outbound_date < dateRange.from)) return false;
+    if (dateRange.to && (!r.outbound_date || r.outbound_date > dateRange.to)) return false;
+    return true;
+  });
+
+  const hasFilters = search.trim() || warehouseFilter || itemFilter || duidFilter || dateRange.from || dateRange.to;
+
+  return (
+    <>
+      <div className="toolbar">
+        <input type="search" placeholder="Search bill, DUID, item…"
+          value={search} onChange={(e) => setSearch(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 220 }} />
+        {warehouseOptions.length > 0 && (
+          <select value={warehouseFilter} onChange={(e) => setWarehouseFilter(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}>
+            <option value="">All Warehouses</option>
+            {warehouseOptions.map((w) => <option key={w} value={w}>{w}</option>)}
+          </select>
+        )}
+        {itemOptions.length > 0 && (
+          <select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff" }}>
+            <option value="">All Items</option>
+            {itemOptions.map(([code, name]) => <option key={code} value={code}>{name || code}</option>)}
+          </select>
+        )}
+        <SearchableSelect
+          value={duidFilter}
+          onChange={setDuidFilter}
+          options={duidOptions}
+          placeholder="All DUIDs"
+          allLabel="All DUIDs"
+          triggerStyle={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", background: "#fff", minWidth: 140 }}
+        />
+        <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} />
+        {hasFilters && (
+          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setSearch(""); setWarehouseFilter(""); setItemFilter(""); setDuidFilter(""); setDateRange({ from: "", to: "" }); }}>
+            Clear
+          </button>
+        )}
+        <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{visible.length} rows</span>
+        <button className="btn-secondary" style={{ marginLeft: "auto", fontSize: "0.78rem", padding: "5px 12px" }}
+          onClick={() => load(true)} disabled={refreshing}>
+          {refreshing ? "…" : "Refresh"}
+        </button>
+      </div>
+
+      {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
+
+      <div className="page-content">
+      <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
+          <table className="data-table" data-table-key="im-bill-wise-material-v1">
+            <thead>
+              <tr>
+                <th>Bill No.</th>
+                <th>DUID</th>
+                <th>Project</th>
+                <th>Item</th>
+                <th>Warehouse</th>
+                <th style={{ textAlign: "right" }}>Current Qty</th>
+                <th style={{ textAlign: "right" }}>Received</th>
+                <th style={{ textAlign: "right" }}>Transferred</th>
+                <th style={{ textAlign: "right" }}>Used</th>
+                <th style={{ textAlign: "right" }}>Remaining</th>
+                <th>UOM</th>
+                <th>Outbound Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.length === 0 ? (
+                <tr>
+                  <td colSpan={13} style={{ padding: 0 }}>
+                    {loading ? (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                    ) : (
+                      <div className="empty-state">
+                        <div className="empty-icon">🧾</div>
+                        <h3>No bill-wise material found</h3>
+                        <p>Batch-tracked bills and their current warehouse balance will appear here.</p>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ) : visible.map((row, i) => (
+                <tr key={`${row.bill_no}-${row.item_code}-${row.warehouse}-${i}`}
+                  onClick={() => row.du_id && setViewDuid(row.du_id)}
+                  style={{ cursor: row.du_id ? "pointer" : "default" }}>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.bill_no}</td>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.du_id || "—"}</td>
+                  <td style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.project_name}>{row.project_name || "—"}</td>
+                  <td style={{ fontSize: "0.82rem" }}>
+                    <div style={{ fontWeight: 600 }}>{row.item_code}</div>
+                    {row.item_name && row.item_name !== row.item_code && (
+                      <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{row.item_name}</div>
+                    )}
+                  </td>
+                  <td style={{ fontSize: "0.8rem" }}>{row.warehouse || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{row.current_qty}</td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>{row.received_qty}</td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>{row.transferred_qty}</td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>{row.issued_qty}</td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>{row.remaining_qty}</td>
+                  <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{row.uom}</td>
+                  <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{row.outbound_date}</td>
+                  <td><BillStatusBadge status={row.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+      </DataTableWrapper>
+      </div>
+
+      <DuidBillMaterialsModal duid={viewDuid} onClose={() => setViewDuid("")} />
     </>
   );
 }
@@ -768,13 +1010,33 @@ function StockBalanceTab() {
 
 const ALL_STATUSES = ["Pending Approval", "Pending Team Confirmation", "Transferred", "Rejected", "Issued"];
 
-function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
+function RequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [teamFilter, setTeamFilter] = useState("");
+  const [duidFilter, setDuidFilter] = useState("");
+  const [duidSearch, setDuidSearch] = useState("");
+  const [duidOptions, setDuidOptions] = useState([]);
+  const [dateRange, setDateRange] = useState({ from: "", to: "" });
+  const [imFilter, setImFilter] = useState("");
+  const [imOptions, setImOptions] = useState([]);
   const [detailRow, setDetailRow] = useState(null);
   const [successMsg, setSuccessMsg] = useState("");
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    pmApi.listIMMasters({ status: "Active" }).then((res) => setImOptions(Array.isArray(res) ? res : [])).catch(() => {});
+  }, [isAdmin]);
+
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.searchDuids({ query: duidSearch, limit: 30 })
+      .then((r) => { if (!cancelled) setDuidOptions(Array.isArray(r) ? r : []); })
+      .catch(() => { if (!cancelled) setDuidOptions([]); });
+    return () => { cancelled = true; };
+  }, [duidSearch]);
 
   // ── Manage Table column filters ──────────────────────────────────────
   // Each column's typed value is matched only against that column's own
@@ -803,6 +1065,11 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
       const args = { limit: 100 };
       if (statusFilter) args.status = statusFilter;
       if (!isAdmin && imName) args.im = imName;
+      if (isAdmin && imFilter) args.im = imFilter;
+      if (teamFilter) args.team_id = teamFilter;
+      if (duidFilter) args.duid = duidFilter;
+      if (dateRange.from) args.from_date = dateRange.from;
+      if (dateRange.to) args.to_date = dateRange.to;
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) args.column_filters = colFilters;
       const res = await pmApi.listMaterialRequests(args);
@@ -814,7 +1081,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, imName, statusFilter, columnFiltersDebounced]);
+  }, [isAdmin, imName, statusFilter, teamFilter, duidFilter, dateRange.from, dateRange.to, imFilter, columnFiltersDebounced]);
 
   useEffect(() => { load(); }, [load, refresh]);
 
@@ -825,6 +1092,10 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
     setTimeout(() => setSuccessMsg(""), 5000);
   }
 
+  const duidSelectOptions = duidOptions.map((d) => ({ id: d.duid, label: d.duid }));
+  const imSelectOptions = imOptions.map((i) => ({ id: i.name, label: i.full_name || i.name }));
+  const hasToolbarFilters = statusFilter || teamFilter || duidFilter || imFilter || dateRange.from || dateRange.to;
+
   return (
     <>
       <div className="toolbar">
@@ -833,8 +1104,38 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
           <option value="">All Statuses</option>
           {ALL_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        {statusFilter && (
-          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => setStatusFilter("")}>Clear</button>
+        {teams?.length > 0 && (
+          <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
+            <option value="">All Teams</option>
+            {teams.map((t) => <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>)}
+          </select>
+        )}
+        <SearchableSelect
+          value={duidFilter}
+          onChange={setDuidFilter}
+          onSearch={setDuidSearch}
+          options={duidSelectOptions}
+          placeholder="All DUIDs"
+          allLabel="All DUIDs"
+          triggerStyle={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff", minWidth: 140 }}
+        />
+        {isAdmin && imSelectOptions.length > 0 && (
+          <SearchableSelect
+            value={imFilter}
+            onChange={setImFilter}
+            options={imSelectOptions}
+            placeholder="All IMs"
+            allLabel="All IMs"
+            triggerStyle={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff", minWidth: 140 }}
+          />
+        )}
+        <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} />
+        {hasToolbarFilters && (
+          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setStatusFilter(""); setTeamFilter(""); setDuidFilter(""); setImFilter(""); setDateRange({ from: "", to: "" }); }}>
+            Clear
+          </button>
         )}
         <button className="btn-secondary" style={{ marginLeft: "auto", fontSize: "0.78rem", padding: "5px 12px" }} onClick={load} disabled={loading}>
           {loading ? "…" : "Refresh"}
@@ -845,7 +1146,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount }) {
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
-      <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!statusFilter}>
+      <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!hasToolbarFilters}>
           <table className="data-table" data-table-key="im-material-requests-v2">
             <thead>
               <tr>
@@ -1032,14 +1333,39 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [teamFilter, setTeamFilter] = useState("");
+  const [duidFilter, setDuidFilter] = useState("");
+  const [duidSearch, setDuidSearch] = useState("");
+  const [duidOptions, setDuidOptions] = useState([]);
+  const [dateRange, setDateRange] = useState({ from: "", to: "" });
+  const [imFilter, setImFilter] = useState("");
+  const [imOptions, setImOptions] = useState([]);
   const [actionRow, setActionRow] = useState(null);
   const [actionDetail, setActionDetail] = useState(null);
   const [actionDetailLoading, setActionDetailLoading] = useState(false);
+  // Which bill each item would draw from — only populated for items where
+  // 2+ bills genuinely exist for that item at the team's warehouse (the
+  // common, single-bill case never shows anything here).
+  const [billCandidates, setBillCandidates] = useState({});
+  const [preferredBatches, setPreferredBatches] = useState({});
   const [actionBusy, setActionBusy] = useState(false);
   const [actionErr, setActionErr] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [showDirectReturn, setShowDirectReturn] = useState(false);
   const [directSuccessMsg, setDirectSuccessMsg] = useState("");
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    pmApi.listIMMasters({ status: "Active" }).then((res) => setImOptions(Array.isArray(res) ? res : [])).catch(() => {});
+  }, [isAdmin]);
+
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.searchDuids({ query: duidSearch, limit: 30 })
+      .then((r) => { if (!cancelled) setDuidOptions(Array.isArray(r) ? r : []); })
+      .catch(() => { if (!cancelled) setDuidOptions([]); });
+    return () => { cancelled = true; };
+  }, [duidSearch]);
 
   // ── Manage Table column filters ──────────────────────────────────────
   // Each column's typed value is matched only against that column's own
@@ -1068,6 +1394,11 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
       const args = { limit: 100 };
       if (statusFilter) args.status = statusFilter;
       if (!isAdmin && imName) args.im = imName;
+      if (isAdmin && imFilter) args.im = imFilter;
+      if (teamFilter) args.team_id = teamFilter;
+      if (duidFilter) args.duid = duidFilter;
+      if (dateRange.from) args.from_date = dateRange.from;
+      if (dateRange.to) args.to_date = dateRange.to;
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) args.column_filters = colFilters;
       const res = await pmApi.listReturnRequests(args);
@@ -1077,7 +1408,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
     } catch (e) {
       setError(e.message || "Failed to load");
     } finally { setLoading(false); }
-  }, [isAdmin, imName, statusFilter, columnFiltersDebounced]);
+  }, [isAdmin, imName, statusFilter, teamFilter, duidFilter, dateRange.from, dateRange.to, imFilter, columnFiltersDebounced]);
 
   useEffect(() => { load(); }, [load, refresh]);
 
@@ -1085,7 +1416,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
     setActionBusy(true);
     setActionErr("");
     try {
-      await pmApi.approveReturnRequest(name);
+      await pmApi.approveReturnRequest(name, preferredBatches);
       setActionRow(null);
       load();
     } catch (e) {
@@ -1138,11 +1469,18 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
     setActionDetail(null);
     setActionErr("");
     setRejectReason("");
+    setBillCandidates({});
+    setPreferredBatches({});
     setActionDetailLoading(true);
     pmApi.getMaterialRequest(row.name)
       .then(d => setActionDetail(d))
       .catch(() => setActionDetail(null))
       .finally(() => setActionDetailLoading(false));
+    if (row.request_status === "Pending Approval") {
+      pmApi.getReturnBillCandidates(row.name)
+        .then(c => setBillCandidates(c && typeof c === "object" ? c : {}))
+        .catch(() => setBillCandidates({}));
+    }
   }
 
   function handleDirectDone(msg) {
@@ -1152,6 +1490,10 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
     setTimeout(() => setDirectSuccessMsg(""), 6000);
   }
 
+  const duidSelectOptions = duidOptions.map((d) => ({ id: d.duid, label: d.duid }));
+  const imSelectOptions = imOptions.map((i) => ({ id: i.name, label: i.full_name || i.name }));
+  const hasToolbarFilters = statusFilter || teamFilter || duidFilter || imFilter || dateRange.from || dateRange.to;
+
   return (
     <>
       <div className="toolbar">
@@ -1160,8 +1502,38 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
           <option value="">All Statuses</option>
           {RETURN_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        {statusFilter && (
-          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => setStatusFilter("")}>Clear</button>
+        {teams?.length > 0 && (
+          <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff" }}>
+            <option value="">All Teams</option>
+            {teams.map(t => <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>)}
+          </select>
+        )}
+        <SearchableSelect
+          value={duidFilter}
+          onChange={setDuidFilter}
+          onSearch={setDuidSearch}
+          options={duidSelectOptions}
+          placeholder="All DUIDs"
+          allLabel="All DUIDs"
+          triggerStyle={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff", minWidth: 140 }}
+        />
+        {isAdmin && imSelectOptions.length > 0 && (
+          <SearchableSelect
+            value={imFilter}
+            onChange={setImFilter}
+            options={imSelectOptions}
+            placeholder="All IMs"
+            allLabel="All IMs"
+            triggerStyle={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #dbe3ef", fontSize: "0.84rem", background: "#fff", minWidth: 140 }}
+          />
+        )}
+        <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} />
+        {hasToolbarFilters && (
+          <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
+            onClick={() => { setStatusFilter(""); setTeamFilter(""); setDuidFilter(""); setImFilter(""); setDateRange({ from: "", to: "" }); }}>
+            Clear
+          </button>
         )}
         <button className="btn-secondary" style={{ marginLeft: "auto", fontSize: "0.78rem", padding: "5px 12px" }} onClick={load} disabled={loading}>
           {loading ? "…" : "Refresh"}
@@ -1178,7 +1550,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
-      <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!statusFilter}>
+      <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!hasToolbarFilters}>
           <table className="data-table" data-table-key="im-return-requests-v2">
             <thead>
               <tr>
@@ -1240,7 +1612,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
 
       {/* Review / view modal */}
       <Modal open={!!actionRow} onClose={() => { setActionRow(null); setActionErr(""); setRejectReason(""); }}
-        title={`Return Request · ${actionRow?.name || ""}`} width={520}>
+        title={`Return Request · ${actionRow?.name || ""}`} width={620}>
         {actionRow && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1268,6 +1640,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
                   <thead>
                     <tr style={{ background: "#f8fafc" }}>
                       <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>Item</th>
+                      <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>DUID / Bill No.</th>
                       <th style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: "#475569" }}>Qty</th>
                       <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569" }}>UOM</th>
                     </tr>
@@ -1276,8 +1649,19 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
                     {actionDetail.items.map((it, i) => (
                       <tr key={i} style={{ borderTop: "1px solid #f1f5f9" }}>
                         <td style={{ padding: "6px 10px" }}>
-                          <div style={{ fontWeight: 600, fontSize: "0.82rem" }}>{it.item_name || it.item_code}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontWeight: 600, fontSize: "0.82rem" }}>{it.item_name || it.item_code}</span>
+                            {it.item_type === "customer" ? <HuaweiBadge /> : <CompanyBadge />}
+                          </div>
                           <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontFamily: "monospace" }}>{it.item_code}</div>
+                        </td>
+                        <td style={{ padding: "6px 10px", fontSize: "0.76rem" }}>
+                          {it.duid ? (
+                            <>
+                              <div style={{ fontFamily: "monospace" }}>{it.duid}</div>
+                              {it.bill_no && <div style={{ color: "#94a3b8" }}>{it.bill_no}</div>}
+                            </>
+                          ) : <span style={{ color: "#cbd5e1" }}>—</span>}
                         </td>
                         <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: "#1d4ed8" }}>{it.qty}</td>
                         <td style={{ padding: "6px 10px", color: "#64748b" }}>{it.uom || "pcs"}</td>
@@ -1290,13 +1674,27 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
 
             {actionRow.request_status === "Pending Approval" && actionRow.is_direct_return_by_im ? (
               <div style={{ fontSize: "0.82rem", color: "#78350f", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 12px" }}>
-                This is a direct return you initiated on the team's behalf — only <strong>{actionRow.team_name || "the team's"}</strong> Team Lead can approve releasing the stock (via the Field app), not IM/Stock Manager. This prevents materials leaving a team's declared stock without their knowledge.
+                Awaiting <strong>{actionRow.team_name || "the team's"}</strong> Team Lead approval (Field app) — not IM/Stock Manager.
               </div>
             ) : actionRow.request_status === "Pending Approval" && (
               <>
                 <div style={{ fontSize: "0.76rem", color: "#94a3b8" }}>
                   Approving stages the transfer only — stock moves back after the Warehouse Manager confirms receipt.
                 </div>
+                {Object.entries(billCandidates).map(([itemCode, candidates]) => (
+                  <div key={itemCode} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: "0.78rem", color: "#78350f", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
+                    <span>More than one bill has <strong>{itemCode}</strong> — drawing from:</span>
+                    <select
+                      value={preferredBatches[itemCode] || candidates[0].batch_no}
+                      onChange={(e) => setPreferredBatches((p) => ({ ...p, [itemCode]: e.target.value }))}
+                      style={{ padding: "3px 6px", borderRadius: 6, border: "1px solid #fde68a", fontSize: "0.78rem", background: "#fff" }}
+                    >
+                      {candidates.map((c) => (
+                        <option key={c.batch_no} value={c.batch_no}>{c.bill_no} — {c.available_qty} available</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
                 <div>
                   {label("Rejection reason (required to reject)")}
                   <input style={inp} value={rejectReason} onChange={e => setRejectReason(e.target.value)}
@@ -1400,6 +1798,7 @@ export default function IMMaterialRequest() {
     { id: "requests", label: "Requests", count: pendingCount },
     { id: "duid", label: "DUID Stock" },
     { id: "balance", label: "Stock Balance" },
+    { id: "billwise", label: "Bill Wise Material" },
     { id: "returns", label: "Returns", count: pendingReturnCount },
   ];
 
@@ -1407,7 +1806,7 @@ export default function IMMaterialRequest() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Material Requests</h1>
+          <h1 className="page-title">Material Management</h1>
           <div className="page-subtitle">
             {isAdmin ? "Review and approve material transfer requests." : "Request materials from main warehouse to your team."}
           </div>
@@ -1459,13 +1858,16 @@ export default function IMMaterialRequest() {
       </div>
 
       {tab === "requests" && (
-        <RequestsTab isAdmin={isAdmin} imName={imName} refresh={refreshKey} onPendingCount={setPendingCount} />
+        <RequestsTab isAdmin={isAdmin} imName={imName} refresh={refreshKey} onPendingCount={setPendingCount} teams={teams} />
       )}
       {tab === "duid" && (
         <DuidStockTab onRequest={(duid) => openNew(duid)} />
       )}
       {tab === "balance" && (
         <StockBalanceTab />
+      )}
+      {tab === "billwise" && (
+        <BillWiseMaterialTab />
       )}
       {tab === "returns" && (
         <ReturnRequestsTab

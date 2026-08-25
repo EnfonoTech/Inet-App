@@ -5431,6 +5431,7 @@ def update_execution(payload):
                     existing.qty_transferred = flt(row.get("qty_transferred", 0))
                     existing.qty_used = flt(row.get("qty_used", 0))
                     existing.uom = row.get("uom") or existing.uom
+                    existing.preferred_batch_no = row.get("preferred_batch_no") or ""
                     new_rows.append(existing)
                 else:
                     new_rows.append({
@@ -5440,6 +5441,7 @@ def update_execution(payload):
                         "qty_transferred": flt(row.get("qty_transferred", 0)),
                         "qty_used": flt(row.get("qty_used", 0)),
                         "uom": row.get("uom") or "",
+                        "preferred_batch_no": row.get("preferred_batch_no") or "",
                     })
             # A row already actually issued (qty_issued > 0) stays even if
             # the TL's current payload no longer lists it — that's a real,
@@ -17168,11 +17170,99 @@ def request_cancel_plan(rollout_plan, reason=None):
     return _serialize_plan_for_cancel(rollout_plan)
 
 
+def _material_cleanup_on_plan_cancel(po_dispatch_name, team):
+    """Cancelling a plan says nothing about the material already requested
+    for its DUID at the team's warehouse — left alone, that material either
+    sits there unreturned forever, or a Pending request for a plan that no
+    longer exists gets approved and transferred later anyway.
+
+    Rule (per product decision): a Material Request that has NO Stock Entry
+    linked yet (nothing staged, nothing moved) is safe to auto-reject — no
+    stock has moved, so there's nothing to reverse. One that already has a
+    transfer — staged (draft, awaiting confirmation) or fully submitted —
+    is never auto-touched; it's surfaced as a warning for a human to handle
+    via the normal Return flow, since a team may still legitimately want
+    that stock for another job on the same DUID.
+
+    Returns {auto_cancelled: [...], needs_attention: [...], unconsumed_material: [...]}.
+    """
+    result = {"auto_cancelled": [], "needs_attention": [], "unconsumed_material": []}
+    if not po_dispatch_name or not team:
+        return result
+
+    duid = frappe.db.get_value("PO Dispatch", po_dispatch_name, "site_code")
+    team_wh = frappe.db.get_value("INET Team", team, "warehouse")
+    if not duid or not team_wh:
+        return result
+
+    mrs = frappe.db.get_all(
+        "Material Request",
+        filters={
+            "duid": duid, "set_warehouse": team_wh, "material_request_type": "Material Transfer",
+            "docstatus": 1, "is_return_request": ["!=", 1], "status": ["!=", "Cancelled"],
+        },
+        fields=["name", "pending_transfer_se"],
+    )
+    for mr in mrs:
+        has_transfer_se = bool(mr.pending_transfer_se) or frappe.db.exists(
+            "Stock Entry", {"material_request": mr.name, "stock_entry_type": "Material Transfer"}
+        )
+        if has_transfer_se:
+            result["needs_attention"].append(mr.name)
+            continue
+        # ERPNext's own permission check on reject_material_request requires
+        # System Manager / Stock Manager — a PM approving this may only hold
+        # "INET Admin", which _is_pm_role() already accepted as sufficient
+        # authorization for *this* action. Elevate briefly rather than widen
+        # that role's actual DocType permissions.
+        _caller = frappe.session.user
+        frappe.set_user("Administrator")
+        try:
+            from inet_app.api.material_management import reject_material_request
+            reject_material_request(mr.name, reason="Rollout Plan cancelled")
+            result["auto_cancelled"].append(mr.name)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "Auto-cancel material request on plan cancel failed")
+            result["needs_attention"].append(mr.name)
+        finally:
+            frappe.set_user(_caller)
+
+    unconsumed = frappe.db.sql(
+        """
+        SELECT sed.item_code, IFNULL(MAX(i.item_name), sed.item_code) AS item_name,
+               IFNULL(MAX(sed.uom), '') AS uom,
+               SUM(CASE WHEN se.stock_entry_type = 'Material Transfer' AND sed.t_warehouse = %(wh)s
+                          AND sed.to_duid = %(duid)s THEN sed.qty ELSE 0 END)
+             - SUM(CASE WHEN se.stock_entry_type = 'Material Issue' AND sed.s_warehouse = %(wh)s
+                          AND sed.duid = %(duid)s THEN sed.qty ELSE 0 END) AS net_qty
+        FROM `tabStock Entry Detail` sed
+        JOIN `tabStock Entry` se ON se.name = sed.parent
+        LEFT JOIN `tabItem` i ON i.name = sed.item_code
+        WHERE se.docstatus = 1
+          AND (
+            (se.stock_entry_type = 'Material Transfer' AND sed.t_warehouse = %(wh)s AND sed.to_duid = %(duid)s)
+            OR (se.stock_entry_type = 'Material Issue' AND sed.s_warehouse = %(wh)s AND sed.duid = %(duid)s)
+          )
+        GROUP BY sed.item_code
+        HAVING net_qty > 0.0001
+        """,
+        {"wh": team_wh, "duid": duid}, as_dict=True,
+    )
+    result["unconsumed_material"] = [
+        {"item_code": r.item_code, "item_name": r.item_name, "uom": r.uom, "qty": flt(r.net_qty), "warehouse": team_wh}
+        for r in unconsumed
+    ]
+    return result
+
+
 @frappe.whitelist()
 def pm_decide_cancel_plan(rollout_plan, action, remark=None):
     """PM approves or rejects a cancel plan request.
 
-    On approve: Rollout Plan → Cancelled, linked PO Dispatch → Pending.
+    On approve: Rollout Plan → Cancelled, linked PO Dispatch → Pending, and
+    any Material Request for that DUID at the team's warehouse is either
+    auto-rejected (nothing moved yet) or flagged for manual attention (stock
+    already staged/transferred) — see _material_cleanup_on_plan_cancel.
     On reject: cancel_request_status → Rejected, plan stays as-is.
     """
     if not _is_pm_role():
@@ -17186,7 +17276,7 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
 
     plan = frappe.db.get_value(
         "Rollout Plan", rollout_plan,
-        ["name", "plan_status", "cancel_request_status", "po_dispatch"],
+        ["name", "plan_status", "cancel_request_status", "po_dispatch", "team"],
         as_dict=True,
     )
     if not plan:
@@ -17230,12 +17320,17 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
             frappe.db.set_value("PO Dispatch", po_dispatch_name, "dispatch_status", "Dispatched")
 
     frappe.db.commit()
+
+    material_cleanup = _material_cleanup_on_plan_cancel(po_dispatch_name, plan.get("team"))
+
     try:
         from inet_app.api.notifications import notify_im_cancel_plan_decided
         notify_im_cancel_plan_decided(rollout_plan, "approve")
     except Exception:
         pass
-    return _serialize_plan_for_cancel(rollout_plan)
+    out = _serialize_plan_for_cancel(rollout_plan)
+    out.update(material_cleanup)
+    return out
 
 
 @frappe.whitelist()

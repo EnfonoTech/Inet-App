@@ -50,7 +50,7 @@ export default function DuidBillMaterialsModal({ duid, onClose }) {
   }, [duid]);
 
   return (
-    <Modal open={!!duid} onClose={onClose} title={`Bills — ${duid}`} width={780}>
+    <Modal open={!!duid} onClose={onClose} title={`Bills — ${duid}`} width={920}>
       {loading ? (
         <div style={{ padding: 24, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
       ) : error ? (
@@ -73,27 +73,38 @@ export default function DuidBillMaterialsModal({ duid, onClose }) {
               <table style={{ width: "100%", tableLayout: "fixed", borderCollapse: "collapse", fontSize: "0.8rem" }}>
                 <colgroup>
                   <col style={{ width: "auto" }} />
-                  <col style={{ width: 70 }} />
-                  <col style={{ width: 70 }} />
+                  <col style={{ width: 80 }} />
+                  <col style={{ width: 90 }} />
+                  <col style={{ width: 80 }} />
+                  <col style={{ width: 100 }} />
+                  <col style={{ width: 55 }} />
                 </colgroup>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: "left", padding: "5px 12px", fontSize: "0.7rem", color: "#94a3b8" }}>Item</th>
-                    <th style={{ textAlign: "right", padding: "5px 12px", fontSize: "0.7rem", color: "#94a3b8" }}>Qty</th>
-                    <th style={{ textAlign: "left", padding: "5px 12px", fontSize: "0.7rem", color: "#94a3b8" }}>UOM</th>
+                    <th style={{ textAlign: "left", padding: "5px 10px", fontSize: "0.7rem", color: "#94a3b8" }}>Item</th>
+                    <th style={{ textAlign: "right", padding: "5px 10px", fontSize: "0.7rem", color: "#94a3b8" }}>Received</th>
+                    <th style={{ textAlign: "right", padding: "5px 10px", fontSize: "0.7rem", color: "#94a3b8" }}>Transferred</th>
+                    <th style={{ textAlign: "right", padding: "5px 10px", fontSize: "0.7rem", color: "#94a3b8" }}>Used</th>
+                    <th style={{ textAlign: "right", padding: "5px 10px", fontSize: "0.7rem", color: "#94a3b8" }}>Left (Main WH)</th>
+                    <th style={{ textAlign: "left", padding: "5px 10px", fontSize: "0.7rem", color: "#94a3b8" }}>UOM</th>
                   </tr>
                 </thead>
                 <tbody>
                   {b.items.map((it) => (
                     <tr key={it.item_code} style={{ borderTop: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "5px 12px", overflowWrap: "anywhere" }}>
+                      <td style={{ padding: "5px 10px", overflowWrap: "anywhere" }}>
                         <div style={{ fontWeight: 600 }}>{it.item_code}</div>
                         {it.item_name && it.item_name !== it.item_code && (
                           <div style={{ fontSize: "0.7rem", color: "#64748b", overflowWrap: "anywhere" }}>{it.item_name}</div>
                         )}
                       </td>
-                      <td style={{ padding: "5px 12px", textAlign: "right" }}>{it.qty}</td>
-                      <td style={{ padding: "5px 12px", color: "#64748b" }}>{it.uom}</td>
+                      <td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 600 }}>{it.received_qty}</td>
+                      <td style={{ padding: "5px 10px", textAlign: "right", color: "#1d4ed8" }}>{it.transferred_qty}</td>
+                      <td style={{ padding: "5px 10px", textAlign: "right", color: "#047857" }}>{it.issued_qty}</td>
+                      <td style={{ padding: "5px 10px", textAlign: "right", color: it.remaining_main_qty > 0 ? "#b45309" : "#94a3b8", fontWeight: it.remaining_main_qty > 0 ? 700 : 400 }}>
+                        {it.remaining_main_qty}
+                      </td>
+                      <td style={{ padding: "5px 10px", color: "#64748b" }}>{it.uom}</td>
                     </tr>
                   ))}
                 </tbody>

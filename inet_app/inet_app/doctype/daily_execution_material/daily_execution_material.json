@@ -13,7 +13,8 @@
   "qty_used",
   "uom",
   "qty_issued",
-  "material_issue"
+  "material_issue",
+  "preferred_batch_no"
  ],
  "fields": [
   {
@@ -78,6 +79,13 @@
    "label": "Material Issue",
    "options": "Stock Entry",
    "read_only": 1
+  },
+  {
+   "fieldname": "preferred_batch_no",
+   "fieldtype": "Link",
+   "label": "Preferred Batch (Bill)",
+   "options": "Batch",
+   "description": "Optional manual override for which bill this item is drawn from — only ever set when 2+ bills genuinely exist for this DUID+item in the team warehouse. Left blank, the automatic FIFO pick applies exactly as before."
   }
  ],
  "istable": 1,

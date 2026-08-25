@@ -141,7 +141,7 @@ const adminNav = [
   { to: "/teams",     label: "Teams",     icon: "user" },
   { to: "/expenses",   label: "Expenses",    icon: "dollar" },
   { to: "/overview",   label: "Search / Overview", icon: "search" },
-  { to: "/im-material-request", label: "Material Requests", icon: "package" },
+  { to: "/im-material-request", label: "Material Management", icon: "package" },
   { to: "/masters",    label: "Masters",     icon: "settings" },
 ];
 
@@ -155,7 +155,7 @@ const imNav = [
   { to: "/im-execution", label: "Rollout Work Done", icon: "eye" },
   { to: "/im-work-done", label: "Work Done",    icon: "checkCircle" },
   { to: "/im-issues-risks", label: "Issues & Risks", icon: "clipboard" },
-  { to: "/im-material-request", label: "Material Request", icon: "package" },
+  { to: "/im-material-request", label: "Material Management", icon: "package" },
   { to: "/im-expense",   label: "Expense Approvals", icon: "dollar" },
   { to: "/im-reports",   label: "Reports",      icon: "barChart" },
   { to: "/im-timesheets", label: "Time logs",   icon: "clock" },
@@ -177,7 +177,7 @@ const picNav = [
 ];
 
 const warehouseNav = [
-  { to: "/im-material-request", label: "Material Requests", icon: "package" },
+  { to: "/im-material-request", label: "Material Management", icon: "package" },
 ];
 
 const fieldNav = [

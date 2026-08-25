@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { pmApi } from "../services/api";
 
 // Shared with IMMaterialRequest.jsx's own request-detail/stock-balance views —
@@ -41,6 +41,11 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
   const [huaweiQtys, setHuaweiQtys] = useState({});
   const [removedHuawei, setRemovedHuawei] = useState(new Set());
   const [huaweiLoading, setHuaweiLoading] = useState(false);
+  // Which bill each Huawei item would draw from — only populated for items
+  // where 2+ bills genuinely exist in the source warehouse (the common,
+  // single-bill case never shows anything here).
+  const [billCandidates, setBillCandidates] = useState({});
+  const [preferredBatch, setPreferredBatch] = useState({});
   const [companyItems, setCompanyItems] = useState([]);
   const [itemSearch, setItemSearch] = useState("");
   const [itemOptions, setItemOptions] = useState([]);
@@ -66,6 +71,19 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
       .finally(() => { if (!cancelled) setHuaweiLoading(false); });
     return () => { cancelled = true; };
   }, [duid]);
+
+  // Check whether any received item actually has 2+ bills to choose from —
+  // rare, so this comes back empty ({}) the overwhelming majority of the time.
+  useEffect(() => {
+    setBillCandidates({});
+    setPreferredBatch({});
+    if (!duid || !sourceWh || huaweiItems.length === 0) return;
+    let cancelled = false;
+    pmApi.getBillCandidatesBulk(huaweiItems.map((h) => h.item_code), duid, { warehouse: sourceWh })
+      .then((res) => { if (!cancelled) setBillCandidates(res && typeof res === "object" ? res : {}); })
+      .catch(() => { if (!cancelled) setBillCandidates({}); });
+    return () => { cancelled = true; };
+  }, [duid, sourceWh, huaweiItems]);
 
   // Search company items — an empty query still fetches (search_items()
   // treats "" as "no code filter", returning the first N items by code) so
@@ -94,6 +112,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
         qty: h.requestedQty,
         uom: h.uom || "Nos",
         is_huawei: true,
+        ...(preferredBatch[h.item_code] ? { preferred_batch_no: preferredBatch[h.item_code] } : {}),
       })),
       ...companySelected.map((c) => ({
         item_code: c.item_code.trim(),
@@ -104,7 +123,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
     ];
     onItemsChange?.(allItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [huaweiItems, huaweiQtys, removedHuawei, companyItems]);
+  }, [huaweiItems, huaweiQtys, removedHuawei, companyItems, preferredBatch]);
 
   function removeHuaweiItem(itemCode) {
     setRemovedHuawei((p) => new Set(p).add(itemCode));
@@ -157,8 +176,11 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
               </tr>
             </thead>
             <tbody>
-              {visibleHuaweiItems.map((h) => (
-                <tr key={h.item_code}>
+              {visibleHuaweiItems.map((h) => {
+                const candidates = billCandidates[h.item_code] || [];
+                return (
+                <Fragment key={h.item_code}>
+                <tr>
                   <td style={{ padding: "5px 8px" }}>
                     <div style={{ fontWeight: 600, color: "#0f172a" }}>{h.item_code}</div>
                     {h.item_name !== h.item_code && <div style={{ fontSize: "0.72rem", color: "#64748b", overflowWrap: "anywhere" }}>{h.item_name}</div>}
@@ -176,7 +198,27 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
                       style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 17, lineHeight: 1 }}>×</button>
                   </td>
                 </tr>
-              ))}
+                {candidates.length > 1 && (
+                  <tr>
+                    <td colSpan={5} style={{ padding: "0 8px 6px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem", color: "#78350f", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "4px 8px" }}>
+                        <span>More than one bill has this item — drawing from:</span>
+                        <select
+                          value={preferredBatch[h.item_code] || candidates[0].batch_no}
+                          onChange={(e) => setPreferredBatch((p) => ({ ...p, [h.item_code]: e.target.value }))}
+                          style={{ padding: "2px 6px", borderRadius: 6, border: "1px solid #fde68a", fontSize: "0.72rem", background: "#fff" }}
+                        >
+                          {candidates.map((c) => (
+                            <option key={c.batch_no} value={c.batch_no}>{c.bill_no} — {c.available_qty} available</option>
+                          ))}
+                        </select>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
