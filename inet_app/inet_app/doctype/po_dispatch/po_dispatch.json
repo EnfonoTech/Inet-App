@@ -119,7 +119,8 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "POID",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "description": "Immutable internal id from naming series (SYS-YYYY-#####). Same as document name.",
