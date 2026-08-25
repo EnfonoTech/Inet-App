@@ -861,12 +861,22 @@ def _separate_duid_dimensions():
         return
 
     dim = frappe.get_doc("Accounting Dimension", "DUID")
+    from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
+        make_dimension_in_accounting_doctypes,
+    )
     if dim.fieldname != ACCOUNTING_DUID_FIELDNAME:
         dim.fieldname = ACCOUNTING_DUID_FIELDNAME
         dim.label = "DUID"
         # on_update -> make_dimension_in_accounting_doctypes creates the new
         # field across every accounting doctype. Nothing is deleted here.
         dim.save(ignore_permissions=True)
+        frappe.db.commit()
+    elif not frappe.db.exists("Custom Field", {"fieldname": ACCOUNTING_DUID_FIELDNAME}):
+        # The rename itself already happened in an earlier, interrupted run
+        # (dim.fieldname is already duid_acc here) but the fields were never
+        # actually created — e.g. GL Entry still only has the old `duid`
+        # column. Create them now instead of assuming "renamed" means "done".
+        make_dimension_in_accounting_doctypes(doc=dim)
         frappe.db.commit()
 
     # Put the inventory dimension's field back in its own section. An earlier
