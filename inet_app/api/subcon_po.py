@@ -97,6 +97,14 @@ _CLOSED_STATUSES = (SUB_PO_CLOSED,)
 # Ready milestones; see create_purchase_order_from_pic.
 _CREATABLE_STATUSES = (SUB_PO_NOT_ORDERED, SUB_PO_READY)
 
+# A supplier PO may only be raised for a milestone INET has already billed the
+# customer for — the subcontractor is not committed to before the revenue side
+# is invoiced. Gated per MILESTONE on its own customer status (pic_status for
+# MS1, pic_status_ms2 for MS2), not on the line's rolled-up dispatch_status:
+# a line at "Partially Closed" means MS1 is closed while MS2 may not even be
+# worked yet, so a line-level test would leave those MS2 legs orderable.
+_CUSTOMER_BILLED_STATUSES = ("Commercial Invoice Submitted", "Commercial Invoice Closed")
+
 # There is deliberately no separate "closed without a PO" status — one "Closed"
 # covers both a settled Purchase Order and the pre-launch backlog that was paid
 # outside this system. The distinction is still reportable because it's
@@ -241,6 +249,17 @@ def _status_field(milestone):
     return "sub_po_status_ms1" if milestone == "MS1" else "sub_po_status_ms2"
 
 
+def _pic_status_field(milestone):
+    """The CUSTOMER-side status field for a milestone (pic.py's vocabulary)."""
+    return "pic_status" if milestone == "MS1" else "pic_status_ms2"
+
+
+def _customer_billed_ms_sql(n):
+    """Has INET invoiced the customer for this milestone yet."""
+    col = "pd.pic_status" if n == 1 else "pd.pic_status_ms2"
+    return _in_list_sql(f"IFNULL({col}, '')", _CUSTOMER_BILLED_STATUSES)
+
+
 def _ms_num(milestone):
     return 1 if milestone == "MS1" else 2
 
@@ -350,6 +369,7 @@ def _orderable_ms_sql(n):
     ``can_order_ms1`` / ``can_order_ms2`` flags the FE gates its action on.
     """
     return (f"(IFNULL(pd.ms{n}_amount, 0) > 0 AND "
+            f"{_customer_billed_ms_sql(n)} AND "
             f"{_in_list_sql(_ms_status_sql(n), _CREATABLE_STATUSES)})")
 
 
@@ -361,12 +381,14 @@ def _ready_ms_sql(n):
     create_sales_invoice_from_pic picks up every Ready milestone when no
     milestone is named.
     """
-    return f"(IFNULL(pd.ms{n}_amount, 0) > 0 AND {_ms_status_sql(n)} = '{SUB_PO_READY}')"
+    return (f"(IFNULL(pd.ms{n}_amount, 0) > 0 AND {_customer_billed_ms_sql(n)} "
+            f"AND {_ms_status_sql(n)} = '{SUB_PO_READY}')")
 
 
 def _awaiting_order_ms_sql(n):
     """Belongs on the To Order tab: not ordered, or ordered but still a draft."""
     return (f"(IFNULL(pd.ms{n}_amount, 0) > 0 AND "
+            f"{_customer_billed_ms_sql(n)} AND "
             f"{_in_list_sql(_ms_status_sql(n), _PENDING_ORDER_STATUSES)})")
 
 
@@ -528,6 +550,7 @@ def _batch_resolve_subcontracts(po_dispatch_names):
                    pd.ms1_pct, pd.ms2_pct, pd.ms1_amount, pd.ms2_amount,
                    pd.is_internal_work, pd.is_dummy_po, pd.dispatch_status,
                    pd.sub_po_status_ms1, pd.sub_po_status_ms2,
+                   pd.pic_status, pd.pic_status_ms2,
                    pd.sub_po_amount_ms1, pd.sub_po_amount_ms2,
                    sm.name AS subcontract, sm.type AS contract_type,
                    sm.supplier, sm.sub_payout_pct, sm.contract_model, sm.status AS contract_status
@@ -830,6 +853,7 @@ def get_subcon_po_filter_options():
         f"""
         SELECT DISTINCT
           IFNULL(pd.project_code,'') AS project_code,
+          IFNULL(pd.site_code,'')    AS site_code,
           IFNULL(pd.im,'')           AS im,
           IFNULL(imm.full_name,'')   AS im_full_name,
           IFNULL(sm.name,'')         AS subcontract,
@@ -852,6 +876,7 @@ def get_subcon_po_filter_options():
 
     return {
         "project_code": uniq("project_code"),
+        "site_code": uniq("site_code"),
         "subcontract": uniq("subcontract"),
         "contract_model": uniq("contract_model"),
         "supplier": uniq("supplier"),
@@ -1001,6 +1026,15 @@ def create_purchase_order_from_pic(po_dispatch=None, milestone=None):
             if current not in _CREATABLE_STATUSES:
                 if want_ms:
                     skipped.append(f"{label} ({ms}): already at '{current}'")
+                continue
+            # Same gate the To Order tab applies, enforced here too so it
+            # cannot be bypassed by posting a line name straight to the API.
+            customer_status = (line.get(_pic_status_field(ms)) or "").strip()
+            if customer_status not in _CUSTOMER_BILLED_STATUSES:
+                skipped.append(
+                    f"{label} ({ms}): customer not invoiced yet"
+                    f" ({customer_status or 'no status'})"
+                )
                 continue
             # "Auto" mode takes only what PIC has marked Ready to Order —
             # the mirror of create_sales_invoice_from_pic picking up every

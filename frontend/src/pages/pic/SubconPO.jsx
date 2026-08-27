@@ -456,7 +456,7 @@ export default function SubconPO() {
   const [supplierFilter, setSupplierFilter] = useState([]);
   const [modelFilter, setModelFilter] = useState([]);
   const [statusFilter, setStatusFilter] = useState([]);
-  const [poStatusFilter, setPoStatusFilter] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
   const [poFilter, setPoFilter] = useState([]);
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
 
@@ -560,7 +560,7 @@ export default function SubconPO() {
       if (supplierFilter.length) portal.supplier = supplierFilter;
       if (modelFilter.length) portal.contract_model = modelFilter;
       if (statusFilter.length) portal.sub_po_status = statusFilter;
-      if (poStatusFilter.length) portal.dispatch_status = poStatusFilter;
+      if (duidFilter.length) portal.site_code = duidFilter;
       if (poFilter.length) portal.purchase_order = poFilter;
       if (dateRange.from) portal.from_date = dateRange.from;
       if (dateRange.to) portal.to_date = dateRange.to;
@@ -600,20 +600,21 @@ export default function SubconPO() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, searchDebounced, projectFilter, subconFilter, supplierFilter, modelFilter,
-      statusFilter, poStatusFilter, poFilter, dateRange, rowLimit, refreshKey]);
+      statusFilter, duidFilter, poFilter, dateRange, rowLimit, refreshKey]);
 
   const projectOptions = options.project_code || [];
   const subconOptions = (options.subcontract || []).map((v) => ({ id: v, label: v }));
   const supplierOptions = (options.supplier || []).map((v) => ({ id: v, label: v }));
   const modelOptions = options.contract_model || [];
+  const duidOptions = (options.site_code || []).map((v) => ({ id: v, label: v }));
 
   const hasFilters = !!(search || projectFilter.length || subconFilter.length
     || supplierFilter.length || modelFilter.length || statusFilter.length
-    || poStatusFilter.length || poFilter.length || dateRange.from || dateRange.to);
+    || duidFilter.length || poFilter.length || dateRange.from || dateRange.to);
 
   function clearFilters() {
     setSearch(""); setProjectFilter([]); setSubconFilter([]); setSupplierFilter([]);
-    setModelFilter([]); setStatusFilter([]); setPoStatusFilter([]); setPoFilter([]);
+    setModelFilter([]); setStatusFilter([]); setDuidFilter([]); setPoFilter([]);
     setDateRange({ from: "", to: "" });
   }
 
@@ -998,7 +999,7 @@ export default function SubconPO() {
         <SearchableSelect multi value={modelFilter} onChange={setModelFilter} options={modelOptions} placeholder="Contract Model" minWidth={150} />
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={150} />
         <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={SUB_PO_STATUSES} placeholder="Subcon PO Status" minWidth={165} />
-        <SearchableSelect multi value={poStatusFilter} onChange={setPoStatusFilter} options={options.dispatch_status || []} placeholder="PO Status" minWidth={140} />
+        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="DUID" minWidth={165} />
         {/* Filter to one supplier PO, select all, Receive Invoice — that's how
             you bill a whole PO in one go now that invoicing is per-line. */}
         <SearchableSelect multi value={poFilter} onChange={setPoFilter}
