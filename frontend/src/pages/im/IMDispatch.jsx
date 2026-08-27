@@ -228,6 +228,10 @@ export default function IMDispatch() {
   const [materialSourceWh, setMaterialSourceWh] = useState("");
   const [materialItemsByDuid, setMaterialItemsByDuid] = useState({});
   const [expandedMaterialDuid, setExpandedMaterialDuid] = useState("");
+  // When the TL should go to the warehouse and collect this — one shared
+  // pickup slot for every material request created in this batch.
+  const [materialPickupDate, setMaterialPickupDate] = useState("");
+  const [materialPickupTime, setMaterialPickupTime] = useState("");
   const [viewBillsDuid, setViewBillsDuid] = useState("");
   const [visitType, setVisitType] = useState("Execution");
   const [managerRemark, setManagerRemark] = useState("");
@@ -846,6 +850,8 @@ export default function IMDispatch() {
     setPlanDocUrls([]);
     setMaterialItemsByDuid({});
     setExpandedMaterialDuid("");
+    setMaterialPickupDate("");
+    setMaterialPickupTime("");
     setShowModal(true);
   }
 
@@ -913,6 +919,8 @@ export default function IMDispatch() {
               im: imName || undefined,
               team: planTeam,
               items: materialItemsByDuid[g.duid],
+              pickup_date: materialPickupDate || undefined,
+              pickup_time: materialPickupTime || undefined,
             });
             matResults.push({ duid: g.duid, ok: true, name: res?.name });
           } catch (e) {
@@ -1423,6 +1431,18 @@ export default function IMDispatch() {
         {SHOW_MATERIAL_DISPATCH && createPlanDuidGroups.length > 0 && (
           <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 16 }}>
             <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8 }}>DISPATCH MATERIALS</div>
+            <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 140px" }}>
+                <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Date</label>
+                <input type="date" value={materialPickupDate} onChange={(e) => setMaterialPickupDate(e.target.value)}
+                  style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ flex: "1 1 140px" }}>
+                <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Time</label>
+                <input type="time" value={materialPickupTime} onChange={(e) => setMaterialPickupTime(e.target.value)}
+                  style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
+              </div>
+            </div>
             {createPlanDuidGroups.map((g) => {
               const items = materialItemsByDuid[g.duid] || [];
               const expanded = expandedMaterialDuid === g.duid;

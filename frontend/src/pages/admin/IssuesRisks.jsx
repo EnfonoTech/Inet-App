@@ -9,6 +9,9 @@ import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constant
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import PoidMaterialsDispatched from "../../components/PoidMaterialsDispatched";
+import MaterialItemPicker from "../../components/MaterialItemPicker";
+import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
@@ -98,6 +101,17 @@ export default function IssuesRisks() {
   const [teamsList, setTeamsList] = useState([]);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
+
+  // Optional materials dispatch, grouped per DUID — same feature as
+  // IMDispatch.jsx's "Create Plan" modal.
+  const [materialSourceWh, setMaterialSourceWh] = useState("");
+  const [materialItemsByDuid, setMaterialItemsByDuid] = useState({});
+  const [expandedMaterialDuid, setExpandedMaterialDuid] = useState("");
+  const [viewBillsDuid, setViewBillsDuid] = useState("");
+  // When the TL should go to the warehouse and collect this — one shared
+  // pickup slot for every material request created in this batch.
+  const [materialPickupDate, setMaterialPickupDate] = useState("");
+  const [materialPickupTime, setMaterialPickupTime] = useState("");
 
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -240,6 +254,7 @@ export default function IssuesRisks() {
         if (!cancelled) setTeamsList([]);
       }
     })();
+    pmApi.getSourceWarehouse().then((wh) => { if (!cancelled) setMaterialSourceWh(wh || ""); }).catch(() => {});
     return () => { cancelled = true; };
   }, [showModal]);
 
@@ -296,9 +311,28 @@ export default function IssuesRisks() {
         visit_type: visitType || "Re-Visit",
         issue_remarks: issueRemarks || undefined,
       });
+
+      // Dispatch any materials selected per-DUID — a separate call from
+      // plan creation, so a failed material request doesn't roll back
+      // plans that DID get created.
+      const matGroups = createPlanDuidGroups.filter((g) => (materialItemsByDuid[g.duid] || []).length > 0);
+      for (const g of matGroups) {
+        try {
+          await pmApi.createMaterialRequest({
+            poid: g.poid || undefined,
+            duid: g.duid,
+            team: planTeam,
+            items: materialItemsByDuid[g.duid],
+            pickup_date: materialPickupDate || undefined,
+            pickup_time: materialPickupTime || undefined,
+          });
+        } catch { /* surfaced per-item elsewhere; don't block plan creation success */ }
+      }
+
       setSelected(new Set());
       setShowModal(false);
       setIssueRemarks("");
+      setMaterialItemsByDuid({});
       await loadData();
     } catch (e) {
       setCreateError(e.message || "Failed to create plans");
@@ -306,6 +340,16 @@ export default function IssuesRisks() {
       setCreating(false);
     }
   }
+
+  // Group selected lines by DUID for the optional materials-dispatch
+  // section — strictly per DUID, never mixed, even when the batch spans
+  // several DUIDs.
+  const selectedIssueRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
+  const createPlanDuids = [...new Set(selectedIssueRows.map((r) => r.site_code).filter(Boolean))];
+  const createPlanDuidGroups = createPlanDuids.map((duid) => {
+    const groupRows = selectedIssueRows.filter((r) => r.site_code === duid);
+    return { duid, poid: groupRows[0]?.po_dispatch || "", count: groupRows.length };
+  });
 
   return (
     <div>
@@ -346,7 +390,7 @@ export default function IssuesRisks() {
         )}
         <div className="toolbar-actions">
           {selected.size > 0 && <span style={{ fontSize: "0.78rem", color: "#64748b" }}>{selected.size} selected</span>}
-          <button className="btn-primary" disabled={selected.size === 0} onClick={() => setShowModal(true)}>
+          <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setMaterialItemsByDuid({}); setExpandedMaterialDuid(""); setMaterialPickupDate(""); setMaterialPickupTime(""); setShowModal(true); }}>
             Create Plans ({selected.size})
           </button>
         </div>
@@ -464,7 +508,7 @@ export default function IssuesRisks() {
       </div>
       {showModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowModal(false)}>
-          <div style={{ width: "min(620px, 95vw)", background: "#fff", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ width: "min(620px, 95vw)", maxHeight: "calc(100dvh - 40px)", overflowY: "auto", background: "#fff", borderRadius: 12, padding: 20, boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 12px" }}>Create Plans from Issues & Risks</h3>
             <div className="form-grid two-col">
               <div className="form-group"><label>Plan Date</label><input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} /></div>
@@ -555,6 +599,68 @@ export default function IssuesRisks() {
                 style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.84rem", resize: "vertical" }}
               />
             </div>
+            {selected.size === 1 && (
+              <PoidMaterialsDispatched poDispatch={filteredRows.find((r) => selected.has(r.rollout_plan))?.po_dispatch} />
+            )}
+
+            {createPlanDuidGroups.length > 0 && (
+              <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 16 }}>
+                <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8 }}>DISPATCH MATERIALS</div>
+                <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 140px" }}>
+                    <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Date</label>
+                    <input type="date" value={materialPickupDate} onChange={(e) => setMaterialPickupDate(e.target.value)}
+                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ flex: "1 1 140px" }}>
+                    <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Time</label>
+                    <input type="time" value={materialPickupTime} onChange={(e) => setMaterialPickupTime(e.target.value)}
+                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
+                  </div>
+                </div>
+                {createPlanDuidGroups.map((g) => {
+                  const items = materialItemsByDuid[g.duid] || [];
+                  const expanded = expandedMaterialDuid === g.duid;
+                  return (
+                    <div key={g.duid} style={{ border: "1px solid #e2e8f0", borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedMaterialDuid(expanded ? "" : g.duid)}
+                        style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "none", cursor: "pointer", textAlign: "left" }}
+                      >
+                        <span>
+                          <span style={{ fontSize: "0.82rem", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}>{g.duid}</span>
+                          <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: 8 }}>{g.count} line{g.count !== 1 ? "s" : ""}</span>
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {items.length > 0 && (
+                            <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#1d4ed8", background: "#eff6ff", padding: "2px 8px", borderRadius: 999 }}>
+                              {items.length} item{items.length !== 1 ? "s" : ""} selected
+                            </span>
+                          )}
+                          <span
+                            role="button"
+                            title="View bills for this DUID"
+                            onClick={(e) => { e.stopPropagation(); setViewBillsDuid(g.duid); }}
+                            style={{ fontSize: "0.72rem", fontWeight: 700, color: "#475569", background: "#f1f5f9", padding: "2px 8px", borderRadius: 999, cursor: "pointer" }}
+                          >
+                            Bills
+                          </span>
+                          <span style={{ color: "#94a3b8" }}>{expanded ? "▲" : "▼"}</span>
+                        </span>
+                      </button>
+                      <div style={{ padding: 12, borderTop: "1px solid #e2e8f0", display: expanded ? "block" : "none" }}>
+                        <MaterialItemPicker
+                          duid={g.duid}
+                          sourceWh={materialSourceWh}
+                          onItemsChange={(its) => setMaterialItemsByDuid((p) => ({ ...p, [g.duid]: its }))}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {createError && <div className="notice error" style={{ marginTop: 10 }}>{createError}</div>}
             <div style={{ marginTop: 14 }}>
               <button className="btn-primary" disabled={creating} onClick={createPlansFromIssues}>{creating ? "Creating..." : "Create"}</button>
@@ -563,6 +669,8 @@ export default function IssuesRisks() {
           </div>
         </div>
       )}
+
+      <DuidBillMaterialsModal duid={viewBillsDuid} onClose={() => setViewBillsDuid("")} />
     </div>
   );
 }

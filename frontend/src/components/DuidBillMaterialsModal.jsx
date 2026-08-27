@@ -50,7 +50,12 @@ export default function DuidBillMaterialsModal({ duid, onClose }) {
   }, [duid]);
 
   return (
-    <Modal open={!!duid} onClose={onClose} title={`Bills — ${duid}`} width={920}>
+    // Explicit high z-index: this is opened via a "Bills" button that lives
+    // INSIDE another already-open modal (Create Plan, DUID Stock, etc.) —
+    // those use inline zIndex: 9999, well above the shared Modal's default
+    // CSS z-index (1200), so without this override Bills would render
+    // behind whichever modal it was opened from.
+    <Modal open={!!duid} onClose={onClose} title={`Bills — ${duid}`} width={920} zIndex={10100}>
       {loading ? (
         <div style={{ padding: 24, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
       ) : error ? (

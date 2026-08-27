@@ -296,7 +296,10 @@ scheduler_events = {
 		"inet_app.api.hr_certificates.daily_certificate_status_refresh",
 	],
 	"cron": {
-		"0 8 * * *": ["inet_app.api.notifications.send_dummy_po_reminder"],
+		"0 8 * * *": [
+			"inet_app.api.notifications.send_dummy_po_reminder",
+			"inet_app.api.notifications.notify_pickup_reminders",
+		],
 		"0 18 * * *": ["inet_app.api.notifications.send_daily_work_done_summary"],
 	},
 }

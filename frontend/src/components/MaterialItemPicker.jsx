@@ -41,9 +41,11 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
   const [huaweiQtys, setHuaweiQtys] = useState({});
   const [removedHuawei, setRemovedHuawei] = useState(new Set());
   const [huaweiLoading, setHuaweiLoading] = useState(false);
-  // Which bill each Huawei item would draw from — only populated for items
-  // where 2+ bills genuinely exist in the source warehouse (the common,
-  // single-bill case never shows anything here).
+  // Which bill each Huawei item would draw from — populated for every item
+  // that resolves to a real bill (so every request is traceable from
+  // creation, and a bill another IM already claimed is never re-offered).
+  // A picker UI only makes sense to show when there's a genuine 2+-bill
+  // choice; a single candidate is still stamped, just silently.
   const [billCandidates, setBillCandidates] = useState({});
   const [preferredBatch, setPreferredBatch] = useState({});
   const [companyItems, setCompanyItems] = useState([]);
@@ -112,7 +114,9 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
         qty: h.requestedQty,
         uom: h.uom || "Nos",
         is_huawei: true,
-        ...(preferredBatch[h.item_code] ? { preferred_batch_no: preferredBatch[h.item_code] } : {}),
+        ...((preferredBatch[h.item_code] || billCandidates[h.item_code]?.[0]?.batch_no)
+          ? { preferred_batch_no: preferredBatch[h.item_code] || billCandidates[h.item_code][0].batch_no }
+          : {}),
       })),
       ...companySelected.map((c) => ({
         item_code: c.item_code.trim(),
@@ -123,7 +127,7 @@ export default function MaterialItemPicker({ duid, sourceWh, onItemsChange }) {
     ];
     onItemsChange?.(allItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [huaweiItems, huaweiQtys, removedHuawei, companyItems, preferredBatch]);
+  }, [huaweiItems, huaweiQtys, removedHuawei, companyItems, preferredBatch, billCandidates]);
 
   function removeHuaweiItem(itemCode) {
     setRemovedHuawei((p) => new Set(p).add(itemCode));

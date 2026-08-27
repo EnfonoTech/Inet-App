@@ -557,8 +557,17 @@ def notify_pm_cancel_plan_requested(rollout_plan_name):
 		_make_notification(user, subject, "Rollout Plan", rollout_plan_name, link="/pms/approvals")
 
 
-def notify_im_cancel_plan_decided(rollout_plan_name, action):
-	"""Notify requesting IM when PM approves or rejects the cancel request."""
+def notify_im_cancel_plan_decided(rollout_plan_name, action, material_cleanup=None):
+	"""Notify requesting IM when PM approves or rejects the cancel request.
+
+	On approve, material_cleanup (see command_center._material_cleanup_on_plan_cancel)
+	tells the IM — who actually knows what to do with it, unlike the PM
+	approving the cancellation — whether anything needs manual follow-up:
+	a pending request that got auto-rejected, or material already sitting
+	in the team's warehouse that was deliberately NOT auto-returned. Kept to
+	counts, not an itemized dump — the IM reviews the actual items in
+	Material Management via the link, not in the notification text.
+	"""
 	plan = frappe.db.get_value(
 		"Rollout Plan", rollout_plan_name,
 		["cancel_requested_by", "po_dispatch"], as_dict=True,
@@ -567,14 +576,30 @@ def notify_im_cancel_plan_decided(rollout_plan_name, action):
 		return
 	po = _po_info(plan.po_dispatch) if plan.po_dispatch else {}
 	label = _po_label(po) or rollout_plan_name
+	link = "/pms/im-planning"
 	if action == "approve":
-		subject = f"[INFO] Plan cancel approved — {label}"
+		material_cleanup = material_cleanup or {}
+		unconsumed = material_cleanup.get("unconsumed_material") or []
+		auto_cancelled = material_cleanup.get("auto_cancelled") or []
+		if unconsumed:
+			subject = (
+				f"[ALERT] Plan cancelled — {label}: {len(unconsumed)} item(s) already in the "
+				f"team's warehouse were NOT auto-returned — review Material Management"
+			)
+			link = "/pms/im-material-request"
+		elif auto_cancelled:
+			subject = (
+				f"[INFO] Plan cancel approved — {label}. "
+				f"{len(auto_cancelled)} pending material request(s) auto-rejected."
+			)
+		else:
+			subject = f"[INFO] Plan cancel approved — {label}"
 	else:
 		subject = f"[CRITICAL] Plan cancel rejected by PM — {label}"
 	_make_notification(
 		plan.cancel_requested_by, subject,
 		"Rollout Plan", rollout_plan_name,
-		link="/pms/im-planning",
+		link=link,
 	)
 
 
@@ -642,4 +667,68 @@ def send_dummy_po_reminder():
 			f"[ALERT] {row.cnt} dummy PO(s) need real PO mapping",
 			None, None,
 			link="/pms/im-dashboard",
+		)
+
+
+def notify_pickup_reminders():
+	"""Run at 08:00 daily — reminds the Team Lead to collect a staged transfer
+	once its planned pickup date has arrived (or passed), and separately
+	nudges the requesting IM when a request still hasn't been staged by the
+	Warehouse Manager past its own planned pickup date. Re-fires every day
+	the condition still holds (same pattern as send_dummy_po_reminder) —
+	no separate dedup bookkeeping needed."""
+	today = frappe.utils.nowdate()
+
+	staged = frappe.db.sql(
+		"""
+		SELECT mr.name, mr.set_warehouse, mr.schedule_date
+		FROM `tabMaterial Request` mr
+		WHERE mr.material_request_type = 'Material Transfer'
+		  AND IFNULL(mr.is_return_request, 0) != 1
+		  AND mr.docstatus = 1
+		  AND IFNULL(mr.pending_transfer_se, '') != ''
+		  AND mr.transfer_status != 'Completed'
+		  AND mr.schedule_date IS NOT NULL
+		  AND mr.schedule_date <= %(today)s
+		""",
+		{"today": today}, as_dict=True,
+	)
+	for r in staged:
+		team = frappe.db.get_value("INET Team", {"warehouse": r.set_warehouse}, "name")
+		tl_user = _tl_user_from_team(team) if team else None
+		if not tl_user:
+			continue
+		overdue = str(r.schedule_date) < today
+		subject = (
+			f"[ALERT] Overdue pickup — {r.name} was due {r.schedule_date}, please collect from warehouse"
+			if overdue else
+			f"[ALERT] Pickup due today — {r.name} is ready, please collect from warehouse"
+		)
+		_make_notification(tl_user, subject, "Material Request", r.name, link="/pms/field-my-stock")
+
+	unstaged = frappe.db.sql(
+		"""
+		SELECT mr.name, mr.im, mr.schedule_date
+		FROM `tabMaterial Request` mr
+		WHERE mr.material_request_type = 'Material Transfer'
+		  AND IFNULL(mr.is_return_request, 0) != 1
+		  AND mr.docstatus = 1
+		  AND IFNULL(mr.pending_transfer_se, '') = ''
+		  AND mr.transfer_status != 'Completed'
+		  AND mr.schedule_date IS NOT NULL
+		  AND mr.schedule_date <= %(today)s
+		""",
+		{"today": today}, as_dict=True,
+	)
+	for r in unstaged:
+		if not r.im:
+			continue
+		im_user = frappe.db.get_value("IM Master", r.im, "user")
+		if not im_user:
+			continue
+		_make_notification(
+			im_user,
+			f"[ALERT] {r.name} still awaiting Warehouse Manager approval — pickup was planned for {r.schedule_date}",
+			"Material Request", r.name,
+			link="/pms/im-material-request",
 		)

@@ -1,9 +1,10 @@
-export default function Modal({ open, title, onClose, children, wide = false, width, footer = null }) {
+export default function Modal({ open, title, onClose, children, wide = false, width, footer = null, zIndex }) {
   if (!open) return null;
   const customStyle = width ? { width: typeof width === "number" ? `${width}px` : width, maxWidth: "calc(100vw - 32px)" } : undefined;
   return (
     <div
       className={`modal-overlay${wide || width ? " modal-overlay-center" : ""}`}
+      style={zIndex ? { zIndex } : undefined}
       onClick={onClose}
     >
       <div

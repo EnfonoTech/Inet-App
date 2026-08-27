@@ -367,7 +367,26 @@ function MaterialsSection({ duid, teamId, executionName, onUsageChange }) {
     if (!duid || !teamId || codes.length === 0) return;
     let cancelled = false;
     pmApi.getBillCandidatesBulk(codes, duid, { team_id: teamId })
-      .then(res => { if (!cancelled) setBillCandidates(res && typeof res === "object" ? res : {}); })
+      .then(res => {
+        if (cancelled) return;
+        const candidates = res && typeof res === "object" ? res : {};
+        setBillCandidates(candidates);
+        // Silently stamp the first (best, non-reserved) candidate on any
+        // item that doesn't already have one — always traceable to a real
+        // bill, not just when there's a visible 2+-bill choice to show.
+        setMaterials(prev => {
+          let changed = false;
+          const next = prev.map(m => {
+            if (!m.is_huawei || m.preferred_batch_no) return m;
+            const first = candidates[m.item_code]?.[0]?.batch_no;
+            if (!first) return m;
+            changed = true;
+            return { ...m, preferred_batch_no: first };
+          });
+          if (changed) onUsageChange && onUsageChange(next);
+          return changed ? next : prev;
+        });
+      })
       .catch(() => { if (!cancelled) setBillCandidates({}); });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps

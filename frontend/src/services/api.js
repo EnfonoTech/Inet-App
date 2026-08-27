@@ -898,6 +898,7 @@ export const pmApi = {
   confirmMaterialTransfer: (name)   => call("inet_app.api.material_management.confirm_material_transfer", { name }),
   rejectMaterialTransferConfirmation: (name, reason) => call("inet_app.api.material_management.reject_material_transfer_confirmation", { name, reason: reason || "" }),
   listPendingTeamConfirmations: ()  => call("inet_app.api.material_management.list_pending_team_confirmations", {}),
+  listTeamRequestsAwaitingApproval: () => call("inet_app.api.material_management.list_team_requests_awaiting_approval", {}),
   getAvailableStock:       (item_code, warehouse)  => call("inet_app.api.material_management.get_available_stock", { item_code, ...(warehouse ? { warehouse } : {}) }),
   getPoidMaterials:        (po_dispatch)           => call("inet_app.api.material_management.get_poid_materials", { po_dispatch }),
   getExecutionMaterialUsage: (execution)            => call("inet_app.api.material_management.get_execution_material_usage", { execution }),

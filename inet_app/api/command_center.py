@@ -17339,7 +17339,7 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
 
     try:
         from inet_app.api.notifications import notify_im_cancel_plan_decided
-        notify_im_cancel_plan_decided(rollout_plan, "approve")
+        notify_im_cancel_plan_decided(rollout_plan, "approve", material_cleanup=material_cleanup)
     except Exception:
         pass
     out = _serialize_plan_for_cancel(rollout_plan)

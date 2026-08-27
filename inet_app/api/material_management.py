@@ -1346,6 +1346,15 @@ def get_material_request(name):
     # only decided once approved, when ERPNext auto-picks a batch for the
     # staged transfer Stock Entry. Surface it once it exists; blank before
     # that ("if exists").
+    # Resolve IM Master link → user's display name (the raw Link value, e.g.
+    # "456", is meaningless to a human reading the request detail popup).
+    im_link = doc.get("im")
+    im_display = im_link
+    if im_link:
+        im_user = frappe.db.get_value("IM Master", im_link, "user")
+        if im_user:
+            im_display = frappe.db.get_value("User", im_user, "full_name") or im_user
+
     return_trace = {}
     if doc.get("is_return_request") and transfer_se:
         se_rows = frappe.db.get_all(
@@ -1366,8 +1375,11 @@ def get_material_request(name):
     return {
         "name": doc.name,
         "request_date": str(doc.transaction_date or ""),
+        "pickup_date": str(doc.schedule_date or ""),
+        "pickup_time": str(doc.get("pickup_time") or ""),
         "owner": doc.owner,
-        "im": doc.get("im"),
+        "im": im_display,
+        "im_full_name": im_display,
         "poid": poid_display or poid_link,
         "duid": doc.get("duid"),
         "request_status": _request_status(
@@ -1485,10 +1497,24 @@ def get_duid_received_items(duid):
     # Sum received qty per item across all receipts for this DUID
     received = {}   # item_code → {item_name, qty, uom, material_receipt}
     for plan in plans:
-        rows = frappe.db.get_all(
-            "Stock Entry Detail",
-            filters={"parent": plan["material_receipt"]},
-            fields=["item_code", "item_name", "qty", "uom"],
+        # A Material Receipt can be a combined Stock Entry covering several
+        # bills at once (on_stock_entry_submit tags each bill's Huawei
+        # Outbound Plan with the same material_receipt when that happens) —
+        # so pulling every row on the Stock Entry would attribute another
+        # bill's (and possibly another DUID's) items to this one. Restrict
+        # to rows whose own batch is actually tied to *this* bill; a row
+        # with no batch at all (legacy, predates batch tracking) is still
+        # trusted as before, since there's no better signal for it.
+        rows = frappe.db.sql(
+            """SELECT sed.item_code, sed.item_name, sed.qty, sed.uom
+               FROM `tabStock Entry Detail` sed
+               LEFT JOIN `tabBatch` b ON b.name = sed.batch_no
+               WHERE sed.parent = %(receipt)s
+                 AND (
+                   IFNULL(sed.batch_no, '') = ''
+                   OR (b.reference_doctype = 'Huawei Outbound Plan' AND b.reference_name = %(bill)s)
+                 )""",
+            {"receipt": plan["material_receipt"], "bill": plan["name"]}, as_dict=True,
         )
         for r in rows:
             ic = r["item_code"]
@@ -2026,6 +2052,12 @@ def create_material_request(payload):
     duid = data.get("duid") or ""
     company = frappe.defaults.get_global_default("company")
 
+    # When the TL should go to the warehouse and collect this — defaults to
+    # the request date with no specific time if the IM doesn't set one, same
+    # as before this was ever exposed as its own concept.
+    pickup_date = (data.get("pickup_date") or "").strip() or req_date
+    pickup_time = (data.get("pickup_time") or "").strip() or None
+
     # Resolve business POID → system document name for the Link field
     poid_input = (data.get("poid") or "").strip()
     poid = _resolve_po_dispatch(poid_input) if poid_input else ""
@@ -2088,7 +2120,8 @@ def create_material_request(payload):
         "doctype": "Material Request",
         "material_request_type": "Material Transfer",
         "transaction_date": req_date,
-        "schedule_date": req_date,
+        "schedule_date": pickup_date,
+        "pickup_time": pickup_time,
         "company": company,
         "set_warehouse": target_wh,
         "set_from_warehouse": source_wh,
@@ -2102,10 +2135,10 @@ def create_material_request(payload):
                 "uom": i.get("uom") or frappe.db.get_value("Item", i["item_code"], "stock_uom") or "",
                 "warehouse": target_wh,
                 "from_warehouse": source_wh,
-                "schedule_date": req_date,
+                "schedule_date": pickup_date,
                 "poid": poid,
                 "duid": duid,
-                "preferred_batch_no": i.get("preferred_batch_no") or "",
+                "preferred_batch_no": i.get("preferred_batch_no") or _default_preferred_batch(i["item_code"], duid, source_wh),
             }
             for i in items
         ],
@@ -2130,7 +2163,17 @@ def _check_team_lead_for_warehouse(warehouse):
 
 def _bill_candidates_for_item(item_code, duid, warehouse):
     """Core lookup shared by get_bill_candidates and get_bill_candidates_bulk
-    — see get_bill_candidates for what this returns and why."""
+    — see get_bill_candidates for what this returns and why.
+
+    Each batch's real ledger balance is reduced by whatever's already
+    earmarked for it via another active request's own preferred_batch_no —
+    a Material Request that hasn't been transferred yet doesn't show up in
+    the ledger, so without this a second IM requesting the same item+DUID
+    would still see (and could pick) a bill another IM already claimed.
+    Only requests that haven't actually moved the stock yet count as a
+    claim — once transferred, the ledger balance above already reflects it,
+    so double-subtracting would under-report real availability.
+    """
     if not (item_code and duid and warehouse):
         return []
     if not frappe.get_cached_value("Item", item_code, "has_batch_no"):
@@ -2151,27 +2194,46 @@ def _bill_candidates_for_item(item_code, duid, warehouse):
     rows = get_available_batches(frappe._dict({
         "item_code": item_code, "warehouse": warehouse, "batch_no": matching_batches,
     })) or []
+    if not rows:
+        return []
+
+    batch_names = [r.batch_no for r in rows]
+    ph = ", ".join(["%s"] * len(batch_names))
+    reserved_rows = frappe.db.sql(
+        f"""SELECT mri.preferred_batch_no AS batch_no, SUM(mri.qty) AS qty
+            FROM `tabMaterial Request Item` mri
+            JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+            WHERE mri.preferred_batch_no IN ({ph})
+              AND mr.docstatus = 1
+              AND IFNULL(mr.is_return_request, 0) != 1
+              AND IFNULL(mr.transfer_status, '') != 'Completed'
+            GROUP BY mri.preferred_batch_no""",
+        batch_names, as_dict=True,
+    )
+    reserved = {r.batch_no: flt(r.qty) for r in reserved_rows}
 
     out = []
     for r in rows:
-        if flt(r.qty) <= 0.0001:
+        available = flt(r.qty) - reserved.get(r.batch_no, 0)
+        if available <= 0.0001:
             continue
         bill_no = r.batch_no.split("::")[0] if "::" in r.batch_no else r.batch_no
-        out.append({"batch_no": r.batch_no, "bill_no": bill_no, "available_qty": flt(r.qty)})
+        out.append({"batch_no": r.batch_no, "bill_no": bill_no, "available_qty": available})
     return out
 
 
 @frappe.whitelist()
 def get_bill_candidates(item_code, duid, warehouse):
     """Bills (batches) of `item_code` tagged to `duid` that currently have
-    stock in `warehouse`, oldest-first — the same order/scope
+    stock in `warehouse`, oldest-first, net of whatever's already reserved
+    by another pending request — the same order/scope
     _auto_select_batch_for_row would draw from automatically.
 
-    Powers the "which bill would be auto-picked, change it if you want"
-    control in the portal. Deliberately returns [] whenever there's nothing
-    to decide (no batching, no DUID match, or only one bill) — the caller
-    should only show a picker when this comes back with 2+ rows, so the
-    common case stays exactly as automatic as it is today.
+    Powers the "which bill would this draw from" tracking: the caller
+    should always stamp preferred_batch_no from the first entry (so every
+    request is traceable to a real bill from the moment it's created, and a
+    bill another IM already claimed is never handed out again), and only
+    show a picker UI when this comes back with 2+ rows.
     """
     return _bill_candidates_for_item(item_code, duid, warehouse)
 
@@ -2180,8 +2242,10 @@ def get_bill_candidates(item_code, duid, warehouse):
 def get_bill_candidates_bulk(item_codes, duid, warehouse=None, team_id=None):
     """Same as get_bill_candidates, for several items sharing one DUID +
     warehouse (e.g. every Huawei item on one request, or one Daily
-    Execution) — one call instead of N. Returns {item_code: [...]}, only
-    including items where a genuine 2+-bill choice exists.
+    Execution) — one call instead of N. Returns {item_code: [...]} for
+    every item that has at least one bill to draw from (including a single
+    entry when there's only one, so the caller can always stamp
+    preferred_batch_no — only show a picker UI for entries with 2+ rows).
 
     Callers that only know a team (not its warehouse directly, e.g. the
     Field execution form) can pass team_id instead of warehouse."""
@@ -2192,9 +2256,20 @@ def get_bill_candidates_bulk(item_codes, duid, warehouse=None, team_id=None):
     out = {}
     for item_code in item_codes or []:
         candidates = _bill_candidates_for_item(item_code, duid, warehouse)
-        if len(candidates) > 1:
+        if candidates:
             out[item_code] = candidates
     return out
+
+
+def _default_preferred_batch(item_code, duid, warehouse):
+    """Best bill to stamp on a new item row when the caller didn't pick one
+    explicitly — the same first (oldest, non-reserved) candidate
+    _auto_select_batch_for_row would land on anyway, resolved up front so
+    the request is traceable to a real bill from the moment it's created."""
+    if not duid:
+        return ""
+    candidates = _bill_candidates_for_item(item_code, duid, warehouse)
+    return candidates[0]["batch_no"] if candidates else ""
 
 
 def _auto_select_batch_for_row(item_row):
@@ -2312,16 +2387,32 @@ def approve_material_request(name):
     se.confirmation_stage = "Awaiting Team Confirmation"
     preferred_map = {i.name: i.get("preferred_batch_no") for i in mr.items if i.get("preferred_batch_no")}
     extra_rows = []
+    resolved_batches = {}  # material_request_item name -> batch_no, for tracking
     for item in se.items:
         item.duid = duid
-        if preferred_map.get(item.get("material_request_item")):
-            item.preferred_batch_no = preferred_map[item.material_request_item]
+        mri_name = item.get("material_request_item")
+        preferred = preferred_map.get(mri_name)
+        if not preferred and duid:
+            # Defense-in-depth: a request created without the picker
+            # stamping a bill (older data, or created directly in Desk)
+            # still gets one resolved here, so every transfer is traceable
+            # to a real bill from this point on, not just the ones the
+            # portal explicitly picked.
+            auto_candidates = get_bill_candidates(item.item_code, duid, item.s_warehouse)
+            if auto_candidates:
+                preferred = auto_candidates[0]["batch_no"]
+        if preferred:
+            item.preferred_batch_no = preferred
+            if mri_name:
+                resolved_batches[mri_name] = preferred
         extra_rows.extend(_auto_select_batch_for_row(item))
     for row in extra_rows:
         se.append("items", row)
 
     se.insert(ignore_permissions=True)
     frappe.db.set_value("Material Request", name, "pending_transfer_se", se.name)
+    for mri_name, batch_no in resolved_batches.items():
+        frappe.db.set_value("Material Request Item", mri_name, "preferred_batch_no", batch_no, update_modified=False)
     frappe.db.commit()
     return {"name": name, "stock_entry": se.name, "status": "Pending Team Confirmation"}
 
@@ -2401,7 +2492,7 @@ def list_pending_team_confirmations():
             "docstatus": 1,
             "pending_transfer_se": ["not in", ["", None]],
         },
-        fields=["name", "transaction_date", "poid", "duid", "pending_transfer_se"],
+        fields=["name", "transaction_date", "schedule_date", "pickup_time", "poid", "duid", "pending_transfer_se"],
         order_by="creation asc",
     )
     if not rows:
@@ -2415,6 +2506,8 @@ def list_pending_team_confirmations():
 
     for r in rows:
         r["request_date"] = str(r.pop("transaction_date", "") or "")
+        r["pickup_date"] = str(r.pop("schedule_date", "") or "")
+        r["pickup_time"] = str(r.get("pickup_time") or "")
         if r.get("poid"):
             r["poid"] = poid_map.get(r["poid"], r["poid"])
         r["items"] = frappe.db.get_all(
@@ -2422,6 +2515,68 @@ def list_pending_team_confirmations():
             filters={"parent": r["pending_transfer_se"]},
             fields=["item_code", "item_name", "qty", "uom"],
         )
+    return rows
+
+
+@frappe.whitelist()
+def list_team_requests_awaiting_approval():
+    """Material Requests submitted for this Team Lead's team warehouse that
+    are still sitting at Pending Approval — the Warehouse Manager hasn't
+    staged a transfer yet, so there's nothing to confirm or act on. FYI-only
+    heads-up for the Field portal's Incoming Transfers tab (a separate,
+    non-actionable section from list_pending_team_confirmations above), so
+    a TL isn't blindsided by material appearing with no warning once it's
+    finally staged. Deliberately not shown as "incoming" — nothing has been
+    approved, decided, or batch-picked yet; the Warehouse Manager could
+    still reject it or change quantities.
+    """
+    team = frappe.db.get_value(
+        "INET Team", {"field_user": frappe.session.user, "status": "Active"},
+        ["name", "warehouse"], as_dict=True,
+    )
+    if not team or not team.warehouse:
+        return []
+
+    rows = frappe.db.get_all(
+        "Material Request",
+        filters={
+            "material_request_type": "Material Transfer",
+            "is_return_request": ["!=", 1],
+            "set_warehouse": team.warehouse,
+            "docstatus": 1,
+            "pending_transfer_se": ["in", ["", None]],
+            "transfer_status": ["!=", "Completed"],
+        },
+        fields=["name", "transaction_date", "schedule_date", "pickup_time", "poid", "duid"],
+        order_by="creation asc",
+    )
+    if not rows:
+        return []
+
+    poid_links = list({r["poid"] for r in rows if r.get("poid")})
+    poid_map = {}
+    if poid_links:
+        for row in frappe.db.get_all("PO Dispatch", filters={"name": ["in", poid_links]}, fields=["name", "poid"]):
+            poid_map[row["name"]] = row["poid"]
+
+    names = [r["name"] for r in rows]
+    items_by_mr = {}
+    for it in frappe.db.get_all(
+        "Material Request Item",
+        filters={"parent": ["in", names]},
+        fields=["parent", "item_code", "item_name", "qty", "uom"],
+    ):
+        items_by_mr.setdefault(it["parent"], []).append(
+            {"item_code": it["item_code"], "item_name": it["item_name"], "qty": it["qty"], "uom": it["uom"]}
+        )
+
+    for r in rows:
+        r["request_date"] = str(r.pop("transaction_date", "") or "")
+        r["pickup_date"] = str(r.pop("schedule_date", "") or "")
+        r["pickup_time"] = str(r.get("pickup_time") or "")
+        if r.get("poid"):
+            r["poid"] = poid_map.get(r["poid"], r["poid"])
+        r["items"] = items_by_mr.get(r["name"], [])
     return rows
 
 
@@ -2463,6 +2618,13 @@ def reject_material_request(name, reason=None):
     se_name = mr.get("pending_transfer_se")
     if se_name and frappe.db.get_value("Stock Entry", se_name, "docstatus") == 0:
         frappe.delete_doc("Stock Entry", se_name, ignore_permissions=True, force=True)
+        # on_stock_entry_trash (the Stock Entry's own delete hook) just
+        # cleared pending_transfer_se via frappe.db.set_value as a safety
+        # net for a Stock Entry deleted some other way — which bumps this
+        # doc's `modified` out from under us the same way a direct
+        # db.set_value here would have. Reload so mr.cancel()/save() below
+        # checks against the current timestamp instead of a stale one.
+        mr.reload()
         mr.pending_transfer_se = ""
 
     if reason:
@@ -3557,13 +3719,24 @@ def _throw_insufficient_stock(row, balance):
 
 
 def _build_issue_se_item(row, qty, team_wh, duid, expense_account):
+    preferred_batch_no = row.get("preferred_batch_no")
+    if not preferred_batch_no and duid:
+        # Defense-in-depth, same as the Transfer/Return flows: always
+        # resolve a real bill for tracking even if the TL's form didn't
+        # explicitly stamp one — get_bill_candidates already excludes
+        # anything another pending request reserved.
+        auto_candidates = get_bill_candidates(row.item_code, duid, team_wh)
+        if auto_candidates:
+            preferred_batch_no = auto_candidates[0]["batch_no"]
+            if row.get("name"):
+                frappe.db.set_value("Daily Execution Material", row.name, "preferred_batch_no", preferred_batch_no, update_modified=False)
     item_row = frappe._dict({
         "item_code": row.item_code,
         "qty": qty,
         "uom": row.uom or "Nos",
         "s_warehouse": team_wh,
         "duid": duid,
-        "preferred_batch_no": row.get("preferred_batch_no"),
+        "preferred_batch_no": preferred_batch_no,
         # Deliberately NOT carrying material_request through onto the Issue
         # row: ERPNext's own validate_with_material_request() looks up a
         # Material Request Item by (material_request_item, material_request)
@@ -4005,11 +4178,11 @@ def list_return_requests(team_id=None, status=None, limit=50, column_filters=Non
 
 @frappe.whitelist()
 def get_return_bill_candidates(name):
-    """Preview which bill each of a pending return's items would
-    auto-select from, and whether there's a genuine choice (2+ bills) worth
-    surfacing to the approver. Returns {} (nothing to show) in the
-    overwhelming common case — only items with 2+ available bills come
-    back, keyed by item_code."""
+    """Preview which bill each of a pending return's items would draw from
+    — every item that resolves to a real bill comes back (so the approver's
+    choice is always traceable, not just when there's a genuine 2+-bill
+    ambiguity), keyed by item_code. Returns {} entirely when the return's
+    DUID can't even be resolved yet (nothing to preview)."""
     mr = frappe.get_doc("Material Request", name)
     if not mr.get("is_return_request"):
         return {}
@@ -4024,7 +4197,7 @@ def get_return_bill_candidates(name):
         if not duid:
             continue
         candidates = get_bill_candidates(item_code, duid, team_wh)
-        if len(candidates) > 1:
+        if candidates:
             out[item_code] = {"duid": duid, "candidates": candidates}
     return out
 
@@ -4100,8 +4273,10 @@ def approve_material_return_request(name, preferred_batches=None):
     team_wh = mr.set_from_warehouse
     item_codes = [i.item_code for i in mr.items]
     duid_by_item = _get_team_duid_per_item(team_wh, item_codes)
+    mri_by_item_code = {i.item_code: i.name for i in mr.items}
 
     extra_rows = []
+    resolved_batches = {}  # material_request_item name -> batch_no, for tracking
     for item in se.items:
         duid = duid_by_item.get(item.item_code, "")
         if duid:
@@ -4115,8 +4290,20 @@ def approve_material_return_request(name, preferred_batches=None):
             # duid_by_item (the item's actual DUID at the team warehouse) is.
             item.duid = duid
             item.to_duid = duid
-        if preferred_batches.get(item.item_code):
-            item.preferred_batch_no = preferred_batches[item.item_code]
+        preferred = preferred_batches.get(item.item_code)
+        if not preferred and duid:
+            # Same defense-in-depth as approve_material_request: always
+            # resolve a real bill for tracking, even if the approver didn't
+            # explicitly pick one (the common case — get_return_bill_candidates
+            # already excludes anything another pending request reserved).
+            auto_candidates = get_bill_candidates(item.item_code, duid, team_wh)
+            if auto_candidates:
+                preferred = auto_candidates[0]["batch_no"]
+        if preferred:
+            item.preferred_batch_no = preferred
+            mri_name = mri_by_item_code.get(item.item_code)
+            if mri_name:
+                resolved_batches[mri_name] = preferred
         extra_rows.extend(_auto_select_batch_for_row(item))
     for row in extra_rows:
         se.append("items", row)
@@ -4124,6 +4311,8 @@ def approve_material_return_request(name, preferred_batches=None):
     se.confirmation_stage = "Awaiting Warehouse Confirmation"
     se.insert(ignore_permissions=True)
     frappe.db.set_value("Material Request", name, "pending_transfer_se", se.name)
+    for mri_name, batch_no in resolved_batches.items():
+        frappe.db.set_value("Material Request Item", mri_name, "preferred_batch_no", batch_no, update_modified=False)
     frappe.db.commit()
     return {"name": name, "stock_entry": se.name, "status": "Pending Warehouse Confirmation"}
 

@@ -8,6 +8,9 @@ import { useDebounced } from "../../hooks/useDebounced";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
+import PoidMaterialsDispatched from "../../components/PoidMaterialsDispatched";
+import MaterialItemPicker from "../../components/MaterialItemPicker";
+import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
@@ -163,6 +166,18 @@ export default function RolloutPlanning() {
   const [detailRow, setDetailRow] = useState(null);
   const [managerRemark, setManagerRemark] = useState("");
 
+  // Optional materials dispatch, grouped per DUID — same feature as
+  // IMDispatch.jsx's "Create Plan" modal (Huawei stock is DUID-scoped, so
+  // materials for one DUID must never be usable against another).
+  const [materialSourceWh, setMaterialSourceWh] = useState("");
+  const [materialItemsByDuid, setMaterialItemsByDuid] = useState({});
+  const [expandedMaterialDuid, setExpandedMaterialDuid] = useState("");
+  const [viewBillsDuid, setViewBillsDuid] = useState("");
+  // When the TL should go to the warehouse and collect this — one shared
+  // pickup slot for every material request created in this batch.
+  const [materialPickupDate, setMaterialPickupDate] = useState("");
+  const [materialPickupTime, setMaterialPickupTime] = useState("");
+
   const [refreshKey, setRefreshKey] = useState(0);
 
   const loadMeta = useCallback(async () => {
@@ -297,6 +312,7 @@ export default function RolloutPlanning() {
       }
     })();
     pmApi.listHuaweiIMs().then((res) => { if (!cancelled) setHuaweiIms(res || []); }).catch(() => {});
+    pmApi.getSourceWarehouse().then((wh) => { if (!cancelled) setMaterialSourceWh(wh || ""); }).catch(() => {});
     return () => { cancelled = true; };
   }, [showModal]);
 
@@ -357,6 +373,10 @@ export default function RolloutPlanning() {
     setQcRequired(true);
     setCiagRequired(true);
     setManagerRemark("");
+    setMaterialItemsByDuid({});
+    setExpandedMaterialDuid("");
+    setMaterialPickupDate("");
+    setMaterialPickupTime("");
     setShowModal(true);
   }
 
@@ -400,7 +420,34 @@ export default function RolloutPlanning() {
         manager_remark: managerRemark || undefined,
       });
       const count = result?.created ?? selected.size;
-      setSuccessMsg(`Created ${count} rollout plan${count !== 1 ? "s" : ""} successfully.`);
+      let msg = `Created ${count} rollout plan${count !== 1 ? "s" : ""} successfully.`;
+
+      // Dispatch any materials selected per-DUID — a separate call from
+      // plan creation, so a failed material request doesn't roll back plans
+      // that DID get created.
+      const matGroups = createPlanDuidGroups.filter((g) => (materialItemsByDuid[g.duid] || []).length > 0);
+      if (matGroups.length > 0) {
+        const matResults = [];
+        for (const g of matGroups) {
+          try {
+            const res = await pmApi.createMaterialRequest({
+              poid: g.poid || undefined,
+              duid: g.duid,
+              team: planTeam,
+              items: materialItemsByDuid[g.duid],
+              pickup_date: materialPickupDate || undefined,
+              pickup_time: materialPickupTime || undefined,
+            });
+            matResults.push({ duid: g.duid, ok: true, name: res?.name });
+          } catch (e) {
+            matResults.push({ duid: g.duid, ok: false, error: e.message || "Failed" });
+          }
+        }
+        const okCount = matResults.filter((r) => r.ok).length;
+        msg += ` Material requests: ${okCount}/${matResults.length} created.`;
+      }
+
+      setSuccessMsg(msg);
       setSelected(new Set());
       setShowModal(false);
       await Promise.all([loadData(), loadMeta()]);
@@ -420,6 +467,13 @@ export default function RolloutPlanning() {
   const createPlanDuids = [...new Set(createPlanSelRows.map((r) => r.site_code || r.name).filter(Boolean))];
   const createPlanIms = [...new Set(createPlanSelRows.map((r) => r.im).filter(Boolean))];
   const createPlanTotalQty = createPlanSelRows.reduce((s, r) => s + Number(r.qty || 0), 0);
+  // Group selected lines by DUID for the optional materials-dispatch
+  // section — strictly per DUID, never mixed, even when the batch spans
+  // several DUIDs.
+  const createPlanDuidGroups = createPlanDuids.map((duid) => {
+    const groupRows = createPlanSelRows.filter((r) => (r.site_code || r.name) === duid);
+    return { duid, poid: groupRows[0]?.poid || groupRows[0]?.name || "", count: groupRows.length };
+  });
   const planTeamsAssignedQty = (planTeams || [])
     .filter((r) => r.team)
     .reduce((s, r) => s + (Number(r.assigned_qty) || 0), 0);
@@ -1097,6 +1151,65 @@ export default function RolloutPlanning() {
                   style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: "0.86rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical", minHeight: 60 }}
                 />
               </div>
+
+              {createPlanDuidGroups.length > 0 && (
+                <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 16 }}>
+                  <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8 }}>DISPATCH MATERIALS</div>
+                  <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                    <div style={{ flex: "1 1 140px" }}>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Date</label>
+                      <input type="date" value={materialPickupDate} onChange={(e) => setMaterialPickupDate(e.target.value)}
+                        style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
+                    </div>
+                    <div style={{ flex: "1 1 140px" }}>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Time</label>
+                      <input type="time" value={materialPickupTime} onChange={(e) => setMaterialPickupTime(e.target.value)}
+                        style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
+                    </div>
+                  </div>
+                  {createPlanDuidGroups.map((g) => {
+                    const items = materialItemsByDuid[g.duid] || [];
+                    const expanded = expandedMaterialDuid === g.duid;
+                    return (
+                      <div key={g.duid} style={{ border: "1px solid #e2e8f0", borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedMaterialDuid(expanded ? "" : g.duid)}
+                          style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "none", cursor: "pointer", textAlign: "left" }}
+                        >
+                          <span>
+                            <span style={{ fontSize: "0.82rem", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}>{g.duid}</span>
+                            <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: 8 }}>{g.count} line{g.count !== 1 ? "s" : ""}</span>
+                          </span>
+                          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {items.length > 0 && (
+                              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#1d4ed8", background: "#eff6ff", padding: "2px 8px", borderRadius: 999 }}>
+                                {items.length} item{items.length !== 1 ? "s" : ""} selected
+                              </span>
+                            )}
+                            <span
+                              role="button"
+                              title="View bills for this DUID"
+                              onClick={(e) => { e.stopPropagation(); setViewBillsDuid(g.duid); }}
+                              style={{ fontSize: "0.72rem", fontWeight: 700, color: "#475569", background: "#f1f5f9", padding: "2px 8px", borderRadius: 999, cursor: "pointer" }}
+                            >
+                              Bills
+                            </span>
+                            <span style={{ color: "#94a3b8" }}>{expanded ? "▲" : "▼"}</span>
+                          </span>
+                        </button>
+                        <div style={{ padding: 12, borderTop: "1px solid #e2e8f0", display: expanded ? "block" : "none" }}>
+                          <MaterialItemPicker
+                            duid={g.duid}
+                            sourceWh={materialSourceWh}
+                            onItemsChange={(its) => setMaterialItemsByDuid((p) => ({ ...p, [g.duid]: its }))}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
         </>
 
         {createError && (
@@ -1105,6 +1218,8 @@ export default function RolloutPlanning() {
           </div>
         )}
       </Modal>
+
+      <DuidBillMaterialsModal duid={viewBillsDuid} onClose={() => setViewBillsDuid("")} />
 
       <Modal
         open={!!detailRow}
@@ -1150,6 +1265,7 @@ export default function RolloutPlanning() {
             ]}
           />
         )}
+        {detailRow && <PoidMaterialsDispatched poDispatch={detailRow.name} />}
       </Modal>
     </div>
   );

@@ -7,6 +7,38 @@ function fmt(n) {
   return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
+// Backend sends Time-field values as raw "HH:MM:SS" — render as e.g. "11:11 AM".
+function fmtPickupTime(t) {
+  if (!t) return "";
+  const [h, m] = t.split(":");
+  if (h === undefined || m === undefined) return t;
+  const d = new Date(2000, 0, 1, Number(h), Number(m));
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+// How urgent is this pickup, based on today vs pickup_date.
+function pickupUrgency(dateStr) {
+  if (!dateStr) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(`${dateStr}T00:00:00`);
+  const diffDays = Math.round((d - today) / 86400000);
+  if (diffDays < 0) return { label: `Overdue ${Math.abs(diffDays)}d`, color: "#dc2626", bg: "#fef2f2", border: "#fecaca", due: true };
+  if (diffDays === 0) return { label: "Due today", color: "#b45309", bg: "#fffbeb", border: "#fde68a", due: true };
+  if (diffDays === 1) return { label: "Due tomorrow", color: "#1d4ed8", bg: "#eff6ff", border: "#bfdbfe", due: false };
+  return { label: `In ${diffDays}d`, color: "#475569", bg: "#f1f5f9", border: "#e2e8f0", due: false };
+}
+
+function PickupUrgencyMark({ dateStr }) {
+  const u = pickupUrgency(dateStr);
+  if (!u) return null;
+  return (
+    <span style={{ fontSize: "0.7rem", fontWeight: 800, color: u.color, background: u.bg, border: `1px solid ${u.border}`, borderRadius: 999, padding: "2px 8px", marginLeft: 8, whiteSpace: "nowrap" }}>
+      {u.label}
+    </span>
+  );
+}
+
 // ─── Return status helper ────────────────────────────────────────────────────
 
 function returnStatusClass(status) {
@@ -444,6 +476,12 @@ function IncomingTransferCard({ row, onOpen }) {
         {row.duid && <span>DUID: <strong style={{ color: "#0f172a" }}>{row.duid}</strong></span>}
         {row.poid && <span>POID: {row.poid}</span>}
       </div>
+      {row.pickup_date && (
+        <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.76rem", fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px" }}>
+          🕐 Pickup: {row.pickup_date}{row.pickup_time ? ` · ${fmtPickupTime(row.pickup_time)}` : ""}
+          <PickupUrgencyMark dateStr={row.pickup_date} />
+        </div>
+      )}
       <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: "0.82rem" }}>
           {items.length} item{items.length !== 1 ? "s" : ""} · <strong>{fmt(totalQty)}</strong> qty
@@ -497,6 +535,13 @@ function IncomingTransferDetailModal({ row, onClose, onDone }) {
             {row.poid && <span>POID: <strong style={{ color: "#0f172a" }}>{row.poid}</strong></span>}
             <span>Date: <strong style={{ color: "#0f172a" }}>{row.request_date}</strong></span>
           </div>
+
+          {row.pickup_date && (
+            <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8, fontSize: "0.84rem", fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px" }}>
+              🕐 Pickup: {row.pickup_date}{row.pickup_time ? ` · ${fmtPickupTime(row.pickup_time)}` : ""}
+              <PickupUrgencyMark dateStr={row.pickup_date} />
+            </div>
+          )}
 
           <table style={{ width: "100%", tableLayout: "fixed", borderCollapse: "collapse", fontSize: "0.82rem" }}>
             <colgroup>
@@ -571,7 +616,7 @@ function IncomingTransferDetailModal({ row, onClose, onDone }) {
   );
 }
 
-function IncomingTransfers({ refresh, onCount, onDone }) {
+function IncomingTransfers({ refresh, onCount, onDueCount, onDone }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openRow, setOpenRow] = useState(null);
@@ -583,9 +628,10 @@ function IncomingTransfers({ refresh, onCount, onDone }) {
       const list = Array.isArray(res) ? res : [];
       setRows(list);
       onCount?.(list.length);
+      onDueCount?.(list.filter(r => pickupUrgency(r.pickup_date)?.due).length);
     } catch { setRows([]); }
     finally { setLoading(false); }
-  }, [onCount]);
+  }, [onCount, onDueCount]);
 
   useEffect(() => { load(); }, [load, refresh]);
 
@@ -614,6 +660,136 @@ function IncomingTransfers({ refresh, onCount, onDone }) {
       )}
 
       <IncomingTransferDetailModal row={openRow} onClose={() => setOpenRow(null)} onDone={handleDone} />
+    </>
+  );
+}
+
+// ─── Awaiting-approval requests (submitted, not yet staged by Warehouse Manager —
+//     passive heads-up only, no action to take here) ──────────────────────────
+
+function AwaitingApprovalCard({ row, onOpen }) {
+  const items = row.items || [];
+  const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
+  return (
+    <div className="history-card" style={{ borderLeftColor: "#94a3b8", cursor: "pointer" }} onClick={() => onOpen(row)}>
+      <div className="history-card-row">
+        <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 700 }}>{row.name}</span>
+        <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{row.request_date}</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 14px", marginTop: 3, fontSize: "0.76rem", color: "var(--text-muted)" }}>
+        {row.duid && <span>DUID: <strong style={{ color: "#0f172a" }}>{row.duid}</strong></span>}
+        {row.poid && <span>POID: {row.poid}</span>}
+      </div>
+      {row.pickup_date && (
+        <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.76rem", fontWeight: 700, color: "#475569", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 999, padding: "3px 10px" }}>
+          🕐 Pickup: {row.pickup_date}{row.pickup_time ? ` · ${fmtPickupTime(row.pickup_time)}` : ""}
+          <PickupUrgencyMark dateStr={row.pickup_date} />
+        </div>
+      )}
+      <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: "0.82rem" }}>
+          {items.length} item{items.length !== 1 ? "s" : ""} · <strong>{fmt(totalQty)}</strong> qty
+        </span>
+        <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>View details →</span>
+      </div>
+    </div>
+  );
+}
+
+function AwaitingApprovalDetailModal({ row, onClose }) {
+  return (
+    <Modal open={!!row} onClose={onClose} title={row?.name || ""} width={560}>
+      {row && (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px", marginBottom: 12, fontSize: "0.82rem", color: "#475569" }}>
+            {row.duid && <span>DUID: <strong style={{ color: "#0f172a" }}>{row.duid}</strong></span>}
+            {row.poid && <span>POID: <strong style={{ color: "#0f172a" }}>{row.poid}</strong></span>}
+            <span>Date: <strong style={{ color: "#0f172a" }}>{row.request_date}</strong></span>
+          </div>
+
+          {row.pickup_date && (
+            <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8, fontSize: "0.84rem", fontWeight: 700, color: "#475569", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 12px" }}>
+              🕐 Pickup: {row.pickup_date}{row.pickup_time ? ` · ${fmtPickupTime(row.pickup_time)}` : ""}
+              <PickupUrgencyMark dateStr={row.pickup_date} />
+            </div>
+          )}
+
+          <table style={{ width: "100%", tableLayout: "fixed", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+            <colgroup>
+              <col style={{ width: "auto" }} />
+              <col style={{ width: 75 }} />
+              <col style={{ width: 55 }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "5px 8px", fontSize: "0.7rem", color: "#94a3b8" }}>Item</th>
+                <th style={{ textAlign: "right", padding: "5px 8px", fontSize: "0.7rem", color: "#94a3b8" }}>Qty</th>
+                <th style={{ textAlign: "left", padding: "5px 8px", fontSize: "0.7rem", color: "#94a3b8" }}>UOM</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(row.items || []).map((it, i) => (
+                <tr key={i} style={{ borderTop: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "5px 8px", overflowWrap: "anywhere" }}>
+                    <div style={{ fontWeight: 600 }}>{it.item_code}</div>
+                    {it.item_name && it.item_name !== it.item_code && (
+                      <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{it.item_name}</div>
+                    )}
+                  </td>
+                  <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600 }}>{fmt(it.qty)}</td>
+                  <td style={{ padding: "5px 8px", color: "#64748b" }}>{it.uom || "pcs"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div style={{ marginTop: 14, textAlign: "center", fontSize: "0.78rem", color: "#94a3b8" }}>
+            Waiting on the Warehouse Manager to stage this transfer — nothing to do yet.
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+function AwaitingApprovalRequests({ refresh, onCount, onDueCount }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openRow, setOpenRow] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await pmApi.listTeamRequestsAwaitingApproval();
+      const list = Array.isArray(res) ? res : [];
+      setRows(list);
+      onCount?.(list.length);
+      onDueCount?.(list.filter(r => pickupUrgency(r.pickup_date)?.due).length);
+    } catch { setRows([]); }
+    finally { setLoading(false); }
+  }, [onCount, onDueCount]);
+
+  useEffect(() => { load(); }, [load, refresh]);
+
+  return (
+    <>
+      {rows.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {rows.map(r => <AwaitingApprovalCard key={r.name} row={r} onOpen={setOpenRow} />)}
+        </div>
+      ) : loading ? (
+        <div className="history-card" style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: 18 }}>
+          Loading…
+        </div>
+      ) : (
+        <div className="empty-state" style={{ padding: "24px 0" }}>
+          <div className="empty-icon">🕐</div>
+          <h3>Nothing awaiting approval</h3>
+          <p>Requests you've submitted that the Warehouse Manager hasn't staged yet will show up here — nothing to do until they do.</p>
+        </div>
+      )}
+
+      <AwaitingApprovalDetailModal row={openRow} onClose={() => setOpenRow(null)} />
     </>
   );
 }
@@ -707,6 +883,9 @@ export default function FieldMyStock() {
   const [returnRefresh, setReturnRefresh] = useState(0);
   const [incomingRefresh, setIncomingRefresh] = useState(0);
   const [incomingCount, setIncomingCount] = useState(0);
+  const [incomingDueCount, setIncomingDueCount] = useState(0);
+  const [awaitingCount, setAwaitingCount] = useState(0);
+  const [awaitingDueCount, setAwaitingDueCount] = useState(0);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -797,19 +976,35 @@ export default function FieldMyStock() {
             )}
           </div>
         </div>
-        <div style={{ display: "flex", padding: "0 16px" }}>
+        <div style={{ display: "flex", padding: "0 16px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <button type="button" style={tabStyle("stock")} onClick={() => setTab("stock")}>Stock</button>
           <button type="button" style={tabStyle("incoming")} onClick={() => setTab("incoming")}>
             Incoming
             {incomingCount > 0 && (
-              <span style={{
+              <span title={incomingDueCount > 0 ? `${incomingDueCount} of these due today or overdue` : undefined} style={{
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
                 minWidth: 19, height: 19, padding: "0 6px", marginLeft: 5,
                 borderRadius: 999, fontSize: "0.68rem", fontWeight: 800,
-                background: "linear-gradient(180deg, #f87171, #ef4444)", color: "#fff",
-                boxShadow: "0 2px 6px rgba(239,68,68,0.45)",
+                background: incomingDueCount > 0 ? "linear-gradient(180deg, #fbbf24, #d97706)" : "linear-gradient(180deg, #f87171, #ef4444)",
+                color: "#fff",
+                boxShadow: incomingDueCount > 0 ? "0 2px 6px rgba(217,119,6,0.45)" : "0 2px 6px rgba(239,68,68,0.45)",
               }}>
                 {incomingCount}
+              </span>
+            )}
+          </button>
+          <button type="button" style={tabStyle("awaiting")} onClick={() => setTab("awaiting")}>
+            Awaiting
+            {awaitingCount > 0 && (
+              <span title={awaitingDueCount > 0 ? `${awaitingDueCount} of these due today or overdue` : undefined} style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                minWidth: 19, height: 19, padding: "0 6px", marginLeft: 5,
+                borderRadius: 999, fontSize: "0.68rem", fontWeight: 800,
+                background: awaitingDueCount > 0 ? "linear-gradient(180deg, #fbbf24, #d97706)" : "linear-gradient(180deg, #cbd5e1, #94a3b8)",
+                color: "#fff",
+                boxShadow: awaitingDueCount > 0 ? "0 2px 6px rgba(217,119,6,0.45)" : "none",
+              }}>
+                {awaitingCount}
               </span>
             )}
           </button>
@@ -895,7 +1090,12 @@ export default function FieldMyStock() {
             so its pending count keeps loading/updating in the background and the
             tab badge is accurate even before the user ever opens this tab. */}
         <div className="exec-section" style={{ display: tab === "incoming" ? "block" : "none" }}>
-          <IncomingTransfers refresh={incomingRefresh} onCount={setIncomingCount} onDone={handleIncomingDone} />
+          <IncomingTransfers refresh={incomingRefresh} onCount={setIncomingCount} onDueCount={setIncomingDueCount} onDone={handleIncomingDone} />
+        </div>
+
+        {/* Awaiting-approval tab — same always-mounted treatment, for the same reason. */}
+        <div className="exec-section" style={{ display: tab === "awaiting" ? "block" : "none" }}>
+          <AwaitingApprovalRequests refresh={incomingRefresh} onCount={setAwaitingCount} onDueCount={setAwaitingDueCount} />
         </div>
 
         {/* Return requests tab */}

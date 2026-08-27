@@ -8,6 +8,15 @@ import MaterialItemPicker, { HuaweiBadge, CompanyBadge } from "../../components/
 import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 import DateRangePicker from "../../components/DateRangePicker";
 
+// Backend sends Time-field values as raw "HH:MM:SS" — render as e.g. "11:11 AM".
+function fmtPickupTime(t) {
+  if (!t) return "";
+  const [h, m] = t.split(":");
+  if (h === undefined || m === undefined) return t;
+  const d = new Date(2000, 0, 1, Number(h), Number(m));
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
 // ─── Status ───────────────────────────────────────────────────────────────────
 
 function statusClass(status) {
@@ -93,6 +102,10 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
   const [sourceWh, setSourceWh] = useState("");
 
   const [remark, setRemark] = useState("");
+  // When the TL should go to the warehouse and collect this — optional;
+  // left blank it just falls back to the request date with no set time.
+  const [pickupDate, setPickupDate] = useState("");
+  const [pickupTime, setPickupTime] = useState("");
   const [busy, setBusy]     = useState(false);
   const [err, setErr]       = useState("");
 
@@ -167,6 +180,8 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
         team,
         remark: remark.trim() || undefined,
         items: allItems,
+        pickup_date: pickupDate || undefined,
+        pickup_time: pickupTime || undefined,
       });
       // Backend warns (doesn't block) when the DUID's team warehouse already
       // has unconsumed stock of a requested item — surfaced here rather than
@@ -259,6 +274,18 @@ function NewRequestForm({ imName, prefillDuid, onClose, onDone }) {
           </select>
         </div>
 
+        {/* Pickup Date/Time — when the TL should go to the warehouse and
+            collect this. Optional; blank just falls back to today with no
+            set time, same as before this existed. */}
+        <div style={{ marginBottom: 14 }}>
+          {label("Pickup Date")}
+          <input type="date" style={inp} value={pickupDate} onChange={(e) => setPickupDate(e.target.value)} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          {label("Pickup Time")}
+          <input type="time" style={inp} value={pickupTime} onChange={(e) => setPickupTime(e.target.value)} />
+        </div>
+
         <div style={{ marginBottom: 14 }}>
           {label("Remark")}
           <textarea style={{ ...inp, resize: "vertical", minHeight: 38 }} value={remark}
@@ -338,6 +365,7 @@ function RequestDetail({ row, isAdmin, onClose, onActioned }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
             <DItem label="POID" value={detail?.poid} />
             <DItem label="DUID" value={detail?.duid} />
+            <DItem label="Pickup" value={detail?.pickup_date ? `${detail.pickup_date}${detail.pickup_time ? ` at ${fmtPickupTime(detail.pickup_time)}` : ""}` : ""} />
             <DItem label="IM" value={detail?.im} />
             <DItem label="Source Warehouse" value={detail?.source_warehouse} />
             <DItem label="Team Warehouse" value={detail?.team_warehouse} />
@@ -1681,15 +1709,17 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
                 <div style={{ fontSize: "0.76rem", color: "#94a3b8" }}>
                   Approving stages the transfer only — stock moves back after the Warehouse Manager confirms receipt.
                 </div>
-                {Object.entries(billCandidates).map(([itemCode, candidates]) => (
+                {Object.entries(billCandidates)
+                  .filter(([, entry]) => entry.candidates?.length > 1)
+                  .map(([itemCode, entry]) => (
                   <div key={itemCode} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: "0.78rem", color: "#78350f", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
                     <span>More than one bill has <strong>{itemCode}</strong> — drawing from:</span>
                     <select
-                      value={preferredBatches[itemCode] || candidates[0].batch_no}
+                      value={preferredBatches[itemCode] || entry.candidates[0].batch_no}
                       onChange={(e) => setPreferredBatches((p) => ({ ...p, [itemCode]: e.target.value }))}
                       style={{ padding: "3px 6px", borderRadius: 6, border: "1px solid #fde68a", fontSize: "0.78rem", background: "#fff" }}
                     >
-                      {candidates.map((c) => (
+                      {entry.candidates.map((c) => (
                         <option key={c.batch_no} value={c.batch_no}>{c.bill_no} — {c.available_qty} available</option>
                       ))}
                     </select>

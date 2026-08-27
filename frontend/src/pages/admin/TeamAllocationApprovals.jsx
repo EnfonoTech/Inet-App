@@ -70,16 +70,15 @@ export default function TeamAllocationApprovals() {
       if (decideTarget._type === "cancel") {
         const res = await pmApi.pmDecideCancelPlan(decideTarget.name, decideAction, decideRemark);
         if (decideAction === "approve") {
+          // Kept short — the full detail (which items, which requests) goes
+          // to the requesting IM's notification instead, since they're the
+          // one who'll actually follow up on it, not the approving PM.
           const parts = [`Plan cancellation approved.`];
           if (res?.auto_cancelled?.length) {
-            parts.push(`Auto-rejected ${res.auto_cancelled.length} pending request(s) for this DUID that hadn't moved yet: ${res.auto_cancelled.join(", ")}.`);
+            parts.push(`${res.auto_cancelled.length} pending request(s) auto-rejected.`);
           }
           if (res?.unconsumed_material?.length) {
-            const items = res.unconsumed_material.map(m => `${m.qty} ${m.uom} of ${m.item_name || m.item_code} in ${m.warehouse}`).join("; ");
-            parts.push(`⚠ Material already at the team's warehouse for this DUID was NOT auto-returned — review and return it manually if no longer needed: ${items}.`);
-          }
-          if (res?.needs_attention?.length && !res?.unconsumed_material?.length) {
-            parts.push(`⚠ ${res.needs_attention.length} request(s) already have a transfer staged/completed and were left as-is: ${res.needs_attention.join(", ")}.`);
+            parts.push(`⚠ ${res.unconsumed_material.length} item(s) still in the team's warehouse — the requesting IM has been notified to review.`);
           }
           setMsg(parts.join(" "));
         } else {

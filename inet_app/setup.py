@@ -30,6 +30,7 @@ def after_migrate():
     _ensure_material_return_field()
     _ensure_material_confirmation_fields()
     _ensure_preferred_batch_field()
+    _ensure_pickup_time_field()
     _declutter_stock_entry_list_view()
     _ensure_certificate_tracker_setup()
     _ensure_certificate_expiry_notifications()
@@ -768,6 +769,21 @@ def _ensure_preferred_batch_field():
         "fieldtype": "Link",
         "options": "Batch",
         "insert_after": "warehouse",
+        "print_hide": 1,
+    })
+    frappe.db.commit()
+
+
+def _ensure_pickup_time_field():
+    """Material Request already has a native `schedule_date` (Date only) —
+    add the matching time-of-day so the IM can tell the Team Lead exactly
+    when to go to the warehouse and collect the material, not just which
+    day. Surfaced on the Field portal's Incoming Transfers card."""
+    _add_field("Material Request", "Material Request-pickup_time", {
+        "fieldname": "pickup_time",
+        "label": "Pickup Time",
+        "fieldtype": "Time",
+        "insert_after": "schedule_date",
         "print_hide": 1,
     })
     frappe.db.commit()
