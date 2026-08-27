@@ -16048,6 +16048,20 @@ def _run_po_archive_import(file_url, customer, log_name, chunk_size=200):
                                 "site_name": append_row.get("site_name"),
                                 "project_code": append_row.get("project_code"),
                             }.items() if v is not None and v != ""}
+                            # An archive row can classify an existing dispatch as
+                            # "Pending" (see _archive_row_has_no_pic_progress) based
+                            # only on that row's own, possibly-blank PIC columns —
+                            # but a dispatch that already has an `im` assigned was,
+                            # by definition, already dispatched: dispatch_po_lines
+                            # sets dispatch_status="Dispatched" the moment im is
+                            # assigned and never leaves it at "Pending". Regressing
+                            # it back here silently hides the line from every
+                            # IM-facing queue (they all filter out Pending rows),
+                            # so the IM can no longer act on it at all.
+                            if dispatch_updates.get("dispatch_status") == "Pending":
+                                existing_im = frappe.db.get_value("PO Dispatch", dispatch_name, "im")
+                                if existing_im:
+                                    dispatch_updates.pop("dispatch_status", None)
                             if dispatch_updates:
                                 frappe.db.set_value(
                                     "PO Dispatch", dispatch_name, dispatch_updates,
