@@ -518,6 +518,7 @@ export default function IMWorkDone() {
   const [legacyBulkOpen, setLegacyBulkOpen] = useState(false);
   const [legacyBulkTargets, setLegacyBulkTargets] = useState([]);
   const [legacyBulkDoc1Files, setLegacyBulkDoc1Files] = useState([]);
+  const [legacyBulkDoc2Files, setLegacyBulkDoc2Files] = useState([]);
   const [legacyBulkNote, setLegacyBulkNote] = useState("");
   const [legacyBulkBusy, setLegacyBulkBusy] = useState(false);
   const [legacyBulkErr, setLegacyBulkErr] = useState(null);
@@ -541,6 +542,7 @@ export default function IMWorkDone() {
     setLegacyBulkResult(null);
     setLegacyBulkNote("");
     setLegacyBulkDoc1Files([]);
+    setLegacyBulkDoc2Files([]);
     setLegacyBulkExistingAttachments([]);
     setLegacyBulkAttachLoading(true);
     const pds = [...new Set(targets.map((t) => t.row.name).filter(Boolean))];
@@ -570,13 +572,14 @@ export default function IMWorkDone() {
     setLegacyBulkErr(null);
     try {
       const fileUrls = {};
-      if (legacyBulkDoc1Files.length > 0) {
+      for (const [slot, files] of [["im_doc1", legacyBulkDoc1Files], ["im_doc2", legacyBulkDoc2Files]]) {
+        if (files.length === 0) continue;
         const urls = [];
-        for (const file of legacyBulkDoc1Files) {
+        for (const file of files) {
           const url = await pmApi.uploadFileGeneric(file);
           if (url) urls.push(url);
         }
-        if (urls.length) fileUrls.im_doc1 = urls;
+        if (urls.length) fileUrls[slot] = urls;
       }
       const items = legacyBulkTargets.map((t) => ({ po_dispatch: t.row.name, milestone: t.milestone, poid: t.row.poid }));
       const res = await pmApi.bulkResubmitLegacyMilestonesToPic({
@@ -1640,7 +1643,7 @@ export default function IMWorkDone() {
                 {legacyBulkErr && <div className="notice error" style={{ marginBottom: 12 }}>{legacyBulkErr}</div>}
 
                 <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
-                  Supporting Document
+                  Documents
                 </div>
                 {legacyBulkAttachLoading ? (
                   <div style={{ color: "#94a3b8", fontSize: "0.82rem", padding: "6px 0", marginBottom: 8 }}>Loading existing documents…</div>
@@ -1654,6 +1657,7 @@ export default function IMWorkDone() {
                   </div>
                 ) : null}
                 <FileSlot slotKey="DOC1" slotLabel="Confirmation Mail" accept=".msg" files={legacyBulkDoc1Files} setFiles={setLegacyBulkDoc1Files} required={false} />
+                <FileSlot slotKey="DOC2" slotLabel="Supporting Document" accept=".pdf,.xls,.xlsx,.doc,.docx,.ppt,.pptx" files={legacyBulkDoc2Files} setFiles={setLegacyBulkDoc2Files} required={false} />
 
                 <div className="form-group" style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 4 }}>Note</label>
