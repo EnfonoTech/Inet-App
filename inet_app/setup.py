@@ -298,12 +298,26 @@ def _ensure_pic_permissions():
     if not frappe.db.exists("Role", role):
         return
 
+    # Every permission checkbox Custom DocPerm has, for the three documents PIC
+    # owns end to end. `if_owner` is deliberately 0: it is a RESTRICTION (limit
+    # the row to documents the user created), not a grant — setting it would cut
+    # PIC off from colleagues' invoices.
+    full_perms = {
+        "select": 1, "read": 1, "write": 1, "create": 1, "delete": 1,
+        "submit": 1, "cancel": 1, "amend": 1, "report": 1,
+        "export": 1, "import": 1, "share": 1, "print": 1, "email": 1,
+        "if_owner": 0,
+    }
+
     # Doctypes PIC needs and the flags it requires (permlevel 0)
     doctypes = [
-        # delete/cancel: PIC needs to remove a stray/duplicate draft invoice
-        # and cancel an already-submitted one (e.g. to correct a mistake)
-        # without going through an Administrator.
-        ("Sales Invoice",                  {"read": 1, "write": 1, "create": 1, "delete": 1, "cancel": 1}),
+        # Full permissions on the three documents PIC raises: they are PIC's own
+        # outbound paperwork and PIC was blocked on the two flags that actually
+        # matter for that — `print` and `email` were both missing, so the
+        # Purchase Order could not be produced for the subcontractor at all.
+        # Granted wholesale ("all permissions for now") at the client's request
+        # rather than flag-by-flag; see full_perms above for what that includes.
+        ("Sales Invoice",                  dict(full_perms)),
         ("Sales Invoice Item",             {"read": 1, "write": 1, "create": 1}),
         ("Sales Taxes and Charges",        {"read": 1}),
         ("Sales Taxes and Charges Template", {"read": 1}),
@@ -311,14 +325,15 @@ def _ensure_pic_permissions():
         ("Item",                           {"read": 1}),
         # Subcon PO (supplier side). The Purchase Order is PIC's own outbound
         # document — it gets printed and emailed to the subcontractor, and a
-        # draft can't be sent, so PIC needs submit here.
-        ("Purchase Order",                 {"read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1}),
+        # draft can't be sent, so PIC needs submit, print and email here.
+        ("Purchase Order",                 dict(full_perms)),
         ("Purchase Order Item",            {"read": 1, "write": 1, "create": 1}),
-        # Purchase Invoice deliberately has NO submit: submitting posts a
-        # supplier payable to the GL, which is Accounts' call. PIC creates the
-        # draft (same split as Sales Invoice above) and the status advances by
-        # itself via on_purchase_invoice_submit once Accounts submits it.
-        ("Purchase Invoice",               {"read": 1, "write": 1, "create": 1, "delete": 1, "cancel": 1}),
+        # Purchase Invoice previously had NO submit on purpose — submitting posts
+        # a supplier payable to the GL, which is Accounts' call — but it is now
+        # included in the blanket grant above at the client's request. The status
+        # flow is unaffected either way: on_purchase_invoice_submit advances the
+        # line whoever submits the document.
+        ("Purchase Invoice",               dict(full_perms)),
         ("Purchase Invoice Item",          {"read": 1, "write": 1, "create": 1}),
         ("Purchase Taxes and Charges",     {"read": 1}),
         ("Purchase Taxes and Charges Template", {"read": 1}),
