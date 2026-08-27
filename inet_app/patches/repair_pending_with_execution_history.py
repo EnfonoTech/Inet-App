@@ -11,20 +11,21 @@ no Rollout Plan, no Work Done at all. This one covers the rows that DO
 have real Plan/Work Done history, where the correct status depends on
 that history rather than being a flat "Dispatched" for everyone:
 
-  - Work Done exists with submission_status "Confirmation Done"
-    -> Completed (matches work_done.py's own on_submit rule: a
-       confirmed Work Done means the dispatch is Completed)
+  - A Work Done record exists at all, regardless of its own
+    submission_status (Confirmation Done / Ready for Confirmation /
+    PIC Rejected / blank) -> Completed. The field work happened; whatever
+    submission_status says is a separate, later-stage concern (IM
+    confirmation, PIC review) that dispatch_status doesn't track.
   - No Work Done, latest Rollout Plan status is "Overdue" or "Not Attended"
     -> Planned (a plan exists, wasn't executed in time)
   - No Work Done, latest Rollout Plan status is "Cancelled"
     -> Dispatched (the attempt was cancelled; needs a fresh plan)
 
 Deliberately SKIPPED (left at Pending, reported separately, not fixed
-here) — these need an explicit decision, not a mechanical rule:
-  - Work Done status "Ready for Confirmation" (IM hasn't confirmed yet)
-  - Work Done status "PIC Rejected"
-  - Work Done exists with a blank/missing submission_status
-  - Latest Rollout Plan status "Completed" but no Work Done record at all
+here) — needs an explicit decision, not a mechanical rule:
+  - No Work Done record at all, and the latest Rollout Plan's status
+    doesn't match any of the three rules above (e.g. "Completed" with
+    no Work Done ever logged for it, or an unrecognized plan_status)
 
 Safe to re-run: only ever touches rows still at dispatch_status="Pending"
 with im set, so anything already fixed (by this script or otherwise) no
@@ -37,8 +38,8 @@ def execute():
     rows = frappe.db.sql(
         """
         SELECT pd.name, pd.poid,
-               (SELECT wd.submission_status FROM `tabWork Done` wd
-                WHERE wd.system_id = pd.name ORDER BY wd.creation DESC LIMIT 1) AS wd_status,
+               (SELECT wd.name FROM `tabWork Done` wd
+                WHERE wd.system_id = pd.name ORDER BY wd.creation DESC LIMIT 1) AS wd_name,
                (SELECT rp.plan_status FROM `tabRollout Plan` rp
                 WHERE rp.po_dispatch = pd.name ORDER BY rp.creation DESC LIMIT 1) AS plan_status
         FROM `tabPO Dispatch` pd
@@ -60,17 +61,16 @@ def execute():
     skipped = []
 
     for row in rows:
-        wd_status = (row.wd_status or "").strip()
         plan_status = (row.plan_status or "").strip()
 
-        if wd_status == "Confirmation Done":
+        if row.wd_name:
             new_status = "Completed"
-        elif not wd_status and plan_status in ("Overdue", "Not Attended"):
+        elif plan_status in ("Overdue", "Not Attended"):
             new_status = "Planned"
-        elif not wd_status and plan_status == "Cancelled":
+        elif plan_status == "Cancelled":
             new_status = "Dispatched"
         else:
-            skipped.append({"name": row.name, "poid": row.poid, "wd_status": wd_status, "plan_status": plan_status})
+            skipped.append({"name": row.name, "poid": row.poid, "plan_status": plan_status})
             continue
 
         frappe.db.set_value("PO Dispatch", row.name, "dispatch_status", new_status, update_modified=False)
@@ -83,8 +83,8 @@ def execute():
         f"{sum(updated.values())} updated ({updated}), {len(skipped)} skipped (need a manual decision)"
     )
     if skipped:
-        print("  skipped rows:")
+        print("  skipped rows (no Work Done at all, plan_status doesn't match a rule):")
         for s in skipped:
-            print(f"  - {s['name']} ({s['poid']}): wd_status={s['wd_status']!r} plan_status={s['plan_status']!r}")
+            print(f"  - {s['name']} ({s['poid']}): plan_status={s['plan_status']!r}")
 
     return {"checked": len(rows), "updated": updated, "skipped": skipped}
