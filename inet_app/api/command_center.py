@@ -8392,8 +8392,16 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
     # the NOT EXISTS Work Done guard catches it.
     #
     # Backward-compat fallback: old rows without issue_status set still
-    # surface via visit_type / plan_status markers, using the original
-    # NOT EXISTS(higher visit) guard so only the latest plan shows.
+    # surface via visit_type / plan_status markers.
+    #
+    # A later plan (higher visit_number) for the same po_dispatch supersedes
+    # an earlier one — logically the earlier issue is resolved the moment a
+    # follow-up plan exists for that line, even if its own issue_status was
+    # never flipped to 'Resolved'. This guard used to apply only to the
+    # backward-compat branch, so a dispatch could show 2 open rows at once:
+    # the original issue (still "In Execution"/etc, never explicitly
+    # resolved) AND the new issue on its own follow-up re-visit plan. Now
+    # applies to both branches so only the latest plan's issue ever shows.
     wheres = [
         "("
         # New data: tracked by issue_status
@@ -8407,12 +8415,12 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
         "      rp.plan_status = 'Planning with Issue'"
         "      OR IFNULL(rp.issue_category,'') != ''"
         "    )"
-        "    AND NOT EXISTS ("
-        "      SELECT 1 FROM `tabRollout Plan` rp_later"
-        "      WHERE rp_later.po_dispatch = rp.po_dispatch"
-        "      AND IFNULL(rp_later.visit_number,0) > IFNULL(rp.visit_number,0)"
-        "    )"
         "  )"
+        ")",
+        "NOT EXISTS ("
+        "  SELECT 1 FROM `tabRollout Plan` rp_later"
+        "  WHERE rp_later.po_dispatch = rp.po_dispatch"
+        "  AND IFNULL(rp_later.visit_number,0) > IFNULL(rp.visit_number,0)"
         ")",
         "NOT EXISTS ("
         " SELECT 1 FROM `tabWork Done` wd_ir"

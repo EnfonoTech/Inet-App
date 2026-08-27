@@ -281,7 +281,7 @@ export default function IssuesRisks() {
   }
 
   async function createPlansFromIssues() {
-    if (selected.size === 0 || !planTeam || !planDate || !planEndDate) return;
+    if (selected.size === 0 || !planTeam || !planDate || !planEndDate || !accessTime || !accessPeriod) return;
     setCreating(true);
     setCreateError(null);
     try {
@@ -663,7 +663,7 @@ export default function IssuesRisks() {
             )}
             {createError && <div className="notice error" style={{ marginTop: 10 }}>{createError}</div>}
             <div style={{ marginTop: 14 }}>
-              <button className="btn-primary" disabled={creating} onClick={createPlansFromIssues}>{creating ? "Creating..." : "Create"}</button>
+              <button className="btn-primary" disabled={creating || !planDate || !planEndDate || !planTeam || !accessTime || !accessPeriod} onClick={createPlansFromIssues}>{creating ? "Creating..." : "Create"}</button>
               <button className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setShowModal(false)}>Cancel</button>
             </div>
           </div>

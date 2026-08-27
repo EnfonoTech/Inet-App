@@ -299,7 +299,7 @@ export default function IMIssuesRisks() {
   }
 
   async function createPlansFromIssues() {
-    if (selected.size === 0 || !planTeam || !planDate || !planEndDate) return;
+    if (selected.size === 0 || !planTeam || !planDate || !planEndDate || !accessTime || !accessPeriod) return;
     const selectedRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
     const blocked = selectedRows.filter((r) => ["Closed", "Partially Closed", "Submitted", "Partially Submitted", "Completed"].includes(r.dispatch_status));
     if (blocked.length > 0) {
@@ -723,7 +723,7 @@ export default function IMIssuesRisks() {
             )}
             {createError && <div className="notice error" style={{ marginTop: 10 }}>{createError}</div>}
             <div style={{ marginTop: 14 }}>
-              <button className="btn-primary" disabled={creating} onClick={createPlansFromIssues}>{creating ? "Creating..." : "Create"}</button>
+              <button className="btn-primary" disabled={creating || !planDate || !planEndDate || !planTeam || !accessTime || !accessPeriod} onClick={createPlansFromIssues}>{creating ? "Creating..." : "Create"}</button>
               <button className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setShowModal(false)}>Cancel</button>
             </div>
           </div>
