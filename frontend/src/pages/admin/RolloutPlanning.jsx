@@ -469,9 +469,13 @@ export default function RolloutPlanning() {
   const createPlanTotalQty = createPlanSelRows.reduce((s, r) => s + Number(r.qty || 0), 0);
   // Group selected lines by DUID for the optional materials-dispatch
   // section — strictly per DUID, never mixed, even when the batch spans
-  // several DUIDs.
-  const createPlanDuidGroups = createPlanDuids.map((duid) => {
-    const groupRows = createPlanSelRows.filter((r) => (r.site_code || r.name) === duid);
+  // several DUIDs. Rows with no site_code (e.g. a dummy PO not yet mapped
+  // to a site) are excluded here — material dispatch is bill/DUID-tracked,
+  // so there's nothing meaningful to group without a real DUID. (They still
+  // count toward plan creation itself via createPlanDuids above, which
+  // falls back to the row's own name so each still gets its own plan.)
+  const createPlanDuidGroups = [...new Set(createPlanSelRows.map((r) => r.site_code).filter(Boolean))].map((duid) => {
+    const groupRows = createPlanSelRows.filter((r) => r.site_code === duid);
     return { duid, poid: groupRows[0]?.poid || groupRows[0]?.name || "", count: groupRows.length };
   });
   const planTeamsAssignedQty = (planTeams || [])

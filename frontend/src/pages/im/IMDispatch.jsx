@@ -968,8 +968,13 @@ export default function IMDispatch() {
   // Material Request's linked POID (Huawei stock is DUID-scoped, so the
   // material can be used against any POID at that DUID — this is only for
   // accounting traceability).
-  const createPlanDuidGroups = createPlanDuids.map((duid) => {
-    const groupRows = createPlanSelRows.filter((r) => (r.site_code || r.name) === duid);
+  // Rows with no site_code (e.g. a dummy PO not yet mapped to a site) are
+  // excluded here — material dispatch is bill/DUID-tracked, so there's
+  // nothing meaningful to group without a real DUID. (They still count
+  // toward plan creation itself via createPlanDuids above, which falls
+  // back to the row's own name so each still gets its own plan.)
+  const createPlanDuidGroups = [...new Set(createPlanSelRows.map((r) => r.site_code).filter(Boolean))].map((duid) => {
+    const groupRows = createPlanSelRows.filter((r) => r.site_code === duid);
     return { duid, poid: groupRows[0]?.poid || groupRows[0]?.name || "", count: groupRows.length };
   });
   const planTeamsAssignedQty = (planTeams || [])
