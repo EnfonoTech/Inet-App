@@ -2630,7 +2630,7 @@ def on_sales_invoice_submit(doc, method):
                 "pic_status", "pic_status_ms2",
                 "ms1_amount", "ms2_amount",
                 "ms1_invoiced", "ms2_invoiced",
-                "line_amount",
+                "line_amount", "dispatch_status",
             ], as_dict=True)
         except Exception:
             continue
@@ -2686,6 +2686,16 @@ def on_sales_invoice_submit(doc, method):
         remaining = (ms1_amt - m1_inv) + (ms2_amt - m2_inv)
         updates["remaining_milestone_pct"] = round(remaining / line * 100.0, 2) if line else 0.0
 
+        # Same recompute update_pic_row does on a manual PIC edit — without
+        # this, dispatch_status silently drifts from pic_status on every
+        # invoice submission (it was previously only recomputed on a manual
+        # PIC UI edit, never on the actual invoicing trigger).
+        eff_ms1 = updates.get("pic_status", pd.pic_status)
+        eff_ms2 = updates.get("pic_status_ms2", pd.pic_status_ms2)
+        new_dispatch_status = _compute_dispatch_status_from_pic(eff_ms1, eff_ms2, ms2_amt, pd.dispatch_status)
+        if new_dispatch_status:
+            updates["dispatch_status"] = new_dispatch_status
+
         frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
 
         # Sync Work Done billing_status to Invoiced
@@ -2710,7 +2720,7 @@ def on_sales_invoice_cancel(doc, method):
             pd = frappe.db.get_value("PO Dispatch", pd_name, [
                 "pic_status", "pic_status_ms2",
                 "ms1_amount", "ms2_amount",
-                "line_amount",
+                "line_amount", "dispatch_status",
             ], as_dict=True)
         except Exception:
             continue
@@ -2768,6 +2778,12 @@ def on_sales_invoice_cancel(doc, method):
         line = flt(pd.line_amount or 0) or (ms1_amt + ms2_amt)
         remaining = (ms1_amt - m1_inv) + (ms2_amt - m2_inv)
         updates["remaining_milestone_pct"] = round(remaining / line * 100.0, 2) if line else 0.0
+
+        eff_ms1 = updates.get("pic_status", pd.pic_status)
+        eff_ms2 = updates.get("pic_status_ms2", pd.pic_status_ms2)
+        new_dispatch_status = _compute_dispatch_status_from_pic(eff_ms1, eff_ms2, ms2_amt, pd.dispatch_status)
+        if new_dispatch_status:
+            updates["dispatch_status"] = new_dispatch_status
 
         frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
 
@@ -2834,7 +2850,7 @@ def on_payment_entry_submit(doc, method=None):
         try:
             pd = frappe.db.get_value("PO Dispatch", pd_name, [
                 "pic_status", "pic_status_ms2",
-                "ms1_amount", "ms2_amount",
+                "ms1_amount", "ms2_amount", "dispatch_status",
             ], as_dict=True)
         except Exception:
             continue
@@ -2868,6 +2884,11 @@ def on_payment_entry_submit(doc, method=None):
             updates["ms2_payment_received_date"] = posting_date
 
         if updates:
+            eff_ms1 = updates.get("pic_status", ms1_status)
+            eff_ms2 = updates.get("pic_status_ms2", ms2_status)
+            new_dispatch_status = _compute_dispatch_status_from_pic(eff_ms1, eff_ms2, ms2_amt, pd.dispatch_status)
+            if new_dispatch_status:
+                updates["dispatch_status"] = new_dispatch_status
             frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
 
 
@@ -2887,7 +2908,7 @@ def on_payment_entry_cancel(doc, method=None):
 
         try:
             pd = frappe.db.get_value("PO Dispatch", pd_name, [
-                "pic_status", "pic_status_ms2",
+                "pic_status", "pic_status_ms2", "ms2_amount", "dispatch_status",
             ], as_dict=True)
         except Exception:
             continue
@@ -2916,6 +2937,11 @@ def on_payment_entry_cancel(doc, method=None):
             updates["ms2_payment_received_date"] = None
 
         if updates:
+            eff_ms1 = updates.get("pic_status", ms1_status)
+            eff_ms2 = updates.get("pic_status_ms2", ms2_status)
+            new_dispatch_status = _compute_dispatch_status_from_pic(eff_ms1, eff_ms2, pd.ms2_amount, pd.dispatch_status)
+            if new_dispatch_status:
+                updates["dispatch_status"] = new_dispatch_status
             frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
 
 

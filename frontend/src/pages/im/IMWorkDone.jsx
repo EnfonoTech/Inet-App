@@ -367,6 +367,7 @@ export default function IMWorkDone() {
   const [execStatusFilter, setExecStatusFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const [subconFilter, setSubconFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selectedRows, setSelectedRows] = useState(new Set());
@@ -407,7 +408,7 @@ export default function IMWorkDone() {
   const [bulkIssueFlagBusy, setBulkIssueFlagBusy] = useState(false);
   const [bulkIssueFlagErr, setBulkIssueFlagErr] = useState(null);
   const [bulkIssueFlagResult, setBulkIssueFlagResult] = useState(null);
-  const [tab, setTab] = useState("active"); // "active" | "confirmed" | "pic_rejected" | "legacy"
+  const [tab, setTab] = useState("active"); // "all" | "active" | "confirmed" | "pic_rejected" | "legacy"
   // "All" is stored per-path, not per-tab, so without this it silently
   // carries over to whichever tab you switch to next — re-triggering an
   // unlimited fetch+render for a tab the user never asked "All" for on this
@@ -796,6 +797,7 @@ export default function IMWorkDone() {
         if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         if (projectFilter.length) filters.project_code = projectFilter;
         if (duidFilter.length) filters.site_code = duidFilter;
+        if (subconFilter.length) filters.subcontractor = subconFilter;
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
         if (sourceFilter.length) filters.source = sourceFilter;
@@ -833,7 +835,7 @@ export default function IMWorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, effectiveRowLimit, searchDebounced, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
+  }, [imName, effectiveRowLimit, searchDebounced, projectFilter, duidFilter, subconFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
 
   // PIC Rejected tab badge — fetched independently of `tab`/`rows` because
   // the backend now scopes list_work_done_rows to whichever tab is active
@@ -864,6 +866,11 @@ export default function IMWorkDone() {
 
   const tabRows = useMemo(() => {
     if (tab === "legacy") return legacyRows;
+    // "all" is fetched with the backend's own tab="all" scope (bypasses the
+    // active/confirmed/pic_rejected split entirely — see the fetch effect
+    // below), so `rows` already IS the combined set; no client-side
+    // submission_status filtering needed on top of it.
+    if (tab === "all") return rows;
     if (tab === "confirmed") return rows.filter((r) => r.submission_status === "Confirmation Done");
     if (tab === "pic_rejected") return rows.filter((r) => r.submission_status === "PIC Rejected" || !!r.pic_rejection_remark);
     return rows.filter((r) => r.submission_status !== "Confirmation Done" && r.submission_status !== "PIC Rejected" && !r.pic_rejection_remark);
@@ -907,10 +914,11 @@ export default function IMWorkDone() {
   const bulkActTypes = [...new Set(filteredRows.filter((r) => selectedRows.has(r.name)).map((r) => r.activity_type).filter(Boolean))];
   const bulkDocReq = bulkActTypes.length === 1 ? (DOC_REQUIREMENTS[bulkActTypes[0]] || null) : null;
 
-  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
-  const hasFilters = !!(search || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || fromDate || toDate || legacyPoStatusFilter.length);
+  const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
+  const hasFilters = !!(search || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || fromDate || toDate || legacyPoStatusFilter.length);
 
   const totals = filteredRows.slice(0, displayedCount).reduce(
     (acc, r) => ({
@@ -935,7 +943,7 @@ export default function IMWorkDone() {
         <div>
           <h1 className="page-title">Work Done</h1>
           <div className="page-subtitle">
-            {tab === "confirmed" ? "Lines confirmed by PIC." : tab === "pic_rejected" ? "Lines rejected by PIC." : "Active work rows for your IM scope."}
+            {tab === "all" ? "Every work row for your IM scope — active, confirmed, and PIC rejected combined." : tab === "confirmed" ? "Lines confirmed by PIC." : tab === "pic_rejected" ? "Lines rejected by PIC." : "Active work rows for your IM scope."}
           </div>
         </div>
         <div className="page-actions">
@@ -946,6 +954,7 @@ export default function IMWorkDone() {
 
       {/* Tab bar */}
       <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", margin: "0 0 2px", paddingLeft: 4 }}>
+        <button type="button" style={tabStyle(tab === "all")} onClick={() => setTab("all")}>All</button>
         <button type="button" style={tabStyle(tab === "active")} onClick={() => setTab("active")}>Active</button>
         <button type="button" style={tabStyle(tab === "confirmed")} onClick={() => setTab("confirmed")}>Confirmation Done</button>
         <button type="button" style={tabStyle(tab === "pic_rejected")} onClick={() => setTab("pic_rejected")}>
@@ -997,6 +1006,9 @@ export default function IMWorkDone() {
         )}
         <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        {tab !== "legacy" && (
+        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="All Subcontractors" minWidth={170} />
+        )}
         {tab === "legacy" && (
           <SearchableSelect
             multi
@@ -1028,7 +1040,7 @@ export default function IMWorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setFromDate(""); setToDate(""); setLegacyPoStatusFilter([]); }}
+            onClick={() => { setSearch(""); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setFromDate(""); setToDate(""); setLegacyPoStatusFilter([]); }}
           >
             Clear
           </button>
@@ -1153,6 +1165,8 @@ export default function IMWorkDone() {
                   <th style={{ textAlign: "right" }}>Dispatch Seq</th>
                   <th>Plan Date</th>
                   <th>Assigned Team</th>
+                  <th>Subcontract</th>
+                  <th>Contract Model</th>
                   <th>Dispatch Status</th>
                   <th>Execution Date</th>
                   <th>Execution Status</th>
@@ -1205,6 +1219,8 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.dispatch_seq != null ? r.dispatch_seq : "—"}</td>
                     <td>{r.plan_date || "—"}</td>
                     <td>{r.team_name || r.team || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                     <td><PoStatusBadge value={r.dispatch_status} /></td>
                     <td>{r.execution_date || "—"}</td>
                     <td><StatusPill value={r.execution_status} /></td>
@@ -1276,7 +1292,7 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
                       {money.format(totals.lineAmount)}
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
                       {fmt.format(totals.revenue)}
                     </td>
@@ -1321,6 +1337,9 @@ export default function IMWorkDone() {
               <div><strong>Revenue:</strong> {fmt.format(detailRow.revenue_sar || 0)}</div>
               {detailRow.subcontractor && (
                 <div><strong>Subcontract:</strong> {detailRow.subcontractor}</div>
+              )}
+              {detailRow.contract_model && (
+                <div><strong>Contract Model:</strong> {detailRow.contract_model}</div>
               )}
               {detailRow.source && (
                 <div><strong>Source:</strong> {detailRow.source}{detailRow.direct_close_by ? ` · ${detailRow.direct_close_by_full_name || detailRow.direct_close_by}` : ""}</div>

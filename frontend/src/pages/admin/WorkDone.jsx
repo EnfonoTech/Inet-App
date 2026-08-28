@@ -28,12 +28,6 @@ const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 // "operationally done" subset.
 const PO_STATUSES = ["Pending", "Dispatched", "Planned", "Backend Assigned", "Completed", "Partially Submitted", "Submitted", "Partially Closed", "Closed", "Cancelled"];
 
-// Must match get_work_done_summary()'s _OPERATIONAL_STATUSES exactly — the
-// population behind "Operational Work Done Categories". Used so the tile
-// drill-downs actually land on the same rows the tile counted, instead of
-// clearing the PO Status filter and showing the whole unfiltered list.
-const OPERATIONAL_STATUSES = ["Pending", "Dispatched", "Planned", "Backend Assigned", "Completed"];
-
 const DOC_REQUIREMENTS = {
   "installation":    { doc1Label: "Confirmation Mail", doc2: null },
   "Dismantle":       { doc1Label: "Confirmation Mail", doc2: { label: "Supporting Documents", parts: [{ label: "Dismantling Checklist", slot: "im_doc2a" }, { label: "PPT", slot: "im_doc2b" }, { label: "POD", slot: "im_doc2c" }], accept: ".pdf,.xls,.xlsx,.doc,.docx,.ppt,.pptx" } },
@@ -328,6 +322,7 @@ export default function WorkDone() {
   const [teamFilter, setTeamFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const [subconFilter, setSubconFilter] = useState([]);
   const [fromDate, setFromDate] = useState(_navWD?.fromDate ?? "");
   const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
   const [detailRow, setDetailRow] = useState(null);
@@ -579,6 +574,7 @@ export default function WorkDone() {
       if (teamFilter.length) filters.team = teamFilter;
       if (projectFilter.length) filters.project_code = projectFilter;
       if (duidFilter.length) filters.site_code = duidFilter;
+      if (subconFilter.length) filters.subcontractor = subconFilter;
       if (fromDate) filters.from_date = fromDate;
       if (toDate) filters.to_date = toDate;
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
@@ -624,7 +620,7 @@ export default function WorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, workTypeFilter, issueFlagFilter]);
+  }, [rowLimit, searchDebounced, poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, subconFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, workTypeFilter, issueFlagFilter]);
 
   // Drill down from a Work Done Summary tile/card into the List tab. The
   // summary is a full-dataset, unfiltered aggregate (see get_work_done_summary)
@@ -633,13 +629,14 @@ export default function WorkDone() {
   // just clicked, which is exactly the confusing-looking mismatch this is
   // meant to avoid. So this clears every other filter before applying just
   // the one that corresponds to what was clicked.
-  function goToWorkDoneList(issueFlagValues, poStatusValues) {
+  function goToWorkDoneList(issueFlagValues) {
     setSearch("");
-    setPoStatusFilter(poStatusValues || []);
+    setPoStatusFilter([]);
     setImFilter([]);
     setTeamFilter([]);
     setProjectFilter([]);
     setDuidFilter([]);
+    setSubconFilter([]);
     setFromDate("");
     setToDate("");
     setWorkTypeFilter([]);
@@ -677,7 +674,7 @@ export default function WorkDone() {
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
 
-  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || issueFlagFilter.length || workTypeFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || issueFlagFilter.length || workTypeFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const [teams, setTeams] = useState([]);
   useEffect(() => {
@@ -685,9 +682,10 @@ export default function WorkDone() {
       if (Array.isArray(opts)) setTeams(opts);
     }).catch(() => {});
   }, []);
-  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
   const projects = dispOpts.project_code || [];
   const duids = dispOpts.site_code || [];
+  const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
   const [knownImOptions, setKnownImOptions] = useState([]);
   useEffect(() => {
     if (!rows.length) return;
@@ -817,6 +815,14 @@ export default function WorkDone() {
         />
         <SearchableSelect
           multi
+          value={subconFilter}
+          onChange={setSubconFilter}
+          options={subconOptions}
+          placeholder="All Subcontractors"
+          minWidth={170}
+        />
+        <SearchableSelect
+          multi
           value={issueFlagFilter}
           onChange={setIssueFlagFilter}
           options={[{ id: "__NONE__", label: "No flag" }, ...["POD/PPT required","TFM Check list","Spare part return","PAT/HO Final Approval","FPDC/FM Survey report Approval","Partial Work done"].map((o) => ({ id: o, label: o }))]}
@@ -859,7 +865,7 @@ export default function WorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setIssueFlagFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setIssueFlagFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -1049,9 +1055,9 @@ export default function WorkDone() {
                   <div style={{ marginBottom: 0 }}>
                     <SectionHeader accent="#047857" title="Operational Work Done Categories" sub="by Issue Flag" />
                     <TotalsRow tiles={[
-                      { label: "Total Work Done", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0", onClick: () => goToWorkDoneList([], OPERATIONAL_STATUSES) },
-                      { label: "Flagged Lines",   lines: flaggedLines,  revenue: flaggedRev,        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa", onClick: () => goToWorkDoneList(opKeys, OPERATIONAL_STATUSES) },
-                      { label: "Not Flagged",     lines: nonFlagged.count, revenue: nonFlagged.revenue || 0, bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0", onClick: () => goToWorkDoneList(["__NONE__"], OPERATIONAL_STATUSES) },
+                      { label: "Total Work Done", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0", onClick: () => goToWorkDoneList([]) },
+                      { label: "Flagged Lines",   lines: flaggedLines,  revenue: flaggedRev,        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa", onClick: () => goToWorkDoneList(opKeys) },
+                      { label: "Not Flagged",     lines: nonFlagged.count, revenue: nonFlagged.revenue || 0, bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0", onClick: () => goToWorkDoneList(["__NONE__"]) },
                     ]} />
                     <ProportionBar segments={[
                       { value: flaggedLines, color: "#f97316", label: `Flagged ${totalOpLines > 0 ? Math.round(flaggedLines/totalOpLines*100) : 0}%` },
@@ -1073,7 +1079,7 @@ export default function WorkDone() {
                             barColor={p.fg}
                             totalLines={flaggedLines}
                             totalRev={flaggedRev}
-                            onClick={() => goToWorkDoneList([key || "__NONE__"], OPERATIONAL_STATUSES)}
+                            onClick={() => goToWorkDoneList([key || "__NONE__"])}
                           />
                         );
                       })}
@@ -1167,6 +1173,8 @@ export default function WorkDone() {
                   <th>Center area</th>
                   <th>Region</th>
                   <th>Team</th>
+                  <th>Subcontract</th>
+                  <th>Contract Model</th>
                   <th>IM</th>
                   <th>Exec Date</th>
                   <th style={{ textAlign: "right" }} title="Which visit this work-done is (1, 2, 3…)">Visit #</th>
@@ -1219,6 +1227,8 @@ export default function WorkDone() {
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
                       <td>{row.team_name || row.team || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.subcontractor || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.contract_model || "—"}</td>
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.execution_date || "—"}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
@@ -1279,10 +1289,11 @@ export default function WorkDone() {
               {filteredRows.length > 0 && (
                 <tfoot>
                   <tr style={{ borderTop: "2px solid var(--border-medium)", background: "#f8fafc" }}>
+                    <td />
                     <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
                       {displayedCount} rows
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
                     <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                       {fmt.format(totals.revenue)}

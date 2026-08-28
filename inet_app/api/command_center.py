@@ -6746,57 +6746,30 @@ def get_work_done_summary():
     has_pic_ms2 = frappe.db.has_column("PO Dispatch", "pic_status_ms2")
     has_flag    = frappe.db.has_column("Work Done", "issue_flag")
 
-    # Operational Work Done = the IM-facing category: Work Done rows (real
-    # records + synthesized subcon placeholders — exactly what the List tab
-    # itself shows, see list_work_done_rows/_synthesize_subcon_workdone_rows)
-    # whose underlying PO Dispatch hasn't yet entered PIC's commercial range.
-    # Verified directly against the List tab: filtering it to these 5
-    # statuses returns the exact same count this produces.
-    #
-    # This used to scan PO Dispatch directly at dispatch_status='Completed'
-    # only. Two bugs with that: (1) it counted PO Dispatch lines with ZERO
-    # Work Done trail (no real record, no subcon flag) — legacy rows that
-    # can never actually be found by clicking through to the List tab; (2) it
-    # missed real Work Done rows sitting at Pending/Dispatched/Planned/
-    # Backend Assigned — anything operationally-scoped before Completed.
-    _OPERATIONAL_STATUSES = ["Pending", "Dispatched", "Planned", "Backend Assigned", "Completed"]
-
-    def _operational_rows(group_expr):
-        # No is_internal_work/is_dummy_po exclusion here, deliberately —
-        # list_work_done_rows (the List tab) doesn't apply either (internal
-        # work structurally never gets a Work Done record at all, so that
-        # exclusion would be a no-op; dummy POs DO show up there, badge and
-        # all). Excluding dummy POs here made this undercount the List tab
-        # by exactly the dummy-PO rows it was hiding — verified live.
-        # PO Dispatch resolution mirrors list_work_done_rows' own priority
-        # exactly: via the execution -> rollout_plan chain FIRST, falling
-        # back to wd.system_id only when there's no rollout plan. A few real
-        # Work Done rows have a blank system_id but a working rollout-plan
-        # chain — a plain `wd.system_id = pd.name` join silently drops them.
-        ph = ", ".join(["%s"] * len(_OPERATIONAL_STATUSES))
-        real = frappe.db.sql(f"""
-            SELECT IFNULL({group_expr}, '') AS grp,
-                   COUNT(*) AS cnt,
-                   SUM(COALESCE(wd.revenue_sar, 0)) AS revenue
-            FROM `tabWork Done` wd
-            LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
-            LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-            JOIN `tabPO Dispatch` pd ON pd.name = COALESCE(rp.po_dispatch, wd.system_id)
-            WHERE pd.dispatch_status IN ({ph})
-            GROUP BY grp
-        """, tuple(_OPERATIONAL_STATUSES), as_dict=True)
-        # Synthesized subcon placeholders never carry an issue_flag (see
-        # _synthesize_subcon_workdone_rows), so they only ever add to the ""
-        # (No Flag) bucket — but they DO belong in the total, matching the
-        # List tab's own population exactly.
-        subcon = _synthesize_subcon_workdone_rows({"tab": "all", "dispatch_status": _OPERATIONAL_STATUSES}) or []
-        if subcon:
-            merged = {r["grp"]: dict(r) for r in real}
-            blank = merged.setdefault("", {"grp": "", "cnt": 0, "revenue": 0})
-            blank["cnt"] += len(subcon)
-            blank["revenue"] = flt(blank["revenue"]) + sum(flt(s.get("revenue_sar")) for s in subcon)
-            real = list(merged.values())
-        return real
+    # Operational Work Done = the IM-facing category: exactly the row set
+    # the List tab itself shows (list_work_done_rows' "all" tab — real
+    # records + synthesized subcon placeholders, already excluding anything
+    # fully resolved on both milestones). Reusing that function directly
+    # (rather than re-deriving an independent dispatch_status-based scope,
+    # which is what this used to do) makes the two permanently identical by
+    # construction instead of two parallel definitions that can silently
+    # drift apart again — which is exactly what happened: a dispatch_status
+    # IN (...) scan can't tell "fully invoiced but dispatch_status never
+    # advanced" from "still needs work", and separately has no way to know
+    # about a milestone that's genuinely still open (e.g. I-BUY/ISDP
+    # Rejected) once dispatch_status has already moved past its own
+    # 5-value list. limit=0 is required, not optional — the default 500
+    # cap would silently undercount once the site has more Work Done rows
+    # than that.
+    def _operational_rows(group_key):
+        all_rows = list_work_done_rows(filters={"tab": "all"}, limit=0) or []
+        buckets = {}
+        for r in all_rows:
+            grp = r.get(group_key) or ""
+            b = buckets.setdefault(grp, {"grp": grp, "cnt": 0, "revenue": 0})
+            b["cnt"] += 1
+            b["revenue"] = flt(b["revenue"]) + flt(r.get("revenue_sar"))
+        return list(buckets.values())
 
     def _po_rows(group_expr, status_clause):
         # wd_sub: same correlated subquery pic.py's _PIC_FROM_JOIN_LEAN uses —
@@ -6888,7 +6861,7 @@ def get_work_done_summary():
 
     # to_serial() below reads r.cnt/r.revenue via attribute access — frappe._dict
     # supports that (plain dict subscripting wouldn't).
-    op_rows = [frappe._dict(flag=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _operational_rows("wd.issue_flag")] if has_flag else []
+    op_rows = [frappe._dict(flag=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _operational_rows("issue_flag")] if has_flag else []
     # MS1/MS2 status detail is scoped to the SAME (narrowed) "Active" set the
     # headline "Still Active" tile shows, not the full 17,434-line PIC
     # universe and not the lines just promoted into "Commercially Done"
@@ -7017,6 +6990,63 @@ def list_work_done_rows(filters=None, limit=500):
         if c:
             wheres.append(c)
             params.extend(p)
+    # Hide rows that are fully commercially wrapped up — the Work Done pages
+    # are for tracking work that still needs PIC submission/invoicing, not an
+    # invoicing archive. "Fully wrapped up" is judged per milestone, not per
+    # dispatch_status: a row is hidden only once every milestone IT
+    # represents has reached a terminal PIC status
+    # (_DATA_INTEGRITY_TERMINAL_MS: Submitted / Closed / Line Canceled).
+    #   - A milestone-scoped Direct Close row (ms1_closed XOR ms2_closed,
+    #     see _direct_close_one) only ever represents the ONE milestone it
+    #     closed — MS2's own state is irrelevant to an MS1-only row; MS2
+    #     will get its own row (and its own visibility check) whenever it's
+    #     eventually closed.
+    #   - Every other row (normal Rollout Execution, or a Direct Close that
+    #     closed the whole line at once) represents the entire dispatch, so
+    #     it's hidden only once MS1 AND (MS2, if it even applies — i.e.
+    #     ms2_amount > 0) are both terminal. A two-milestone line with only
+    #     one milestone submitted still needs to show — there's real work
+    #     left to track on the other one.
+    # Absolute: unlike the old dispatch_status='Closed' default this
+    # replaces, there is no explicit-filter escape hatch — a fully resolved
+    # row simply never loads on this page.
+    if (
+        frappe.db.has_column("PO Dispatch", "pic_status")
+        and frappe.db.has_column("PO Dispatch", "pic_status_ms2")
+        and frappe.db.has_column("Work Done", "ms1_closed")
+    ):
+        terminal_ms = list(_DATA_INTEGRITY_TERMINAL_MS)
+        ph_ms = ", ".join(["%s"] * len(terminal_ms))
+        # IFNULL wrapping matters here, not just style: pic_status is SQL NULL
+        # (not '') on plenty of real rows (never touched by PIC yet). Left
+        # bare, `NULL IN (...)` evaluates to NULL rather than FALSE, and
+        # `NOT (... OR (NULL AND ...))` can itself come out NULL — which a
+        # WHERE clause silently treats as "exclude", dropping rows that are
+        # obviously unresolved. Coercing to '' first keeps this on ordinary
+        # two-valued boolean logic.
+        ms1_status_expr = "IFNULL(COALESCE(pd.pic_status, pd_sys.pic_status), '')"
+        ms2_status_expr = "IFNULL(COALESCE(pd.pic_status_ms2, pd_sys.pic_status_ms2), '')"
+        ms2_amount_expr = "COALESCE(pd.ms2_amount, pd_sys.ms2_amount, 0)"
+        wheres.append(
+            "NOT ("
+            f"  (IFNULL(wd.ms1_closed,0) = 1 AND IFNULL(wd.ms2_closed,0) = 0 AND {ms1_status_expr} IN ({ph_ms}))"
+            "  OR"
+            f"  (IFNULL(wd.ms2_closed,0) = 1 AND IFNULL(wd.ms1_closed,0) = 0 AND {ms2_status_expr} IN ({ph_ms}))"
+            "  OR"
+            # Both flags equal (0/0 normal or full-close row, but also 1/1 —
+            # real data has rows where a Direct Close set both at once) means
+            # this row isn't scoped to a single milestone, so it represents
+            # the whole line.
+            "  (IFNULL(wd.ms1_closed,0) = IFNULL(wd.ms2_closed,0)"
+            f"    AND {ms1_status_expr} IN ({ph_ms})"
+            f"    AND ({ms2_amount_expr} = 0 OR {ms2_status_expr} IN ({ph_ms}))"
+            "  )"
+            ")"
+        )
+        params.extend(terminal_ms)
+        params.extend(terminal_ms)
+        params.extend(terminal_ms)
+        params.extend(terminal_ms)
     im_vals = _ensure_list(filters.get("im"))
     if im_vals:
         rp_im_col = frappe.db.has_column("Rollout Plan", "im")
@@ -7120,6 +7150,29 @@ def list_work_done_rows(filters=None, limit=500):
         else ""
     )
 
+    # Subcontractor / Contract Model — same resolution PIC pages already use:
+    # PO Dispatch's own `contract` link wins when set (an explicit PIC-side
+    # assignment), falling back to whichever team executed the work (via the
+    # `it` INET Team already joined above for assigned_team).
+    subcon_join_wd = ""
+    _subcon_expr_wd = "NULL"
+    _contract_model_expr_wd = "NULL"
+    _subcon_id_expr_wd = "NULL"
+    if frappe.db.has_column("PO Dispatch", "contract") and frappe.db.exists("DocType", "Subcontract Master"):
+        subcon_join_wd = (
+            "LEFT JOIN `tabSubcontract Master` sm_pd ON sm_pd.name = COALESCE(pd.contract, pd_sys.contract) "
+            "LEFT JOIN `tabSubcontract Master` sm_it ON sm_it.name = it.subcontractor "
+        )
+        _subcon_expr_wd = "COALESCE(sm_pd.subcontractor_name, sm_it.subcontractor_name)"
+        _contract_model_expr_wd = "COALESCE(sm_pd.contract_model, sm_it.contract_model)"
+        _subcon_id_expr_wd = "COALESCE(sm_pd.name, sm_it.name)"
+
+    subcontractor_vals = _ensure_list(filters.get("subcontractor"))
+    if subcontractor_vals and subcon_join_wd:
+        ph_sc = ", ".join(["%s"] * len(subcontractor_vals))
+        wheres.append(f"{_subcon_id_expr_wd} IN ({ph_sc})")
+        params.extend(subcontractor_vals)
+
     # Per-column "Manage Table" filters — see list_im_rollout_plans for the
     # rationale (each column matched independently and ANDed, not blended
     # into the wide `search` clause below; same expressions widen that
@@ -7157,6 +7210,8 @@ def list_work_done_rows(filters=None, limit=500):
         "execution_remarks": "IFNULL(de.remarks,'')",
         "revenue": "CAST(wd.revenue_sar AS CHAR)",
         "billing_status": billing_expr,
+        "subcontract": f"IFNULL({_subcon_expr_wd},'')",
+        "contract_model": f"IFNULL({_contract_model_expr_wd},'')",
     }
     im_filter_parts = ["COALESCE(NULLIF(pd.im,''), pd_sys.im, '')"]
     if frappe.db.has_column("Rollout Plan", "im"):
@@ -7246,7 +7301,8 @@ def list_work_done_rows(filters=None, limit=500):
             params.extend(cparams)
 
     id_sql = (
-        "SELECT wd.name AS wd_name "
+        f"SELECT wd.name AS wd_name, {_subcon_expr_wd} AS subcontractor, "
+        f"{_contract_model_expr_wd} AS contract_model "
         "FROM `tabWork Done` wd "
         # LEFT JOIN so direct-close WDs (execution=NULL) are also included.
         "LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution "
@@ -7255,13 +7311,14 @@ def list_work_done_rows(filters=None, limit=500):
         "LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id "
         "LEFT JOIN `tabItem` item_wd ON item_wd.name = wd.item_code "
         "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
-        f"{rp_im_join_wd} {pd_im_join_wd} "
+        f"{rp_im_join_wd} {pd_im_join_wd} {subcon_join_wd} "
         f"WHERE {' AND '.join(wheres)} "
         "ORDER BY wd.creation DESC "
         f"{_sql_limit_suffix(lim)}"
     )
     wd_id_rows = frappe.db.sql(id_sql, tuple(params), as_dict=True)
     wd_ids = [r.wd_name for r in (wd_id_rows or []) if r.get("wd_name")]
+    subcon_map = {r.wd_name: (r.subcontractor, r.contract_model) for r in (wd_id_rows or []) if r.get("wd_name")}
     if not wd_ids:
         # No regular Work Done records matched — still try synthesized backend rows
         # (dispatches with subcon_status='Work Done' but no Daily Execution/Rollout Plan).
@@ -7410,10 +7467,13 @@ def list_work_done_rows(filters=None, limit=500):
         # the new pic_status column yet.
         pic_status_val = pd.get("pic_status") if pd and "pic_status" in pd else None
         billing_override = _billing_status_from_pic(pic_status_val, r.get("billing_status"))
+        subcon_row = subcon_map.get(r.name) or (None, None)
         out.append(
             {
                 **r,
                 "billing_status": billing_override,
+                "subcontractor": subcon_row[0],
+                "contract_model": subcon_row[1],
                 "pic_status": pic_status_val,
                 "pic_status_ms2": pd.get("pic_status_ms2") if pd else None,
                 "rollout_plan": ex.rollout_plan if ex else None,
@@ -7543,6 +7603,23 @@ def _synthesize_subcon_workdone_rows(filters):
         "NOT EXISTS (SELECT 1 FROM `tabWork Done` wd WHERE wd.system_id = pd.name)",
     ]
     params = []
+
+    # Same Subcontract Master resolution as list_work_done_rows' main path
+    # (and PIC before it): an explicit override on the dispatch itself, else
+    # fall back to the executing team's own subcontractor.
+    subcon_join_sub = ""
+    _subcon_expr_sub = "NULL"
+    _contract_model_expr_sub = "NULL"
+    _subcon_id_expr_sub = "NULL"
+    if frappe.db.has_column("PO Dispatch", "contract") and frappe.db.exists("DocType", "Subcontract Master"):
+        subcon_join_sub = (
+            "LEFT JOIN `tabSubcontract Master` sm_pd ON sm_pd.name = pd.contract "
+            "LEFT JOIN `tabSubcontract Master` sm_t ON sm_t.name = t.subcontractor "
+        )
+        _subcon_expr_sub = "COALESCE(sm_pd.subcontractor_name, sm_t.subcontractor_name)"
+        _contract_model_expr_sub = "COALESCE(sm_pd.contract_model, sm_t.contract_model)"
+        _subcon_id_expr_sub = "COALESCE(sm_pd.name, sm_t.name)"
+
     for col, key in (
         ("pd.project_code", "project_code"),
         ("pd.site_code", "site_code"),
@@ -7553,6 +7630,31 @@ def _synthesize_subcon_workdone_rows(filters):
         if c:
             where.append(c)
             params.extend(p)
+
+    # Same milestone-based resolution check as list_work_done_rows (see there
+    # for the full rationale). These synthesized rows never come from a
+    # milestone-scoped Direct Close (that path always creates a real Work
+    # Done record), so every row here always represents the WHOLE line —
+    # only the "normal row" branch applies: hidden once MS1 is terminal AND
+    # (MS2 doesn't apply, or is itself terminal too).
+    if frappe.db.has_column("PO Dispatch", "pic_status") and frappe.db.has_column("PO Dispatch", "pic_status_ms2"):
+        terminal_ms_sub = list(_DATA_INTEGRITY_TERMINAL_MS)
+        ph_ms_sub = ", ".join(["%s"] * len(terminal_ms_sub))
+        where.append(
+            "NOT ("
+            f"  IFNULL(pd.pic_status,'') IN ({ph_ms_sub})"
+            f"  AND (IFNULL(pd.ms2_amount,0) = 0 OR IFNULL(pd.pic_status_ms2,'') IN ({ph_ms_sub}))"
+            ")"
+        )
+        params.extend(terminal_ms_sub)
+        params.extend(terminal_ms_sub)
+
+    subcontractor_vals = _ensure_list(f.get("subcontractor"))
+    if subcontractor_vals and subcon_join_sub:
+        ph_sc = ", ".join(["%s"] * len(subcontractor_vals))
+        where.append(f"{_subcon_id_expr_sub} IN ({ph_sc})")
+        params.extend(subcontractor_vals)
+
     im_vals = _ensure_list(f.get("im"))
     if im_vals:
         ph = ", ".join(["%s"] * len(im_vals))
@@ -7651,6 +7753,8 @@ def _synthesize_subcon_workdone_rows(filters):
     col_filter_map["activity_type"] = (
         "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pd.item_code), '')"
     )
+    col_filter_map["subcontract"] = f"IFNULL({_subcon_expr_sub},'')"
+    col_filter_map["contract_model"] = f"IFNULL({_contract_model_expr_sub},'')"
     column_filters = f.get("column_filters")
     if isinstance(column_filters, str):
         try:
@@ -7683,9 +7787,11 @@ def _synthesize_subcon_workdone_rows(filters):
         f"{sub_sub_col}, "
         f"{_remark_select()}, "
         "t.team_id AS backend_team_id, t.team_name AS backend_team_name, "
+        f"{_subcon_expr_sub} AS subcontractor, {_contract_model_expr_sub} AS contract_model, "
         "pd.modified "
         "FROM `tabPO Dispatch` pd "
         "LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team "
+        f"{subcon_join_sub} "
         f"WHERE {' AND '.join(where)} "
         "ORDER BY pd.subcon_completed_on DESC, pd.modified DESC"
     )
@@ -7731,6 +7837,8 @@ def _synthesize_subcon_workdone_rows(filters):
             "region_type": r.get("region_type"),
             "team": r.get("backend_team"),
             "team_name": r.get("backend_team_name") or r.get("backend_team_id") or r.get("backend_team"),
+            "subcontractor": r.get("subcontractor"),
+            "contract_model": r.get("contract_model"),
             "im": r.get("im"),
             "im_full_name": im_name_map.get(r.get("im")),
             "item_code": r.get("item_code"),
