@@ -25,6 +25,64 @@ function keyFromLabel(label, i) {
   return base || `col_${i}`;
 }
 
+/**
+ * React renders a table's columns in one fixed order; DataTablePro then moves
+ * cells around to honour the user's saved order. After that the DOM no longer
+ * tells us what React's order was — and we still need it, because every
+ * freshly rendered row arrives in that order and gets its data-col-key stamped
+ * BY POSITION (see normalizeRowCells). Reading the order back off a header we
+ * ourselves reordered is what silently mislabels the body: headers say Amount,
+ * the cells under them hold Qty.
+ *
+ * So record each header cell's natural index once and let it ride along when
+ * the cell moves.
+ */
+function natOf(cell) {
+  const v = parseFloat(cell?.dataset?.tpNat);
+  return Number.isFinite(v) ? v : NaN;
+}
+
+function stampNaturalIndexes(headRow) {
+  const cells = Array.from(headRow.children);
+  if (!cells.length) return;
+  if (!cells.some((c) => Number.isFinite(natOf(c)))) {
+    // First sight of this header — the DOM is still exactly as React wrote it.
+    cells.forEach((c, i) => { c.dataset.tpNat = String(i); });
+    return;
+  }
+  // React inserts a new column immediately before its natural successor, so an
+  // unstamped cell belongs just ahead of the next stamped one. Walk right to
+  // left so a run of new columns (PO Dispatch reveals Mode/IM/Target Month
+  // together) keeps its internal order.
+  let nextNat = null;
+  for (let i = cells.length - 1; i >= 0; i -= 1) {
+    const nat = natOf(cells[i]);
+    if (Number.isFinite(nat)) { nextNat = nat; continue; }
+    let prevNat = null;
+    for (let p = i - 1; p >= 0; p -= 1) {
+      const pn = natOf(cells[p]);
+      if (Number.isFinite(pn)) { prevNat = pn; break; }
+    }
+    let assigned;
+    if (nextNat === null) assigned = prevNat === null ? i : prevNat + 1;
+    else if (prevNat === null || prevNat >= nextNat) assigned = nextNat - 0.5;
+    else assigned = (prevNat + nextNat) / 2;
+    cells[i].dataset.tpNat = String(assigned);
+    nextNat = assigned;
+  }
+  // Collapse the fractions back to 0..n-1 so repeated column changes can't
+  // drift into floating-point mush or collide with an existing index.
+  Array.from(headRow.children)
+    .map((c, i) => ({ c, nat: natOf(c), i }))
+    .sort((a, b) => (a.nat - b.nat) || (a.i - b.i))
+    .forEach((e, idx) => { e.c.dataset.tpNat = String(idx); });
+}
+
+/** Header cells in React's order, not the order we may have shuffled them into. */
+function headersInNaturalOrder(headRow) {
+  return Array.from(headRow.children).sort((a, b) => natOf(a) - natOf(b));
+}
+
 /** Column whose cells hold the DocType `name` used to fetch dynamic fields (skip checkbox-only headers). */
 function resolveLinkSourceKey(headRow, columns) {
   if (!headRow || !Array.isArray(columns) || !columns.length) return columns[0]?.key;
@@ -43,12 +101,16 @@ function resolveLinkSourceKey(headRow, columns) {
       || s === "execution"
     );
   };
-  for (let i = 0; i < ths.length && i < columns.length; i++) {
+  // Match on the cell's own key rather than its position: the header may have
+  // been reordered out from under `columns`.
+  const byKey = new Set(columns.map((c) => c.key));
+  for (let i = 0; i < ths.length; i++) {
     const th = ths[i];
     const raw = String(th.textContent || "").replace(/\s+/g, " ").trim();
     const onlyCheckbox = th.querySelector('input[type="checkbox"]') && raw.length === 0;
     if (onlyCheckbox) continue;
-    if (labelIsLink(raw)) return columns[i].key;
+    const key = th.dataset.colKey;
+    if (labelIsLink(raw) && key && byKey.has(key)) return key;
   }
   for (let i = 0; i < ths.length && i < columns.length; i++) {
     const th = ths[i];
@@ -218,7 +280,12 @@ export default function DataTablePro() {
         const headers = Array.from(headRow.children);
         if (!headers.length) continue;
 
-        let columns = headers.map((th, i) => {
+        stampNaturalIndexes(headRow);
+        // Natural order, never DOM order — see stampNaturalIndexes(). Everything
+        // downstream that maps a position to a column (normalizeRowCells above
+        // all) is talking about rows React just rendered, which are natural.
+        const naturalHeaders = headersInNaturalOrder(headRow);
+        let columns = naturalHeaders.map((th, i) => {
           const key = keyFromLabel(th.textContent, i);
           th.dataset.colKey = key;
           return { key, label: String(th.textContent || "").trim() || `Column ${i + 1}` };
@@ -235,14 +302,23 @@ export default function DataTablePro() {
         // cannot end up with a dropdown nothing answers.
         const excelFilterAll = table.getAttribute("data-excel-filter-all") === "1";
         const excelFilterConfig = {};
-        headers.forEach((th, i) => {
+        // Columns that carry data-excel-filter="0" get no filter control at
+        // all — see makeFilterCell.
+        const excelFilterOptOut = new Set();
+        naturalHeaders.forEach((th, i) => {
           const flag = th.getAttribute("data-excel-filter");
-          if (flag === "0") return;
-          // A checkbox-only or unlabelled column has nothing to filter on.
-          const labelled = String(th.textContent || "").trim().length > 0;
-          if (!(flag === "1" || (excelFilterAll && labelled))) return;
+          if (flag === "0") {
+            const c = columns[i];
+            if (c) excelFilterOptOut.add(c.key);
+            return;
+          }
           const col = columns[i];
           if (!col) return;
+          // A checkbox-only or otherwise unlabelled column has nothing to
+          // filter on — no control at all, same as an explicit opt-out.
+          const labelled = String(th.textContent || "").trim().length > 0;
+          if (!labelled) { excelFilterOptOut.add(col.key); return; }
+          if (!(flag === "1" || excelFilterAll)) return;
           excelFilterConfig[col.key] = {
             doctype: th.getAttribute("data-excel-filter-doctype") || "",
             fieldname: th.getAttribute("data-excel-filter-fieldname") || col.key,
@@ -412,9 +488,20 @@ export default function DataTablePro() {
         state.dynamic_fields.forEach((d) => {
           if (d?.key && !state.order.includes(d.key)) state.order.push(d.key);
         });
-        // Append new columns not in saved order
+        // Splice new columns in at their NATURAL position, the same way
+        // restoredOrder does above. Appending instead would park PO Dispatch's
+        // Mode/IM/Target Month past Action, so state.order stops matching the
+        // rendered order and applyOrder starts shuffling a table that was
+        // already correct.
+        let lastSeenIdx = -1;
         columns.forEach((c) => {
-          if (!state.order.includes(c.key)) state.order.push(c.key);
+          const idx = state.order.indexOf(c.key);
+          if (idx !== -1) {
+            lastSeenIdx = idx;
+          } else {
+            lastSeenIdx += 1;
+            state.order.splice(lastSeenIdx, 0, c.key);
+          }
         });
 
         const thSelect = headRow.querySelector(":scope > th:first-child");
@@ -557,6 +644,16 @@ export default function DataTablePro() {
           if (ordersMatch) return;
 
           const rows = getRows();
+          // Never reorder against a column list the DOM has outgrown. The
+          // per-row length check below skips short rows, and a stale
+          // `columns` makes that skip hit the BODY while the header row —
+          // already updated by React — still passes: headers move, data
+          // doesn't. That is the column scramble on PO Dispatch's tab switch.
+          const headCellCount = rows.head[0] ? rows.head[0].children.length : 0;
+          if (headCellCount !== columns.length) {
+            scheduleReinitFromDom();
+            return;
+          }
           const orderIndex = state.order.reduce((acc, key, idx) => {
             acc[key] = idx;
             return acc;
@@ -564,7 +661,9 @@ export default function DataTablePro() {
           const reorderRow = (row) => {
             const cells = Array.from(row.children);
             if (!cells.length) return;
-            if (cells.length < columns.length) return; // skip rows with colspans
+            // Genuinely short rows are empty-state / summary rows that span
+            // the table via colSpan — nothing to reorder.
+            if (cells.length < columns.length) return;
             const sorted = [...cells].sort((a, b) => {
               const ai = orderIndex[a.dataset.colKey ?? ""] ?? 9999;
               const bi = orderIndex[b.dataset.colKey ?? ""] ?? 9999;
@@ -1266,6 +1365,12 @@ export default function DataTablePro() {
           if (excelFilterConfig[key]) return makeExcelFilterCell(key, excelFilterConfig[key]);
           const th = document.createElement("th");
           th.dataset.colKey = key;
+          // Opted out via data-excel-filter="0" — buttons, row numbers and
+          // client-computed badges. An empty cell, not a filter box: those
+          // columns have nothing to match, and for the computed ones a
+          // substring box would only hide already-loaded rows, which is the
+          // half-working behaviour the value filters exist to replace.
+          if (excelFilterOptOut.has(key)) return th;
           const input = document.createElement("input");
           input.className = "tablepro-filter-input";
           input.placeholder = "Filter...";
@@ -1301,7 +1406,20 @@ export default function DataTablePro() {
           const existing = new Map(
             Array.from(filterRow.children).map((c) => [c.dataset.colKey, c])
           );
-          state.order.forEach((key, i) => {
+          // Only columns the table actually has right now. state.order can
+          // still carry keys from a tab with more columns (PO Dispatch's
+          // Dispatched view adds three), and building a cell for each of
+          // those leaves stray filter boxes hanging past the last real
+          // column and pushes the rest out of line with their headers.
+          const liveKeys = new Set(
+            Array.from(table.querySelectorAll("thead tr:first-child > th"))
+              .map((th) => th.dataset.colKey)
+              .filter(Boolean)
+          );
+          const orderedKeys = liveKeys.size
+            ? state.order.filter((k) => liveKeys.has(k))
+            : state.order;
+          orderedKeys.forEach((key, i) => {
             const cell = existing.get(key) || makeFilterCell(key);
             existing.delete(key);
             if (filterRow.children[i] !== cell) {
@@ -1375,6 +1493,19 @@ export default function DataTablePro() {
         };
 
         const applyAll = async () => {
+          // The page's column SET can change without the table being replaced
+          // — PO Dispatch reveals Mode/IM/Target Month when you switch to the
+          // Dispatched tab. `columns` was captured at init, and
+          // normalizeRowCells() stamps data-col-key BY INDEX against it, so a
+          // stale list silently mislabels every cell from the insertion point
+          // on (the new "Mode" <th> gets stamped "action") and applyOrder then
+          // shuffles the table to match. Re-init instead of reordering on a
+          // list we know is out of date.
+          const headThs = table.querySelectorAll("thead tr:first-child > th");
+          if (headThs.length !== columns.length) {
+            scheduleReinitFromDom();
+            return;
+          }
           pinSelectColumnFirst();
           // allowed = saved order UNION current column keys so newly added columns
           // are never removed before normalizeRowCells() gets to stamp their <td>s.
