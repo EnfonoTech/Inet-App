@@ -202,6 +202,7 @@ export const pmApi = {
   reportSiteVerifyStatus:         (f) => call("inet_app.api.material_management.report_site_verify_status", { filters: JSON.stringify(f || {}) }),
   reportBillWiseStatus:           (f) => call("inet_app.api.material_management.report_bill_wise_status",   { filters: JSON.stringify(f || {}) }),
   reportHuaweiOutboundAnalytics:  (f) => call("inet_app.api.material_management.report_huawei_outbound_analytics", { filters: JSON.stringify(f || {}) }),
+  getHuaweiOutboundProjectDomainOptions: () => call("inet_app.api.material_management.get_huawei_outbound_project_domain_options"),
 
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),

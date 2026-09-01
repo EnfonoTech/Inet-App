@@ -6,6 +6,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import useFilterOptions from "../../hooks/useFilterOptions";
+import ReportChart from "../../components/ReportChart";
 
 // ≥90 green, ≥75 light-green, ≥60 yellow, <60 red, 0 neutral
 function pctCellStyle(value) {
@@ -193,7 +194,7 @@ const REPORTS = [
     category: "Material Reports",
     title: "Huawei Outbound Analytics",
     api: "reportHuaweiOutboundAnalytics",
-    description: "Shipment count and volume by subcontractor. Also in Desk as a Script Report.",
+    description: "Shipment count and volume by subcontractor, project or domain — filter to one project/domain to see its subcontractor split. Also in Desk as a Script Report.",
     hasFilters: true,
     filterType: "subcondate",
   },
@@ -229,6 +230,11 @@ export default function Reports() {
   // (e.g. SUM(completed)/SUM(assigned)*100), never averaged/summed
   // client-side from the already-aggregated per-row percentages.
   const [totals, setTotals] = useState({});
+  // Optional {data:{labels,datasets:[{name,values}]}, type, colors} —
+  // same frappe-charts shape Desk Script Reports already return. Only a
+  // handful of reports provide one today; ReportChart renders nothing when
+  // absent, so every other report is unaffected.
+  const [chart, setChart] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -249,6 +255,22 @@ export default function Reports() {
   const [subconFilter, setSubconFilter] = useState("");
   const { options: subconFilterOptions } = useFilterOptions("Huawei Outbound Plan", ["subcon"]);
   const subconOptions = subconFilterOptions.subcon || [];
+  // Project/Domain filters — every row is already a (Project, Subcontractor)
+  // pair, so picking a project narrows straight to "how many subcontractors
+  // work on it and how much each is doing"; a domain filter works the same
+  // way one level up.
+  // Not from useFilterOptions (that resolves a Link's raw code, not its
+  // name) — a small dedicated endpoint joins to Project Control Center once
+  // and returns real project names, scoped to projects that actually
+  // appear in Huawei Outbound Plan data.
+  const [huaweiProjectFilter, setHuaweiProjectFilter] = useState("");
+  const [huaweiDomainFilter, setHuaweiDomainFilter] = useState("");
+  // Off (default): one row per (Project, Subcontractor) pair. On: collapses
+  // to one row per subcontractor, summed across every project it touched —
+  // a plain top-line rollup for when the project/domain split isn't needed.
+  const [huaweiBySubcon, setHuaweiBySubcon] = useState(false);
+  const [huaweiProjectOptions, setHuaweiProjectOptions] = useState([]);
+  const [huaweiDomainOptions, setHuaweiDomainOptions] = useState([]);
 
   const [teamOptions, setTeamOptions] = useState([]);
   const [imOptions, setImOptions] = useState([]);
@@ -314,6 +336,15 @@ export default function Reports() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsSharedFilters]);
 
+  useEffect(() => {
+    if (active?.key !== "huawei_outbound_analytics" || huaweiProjectOptions.length) return;
+    pmApi.getHuaweiOutboundProjectDomainOptions().then((res) => {
+      setHuaweiProjectOptions(res?.projects || []);
+      setHuaweiDomainOptions(res?.domains || []);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.key]);
+
   async function loadReport(filters) {
     setLoading(true);
     setError(null);
@@ -323,10 +354,12 @@ export default function Reports() {
       setColumns(result?.columns || []);
       setData(result?.data || []);
       setTotals(result?.totals || {});
+      setChart(result?.chart || null);
     } catch (err) {
       setColumns([]);
       setData([]);
       setTotals({});
+      setChart(null);
       setError(err?.message || "Failed to load report.");
     } finally {
       setLoading(false);
@@ -353,6 +386,9 @@ export default function Reports() {
     setSiteStatusFilter("");
     setSiteSearch("");
     setSubconFilter("");
+    setHuaweiProjectFilter("");
+    setHuaweiDomainFilter("");
+    setHuaweiBySubcon(false);
     // Clear the previous report's columns immediately (not just when the new
     // report's fetch resolves) — the <table> below only mounts once columns
     // is non-empty, specifically so DataTablePro never gets a chance to
@@ -362,6 +398,7 @@ export default function Reports() {
     setColumns([]);
     setData([]);
     setTotals({});
+    setChart(null);
   }, [activeKey]);
 
   // Auto-reload when active report or filters change. Skipped entirely on the
@@ -383,11 +420,16 @@ export default function Reports() {
         if (dateRange.from) f.from_date = dateRange.from;
         if (dateRange.to) f.to_date = dateRange.to;
       }
-      if (active.filterType === "subcondate" && subconFilter) f.subcon = subconFilter;
+      if (active.filterType === "subcondate") {
+        if (subconFilter) f.subcon = subconFilter;
+        if (huaweiProjectFilter) f.project = huaweiProjectFilter;
+        if (huaweiDomainFilter) f.domain = huaweiDomainFilter;
+        if (huaweiBySubcon) f.by_subcon = 1;
+      }
     }
     loadReport(f);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeKey, teamFilter, imFilter, dateRange, selectedMonth, teamDate, subconFilter]);
+  }, [activeKey, teamFilter, imFilter, dateRange, selectedMonth, teamDate, subconFilter, huaweiProjectFilter, huaweiDomainFilter, huaweiBySubcon]);
 
   const hasFilters = teamFilter.length > 0 || imFilter.length > 0;
 
@@ -564,11 +606,37 @@ export default function Reports() {
                 placeholder="All Subcontractors"
                 minWidth={170}
               />
-              {subconFilter && (
+              <SearchableSelect
+                value={huaweiProjectFilter}
+                onChange={setHuaweiProjectFilter}
+                options={huaweiProjectOptions}
+                placeholder="All Projects"
+                minWidth={200}
+              />
+              <SearchableSelect
+                value={huaweiDomainFilter}
+                onChange={setHuaweiDomainFilter}
+                options={huaweiDomainOptions}
+                placeholder="All Domains"
+                minWidth={170}
+              />
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{
+                  fontSize: "0.78rem", padding: "5px 12px",
+                  ...(huaweiBySubcon ? { borderColor: "#1d4ed8", color: "#1d4ed8", background: "#eff6ff" } : {}),
+                }}
+                onClick={() => setHuaweiBySubcon((v) => !v)}
+                title={huaweiBySubcon ? "Showing one row per subcontractor (summed across projects)" : "Showing one row per Project × Subcontractor pair"}
+              >
+                {huaweiBySubcon ? "✓ " : ""}By Subcontractor Only
+              </button>
+              {(subconFilter || huaweiProjectFilter || huaweiDomainFilter) && (
                 <button
                   className="btn-secondary"
                   style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-                  onClick={() => setSubconFilter("")}
+                  onClick={() => { setSubconFilter(""); setHuaweiProjectFilter(""); setHuaweiDomainFilter(""); }}
                 >
                   Clear
                 </button>
@@ -632,7 +700,26 @@ export default function Reports() {
           </div>
         )}
 
-        <DataTableWrapper>
+        {chart && <ReportChart chart={chart} />}
+
+        {/* This page renders a chart above the table (most other pages using
+            DataTableWrapper don't), so unlike them it needs the PAGE itself
+            to scroll rather than locking the table into the app's usual
+            "fixed viewport height, only the table scrolls internally" layout
+            (pages.css's `:has(.page-content > .data-table-wrapper)` chain —
+            keyed off .data-table-wrapper being a DIRECT child of
+            .page-content). Wrapping it in this shell div breaks that exact
+            selector match, so .page-content falls back to normal block flow
+            and the whole page scrolls — both the chart and the table show in
+            full instead of fighting over one fixed-height budget. */}
+        <div className="rpt-table-shell">
+        {/* .data-table-wrapper's own base CSS caps it at min(92vh, 100dvh-5rem)
+            as a fallback for pages outside the app's usual fixed-viewport
+            table layout (which this page just opted out of, above) — without
+            overriding it here the table would still show its own internal
+            scrollbar capped near full-viewport height instead of rendering
+            in full within the now-scrollable page. */}
+        <DataTableWrapper style={{ maxHeight: "none" }}>
           {/* The <table> itself only mounts once columns for the CURRENT
               report have actually arrived — not gated on data.length (rows),
               which DataTablePro genuinely needs to stay mounted through zero-
@@ -733,6 +820,7 @@ export default function Reports() {
           </table>
           )}
         </DataTableWrapper>
+        </div>
       </div>
       )}
     </div>

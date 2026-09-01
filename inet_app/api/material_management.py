@@ -3998,15 +3998,54 @@ def get_bill_wise_material(filters=None, column_filters=None, limit=None, _optio
 
 @frappe.whitelist()
 def report_huawei_outbound_analytics(filters=None):
-    """Standard {columns, data} wrapper over the Huawei Outbound Analytics
-    Script Report, so the same subcon volume breakdown is reachable from
-    the PM portal, not just Desk."""
+    """Standard {columns, data, chart} wrapper over the Huawei Outbound
+    Analytics Script Report — one row per (Project, Subcontractor) pair, so
+    the PM portal can filter to one project/domain/subcontractor and see
+    exactly who/how much within it, not just Desk. The chart payload
+    previously got dropped here (only columns/data were unpacked) —
+    ReportChart.jsx on the portal side expects the same frappe-charts
+    {labels, datasets} shape Desk already renders natively, so no
+    conversion needed."""
     from inet_app.inet_app.report.huawei_outbound_analytics.huawei_outbound_analytics import execute
 
     if isinstance(filters, str):
         filters = frappe.parse_json(filters)
-    columns, data = execute(filters or {})[:2]
-    return {"columns": columns, "data": data}
+    columns, data, _msg, chart = execute(filters or {})
+    # "% of Total" is already a share-of-the-whole figure (unlike a report
+    # like Top Teams' Completion %), so — unusually — summing it back up IS
+    # the correct total: it should land at ~100% given rounding, which
+    # doubles as a quick sanity check that every row got counted.
+    totals = {"pct": round(sum(r.get("pct") or 0 for r in data), 1)} if data else {}
+    return {"columns": columns, "data": data, "chart": chart, "totals": totals}
+
+
+@frappe.whitelist()
+def get_huawei_outbound_project_domain_options():
+    """{id, label} options for the Project / Domain filters on the Huawei
+    Outbound Analytics report — only projects/domains that actually appear
+    in Huawei Outbound Plan data (mirrors how the existing Subcontractor
+    filter is scoped), with the project's real name as the label rather
+    than its code."""
+    rows = frappe.db.sql(
+        """
+        SELECT DISTINCT hop.project, pcc.project_name, pcc.project_domain
+        FROM `tabHuawei Outbound Plan` hop
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.project_code = hop.project
+        WHERE IFNULL(hop.project, '') != ''
+        """,
+        as_dict=True,
+    )
+    projects = sorted(
+        ({"id": r.project, "label": r.project_name or r.project} for r in rows),
+        key=lambda o: o["label"],
+    )
+    domains = sorted(
+        {(r.project_domain or "").strip() for r in rows if (r.project_domain or "").strip()}
+    )
+    return {
+        "projects": projects,
+        "domains": [{"id": d, "label": d} for d in domains],
+    }
 
 
 # ─── Material Return Flow ──────────────────────────────────────────────────────
