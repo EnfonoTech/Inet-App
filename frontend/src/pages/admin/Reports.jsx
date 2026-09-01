@@ -67,7 +67,7 @@ const TeamIdleDomainReport = lazy(() => import("./TeamDomainReport"));
 const REPORTS = [
   {
     key: "team_utilization_report",
-    category: "Teams & Utilisation",
+    category: "Teams & Utilization",
     title: "Team Utilization",
     api: "reportTeamUtilizationReport",
     description: "Team activity and utilization — Planned vs Actual",
@@ -75,7 +75,7 @@ const REPORTS = [
   },
   {
     key: "monthly_team_details",
-    category: "Teams & Utilisation",
+    category: "Teams & Utilization",
     title: "Monthly Team Details",
     api: "reportMonthlyTeamDetails",
     description: "Monthly team utilization — weekly breakdown per team",
@@ -84,7 +84,7 @@ const REPORTS = [
   },
   {
     key: "team_planning_report",
-    category: "Teams & Utilisation",
+    category: "Teams & Utilization",
     title: "Planning Report",
     api: "reportTeamPlanningReport",
     description: "Daily team plan status — what each team is scheduled to do",
@@ -92,17 +92,17 @@ const REPORTS = [
     filterType: "teamdate",
   },
   {
-    key: "team_utilisation_report",
-    category: "Teams & Utilisation",
-    title: "Utilisation Report",
-    api: "reportTeamUtilisationReport",
-    description: "Daily team utilisation — what each team actually executed",
+    key: "team_utilization_report_daily",
+    category: "Teams & Utilization",
+    title: "Utilization Report",
+    api: "reportTeamUtilizationDaily",
+    description: "Daily team utilization — what each team actually executed",
     hasFilters: true,
     filterType: "teamdate",
   },
   {
     key: "team_implementation_report",
-    category: "Teams & Utilisation",
+    category: "Teams & Utilization",
     title: "Implementation Report",
     api: "reportTeamImplementationReport",
     description: "Daily team implementation status with QC, CIAG and remarks",
@@ -129,10 +129,10 @@ const REPORTS = [
   },
   {
     key: "team_pva",
-    category: "Teams & Utilisation",
+    category: "Teams & Utilization",
     title: "Team PVA",
     api: "reportTeamPVA",
-    description: "Planned vs Actual per team per day — daily utilisation breakdown",
+    description: "Planned vs Actual per team per day — daily utilization breakdown",
     hasFilters: true,
     filterType: "teamdate",
   },
@@ -223,6 +223,12 @@ export default function Reports() {
   });
   const [columns, setColumns] = useState([]);
   const [data, setData] = useState([]);
+  // Per-column overall figure for columns a plain SUM would misrepresent
+  // (Percent columns — e.g. Completion %/Utilization %) — keyed by
+  // fieldname, computed server-side from the real underlying totals
+  // (e.g. SUM(completed)/SUM(assigned)*100), never averaged/summed
+  // client-side from the already-aggregated per-row percentages.
+  const [totals, setTotals] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -316,9 +322,11 @@ export default function Reports() {
       const result = await fn(filters);
       setColumns(result?.columns || []);
       setData(result?.data || []);
+      setTotals(result?.totals || {});
     } catch (err) {
       setColumns([]);
       setData([]);
+      setTotals({});
       setError(err?.message || "Failed to load report.");
     } finally {
       setLoading(false);
@@ -353,6 +361,7 @@ export default function Reports() {
     // that first scan matters — it can only ever happen once per mount.
     setColumns([]);
     setData([]);
+    setTotals({});
   }, [activeKey]);
 
   // Auto-reload when active report or filters change. Skipped entirely on the
@@ -394,6 +403,32 @@ export default function Reports() {
       return true;
     });
   }, [data, active, siteStatusFilter, siteSearch]);
+
+  // One value per column for the totals row, or undefined for a column that
+  // isn't aggregable (text/date/label columns stay blank in the footer).
+  // - Percent columns ONLY ever use the server-computed `totals` map — never
+  //   summed or averaged from the per-row percentages here, which would be
+  //   wrong (e.g. averaging 5 teams' Completion % ignores that they have
+  //   very different line counts; summing is meaningless either way).
+  // - Currency/Int columns are summed directly — always correct for a total.
+  // - `sn`/`#`-style row-number columns are explicitly excluded (see below).
+  const footerValues = useMemo(() => {
+    if (!columns.length) return {};
+    const out = {};
+    for (const col of columns) {
+      const key = col.fieldname || col.name;
+      if (!key || key === "sn") continue;
+      if (isPctCol(col)) {
+        const v = totals?.[key];
+        if (v != null) out[key] = v;
+        continue;
+      }
+      if (col.fieldtype === "Currency" || col.fieldtype === "Int" || col.fieldtype === "Float") {
+        out[key] = displayData.reduce((acc, row) => acc + (parseFloat(row?.[key]) || 0), 0);
+      }
+    }
+    return out;
+  }, [columns, displayData, totals]);
 
   return (
     <div>
@@ -666,6 +701,35 @@ export default function Reports() {
                 </tr>
               ))}
             </tbody>
+            {displayData.length > 0 && (
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                  {columns.map((col, idx) => {
+                    const key = col.fieldname || col.name;
+                    if (idx === 0) {
+                      return (
+                        <td key={key} style={{ fontWeight: 700, color: "#334155", padding: "8px 12px", whiteSpace: "nowrap" }}>
+                          Total
+                        </td>
+                      );
+                    }
+                    const val = footerValues[key];
+                    if (val === undefined) return <td key={key} />;
+                    const pct = isPctCol(col);
+                    const display = pct ? `${Number(val).toFixed(1)}%` : Math.round(val).toLocaleString();
+                    // Match the body cells' own alignment for this column type
+                    // (pctCellStyle centers Percent cells; everything else is
+                    // left-aligned by default) — the totals row must line up
+                    // under the values above it, not invent its own layout.
+                    return (
+                      <td key={key} style={{ fontWeight: 700, padding: "8px 12px", color: "#0f172a", ...(pct ? { textAlign: "center" } : {}) }}>
+                        {display}
+                      </td>
+                    );
+                  })}
+                </tr>
+              </tfoot>
+            )}
           </table>
           )}
         </DataTableWrapper>

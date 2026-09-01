@@ -11323,6 +11323,10 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     plan_by_im = {r.im: r for r in plan_rows}
 
     data = []
+    total_assigned = 0
+    total_completed = 0
+    total_target = 0.0
+    total_revenue = 0.0
     for im_rec in all_ims:
         im_id     = im_rec.name
         r         = plan_by_im.get(im_id, frappe._dict(teams=0, assigned_lines=0, completed_lines=0))
@@ -11334,6 +11338,10 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         profit    = round(revenue - team_cost, 0)
         compl_pct = round(completed / assigned * 100, 1) if assigned > 0 else 0.0
         ach_pct   = round(revenue / target * 100, 1) if target > 0 else 0.0
+        total_assigned += assigned
+        total_completed += completed
+        total_target += target
+        total_revenue += revenue
         rating    = ("Excellent"        if ach_pct >= 100 else
                      "Good"             if ach_pct >= 85  else
                      "Need Improvement" if ach_pct >= 70  else "Idle")
@@ -11365,7 +11373,14 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         {"fieldname": "profit",          "label": "Profit / Loss",   "fieldtype": "Currency"},
         {"fieldname": "rating",          "label": "Rating",          "fieldtype": "Data"},
     ]
-    return {"columns": columns, "data": data}
+    # Overall % columns = ratio of totals, never an average of the per-IM
+    # percentages — IMs have very different assigned-line/target sizes, so
+    # averaging would weight a 1-line IM the same as one with hundreds.
+    totals = {
+        "completion_pct": round(total_completed / total_assigned * 100, 1) if total_assigned > 0 else None,
+        "achievement_pct": round(total_revenue / total_target * 100, 1) if total_target > 0 else None,
+    }
+    return {"columns": columns, "data": data, "totals": totals}
 
 
 @frappe.whitelist()
@@ -11459,6 +11474,9 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         name for name, ti in team_info.items()
         if (ti.status or "Active") != "Disbanded" or name in rev_by_team
     ]
+    total_assigned = 0
+    total_completed = 0
+    total_days_worked = 0
     for team in report_teams:
         ti = team_info[team]
         r           = rev_by_team.get(team, frappe._dict(revenue=0, avg_inet_margin=100, days_worked=0))
@@ -11467,6 +11485,9 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         completed   = cint(p.completed_lines)
         revenue     = flt(r.revenue)
         days_worked = cint(r.days_worked)
+        total_assigned += assigned
+        total_completed += completed
+        total_days_worked += days_worked
 
         team_type = ((ti.team_type if ti else None) or "INET").upper()
 
@@ -11511,7 +11532,20 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         {"fieldname": "profit",          "label": "Profit / Loss",   "fieldtype": "Currency"},
         {"fieldname": "utilization_pct", "label": "Utilization %",   "fieldtype": "Percent"},
     ]
-    return {"columns": columns, "data": data}
+    # Overall Completion % = SUM(completed)/SUM(assigned), never an average of
+    # the per-row percentages — teams have very different assigned counts, so
+    # averaging would weight a 1-line team the same as a 50-line one.
+    # Overall Utilization % IS just the plain average here, but only because
+    # every row shares the same denominator (period_days) — equivalent to
+    # SUM(days_worked)/(period_days * team_count).
+    totals = {
+        "completion_pct": round(total_completed / total_assigned * 100, 1) if total_assigned > 0 else None,
+        "utilization_pct": (
+            round(total_days_worked / (period_days * len(report_teams)) * 100, 1)
+            if report_teams and period_days > 0 else None
+        ),
+    }
+    return {"columns": columns, "data": data, "totals": totals}
 
 
 @frappe.whitelist()
@@ -11570,6 +11604,10 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
     team_names = {}
 
     data = []
+    total_planned = 0
+    total_completed = 0
+    total_target = 0.0
+    total_revenue = 0.0
     for r in plan_rows:
         team = r.team
         if team not in team_names:
@@ -11580,6 +11618,10 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
         revenue   = rev_map.get((str(r.plan_date), team), 0.0)
         compl_pct = round(completed / planned * 100, 1) if planned > 0 else 0.0
         ach_pct   = round(revenue / target * 100, 1) if target > 0 else 0.0
+        total_planned += planned
+        total_completed += completed
+        total_target += target
+        total_revenue += revenue
         data.append({
             "plan_date":       str(r.plan_date),
             "team_name":       team_names[team],
@@ -11601,7 +11643,11 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
         {"fieldname": "revenue",         "label": "Revenue (SAR)",  "fieldtype": "Currency"},
         {"fieldname": "achievement_pct", "label": "Achievement %",  "fieldtype": "Percent"},
     ]
-    return {"columns": columns, "data": data}
+    totals = {
+        "completion_pct": round(total_completed / total_planned * 100, 1) if total_planned > 0 else None,
+        "achievement_pct": round(total_revenue / total_target * 100, 1) if total_target > 0 else None,
+    }
+    return {"columns": columns, "data": data, "totals": totals}
 
 
 @frappe.whitelist()
@@ -11641,6 +11687,10 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
     rev_by_yw = {r.yw: flt(r.revenue) for r in rev_rows}
 
     data = []
+    total_assigned = 0
+    total_completed = 0
+    total_target = 0.0
+    total_revenue = 0.0
     for i, r in enumerate(plan_rows, 1):
         target    = flt(r.target)
         revenue   = rev_by_yw.get(r.yw, 0.0)
@@ -11648,6 +11698,10 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
         completed = cint(r.completed_lines)
         compl_pct = round(completed / assigned * 100, 1) if assigned > 0 else 0.0
         ach_pct   = round(revenue / target * 100, 1) if target > 0 else 0.0
+        total_assigned += assigned
+        total_completed += completed
+        total_target += target
+        total_revenue += revenue
         data.append({
             "sn":              i,
             "week_start":      str(r.week_start),
@@ -11673,7 +11727,11 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
         {"fieldname": "revenue",         "label": "Revenue (SAR)",  "fieldtype": "Currency"},
         {"fieldname": "achievement_pct", "label": "Achievement %",  "fieldtype": "Percent"},
     ]
-    return {"columns": columns, "data": data}
+    totals = {
+        "completion_pct": round(total_completed / total_assigned * 100, 1) if total_assigned > 0 else None,
+        "achievement_pct": round(total_revenue / total_target * 100, 1) if total_target > 0 else None,
+    }
+    return {"columns": columns, "data": data, "totals": totals}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -19399,7 +19457,7 @@ def _idle_rows(fd, supplier, busy_teams, extra_col=None):
 
 @frappe.whitelist()
 def get_team_report(report_type="planning", from_date=None, to_date=None):
-    """Return {columns, data} for Planning / Utilisation / Implementation team reports."""
+    """Return {columns, data} for Planning / Utilization / Implementation team reports."""
     from frappe.utils import today as _today
     fd = from_date or _today()
     td = to_date or fd
@@ -19408,9 +19466,9 @@ def get_team_report(report_type="planning", from_date=None, to_date=None):
     if report_type == "planning":
         cols = list(_TEAM_REPORT_COLS)
         rows = _team_planning_rows(fd, td, single_day)
-    elif report_type == "utilisation":
+    elif report_type == "utilization":
         cols = list(_TEAM_REPORT_COLS)
-        rows = _team_utilisation_rows(fd, td, single_day)
+        rows = _team_utilization_rows(fd, td, single_day)
     else:
         cols = list(_TEAM_REPORT_COLS) + [{"fieldname": "activity_status", "label": "Activity Status"}]
         rows = _team_implementation_rows(fd, td, single_day)
@@ -19643,7 +19701,7 @@ def _daily_execution_report_rows(fd, td, single_day, with_activity_status):
     return rows
 
 
-def _team_utilisation_rows(fd, td, single_day):
+def _team_utilization_rows(fd, td, single_day):
     return _daily_execution_report_rows(fd, td, single_day, with_activity_status=False)
 
 
