@@ -543,9 +543,21 @@ export default function IMTeams() {
                 {filtered.length > 0 && (
                   <tfoot>
                     <tr>
-                      <td colSpan={tab === "all" ? 9 : 12} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                      <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                         {filtered.length}{hasFilters && ` of ${sourceList.length}`} teams
-                      </td>
+                      </td>{/* S/N */}
+                      <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />{/* Team ID */}
+                      <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />{/* Team */}
+                      <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />{/* Category */}
+                      <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />{/* Type */}
+                      {tab === "all" && <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />}{/* Owner IM */}
+                      <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />{/* ISDP Account */}
+                      <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />{/* Status */}
+                      {tab === "my" && <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />}{/* Today */}
+                      {tab === "my" && <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />}{/* Members */}
+                      {tab === "my" && <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />}{/* Projects */}
+                      {tab === "my" && <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />}{/* Active Plans */}
+                      <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />{/* Actions */}
                     </tr>
                   </tfoot>
                 )}
@@ -873,7 +885,8 @@ export default function IMTeams() {
                           </tbody>
                           <tfoot>
                             <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                              <td colSpan={2} style={{ padding: "7px 10px", fontWeight: 700, fontSize: "0.78rem", color: "#475569" }}>{detailStock.length} item{detailStock.length !== 1 ? "s" : ""}</td>
+                              <td style={{ padding: "7px 10px", fontWeight: 700, fontSize: "0.78rem", color: "#475569" }}>{detailStock.length} item{detailStock.length !== 1 ? "s" : ""}</td>
+                    <td style={{ padding: "7px 10px", fontWeight: 700, fontSize: "0.78rem", color: "#475569" }} />
                               <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700, fontSize: "0.78rem", color: "#475569" }}>{detailStock.reduce((s, it) => s + Number(it.qty || 0), 0).toLocaleString()}</td>
                               <td />
                             </tr>

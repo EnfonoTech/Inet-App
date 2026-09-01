@@ -287,18 +287,64 @@ export default function Timesheets() {
                 <tfoot>
                   <tr>
                     <td
-                      colSpan={7}
                       style={{
                         padding: "10px 16px",
                         background: "#f8fafc",
                         borderTop: "1px solid #e2e8f0",
                         fontWeight: 700,
                         fontSize: "0.78rem",
-                      }}
-                    >
+                      }}>
                       TOTALS ({displayedCount}
                       {hasFilters && ` of ${displayedCount}`} / {total} in range)
                     </td>
+                    <td
+                      style={{
+                        padding: "10px 16px",
+                        background: "#f8fafc",
+                        borderTop: "1px solid #e2e8f0",
+                        fontWeight: 700,
+                        fontSize: "0.78rem",
+                      }} />
+                    <td
+                      style={{
+                        padding: "10px 16px",
+                        background: "#f8fafc",
+                        borderTop: "1px solid #e2e8f0",
+                        fontWeight: 700,
+                        fontSize: "0.78rem",
+                      }} />
+                    <td
+                      style={{
+                        padding: "10px 16px",
+                        background: "#f8fafc",
+                        borderTop: "1px solid #e2e8f0",
+                        fontWeight: 700,
+                        fontSize: "0.78rem",
+                      }} />
+                    <td
+                      style={{
+                        padding: "10px 16px",
+                        background: "#f8fafc",
+                        borderTop: "1px solid #e2e8f0",
+                        fontWeight: 700,
+                        fontSize: "0.78rem",
+                      }} />
+                    <td
+                      style={{
+                        padding: "10px 16px",
+                        background: "#f8fafc",
+                        borderTop: "1px solid #e2e8f0",
+                        fontWeight: 700,
+                        fontSize: "0.78rem",
+                      }} />
+                    <td
+                      style={{
+                        padding: "10px 16px",
+                        background: "#f8fafc",
+                        borderTop: "1px solid #e2e8f0",
+                        fontWeight: 700,
+                        fontSize: "0.78rem",
+                      }} />
                     <td
                       style={{
                         textAlign: "right",

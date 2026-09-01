@@ -1258,7 +1258,9 @@ export default function PODispatch() {
                       Item Code·Description·Activity Type = 11 columns, then Qty·Rate·Amount,
                       then everything after Amount (Project..Action, count varies by showDispatched) */}
                   <tr>
-                    <td colSpan={11}
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                       <strong>{displayedCount}</strong> row{displayedCount !== 1 ? "s" : ""}
                       {activeTab === "Dispatched" && autoRows.length > 0 && (
@@ -1267,6 +1269,24 @@ export default function PODispatch() {
                         </span>
                       )}
                     </td>
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(totals.qty)}</td>{/* Qty */}
                     <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />{/* Rate */}
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmtAmt.format(totals.amount)}</td>{/* Amount */}

@@ -384,9 +384,13 @@ export default function PICInvoiceDetail() {
             {rows.length > 0 && (
               <tfoot>
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
-                  <td colSpan={5} style={{ fontSize: "0.78rem", color: "#475569" }}>
+                  <td style={{ fontSize: "0.78rem", color: "#475569" }}>
                     {fmtInt.format(displayedCount)} row{displayedCount !== 1 ? "s" : ""}
-                  </td>{/* Contract, Sub Contract, Project Domain, POID, DUID */}
+                  </td>
+                    <td style={{ fontSize: "0.78rem", color: "#475569" }} />
+                    <td style={{ fontSize: "0.78rem", color: "#475569" }} />
+                    <td style={{ fontSize: "0.78rem", color: "#475569" }} />
+                    <td style={{ fontSize: "0.78rem", color: "#475569" }} />{/* Contract, Sub Contract, Project Domain, POID, DUID */}
                   <td></td>{/* Invoice No */}
                   <td></td>{/* Invoice Date */}
                   <td></td>{/* Customer */}

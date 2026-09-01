@@ -421,9 +421,16 @@ export default function IMBackend() {
                   {/* checkbox·POID·PO No·Project·Domain·Huawei IM·Item·Description = 8 columns,
                       then Qty·Amount (SAR), then DUID..Note = 6 columns */}
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                    <td colSpan={8} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                       {rows.length} row{rows.length !== 1 ? "s" : ""}
                     </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>{fmt.format(totalQty)}</td>{/* Qty */}
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>{fmt.format(totalAmount)}</td>{/* Amount (SAR) */}
                     <td /><td /><td /><td /><td /><td />{/* DUID..Note */}

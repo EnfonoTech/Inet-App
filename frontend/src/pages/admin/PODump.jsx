@@ -409,9 +409,16 @@ export default function PODump() {
                   {/* POID·Line Status·PO No·Project·Project Name·DUID·Item Code·Item Description = 8 columns,
                       then Qty·Unit Price·Amount, then Start Date·End Date·Action = 3 columns */}
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                    <td colSpan={8} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                       {displayedCount} row{displayedCount !== 1 ? "s" : ""}
                     </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                       {fmtNum.format(rows.reduce((s, r) => s + (Number(r.requested_qty) || 0), 0))}
                     </td>{/* Qty */}

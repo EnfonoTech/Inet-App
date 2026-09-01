@@ -1474,9 +1474,12 @@ export default function IMPOIntake() {
                   <tfoot>
                     {/* Request·Direction·From IM·To IM = 4 columns, then POIDs·Amount (SAR), then Status..Actions = 5 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                      <td colSpan={4} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                         {transferVisibleRows.length} request{transferVisibleRows.length !== 1 ? "s" : ""}
                       </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                         {transferVisibleRows.reduce((s, r) => s + (Number(r.poid_count) || 0), 0)}
                       </td>{/* POIDs */}
@@ -1604,9 +1607,21 @@ export default function IMPOIntake() {
                         Center Area·Region·Item Code·Description·Activity Type = 13 columns, then Qty·Line Amount (SAR),
                         then Target Month..Actions = 10 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                      <td colSpan={13} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                         {ovDisplayedCount} row{ovDisplayedCount !== 1 ? "s" : ""}
                       </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                         {fmt.format(ovFilteredRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                       </td>{/* Qty */}
@@ -1706,9 +1721,18 @@ export default function IMPOIntake() {
                     {/* checkbox·POID·Mode·PO No·Project·Domain·Huawei IM·Item·Description·Activity Type = 10 columns,
                         then Qty·Rate (SAR)·Amount (SAR), then MS1..Actions = 6 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                      <td colSpan={10} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                         {intakeDisplayedCount} row{intakeDisplayedCount !== 1 ? "s" : ""}
                       </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                         {fmt.format(rows.slice(0, intakeDisplayedCount).reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                       </td>{/* Qty */}
@@ -1833,9 +1857,19 @@ export default function IMPOIntake() {
                     {/* POID·Status·Mode·Project·Domain·DUID·Center Area·Region·Item Code·Description·
                         Activity Type = 11 columns, then Qty·Line Amount (SAR), then Target Month..Actions = 8 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                      <td colSpan={11} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                         {dummyDisplayedCount} row{dummyDisplayedCount !== 1 ? "s" : ""}
                       </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
                         {fmt.format(filteredDummyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                       </td>{/* Qty */}

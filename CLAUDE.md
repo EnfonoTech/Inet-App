@@ -56,8 +56,17 @@ both before shipping a new page/tab:
    refetch").
 
 Also check: sort by `creation DESC`, not `modified DESC` (rows must not reorder under
-the user when someone edits one — `fc71d14`); tfoot column totals need one `<td>` per
-column, not `colSpan` (`4bf90af`); checkbox `<th>/<td>` needs **no** inline width —
+the user when someone edits one — `fc71d14`); **tfoot column totals need one `<td>` per
+column, never `colSpan`** — DataTablePro reorders thead/tbody/tfoot cells by their
+`data-col-key`, and a merged cell has no single key, so the totals drift out from under
+their headers the moment a column is moved (`4bf90af`; swept across all 37 tables with a
+totals row). Put the label in its own cell (index 1 when there's a leading checkbox
+column, else 0) and emit `<td />` for every other column — see `admin/WorkDone.jsx`. If
+the header has conditional columns, the tfoot must repeat the *same* conditions
+(`{tab === "my" && <td />}`), or compute the trailing run dynamically the way
+`admin/PODispatch.jsx` does with `colCount`. This applies only to `<tfoot>`: a tbody
+empty-state row *should* still use `colSpan` to span the table, and plain non
+`.data-table` summary tables are unaffected; checkbox `<th>/<td>` needs **no** inline width —
 CSS auto-narrows it to 44px, adding a width breaks that (`faf297b`). See "Row-limit
 filter", "Status colors", and "Multi-select bulk-action toolbar" further down for the
 three other most common new-page gotchas.

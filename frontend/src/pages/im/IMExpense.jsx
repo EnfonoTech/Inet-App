@@ -598,9 +598,13 @@ export default function IMExpense({ isAdmin = false }) {
                 {rows.length > 0 && (
                   <tfoot>
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                      <td colSpan={isAdmin ? 5 : 4} style={{ padding: "10px 14px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b" }}>
+                      <td style={{ padding: "10px 14px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b" }}>
                         {rows.length} claim{rows.length !== 1 ? "s" : ""}
-                      </td>{/* Claim # · Date · Team Lead · Team [· IM] */}
+                      </td>{/* Claim # */}
+                  <td style={{ padding: "10px 14px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b" }} />{/* Date */}
+                  <td style={{ padding: "10px 14px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b" }} />{/* Team Lead */}
+                  <td style={{ padding: "10px 14px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b" }} />{/* Team */}
+                  {isAdmin && <td style={{ padding: "10px 14px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b" }} />}{/* IM — mirrors the conditional <th> */}
                       <td style={{ padding: "10px 14px", fontWeight: 700, textAlign: "right", color: "#1d4ed8" }}>SAR {fmtAmt(totalAmt)}</td>{/* Amount (SAR) */}
                       <td /><td /><td />{/* Status · Payment · Actions */}
                     </tr>

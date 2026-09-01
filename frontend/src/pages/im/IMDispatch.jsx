@@ -2138,7 +2138,8 @@ export default function IMDispatch() {
                       Activity Type = 11 columns, then Qty·Amount, then IM·DUID·Center area·Region·
                       Status·Actions = 6 columns */}
                   <tr>
-                    <td colSpan={11} style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                       <strong>{displayedCount} row{displayedCount !== 1 ? "s" : ""}</strong>
                       {planScope !== "all" && visibleRows.length !== rows.length && (
                         <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#94a3b8" }}>
@@ -2151,6 +2152,15 @@ export default function IMDispatch() {
                           : <>Select rows with status <strong>Dispatched</strong> to create rollout plans.</>}
                       </span>
                     </td>
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(dispatchTotals.qty)}</td>{/* Qty */}
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(dispatchTotals.amount)}</td>{/* Amount */}
                     <td /><td /><td /><td /><td /><td />{/* IM..Actions — one <td> per column, no colSpan (see PODispatch.jsx tfoot comment) */}

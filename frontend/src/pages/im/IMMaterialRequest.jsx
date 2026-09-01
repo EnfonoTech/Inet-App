@@ -682,9 +682,14 @@ function DuidStockTab({ onRequest }) {
               <tfoot>
                 {/* DUID·Project·Pending·Received·Transferred·Completed = 6 columns, then Volume (m³), then Latest Date·(actions) = 2 columns */}
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                  <td colSpan={6} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                  <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                     {visible.length} DUID{visible.length !== 1 ? "s" : ""}
                   </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", fontFamily: "monospace" }}>
                     {visible.reduce((s, r) => s + (Number(r.total_volume) || 0), 0).toLocaleString()}
                   </td>{/* Volume (m³) */}
@@ -917,9 +922,14 @@ function StockBalanceTab() {
               <tfoot>
                 {/* DUID·Project·Warehouse·Item Code·Item Name·Type = 6 columns, then Qty, then UOM */}
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                  <td colSpan={6} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                  <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                     {visible.length} row{visible.length !== 1 ? "s" : ""}
                   </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", fontFamily: "monospace" }}>
                     {visible.reduce((s, r) => s + (Number(r.qty) || 0), 0).toLocaleString()}
                   </td>{/* Qty */}

@@ -526,7 +526,8 @@ export default function PICClosed() {
               <tfoot>
                 <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
                   <td></td>{/* checkbox */}
-                  <td colSpan={2} style={{ fontSize: "0.78rem", color: "#475569" }}>
+                  <td style={{ fontSize: "0.78rem", color: "#475569" }} />
+                    <td style={{ fontSize: "0.78rem", color: "#475569" }}>
                     {fmtInt.format(displayedCount)} row{displayedCount !== 1 ? "s" : ""}
                   </td>{/* Subcontract + Contract Model */}
                   <td></td>{/* POID */}
