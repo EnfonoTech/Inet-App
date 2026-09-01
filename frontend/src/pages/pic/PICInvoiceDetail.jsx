@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
@@ -146,6 +148,10 @@ export default function PICInvoiceDetail() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Published for the header summary — see usePublishedQuery.
+
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
+
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -191,6 +197,7 @@ export default function PICInvoiceDetail() {
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) portal.column_filters = colFilters;
       queryArgsRef.current = portal;
+      publishSummaryQuery(portal);
       const signature = JSON.stringify([portal, refreshKey]);
 
       const prev = lastFetchRef.current;
@@ -252,11 +259,9 @@ export default function PICInvoiceDetail() {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <h1 className="page-title">Invoice Detail</h1>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#f1f5f9", color: "#334155", border: "1px solid #e2e8f0", fontSize: "0.74rem", fontWeight: 700 }}>
-              <span style={{ opacity: 0.85 }}>Total Lines</span> <span>{fmtInt.format(totalCount)}</span>
-            </div>
           </div>
         </div>
+        <PageSummary source="invoice_detail" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename="pic-invoice-detail" rows={rows.slice(0, displayedCount)} />
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>

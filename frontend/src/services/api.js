@@ -603,6 +603,15 @@ export const pmApi = {
   // callCached: the list cascades off the page's other active filters, so a
   // client cache would show values that are no longer valid. The server
   // caches it for 60s instead, keyed on the same inputs plus the user.
+  // Headline figures for a page, aggregated over the full filtered set — see
+  // PageSummary.jsx. `source` is the same registry key column options use.
+  getPageSummary: ({ source, portal_filters, extra }) =>
+    call("inet_app.api.command_center.get_page_summary", {
+      source,
+      portal_filters: JSON.stringify(portal_filters || {}),
+      extra: JSON.stringify(extra || {}),
+    }),
+
   getColumnFilterOptions: ({ source, col_key, bucket, filters, portal_filters,
                              exclude_column, search, limit, extra }) =>
     call("inet_app.api.command_center.get_column_filter_options", {

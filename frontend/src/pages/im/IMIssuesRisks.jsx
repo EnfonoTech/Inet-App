@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -156,6 +158,8 @@ export default function IMIssuesRisks() {
   }, []);
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch effect below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -234,6 +238,7 @@ export default function IMIssuesRisks() {
       setLoading(true);
       try {
         queryArgsRef.current = portalArg || {};
+        publishSummaryQuery(portalArg || {});
         const res = await pmApi.listIssueRiskRows(
           imName || "",
           rowLimit,
@@ -417,8 +422,9 @@ export default function IMIssuesRisks() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Issues & Risks</h1>
-          <div className="page-subtitle">Your replanned rollout plans with issue categories.</div>
+          <div className="page-subtitle">Your plans with issues</div>
         </div>
+        <PageSummary source="issue_risk" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename="im-issues-and-risks" rows={filteredRows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>

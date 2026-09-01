@@ -761,7 +761,7 @@ def list_im_all_claims(column_filters=None, limit=None):
 
 
 @frappe.whitelist()
-def list_all_expense_claims(filters=None, limit=None, _options=None):
+def list_all_expense_claims(filters=None, limit=None, _options=None, _summary=None):
     """Return all project expense claims (admin/PM view). Supports optional filters."""
     import json
 
@@ -807,6 +807,33 @@ def list_all_expense_claims(filters=None, limit=None, _options=None):
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # An approver's page: how much money is sitting in the queue, and how
+        # much of it is still waiting on a decision.
+        from inet_app.api.command_center import summary_from_query
+        _st = "IFNULL(ec.approval_status,'')"
+        return summary_from_query(
+            "`tabExpense Claim` ec "
+            "LEFT JOIN `tabEmployee` emp ON emp.name = ec.employee "
+            "LEFT JOIN `tabINET Team` it ON it.name = ec.inet_team "
+            "LEFT JOIN `tabIM Master` im ON im.user = ec.expense_approver",
+            where, params, [
+                {"key": "claims", "label": "Claims", "agg": "count"},
+                {"key": "teams", "label": "Teams", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(ec.inet_team,''), '')"},
+                {"key": "amount", "label": "Claimed", "agg": "sum",
+                 "expr": "IFNULL(ec.total_claimed_amount, 0)", "format": "money"},
+                {"key": "pending_amt", "label": "Pending", "agg": "sum_if", "group": "Awaiting",
+                 "expr": "IFNULL(ec.total_claimed_amount, 0)", "cond": f"{_st} = 'Draft'",
+                 "format": "money", "tone": "warn", "hide_if_zero": True,
+                 "hint": "Value still waiting on approval"},
+                {"key": "pending_n", "label": "Claims", "agg": "count_if", "group": "Awaiting",
+                 "cond": f"{_st} = 'Draft'", "tone": "warn", "hide_if_zero": True},
+                {"key": "approved", "label": "Approved", "agg": "count_if", "group": "Decided",
+                 "cond": f"{_st} = 'Approved'", "tone": "good", "hide_if_zero": True},
+                {"key": "rejected", "label": "Rejected", "agg": "count_if", "group": "Decided",
+                 "cond": f"{_st} = 'Rejected'", "tone": "bad", "hide_if_zero": True},
+            ])
 
     limit_clause = _expense_limit_suffix(limit)
     if limit_clause is None:

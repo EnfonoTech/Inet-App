@@ -57,7 +57,7 @@ export default function OperationsOverview() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Search / overview</h1>
-          <div className="page-subtitle">DUID, PO, and Acceptance — PM view</div>
+          <div className="page-subtitle">PM overview</div>
         </div>
       </div>
 

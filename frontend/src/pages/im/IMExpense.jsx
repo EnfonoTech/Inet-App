@@ -1,5 +1,7 @@
 import { useCallback, useRef, useEffect, useMemo, useState } from "react";
 import { pmApi } from "../../services/api";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import DateRangePicker from "../../components/DateRangePicker";
 import AttachmentsSection from "../../components/AttachmentsSection";
@@ -329,6 +331,8 @@ export default function IMExpense({ isAdmin = false }) {
   }, [isAdmin]);
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch effect below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     // Own copy of the key — the one above is scoped inside that effect.
@@ -380,6 +384,7 @@ export default function IMExpense({ isAdmin = false }) {
           adminFilters.approval_status = statusFilter === "Pending" ? "Draft" : statusFilter;
         }
         queryArgsRef.current = adminFilters;
+        publishSummaryQuery(adminFilters);
         const all = await pmApi.listAllExpenseClaims(adminFilters, rowLimit);
         const rows = all || [];
         setAllClaims(rows);
@@ -480,6 +485,7 @@ export default function IMExpense({ isAdmin = false }) {
             {`${rows.length} claim${rows.length !== 1 ? "s" : ""}${rows.length > 0 ? ` · SAR ${fmtAmt(totalAmt)}` : ""}${!isAdmin && pending.length > 0 ? ` · ${pending.length} pending` : ""}`}
           </div>
         </div>
+        <PageSummary source="expense_claims" filters={summaryQuery} />
       </div>
 
       <div className="tabs">

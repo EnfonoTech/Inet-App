@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useDebounced } from "../../hooks/useDebounced";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
@@ -211,6 +213,8 @@ export default function ExecutionMonitor() {
   // Excel column-filter dropdowns cascade off exactly the query the rows were
   // fetched with. Both tables share one query (scoped by filters.tab), so one
   // ref serves both keys.
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -319,6 +323,7 @@ export default function ExecutionMonitor() {
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         queryArgsRef.current = filters;
+        publishSummaryQuery(filters);
         const signature = JSON.stringify([filters]);
 
         const prev = lastFetchRef.current;
@@ -465,7 +470,7 @@ export default function ExecutionMonitor() {
         <div>
           <h1 className="page-title">Execution Monitor</h1>
           <div className="page-subtitle">
-            Today's live execution status
+            Live execution
             {lastRefresh && (
               <span style={{ marginLeft: 8, color: "var(--text-muted)" }}>
                 · Last refreshed {formatTime(lastRefresh)}
@@ -473,6 +478,7 @@ export default function ExecutionMonitor() {
             )}
           </div>
         </div>
+        <PageSummary source="execution_monitor" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename="execution-monitor" rows={tab === "internal_done" ? filteredInternalDone.slice(0, displayedInternalCount) : mainRows.slice(0, displayedMainCount)} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>

@@ -25,7 +25,7 @@ export default function IMTeamStock() {
       <div className="page-header" style={{ marginBottom: 20 }}>
         <div>
           <h1 className="page-title">Team Material Stock</h1>
-          <div className="page-subtitle">Current warehouse stock for all teams</div>
+          <div className="page-subtitle">Team warehouse stock</div>
         </div>
       </div>
 

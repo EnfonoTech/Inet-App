@@ -155,7 +155,7 @@ export default function PICReports() {
       <div className="page-header">
         <div>
           <h1 className="page-title">PIC Reports</h1>
-          <div className="page-subtitle">Canned reports for the invoicing pipeline. Pick a report on the left.</div>
+          <div className="page-subtitle">Invoicing pipeline reports</div>
         </div>
         <div className="page-actions">
           <ExportExcelButton

@@ -608,6 +608,111 @@ def excel_options_from_query(from_sql, where_sql, params, expr, bucket=None,
     return {"values": values, "has_blanks": has_blanks, "total": total, "supported": True}
 
 
+# ── Page summaries ──────────────────────────────────────────────────────────
+# Twin of the column-options feature above, and it works the same way: a page's
+# list function hands over its OWN from/where/params, so the headline figures
+# can never disagree with the rows the table would show. The point is that the
+# user sees "1,284 lines · 12.4M" the moment the page opens, without paging the
+# whole dataset in — the numbers are aggregates, so they ignore the row limit
+# entirely.
+#
+# A metric is one of:
+#   {"key","label","agg":"count"}                    -> COUNT(*)
+#   {"key","label","agg":"count_if","cond":SQL}      -> rows matching cond
+#   {"key","label","agg":"count_distinct","expr":SQL}
+#   {"key","label","agg":"sum","expr":SQL}
+#   {"key","label","agg":"sum_if","expr":SQL,"cond":SQL}
+# plus optional "format" ("int"|"money"|"qty"|"percent"), "tone"
+# ("default"|"good"|"warn"|"bad"|"info") and "hint" (tooltip text).
+#
+# `expr` and `cond` are developer-authored constants declared next to the list
+# function whose aliases they use — never anything a caller supplies. Keep it
+# that way: they are interpolated into the SQL as-is.
+SUMMARY_AGGREGATES = {
+    "count": lambda m: "COUNT(*)",
+    "count_if": lambda m: f"SUM(CASE WHEN {m['cond']} THEN 1 ELSE 0 END)",
+    "count_distinct": lambda m: f"COUNT(DISTINCT {m['expr']})",
+    "sum": lambda m: f"COALESCE(SUM({m['expr']}), 0)",
+    "sum_if": lambda m: f"COALESCE(SUM(CASE WHEN {m['cond']} THEN {m['expr']} ELSE 0 END), 0)",
+}
+
+
+def summary_from_query(from_sql, where_sql, params, metrics):
+    """Compute every headline figure for one page in a single round trip.
+
+    All metrics fold into one SELECT of conditional aggregates rather than one
+    query per figure: a page showing six numbers costs one query, not six, and
+    every figure is guaranteed to describe the same snapshot.
+    """
+    metrics = [m for m in (metrics or []) if m.get("key") and m.get("agg") in SUMMARY_AGGREGATES]
+    if not metrics:
+        return {"metrics": [], "supported": False}
+
+    select_sql = ", ".join(
+        f"{SUMMARY_AGGREGATES[m['agg']](m)} AS `m_{i}`" for i, m in enumerate(metrics)
+    )
+    row = frappe.db.sql(
+        f"SELECT {select_sql} FROM {from_sql} WHERE {where_sql}",
+        tuple(params),
+        as_dict=True,
+    )
+    vals = row[0] if row else {}
+
+    out = []
+    for i, m in enumerate(metrics):
+        raw = vals.get(f"m_{i}")
+        try:
+            num = float(raw or 0)
+        except Exception:
+            num = 0.0
+        out.append({
+            "key": m["key"],
+            "label": m.get("label") or m["key"],
+            # Counts come back as ints so the UI never renders "12.0 lines".
+            "value": int(num) if m.get("format", "int") == "int" else num,
+            "format": m.get("format", "int"),
+            "tone": m.get("tone", "default"),
+            "hint": m.get("hint", ""),
+            # Consecutive metrics sharing a group render as one captioned
+            # cluster instead of N identical boxes — a breakdown reads as a
+            # breakdown, and the strip stays narrow.
+            "group": m.get("group", ""),
+            # Breakdown members worth nothing are noise; totals still show 0.
+            "hide_if_zero": bool(m.get("hide_if_zero")),
+        })
+    return {"metrics": out, "supported": True}
+
+
+def merge_summaries(*results):
+    """Add several summaries together, metric by metric.
+
+    For pages whose row list is the union of more than one query (Work Done
+    also emits synthesized subcon rows that have no Work Done record), the
+    headline figures have to cover the same union or the chip disagrees with
+    the row count sitting right under it.
+    """
+    order = []
+    merged = {}
+    for res in results:
+        for m in (res or {}).get("metrics", []) or []:
+            key = m.get("key")
+            if not key:
+                continue
+            if key not in merged:
+                merged[key] = dict(m)
+                order.append(key)
+            else:
+                merged[key]["value"] = (merged[key].get("value") or 0) + (m.get("value") or 0)
+                if merged[key].get("format", "int") == "int":
+                    merged[key]["value"] = int(merged[key]["value"])
+    return {"metrics": [merged[k] for k in order], "supported": bool(order)}
+
+
+def _summary_via(fn, **call_kwargs):
+    """Ask a list function for its own summary — mirrors _excel_options_via."""
+    return fn(_summary=1, **call_kwargs)
+
+
 def _excel_options_cache_key(*parts):
     """Cache key for one column-option lookup.
 
@@ -1611,7 +1716,7 @@ def backfill_po_dispatch_id_to_poid(limit=500):
 
 
 @frappe.whitelist()
-def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000, search=None, column_filters=None, _options=None):
+def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000, search=None, column_filters=None, _options=None, _summary=None):
     """
     Export PO Intake lines whose parent PO was created in the date range (upload date).
     Returns uploaded PO lines in source column order for audit/export.
@@ -1795,6 +1900,20 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # The dump is an export view — what matters is the size and value of
+        # what is about to be exported.
+        return summary_from_query(
+            "`tabPO Intake Line` pil JOIN `tabPO Intake` pi ON pi.name = pil.parent",
+            " AND ".join(where_clauses), params, [
+                {"key": "lines", "label": "Lines", "agg": "count"},
+                {"key": "pos", "label": "POs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pi.po_no,''), '')"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pil.site_code,''), '')"},
+                {"key": "value", "label": "Value", "agg": "sum",
+                 "expr": "IFNULL(pil.line_amount, 0)", "format": "money", "tone": "good"},
+            ])
 
     lines = frappe.db.sql(
         f"""
@@ -2557,7 +2676,7 @@ def _get_dispatch_for_intake_line(parent_name, po_line_no):
 
 
 @frappe.whitelist()
-def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options=None):
+def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options=None, _summary=None):
     """
     Return PO Intake child lines that match given po_line_status (or all when status='all').
     Each row is enriched with parent PO Intake fields and, for dispatched lines, dispatch info.
@@ -2603,10 +2722,10 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
     ]
 
     lines = []
-    # `or _options`: the column-option list is built from the wheres/params
+    # `or _options` / `or _summary`: both are built from the wheres/params
     # assembled in this branch, so it must be taken even when no portal filter
     # is active (otherwise the non-SQL path returns rows instead of options).
-    if _portal_active() or _options:
+    if _portal_active() or _options or _summary:
         wheres = ["1=1"]
         params = []
         if filters.get("po_line_status"):
@@ -2751,6 +2870,35 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
                 bucket=_options.get("bucket"), search=_options.get("search"),
                 limit=_options.get("limit"), label_kind=_options.get("label_kind"),
             )
+        if _summary:
+            # PM's question on this page is dispatch throughput: how much is
+            # still waiting on me, how much is out with the teams, and how much
+            # of it went out automatically. Value is the PO line amount, which
+            # is what the table's own total column adds up.
+            _mode = "COALESCE(NULLIF(pil.dispatch_mode,''), pd.dispatch_mode, '')"
+            _st = "IFNULL(pil.po_line_status,'')"
+            return summary_from_query(INTAKE_LINE_FROM_SQL, " AND ".join(wheres), params, [
+                {"key": "lines", "label": "Lines", "agg": "count"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pil.site_code,''), '')"},
+                {"key": "value", "label": "Value", "agg": "sum",
+                 "expr": "IFNULL(pil.line_amount, 0)", "format": "money", "tone": "good"},
+                {"key": "new", "label": "To dispatch", "agg": "count_if", "group": "Pipeline",
+                 "cond": f"{_st} = 'New'", "tone": "warn",
+                 "hint": "Not dispatched yet — waiting on PM"},
+                {"key": "dispatched", "label": "Dispatched", "agg": "count_if", "group": "Pipeline",
+                 "cond": f"{_st} = 'Dispatched'", "tone": "info"},
+                {"key": "completed", "label": "Completed", "agg": "count_if", "group": "Pipeline",
+                 "cond": f"{_st} = 'Completed'", "tone": "good", "hide_if_zero": True},
+                {"key": "closed", "label": "Closed", "agg": "count_if", "group": "Pipeline",
+                 "cond": f"{_st} = 'Closed'", "hide_if_zero": True},
+                {"key": "cancelled", "label": "Cancelled", "agg": "count_if", "group": "Pipeline",
+                 "cond": f"{_st} = 'Cancelled'", "tone": "bad", "hide_if_zero": True},
+                {"key": "auto", "label": "Auto", "agg": "count_if", "group": "Mode",
+                 "cond": f"{_mode} = 'Auto'", "hide_if_zero": True},
+                {"key": "manual", "label": "Manual", "agg": "count_if", "group": "Mode",
+                 "cond": f"{_mode} = 'Manual'", "hide_if_zero": True},
+            ])
         id_sql = (
             "SELECT pil.name AS line_id "
             "FROM `tabPO Intake Line` pil "
@@ -3883,6 +4031,228 @@ def get_column_filter_options(source, col_key, bucket=None, filters=None, portal
     result = builder(col_key, filters, pf, bucket, search, limit, extra) or empty
     frappe.cache().set_value(cache_key, result, expires_in_sec=EXCEL_OPTIONS_CACHE_TTL)
     return result
+
+
+SUMMARY_SOURCES = {
+    # Same source keys as EXCEL_OPTION_SOURCES, and for the same reason: the
+    # page already knows which one it is (it passes it for column options), so
+    # the summary rides along on that identity rather than inventing a second
+    # naming scheme. Each entry hands its list function the _summary flag; the
+    # metric list itself lives next to that function, where its table aliases
+    # are in scope and correct.
+    "work_done": lambda pf, x: _summary_via(list_work_done_rows, filters=pf, limit=1),
+    "po_intake_line": lambda pf, x: _summary_via(
+        list_po_intake_lines, portal_filters=pf, status=x.get("status") or "all", limit=1),
+    # Lazy: the builder is defined further down the module than this dict.
+    "po_dispatch": lambda pf, x: _summary_po_dispatch(pf, x),
+    "execution_monitor": lambda pf, x: _summary_via(list_execution_monitor_rows, filters=pf, limit=1),
+    "im_rollout_plans": lambda pf, x: _summary_via(
+        list_im_rollout_plans, portal_filters=pf, im=x.get("im"),
+        plan_status=x.get("plan_status"), limit=1),
+    "im_daily_executions": lambda pf, x: _summary_via(
+        list_im_daily_executions, portal_filters=pf, im=x.get("im"),
+        execution_status=x.get("execution_status"), limit=1),
+    "issue_risk": lambda pf, x: _summary_via(
+        list_issue_risk_rows, portal_filters=pf, im=x.get("im"), limit=1),
+    "execution_time_logs": lambda pf, x: _summary_via(list_execution_time_logs, filters=pf, limit=1),
+    "backend_dispatches": lambda pf, x: _summary_via(
+        list_backend_dispatches, limit=1,
+        column_filters=pf.get("column_filters"), im=pf.get("im"),
+        status=pf.get("status") or "all", project_code=pf.get("project_code"),
+        site_code=pf.get("site_code"), backend_team=pf.get("backend_team")),
+    "admin_teams": lambda pf, x: _summary_via(
+        list_admin_teams, limit=1,
+        column_filters=pf.get("column_filters"), status=pf.get("status"),
+        team_type=pf.get("team_type"), team_category=pf.get("team_category"),
+        im=pf.get("im"), for_date=pf.get("for_date")),
+    "po_dump": lambda pf, x: _summary_via(
+        export_po_dump, limit=1, column_filters=pf.get("column_filters"),
+        from_date=x.get("from_date"), to_date=x.get("to_date"),
+        statuses=x.get("statuses"), search=None),
+    # Sources in the other api modules — imported lazily for the same reason
+    # EXCEL_OPTION_SOURCES does it: those modules import from this one.
+    "pic_rows": lambda pf, x: _summary_via(
+        __import__("inet_app.api.pic", fromlist=["x"]).list_pic_rows,
+        portal_filters=pf, limit=1, stage=x.get("stage")),
+    "invoice_detail": lambda pf, x: _summary_via(
+        __import__("inet_app.api.pic", fromlist=["x"]).list_invoice_detail_rows,
+        portal_filters=pf, limit=1),
+    "subcon_po": lambda pf, x: _summary_via(
+        __import__("inet_app.api.subcon_po", fromlist=["x"]).list_subcon_po_rows,
+        portal_filters=pf, limit=1, stage=x.get("stage")),
+    "expense_claims": lambda pf, x: _summary_via(
+        __import__("inet_app.api.expense", fromlist=["x"]).list_all_expense_claims,
+        filters=pf, limit=1),
+    "projects": lambda pf, x: _summary_projects(pf, x),
+    "im_teams": lambda pf, x: _summary_via(
+        list_im_teams, limit=1, im=x.get("im"),
+        column_filters=pf.get("column_filters"), status=pf.get("status"),
+        team_type=pf.get("team_type"), team_category=pf.get("team_category"),
+        for_date=pf.get("for_date")),
+    "material_requests": lambda pf, x: _summary_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).list_material_requests,
+        limit=1, im=x.get("im"), status=x.get("status"),
+        column_filters=pf.get("column_filters"), team_id=pf.get("team_id"),
+        duid=pf.get("duid"), from_date=pf.get("from_date"), to_date=pf.get("to_date")),
+    "return_requests": lambda pf, x: _summary_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).list_return_requests,
+        limit=1, team_id=x.get("team_id"), im=x.get("im"),
+        column_filters=pf.get("column_filters"), duid=pf.get("duid"),
+        from_date=pf.get("from_date"), to_date=pf.get("to_date")),
+    "duid_stock": lambda pf, x: _summary_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).get_duid_stock_summary,
+        limit=1, column_filters=pf.get("column_filters")),
+    "stock_balance": lambda pf, x: _summary_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).get_duid_stock_balance,
+        limit=1, column_filters=pf.get("column_filters")),
+    "bill_wise": lambda pf, x: _summary_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).get_bill_wise_material,
+        limit=1, column_filters=pf.get("column_filters"), filters=pf.get("filters")),
+}
+
+
+def _summary_projects(pf, extra):
+    """Project Control Center headline figures.
+
+    The projects pages filter through the ORM rather than raw SQL, so this
+    rebuilds the same predicates as WHERE fragments. Every value below is
+    parameterised — only the column names are inlined, and those come from a
+    fixed map, never from the caller.
+    """
+    wheres, params = ["1=1"], []
+    _map = {
+        "status": "project_status", "domain": "project_domain",
+        "area": "center_area", "huawei_im": "huawei_im",
+        "implementation_manager": "implementation_manager",
+    }
+    for key, col in _map.items():
+        val = pf.get(key) or extra.get(key)
+        if not val:
+            continue
+        vals = val if isinstance(val, (list, tuple)) else [val]
+        vals = [str(v) for v in vals if str(v or "").strip()]
+        if not vals:
+            continue
+        wheres.append(f"`{col}` IN ({', '.join(['%s'] * len(vals))})")
+        params.extend(vals)
+    search = (pf.get("search") or "").strip()
+    if search:
+        like = f"%{search}%"
+        wheres.append("(`project_code` LIKE %s OR `project_name` LIKE %s OR `customer` LIKE %s)")
+        params.extend([like, like, like])
+    have = set(frappe.db.get_table_columns("Project Control Center"))
+    metrics = [{"key": "projects", "label": "Projects", "agg": "count"}]
+    if "project_status" in have:
+        metrics.append({"key": "active", "label": "Active", "agg": "count_if",
+                        "cond": "IFNULL(`project_status`,'') = 'Active'", "tone": "good"})
+    if "project_domain" in have:
+        metrics.append({"key": "domains", "label": "Domains", "agg": "count_distinct",
+                        "expr": "NULLIF(IFNULL(`project_domain`,''), '')"})
+    if "implementation_manager" in have:
+        metrics.append({"key": "ims", "label": "IMs", "agg": "count_distinct",
+                        "expr": "NULLIF(IFNULL(`implementation_manager`,''), '')"})
+        metrics.append({"key": "no_im", "label": "No IM", "agg": "count_if",
+                        "cond": "IFNULL(`implementation_manager`,'') = ''",
+                        "tone": "warn", "hide_if_zero": True})
+    if "budget_amount" in have:
+        metrics.append({"key": "budget", "label": "Budget", "agg": "sum",
+                        "expr": "IFNULL(`budget_amount`, 0)", "format": "money",
+                        "tone": "good", "hide_if_zero": True})
+    return summary_from_query("`tabProject Control Center`", " AND ".join(wheres), params, metrics)
+
+
+@frappe.whitelist()
+def get_page_summary(source, portal_filters=None, extra=None):
+    """Headline figures for one page, before (and regardless of) row loading.
+
+    Answers "what is in this view?" from aggregates over the FULL filtered set,
+    so the user does not have to raise the row limit to find out. Registered in
+    SUMMARY_SOURCES; see summary_from_query() for the metric shape.
+    """
+    empty = {"metrics": [], "supported": False}
+    builder = SUMMARY_SOURCES.get(source)
+    if not builder:
+        return empty
+
+    cache_key = _excel_options_cache_key(
+        frappe.session.user, "summary", source, portal_filters, extra,
+    )
+    # expires=True for the same reason as get_column_filter_options().
+    cached = frappe.cache().get_value(cache_key, expires=True)
+    if cached is not None:
+        return cached
+
+    pf = _portal_filters_dict(portal_filters)
+    if isinstance(extra, str):
+        try:
+            extra = frappe.parse_json(extra) if extra else {}
+        except Exception:
+            extra = {}
+    extra = extra if isinstance(extra, dict) else {}
+
+    try:
+        result = builder(pf, extra) or empty
+        # A source whose list function fell through to its row path hands back
+        # a list, not a summary. Don't cache that — it would pin the page to a
+        # bad answer for the whole TTL, long after the source was fixed.
+        if not isinstance(result, dict) or "metrics" not in result:
+            return empty
+    except Exception:
+        # A summary is a convenience: never let a bad aggregate take the page
+        # down with it. The strip just stays hidden.
+        frappe.log_error(frappe.get_traceback(), f"get_page_summary({source})")
+        return empty
+    frappe.cache().set_value(cache_key, result, expires_in_sec=EXCEL_OPTIONS_CACHE_TTL)
+    return result
+
+
+def _summary_po_dispatch(pf, extra):
+    """Headline figures for the PO Dispatch-backed pages.
+
+    Rollout Planning, IM Dispatch and IM PO Intake all read PO Dispatch rows
+    through the same where-builder the row list uses, so the figures track
+    whatever the page has filtered to.
+    """
+    fields = list(frappe.db.get_table_columns("PO Dispatch"))
+    wheres, params = _po_dispatch_portal_sql_where({}, pf, fields)
+    have = set(fields)
+    metrics = [{"key": "lines", "label": "Lines", "agg": "count"}]
+    if "site_code" in have:
+        metrics.append({"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                        "expr": "NULLIF(IFNULL(`site_code`,''), '')"})
+    if "line_amount" in have:
+        metrics.append({"key": "value", "label": "Value", "agg": "sum",
+                        "expr": "IFNULL(`line_amount`, 0)", "format": "money", "tone": "good"})
+    if "dispatch_status" in have:
+        _st = "IFNULL(`dispatch_status`,'')"
+        metrics += [
+            {"key": "pending", "label": "Pending", "agg": "count_if", "group": "Pipeline",
+             "cond": f"{_st} = 'Pending'", "tone": "warn", "hide_if_zero": True,
+             "hint": "Not planned out to a team yet"},
+            {"key": "planned", "label": "Planned", "agg": "count_if", "group": "Pipeline",
+             "cond": f"{_st} = 'Planned'", "tone": "info", "hide_if_zero": True},
+            {"key": "dispatched", "label": "Dispatched", "agg": "count_if", "group": "Pipeline",
+             "cond": f"{_st} = 'Dispatched'", "tone": "info", "hide_if_zero": True},
+            {"key": "completed", "label": "Completed", "agg": "count_if", "group": "Pipeline",
+             "cond": f"{_st} IN ('Completed','Partially Closed')", "tone": "good", "hide_if_zero": True},
+            {"key": "closed", "label": "Closed", "agg": "count_if", "group": "Pipeline",
+             "cond": f"{_st} = 'Closed'", "hide_if_zero": True},
+            {"key": "cancelled", "label": "Cancelled", "agg": "count_if", "group": "Pipeline",
+             "cond": f"{_st} = 'Cancelled'", "tone": "bad", "hide_if_zero": True},
+        ]
+    # Planning gaps a PM/IM can act on: a line with no target month can't be
+    # scheduled, and one with no IM has nobody accountable for it.
+    if "dispatch_target_month" in have:
+        metrics.append({"key": "no_month", "label": "No month", "agg": "count_if",
+                        "group": "Gaps", "cond": "IFNULL(`dispatch_target_month`,'') = ''",
+                        "tone": "warn", "hide_if_zero": True,
+                        "hint": "No target month set — cannot be scheduled"})
+    if "im" in have:
+        metrics.append({"key": "no_im", "label": "No IM", "agg": "count_if",
+                        "group": "Gaps", "cond": "IFNULL(`im`,'') = ''",
+                        "tone": "bad", "hide_if_zero": True,
+                        "hint": "No Implementation Manager assigned"})
+    return summary_from_query("`tabPO Dispatch`", " AND ".join(wheres), params, metrics)
 
 
 def _excel_options_po_dispatch(col_key, filters, pf, bucket, search, limit, extra):
@@ -6906,7 +7276,7 @@ def _batch_im_master_full_names(im_ids):
 
 
 @frappe.whitelist()
-def list_execution_monitor_rows(filters=None, limit=500, _options=None):
+def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary=None):
     """
     Rich rows for PM Execution Monitor (Rollout + latest execution + dispatch context).
 
@@ -7314,6 +7684,30 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None):
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # A PM watches this page for movement: what is running now, what
+        # finished, and what has stalled. Plan status is the honest signal —
+        # Rollout Plan drives the whole board.
+        _ps = "IFNULL(rp.plan_status,'')"
+        return summary_from_query(
+            sql_from.replace("FROM ", "", 1), " AND ".join(wheres), params, [
+                {"key": "plans", "label": "Plans", "agg": "count"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+                {"key": "value", "label": "Value", "agg": "sum",
+                 "expr": "IFNULL(pd.line_amount, 0)", "format": "money", "tone": "good"},
+                {"key": "in_execution", "label": "Running", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} IN ('In Execution','Extended')", "tone": "info", "hide_if_zero": True},
+                {"key": "completed", "label": "Completed", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} = 'Completed'", "tone": "good", "hide_if_zero": True},
+                {"key": "overdue", "label": "Overdue", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} = 'Overdue'", "tone": "bad", "hide_if_zero": True,
+                 "hint": "Past its planned date and not complete"},
+                {"key": "issue", "label": "With issue", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} = 'Planning with Issue'", "tone": "warn", "hide_if_zero": True},
+                {"key": "cancelled", "label": "Cancelled", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} = 'Cancelled'", "hide_if_zero": True},
+            ])
     id_sql = (
         "SELECT rp.name AS plan_id "
         f"{sql_from} "
@@ -7698,7 +8092,7 @@ def get_work_done_summary():
 
 
 @frappe.whitelist()
-def list_work_done_rows(filters=None, limit=500, _options=None):
+def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
     """
     Rich Work Done rows for PM page.
     filters: {
@@ -8136,6 +8530,63 @@ def list_work_done_rows(filters=None, limit=500, _options=None):
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # Same wheres/params the row query below uses, so the headline figures
+        # describe exactly the rows the table would show — at any row limit.
+        #
+        # What a PM actually needs off this page is "what still needs me?" and
+        # "what kind of work is this?" — NOT the billing roll-up, which is the
+        # PIC's job and lives on the PIC pages. So: the work mix (field vs
+        # direct close vs backend), where each entry stands in the confirmation
+        # flow, and anything flagged.
+        # NULLIF(...,0), not a plain COALESCE: the table falls back to the
+        # dispatch's line_amount whenever revenue_sar is FALSY
+        # (`r.revenue_sar || r.revenue || r.line_amount`), and a stored 0 is
+        # falsy in JS but not NULL in SQL. Without the NULLIF the chip reads
+        # 166 short of the total sitting directly beneath it.
+        _rev = "COALESCE(NULLIF(wd.revenue_sar, 0), pd.line_amount, pd_sys.line_amount, 0)"
+        _has_source = frappe.db.has_column("Work Done", "source")
+        _has_sub = frappe.db.has_column("Work Done", "submission_status")
+        _has_flag = frappe.db.has_column("Work Done", "issue_flag")
+        _wd_metrics = [
+            {"key": "entries", "label": "Entries", "agg": "count"},
+            {"key": "value", "label": "Value", "agg": "sum",
+             "expr": _rev, "format": "money", "tone": "good"},
+        ]
+        if _has_source:
+            # Rows with no source stamped are legacy field work — the page
+            # displays them that way too (`row.source || "Rollout Execution"`).
+            _wd_metrics += [
+                {"key": "field", "label": "Field", "agg": "count_if", "group": "Work mix",
+                 "cond": "IFNULL(wd.source,'') IN ('Rollout Execution','')",
+                 "hint": "Executed by a field team"},
+                {"key": "direct_close", "label": "Direct", "agg": "count_if", "group": "Work mix",
+                 "cond": "IFNULL(wd.source,'') = 'Direct Close'", "hide_if_zero": True,
+                 "hint": "Closed directly, no field execution"},
+                {"key": "backend", "label": "Backend", "agg": "count_if", "group": "Work mix",
+                 "cond": "IFNULL(wd.source,'') = 'Backend'", "hide_if_zero": True,
+                 "hint": "Backend / subcontract work"},
+            ]
+        if _has_sub:
+            _wd_metrics += [
+                {"key": "awaiting", "label": "Awaiting", "agg": "count_if", "group": "Confirmation",
+                 "cond": "IFNULL(wd.submission_status,'') IN ('', 'Ready for Confirmation')",
+                 "tone": "warn", "hint": "Not yet confirmed — needs PM action"},
+                {"key": "confirmed", "label": "Confirmed", "agg": "count_if", "group": "Confirmation",
+                 "cond": "IFNULL(wd.submission_status,'') = 'Confirmation Done'", "tone": "good"},
+                {"key": "rejected", "label": "Rejected", "agg": "count_if", "group": "Confirmation",
+                 "cond": "IFNULL(wd.submission_status,'') = 'PIC Rejected'", "tone": "bad",
+                 "hide_if_zero": True, "hint": "Sent back by PIC — needs rework"},
+            ]
+        if _has_flag:
+            _wd_metrics.append(
+                {"key": "issues", "label": "Flagged", "agg": "count_if",
+                 "cond": "IFNULL(wd.issue_flag,'') != ''", "tone": "bad", "hide_if_zero": True,
+                 "hint": "Carries an issue flag (POD/PPT, TFM, partial work…)"})
+        _wd_summary = summary_from_query(_wd_from, " AND ".join(wheres), params, _wd_metrics)
+        # The row list is a union — fold in the synthesized subcon rows or the
+        # chip undercounts the table sitting right beneath it.
+        return merge_summaries(_wd_summary, _synthesize_subcon_workdone_rows(filters, _summary=1))
     id_sql = (
         f"SELECT wd.name AS wd_name, {_subcon_expr_wd} AS subcontractor, "
         f"{_contract_model_expr_wd} AS contract_model "
@@ -8391,7 +8842,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None):
     return out
 
 
-def _synthesize_subcon_workdone_rows(filters):
+def _synthesize_subcon_workdone_rows(filters, _summary=None):
     """Build Work-Done-shaped rows from PO Dispatches with subcon_status='Work Done'.
 
     Honors the same filters as ``list_work_done_rows``:
@@ -8639,6 +9090,32 @@ def _synthesize_subcon_workdone_rows(filters):
         f"WHERE {' AND '.join(where)} "
         "ORDER BY pd.subcon_completed_on DESC, pd.modified DESC"
     )
+    if _summary:
+        # These rows are always emitted as billing_status "Pending", qty NULL
+        # and revenue = the dispatch's own line_amount — see the row builder
+        # below. The metric keys mirror list_work_done_rows' so merge_summaries
+        # can fold the two together.
+        _sub_status = (
+            "IFNULL(pd.subcon_submission_status,'')"
+            if frappe.db.has_column("PO Dispatch", "subcon_submission_status")
+            else "''"
+        )
+        return summary_from_query(
+            f"`tabPO Dispatch` pd LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team {subcon_join_sub}",
+            " AND ".join(where), params, [
+                {"key": "entries", "label": "Entries", "agg": "count"},
+                {"key": "value", "label": "Value", "agg": "sum",
+                 "expr": "IFNULL(pd.line_amount, 0)", "format": "money", "tone": "good"},
+                # Every synthesized row is emitted with source="Backend".
+                {"key": "backend", "label": "Backend", "agg": "count", "group": "Work mix"},
+                {"key": "awaiting", "label": "Awaiting", "agg": "count_if", "group": "Confirmation",
+                 "cond": f"{_sub_status} IN ('', 'Ready for Confirmation')", "tone": "warn"},
+                {"key": "confirmed", "label": "Confirmed", "agg": "count_if", "group": "Confirmation",
+                 "cond": f"{_sub_status} = 'Confirmation Done'", "tone": "good"},
+                {"key": "rejected", "label": "Rejected", "agg": "count_if", "group": "Confirmation",
+                 "cond": f"{_sub_status} = 'PIC Rejected'", "tone": "bad"},
+            ],
+        )
     rows = frappe.db.sql(sql, tuple(params), as_dict=True) or []
     if not rows:
         return []
@@ -9328,7 +9805,7 @@ def update_subcon_submission(po_dispatch, submission_status, note=None):
 
 
 @frappe.whitelist()
-def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, _options=None):
+def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, _options=None, _summary=None):
     """
     Issue & Risk rows from rollout plans that are in issue state or carry an issue category.
     - Admin roles can view all rows (or filter by im argument).
@@ -9617,6 +10094,30 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, 
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # This page exists to be emptied, so the useful figures are how many
+        # are still open and what kind — not a value roll-up.
+        _ps_ir = "IFNULL(rp.plan_status,'')"
+        _cat = "IFNULL(rp.issue_category,'')"
+        return summary_from_query(_ir_from, " AND ".join(wheres), params, [
+            {"key": "issues", "label": "Issues", "agg": "count"},
+            {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+             "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+            {"key": "open", "label": "Open", "agg": "count_if", "group": "State",
+             "cond": f"{_ps_ir} NOT IN ('Completed','Cancelled')", "tone": "bad"},
+            {"key": "overdue", "label": "Overdue", "agg": "count_if", "group": "State",
+             "cond": f"{_ps_ir} = 'Overdue'", "tone": "bad", "hide_if_zero": True},
+            {"key": "resolved", "label": "Resolved", "agg": "count_if", "group": "State",
+             "cond": f"{_ps_ir} = 'Completed'", "tone": "good", "hide_if_zero": True},
+            {"key": "qc_reject", "label": "QC", "agg": "count_if", "group": "Category",
+             "cond": f"{_cat} = 'QC Rejection'", "tone": "warn", "hide_if_zero": True},
+            {"key": "pat_reject", "label": "PAT", "agg": "count_if", "group": "Category",
+             "cond": f"{_cat} = 'PAT Rejection'", "tone": "warn", "hide_if_zero": True},
+            {"key": "extra_visit", "label": "Extra visit", "agg": "count_if", "group": "Category",
+             "cond": f"{_cat} = 'Extra Visit'", "hide_if_zero": True},
+            {"key": "late", "label": "Late arrival", "agg": "count_if", "group": "Category",
+             "cond": f"{_cat} = 'Late Arrival'", "hide_if_zero": True},
+        ])
     id_sql = (
         "SELECT rp.name AS plan_id "
         "FROM `tabRollout Plan` rp "
@@ -11904,7 +12405,7 @@ def get_revenue_forecast_report(**kwargs):
 
 
 @frappe.whitelist()
-def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=None, _options=None):
+def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=None, _options=None, _summary=None):
     """Rollout plans for this IM (join PO Dispatch — works before im backfill on Rollout Plan)."""
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
@@ -12101,6 +12602,35 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # The IM's question is scheduling: what have I got out there, what is
+        # late, and how much of it is still unassigned to a team.
+        _ps = "IFNULL(rp.plan_status,'')"
+        return summary_from_query(
+            "`tabRollout Plan` rp "
+            "INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+            "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
+            "LEFT JOIN `tabProject Control Center` pcc_rp ON pcc_rp.name = pd.project_code "
+            f"{rp_im_join} "
+            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im",
+            f"pd.im IN ({ph}){status_clause}{portal_clause}", params, [
+                {"key": "plans", "label": "Plans", "agg": "count"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+                {"key": "value", "label": "Value", "agg": "sum",
+                 "expr": "IFNULL(pd.line_amount, 0)", "format": "money", "tone": "good"},
+                {"key": "running", "label": "Running", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} IN ('In Execution','Extended')", "tone": "info", "hide_if_zero": True},
+                {"key": "completed", "label": "Completed", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} = 'Completed'", "tone": "good", "hide_if_zero": True},
+                {"key": "overdue", "label": "Overdue", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} = 'Overdue'", "tone": "bad", "hide_if_zero": True},
+                {"key": "issue", "label": "With issue", "agg": "count_if", "group": "Progress",
+                 "cond": f"{_ps} = 'Planning with Issue'", "tone": "warn", "hide_if_zero": True},
+                {"key": "no_team", "label": "No team", "agg": "count_if",
+                 "cond": "IFNULL(rp.team,'') = ''", "tone": "warn", "hide_if_zero": True,
+                 "hint": "Planned but no field team assigned yet"},
+            ])
 
     rows = frappe.db.sql(
         f"""
@@ -12151,7 +12681,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
 
 
 @frappe.whitelist()
-def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_filters=None, _options=None):
+def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_filters=None, _options=None, _summary=None):
     """Daily executions for this IM's dispatches."""
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
@@ -12442,6 +12972,33 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # Day-to-day execution: what is in progress right now, what completed,
+        # and what is parked (hold / cancelled).
+        _es = "IFNULL(de.execution_status,'')"
+        return summary_from_query(
+            "`tabDaily Execution` de "
+            "INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
+            "INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+            "LEFT JOIN `tabINET Team` it ON it.name = de.team "
+            "LEFT JOIN `tabProject Control Center` pcc_ex ON pcc_ex.name = pd.project_code "
+            f"{rp_im_join_ex} "
+            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im",
+            f"pd.im IN ({ph}){status_clause}{portal_clause}", params, [
+                {"key": "executions", "label": "Executions", "agg": "count"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+                {"key": "teams", "label": "Teams", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(de.team,''), '')"},
+                {"key": "in_progress", "label": "In progress", "agg": "count_if", "group": "Status",
+                 "cond": f"{_es} = 'In Progress'", "tone": "info", "hide_if_zero": True},
+                {"key": "completed", "label": "Completed", "agg": "count_if", "group": "Status",
+                 "cond": f"{_es} = 'Completed'", "tone": "good", "hide_if_zero": True},
+                {"key": "hold", "label": "On hold", "agg": "count_if", "group": "Status",
+                 "cond": f"{_es} = 'Hold'", "tone": "warn", "hide_if_zero": True},
+                {"key": "cancelled", "label": "Cancelled", "agg": "count_if", "group": "Status",
+                 "cond": f"{_es} = 'Cancelled'", "tone": "bad", "hide_if_zero": True},
+            ])
 
     rows = frappe.db.sql(
         f"""
@@ -14435,7 +14992,7 @@ def save_execution_time_log_manual(rollout_plan, start_time, end_time, notes=Non
 
 
 @frappe.whitelist()
-def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None):
+def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _summary=None):
     """
     List execution time logs with role-based scoping.
     filters (JSON): team_id, im, user, rollout_plan, from_date, to_date, is_running,
@@ -14518,10 +15075,10 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None):
         k: v for k, v in (column_filters_etl or {}).items() if str(v or "").strip()
     } if isinstance(column_filters_etl, dict) else {}
 
-    # `or _options`: the column-option list is built from the wheres/params
+    # `or _options` / `or _summary`: both are built from the wheres/params
     # assembled in this branch, so it must be taken even when nothing is
     # filtered (otherwise the plain path returns rows instead of options).
-    if like_tokens_etl or active_col_filters_etl or _options:
+    if like_tokens_etl or active_col_filters_etl or _options or _summary:
         wheres = ["1=1"]
         params = []
         joins = (
@@ -14638,6 +15195,22 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None):
                 bucket=_options.get("bucket"), search=_options.get("search"),
                 limit=_options.get("limit"), label_kind=_options.get("label_kind"),
             )
+        if _summary:
+            # Timesheets are about time, so lead with hours; the open-session
+            # count is what tells a manager somebody forgot to clock out.
+            return summary_from_query(
+                f"`tabExecution Time Log` etl {joins}", " AND ".join(wheres), params, [
+                    {"key": "logs", "label": "Logs", "agg": "count"},
+                    {"key": "teams", "label": "Teams", "agg": "count_distinct",
+                     "expr": "NULLIF(IFNULL(etl.team_id,''), '')"},
+                    {"key": "hours", "label": "Hours", "agg": "sum",
+                     "expr": "IFNULL(etl.duration_minutes, 0) / 60", "format": "qty", "tone": "good"},
+                    # is_running, not a null end_time: a log is open only while
+                    # the timer says so.
+                    {"key": "open", "label": "Running", "agg": "count_if",
+                     "cond": "IFNULL(etl.is_running, 0) = 1", "tone": "warn", "hide_if_zero": True,
+                     "hint": "Clocked in, not yet clocked out"},
+                ])
         wc = " AND ".join(wheres)
         total = int(
             frappe.db.sql(
@@ -16041,7 +16614,7 @@ def mark_backend_work_done(po_dispatch=None, po_dispatches=None, completed_on=No
 def list_backend_dispatches(
     im=None, search=None, status="all", limit=300,
     project_code=None, site_code=None, backend_team=None,
-    column_filters=None, _options=None,
+    column_filters=None, _options=None, _summary=None,
 ):
     """Sub-Contract list feed.
 
@@ -16153,6 +16726,27 @@ def list_backend_dispatches(
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # Backend work has no field execution behind it, so the IM's question
+        # is simply what is still outstanding with the backend teams.
+        _ss = "IFNULL(pd.subcon_status,'')"
+        return summary_from_query(
+            "`tabPO Dispatch` pd "
+            "LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team "
+            "LEFT JOIN `tabProject Control Center` pcc_bk ON pcc_bk.name = pd.project_code",
+            " AND ".join(where), params, [
+                {"key": "lines", "label": "Lines", "agg": "count"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+                {"key": "teams", "label": "Teams", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pd.backend_team,''), '')"},
+                {"key": "value", "label": "Value", "agg": "sum",
+                 "expr": "IFNULL(pd.line_amount, 0)", "format": "money", "tone": "good"},
+                {"key": "pending", "label": "Pending", "agg": "count_if", "group": "Backend",
+                 "cond": f"{_ss} IN ('', 'Pending')", "tone": "warn", "hide_if_zero": True},
+                {"key": "work_done", "label": "Work done", "agg": "count_if", "group": "Backend",
+                 "cond": f"{_ss} = 'Work Done'", "tone": "good", "hide_if_zero": True},
+            ])
 
     limit_int = int(limit) if limit else 300
     sql = f"""
@@ -18685,7 +19279,7 @@ _ADMIN_TEAM_EDITABLE_FIELDS = [
 
 
 @frappe.whitelist()
-def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None, column_filters=None, _options=None):
+def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None, column_filters=None, _options=None, _summary=None):
     """List all INET Teams with active project/domain for the PM admin Teams page.
 
     for_date: ISO date string (YYYY-MM-DD).  Defaults to today when omitted.
@@ -18827,6 +19421,20 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # A roster page: how many teams, split by who they belong to.
+        return summary_from_query(
+            "`tabINET Team` it", " AND ".join(wheres) if wheres else "1=1", params, [
+                {"key": "teams", "label": "Teams", "agg": "count"},
+                {"key": "active", "label": "Active", "agg": "count_if",
+                 "cond": "IFNULL(it.status,'') = 'Active'", "tone": "good"},
+                {"key": "inet", "label": "INET", "agg": "count_if", "group": "Type",
+                 "cond": "IFNULL(it.team_type,'') = 'INET'", "hide_if_zero": True},
+                {"key": "sub", "label": "Subcon", "agg": "count_if", "group": "Type",
+                 "cond": "IFNULL(it.team_type,'') = 'SUB'", "hide_if_zero": True},
+                {"key": "subcons", "label": "Subcons", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(it.subcontractor,''), '')", "hide_if_zero": True},
+            ])
 
     # Date placeholder: use the supplied date literal or fall back to CURDATE()
     date_expr = "%s" if date_val else "CURDATE()"
@@ -18934,7 +19542,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
 
 
 @frappe.whitelist()
-def list_im_teams(im=None, status=None, team_type=None, team_category=None, search=None, limit=500, for_date=None, column_filters=None, _options=None):
+def list_im_teams(im=None, status=None, team_type=None, team_category=None, search=None, limit=500, for_date=None, column_filters=None, _options=None, _summary=None):
     """Same computed fields as list_admin_teams but accessible to IM role."""
     import re as _re
     if for_date and not _re.match(r"^\d{4}-\d{2}-\d{2}$", str(for_date)):
@@ -19064,6 +19672,18 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # The IM's roster: how many teams answer to them, and how many are live.
+        return summary_from_query(
+            "`tabINET Team` it", " AND ".join(wheres) if wheres else "1=1", params, [
+                {"key": "teams", "label": "Teams", "agg": "count"},
+                {"key": "active", "label": "Active", "agg": "count_if",
+                 "cond": "IFNULL(it.status,'') = 'Active'", "tone": "good"},
+                {"key": "inet", "label": "INET", "agg": "count_if", "group": "Type",
+                 "cond": "IFNULL(it.team_type,'') = 'INET'", "hide_if_zero": True},
+                {"key": "sub", "label": "Subcon", "agg": "count_if", "group": "Type",
+                 "cond": "IFNULL(it.team_type,'') = 'SUB'", "hide_if_zero": True},
+            ])
     date_expr = "%s" if date_val else "CURDATE()"
     # 6 copies — see list_admin_teams' comment on this same count.
     params_date = [date_val] * 6 if date_val else []

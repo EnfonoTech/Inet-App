@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -585,9 +586,10 @@ export default function WorkDone() {
   // Single useEffect with cancellation guard. Replaces the older
   // useResetOnRowLimitChange + separate-load pattern that left the table
   // blank when going from a higher to a lower row limit.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  // One definition of "what this view is", shared by the row fetch and the
+  // header summary — they must describe the same set or the chips contradict
+  // the table underneath them.
+  const queryFilters = useMemo(() => {
       // list_work_done_rows defaults an unset "tab" to "active", which
       // excludes Confirmation-Done / PIC-Rejected rows — a default built for
       // IMWorkDone.jsx's 3-tab UI (Active/Confirmed/PIC Rejected). This page
@@ -617,6 +619,14 @@ export default function WorkDone() {
       if (issueFlagFilter.length) filters.issue_flag = issueFlagFilter;
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) filters.column_filters = colFilters;
+      return filters;
+  }, [poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, subconFilter,
+      fromDate, toDate, searchDebounced, workTypeFilter, issueFlagFilter, columnFiltersDebounced]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const filters = queryFilters;
       const signature = JSON.stringify([filters, refreshKey]);
 
       const prev = lastFetchRef.current;
@@ -649,7 +659,7 @@ export default function WorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, subconFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, workTypeFilter, issueFlagFilter]);
+  }, [rowLimit, queryFilters, refreshKey]);
 
   // Drill down from a Work Done Summary tile/card into the List tab. The
   // summary is a full-dataset, unfiltered aggregate (see get_work_done_summary)
@@ -751,8 +761,9 @@ export default function WorkDone() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Work Done</h1>
-          <div className="page-subtitle">Completed work entries with billing status</div>
+          <div className="page-subtitle">Completed work entries</div>
         </div>
+        <PageSummary source="work_done" filters={queryFilters} refreshKey={refreshKey} />
         <div className="page-actions">
           <ExportExcelButton filename="work-done" rows={filteredRows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>

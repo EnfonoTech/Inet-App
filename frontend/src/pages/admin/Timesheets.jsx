@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -67,6 +69,8 @@ export default function Timesheets() {
   }, []);
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch effect below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -135,6 +139,7 @@ export default function Timesheets() {
       setLoading(true);
       try {
         queryArgsRef.current = filters;
+        publishSummaryQuery(filters);
         const res = await pmApi.listExecutionTimeLogs(filters, rowLimit, 0);
         if (!cancelled) {
           const fetchedRows = res?.logs || [];
@@ -160,9 +165,10 @@ export default function Timesheets() {
         <div>
           <h1 className="page-title">Execution time logs</h1>
           <div className="page-subtitle">
-            Field time on rollouts · {searchDebounced.trim() ? `${total} matching · ` : ""}{displayedCount} loaded · {fmt.format(totalHours)} h
+            Rollout time · {searchDebounced.trim() ? `${total} matching · ` : ""}{displayedCount} loaded · {fmt.format(totalHours)} h
           </div>
         </div>
+        <PageSummary source="execution_time_logs" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename="timesheets" rows={logs.slice(0, displayedCount)} />
         </div>

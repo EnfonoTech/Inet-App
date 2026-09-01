@@ -549,7 +549,7 @@ export default function Masters() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Masters</h1>
-          <div className="page-subtitle">Reference data — click a card to view, create or edit records</div>
+          <div className="page-subtitle">Reference data</div>
         </div>
       </div>
 

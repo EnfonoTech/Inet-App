@@ -4,6 +4,7 @@ import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
+import PageSummary from "../../components/PageSummary";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
@@ -437,6 +438,31 @@ export default function PODispatch() {
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // One definition of "what this tab is showing", shared by the row fetch and
+  // the header summary — they must describe the same set or the chips
+  // contradict the table underneath them.
+  const queryPortal = useMemo(() => {
+    const portal = { intake_tab: String(activeTab || "").toLowerCase() };
+    if (tableSearchDebounced.trim()) portal.search = tableSearchDebounced.trim();
+    if (projectFilter.length) portal.project_code = projectFilter;
+    if (imFilter.length) portal.dispatched_im = imFilter;
+    if (duidFilter.length) portal.site_code = duidFilter;
+    if (itemCodeFilter.length) portal.item_code = itemCodeFilter;
+    // Only meaningful on "All Lines" - the other 2 tabs already imply a
+    // status via the tab itself, and combining that with a leftover
+    // dropdown selection from testing "All Lines" would silently AND
+    // together into a contradiction (e.g. tab=New + dropdown=Dispatched
+    // = 0 rows, looking like "no lines pending dispatch" for no
+    // apparent reason).
+    if (activeTab === "all" && statusFilter.length) portal.line_status = statusFilter;
+    if (fromDate) portal.from_date = fromDate;
+    if (toDate) portal.to_date = toDate;
+    const colFilters = JSON.parse(columnFiltersDebounced);
+    if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+    return portal;
+  }, [activeTab, tableSearchDebounced, projectFilter, imFilter, duidFilter,
+      itemCodeFilter, statusFilter, fromDate, toDate, columnFiltersDebounced]);
+
   useEffect(() => {
     let cancelled = false;
     setError(null);
@@ -456,23 +482,7 @@ export default function PODispatch() {
           return;
         }
         const status = activeTab;
-        const portal = { intake_tab: String(status || "").toLowerCase() };
-        if (tableSearchDebounced.trim()) portal.search = tableSearchDebounced.trim();
-        if (projectFilter.length) portal.project_code = projectFilter;
-        if (imFilter.length) portal.dispatched_im = imFilter;
-        if (duidFilter.length) portal.site_code = duidFilter;
-        if (itemCodeFilter.length) portal.item_code = itemCodeFilter;
-        // Only meaningful on "All Lines" - the other 2 tabs already imply a
-        // status via the tab itself, and combining that with a leftover
-        // dropdown selection from testing "All Lines" would silently AND
-        // together into a contradiction (e.g. tab=New + dropdown=Dispatched
-        // = 0 rows, looking like "no lines pending dispatch" for no
-        // apparent reason).
-        if (activeTab === "all" && statusFilter.length) portal.line_status = statusFilter;
-        if (fromDate) portal.from_date = fromDate;
-        if (toDate) portal.to_date = toDate;
-        const colFilters = JSON.parse(columnFiltersDebounced);
-        if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+        const portal = queryPortal;
         // Excel column-filter dropdowns cascade off exactly this query.
         queryArgsRef.current = { portal, status };
         const signature = JSON.stringify([portal]);
@@ -509,7 +519,7 @@ export default function PODispatch() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeTab, effectiveRowLimit, tableSearchDebounced, projectFilter, imFilter, duidFilter, itemCodeFilter, statusFilter, fromDate, toDate, refreshKey, columnFiltersDebounced]);
+  }, [activeTab, effectiveRowLimit, queryPortal, refreshKey]);
 
   useEffect(() => {
     if (!convertProject) { setConvertProjectItemCodes([]); return; }
@@ -953,8 +963,19 @@ export default function PODispatch() {
       <div className="page-header">
         <div>
           <h1 className="page-title">PO Dispatch</h1>
-          <div className="page-subtitle">Dispatch PO lines to an Implementation Manager; field team is chosen at rollout planning.</div>
+          <div className="page-subtitle">Dispatch PO lines to an IM</div>
         </div>
+        {/* Integrity tabs are a different dataset entirely (see the fetch
+            effect) — a PO-line summary would describe rows that aren't on
+            screen. */}
+        {!integrityDef && (
+          <PageSummary
+            source="po_intake_line"
+            filters={queryPortal}
+            extra={{ status: activeTab }}
+            refreshKey={refreshKey}
+          />
+        )}
         <div className="page-actions">
           <ExportExcelButton filename={`po-dispatch-${activeTab}`} rows={rows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={() => loadData(activeTab)} disabled={loading}>

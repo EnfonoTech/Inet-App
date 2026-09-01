@@ -26,6 +26,10 @@
   font-weight: 800;
   letter-spacing: -0.4px;
   color: var(--text);
+  /* The title block is allowed to shrink so the summary strip gets the room
+     (see below), which would otherwise break a two-word title across two
+     lines and make the header taller. */
+  white-space: nowrap;
 }
 
 .page-subtitle {
@@ -33,12 +37,173 @@
   color: var(--text-muted);
   margin-top: 1px;
   line-height: 1.35;
+  /* Never let a wordy subtitle widen the title block and squeeze the summary
+     strip out of the header — clamp to one line and ellipsise. The full text
+     is still there for screen readers and the title attribute. */
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+/* The title block gives way; the summary gets the room. */
+.page-header > div:first-child { min-width: 0; flex: 0 1 auto; }
 
 .page-actions {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* ── Page summary strip ─────────────────────────────────────────
+   Headline figures in the free space the page header already has,
+   between the title and the action buttons. Sized to the height of
+   title + subtitle, so a page pays nothing in vertical space for it:
+   min-width:0 + overflow-x lets it shrink and scroll rather than
+   push the actions off the row. See PageSummary.jsx. */
+.page-summary {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 10px;
+}
+.page-summary::-webkit-scrollbar { display: none; }
+
+/* Mid-flight refresh: dim rather than swap in skeletons, so the numbers
+   don't flicker away every time a filter changes. */
+.page-summary.is-stale { opacity: 0.55; }
+.page-summary,
+.page-summary.is-stale { transition: opacity 120ms ease; }
+
+.page-summary-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  /* grow into whatever the header isn't using, but never squeeze a figure
+     narrower than it reads — past that the strip scrolls instead. */
+  flex: 1 0 auto;
+  min-width: 74px;
+  padding: 3px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-white);
+  line-height: 1.2;
+  cursor: default;
+}
+
+.page-summary-value {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.page-summary-label {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.page-summary-chip.tone-good   { border-color: #bbf7d0; background: #f0fdf4; }
+.page-summary-chip.tone-good   .page-summary-value { color: #15803d; }
+.page-summary-chip.tone-warn   { border-color: #fed7aa; background: #fff7ed; }
+.page-summary-chip.tone-warn   .page-summary-value { color: #c2410c; }
+.page-summary-chip.tone-bad    { border-color: #fecaca; background: #fef2f2; }
+.page-summary-chip.tone-bad    .page-summary-value { color: #b91c1c; }
+.page-summary-chip.tone-info   { border-color: #bae6fd; background: #f0f9ff; }
+.page-summary-chip.tone-info   .page-summary-value { color: #0369a1; }
+
+/* A breakdown (work mix, confirmation flow) reads as one captioned cluster
+   rather than N identical boxes — fewer borders, less width, and the parts
+   are visibly related. */
+.page-summary-cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1 0 auto;
+  padding: 2px 14px 3px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-white);
+  line-height: 1.2;
+}
+
+.page-summary-cluster-caption {
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.page-summary-cluster-items {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.page-summary-part {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* Hairline separators instead of a border per figure. */
+.page-summary-part + .page-summary-part {
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+}
+
+.page-summary-part-value {
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.page-summary-part-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.page-summary-part.tone-good .page-summary-part-value { color: #15803d; }
+.page-summary-part.tone-warn .page-summary-part-value { color: #c2410c; }
+.page-summary-part.tone-bad  .page-summary-part-value { color: #b91c1c; }
+.page-summary-part.tone-info .page-summary-part-value { color: #0369a1; }
+
+.page-summary-chip--skeleton {
+  min-width: 96px;
+  height: 36px;
+  border-color: var(--border);
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 37%, #f1f5f9 63%);
+  background-size: 400% 100%;
+  animation: page-summary-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes page-summary-shimmer {
+  0%   { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
 }
 
 /* ── Data Table (full-width operational table) ──────────────── */
@@ -1682,6 +1847,19 @@
 }
 
 @media (max-width: 768px) {
+  .page-summary {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0;
+  }
+  .page-subtitle {
+    max-width: none;
+    white-space: normal;
+  }
+  /* Stacked header — chips size to content and scroll rather than stretch. */
+  .page-summary-chip,
+  .page-summary-cluster { flex: 0 0 auto; }
+
   .page-header {
     flex-direction: column;
     align-items: flex-start;

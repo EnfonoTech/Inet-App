@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -444,6 +446,8 @@ export default function IMWorkDone() {
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch effect below). Tabs share the
   // im-workdone-v1-* key prefix, same as the filters listener above.
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   const legacyQueryArgsRef = useRef({});
   useEffect(() => {
@@ -857,6 +861,7 @@ export default function IMWorkDone() {
 
         setLoading(true);
         queryArgsRef.current = filters;
+        publishSummaryQuery(filters);
         const list = await pmApi.listWorkDoneRows(filters, effectiveRowLimit);
         if (cancelled) return;
         const fetchedRows = Array.isArray(list) ? list : [];
@@ -980,6 +985,7 @@ export default function IMWorkDone() {
             {tab === "all" ? "Every work row for your IM scope — active, confirmed, and PIC rejected combined." : tab === "confirmed" ? "Lines confirmed by PIC." : tab === "pic_rejected" ? "Lines rejected by PIC." : "Active work rows for your IM scope."}
           </div>
         </div>
+        <PageSummary source="work_done" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename="im-work-done" rows={filteredRows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>

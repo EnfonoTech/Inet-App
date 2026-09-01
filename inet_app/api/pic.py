@@ -204,7 +204,7 @@ def _pic_role_or_throw():
 
 
 @frappe.whitelist()
-def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0, stage=None, _options=None):
+def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0, stage=None, _options=None, _summary=None):
     """Return PO Dispatch rows enriched with PIC fields + initial-state rule.
 
     ``filters`` (legacy): currently unused; reserved for symmetry with the
@@ -540,6 +540,40 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # The PIC's page IS the invoicing roll-up, so unlike the PM pages the
+        # money breakdown is the point. Unbilled is the actionable figure —
+        # value sitting in a milestone nobody has invoiced yet.
+        from inet_app.api.command_center import summary_from_query
+        _st = "IFNULL(pd.pic_status,'')"
+        return summary_from_query(
+            from_clause.strip().replace("FROM ", "", 1), " AND ".join(where), params, [
+                {"key": "lines", "label": "Lines", "agg": "count"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+                {"key": "value", "label": "Value", "agg": "sum",
+                 "expr": "IFNULL(pd.line_amount, 0)", "format": "money"},
+                {"key": "ms1_unbilled", "label": "MS1", "agg": "sum", "group": "Unbilled",
+                 "expr": "IFNULL(pd.ms1_unbilled, 0)", "format": "money", "tone": "warn",
+                 "hint": "MS1 value not yet invoiced"},
+                {"key": "ms2_unbilled", "label": "MS2", "agg": "sum", "group": "Unbilled",
+                 "expr": "IFNULL(pd.ms2_unbilled, 0)", "format": "money", "tone": "warn",
+                 "hint": "MS2 value not yet invoiced"},
+                {"key": "invoiced", "label": "Invoiced", "agg": "sum", "group": "Billed",
+                 "expr": "IFNULL(pd.ms1_invoiced, 0) + IFNULL(pd.ms2_invoiced, 0)",
+                 "format": "money", "tone": "good"},
+                {"key": "ready", "label": "Ready", "agg": "count_if", "group": "Stage",
+                 "cond": f"{_st} = 'Ready for Invoice'", "tone": "info", "hide_if_zero": True},
+                {"key": "submitted", "label": "Submitted", "agg": "count_if", "group": "Stage",
+                 "cond": f"{_st} = 'Commercial Invoice Submitted'", "tone": "info", "hide_if_zero": True},
+                {"key": "closed", "label": "Closed", "agg": "count_if", "group": "Stage",
+                 "cond": f"{_st} = 'Commercial Invoice Closed'", "tone": "good", "hide_if_zero": True},
+                {"key": "rejected", "label": "Rejected", "agg": "count_if", "group": "Stage",
+                 "cond": f"{_st} IN ('I-BUY Rejected','ISDP Rejected')", "tone": "bad",
+                 "hide_if_zero": True},
+                {"key": "work_not_done", "label": "Work not done", "agg": "count_if",
+                 "cond": f"{_st} = 'Work Not Done'", "tone": "warn", "hide_if_zero": True},
+            ])
 
     # Total matching count + MS1/MS2 sums, independent of the row-limit cap
     # above — the FE "Total Lines" indicator and KPI strip must reflect
@@ -799,7 +833,7 @@ def _invoice_detail_milestone_sql(ms, where_extra):
 
 
 @frappe.whitelist()
-def list_invoice_detail_rows(portal_filters=None, limit=500, _options=None):
+def list_invoice_detail_rows(portal_filters=None, limit=500, _options=None, _summary=None):
     """Row-level Invoice Detail report — mirrors the historical "Invoices
     Data" Excel sheet 1:1 (same columns, same order, same sort). Only
     legacy_ms{1,2}_invoice_no/legacy_po_type have no live equivalent and
@@ -913,6 +947,24 @@ def list_invoice_detail_rows(portal_filters=None, limit=500, _options=None):
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # An invoice report: how many invoices, over how many lines, and what
+        # they add up to before and after VAT.
+        from inet_app.api.command_center import summary_from_query
+        return summary_from_query(
+            f"({union_sql}) u", outer_sql, list(all_params) + outer_params, [
+                {"key": "lines", "label": "Lines", "agg": "count"},
+                {"key": "invoices", "label": "Invoices", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(u.invoice_no,''), '')"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(u.duid,''), '')"},
+                {"key": "net", "label": "Net", "agg": "sum", "group": "Amount",
+                 "expr": "IFNULL(u.invoiced_amount, 0)", "format": "money"},
+                {"key": "vat", "label": "VAT", "agg": "sum", "group": "Amount",
+                 "expr": "IFNULL(u.vat_amount, 0)", "format": "money"},
+                {"key": "gross", "label": "Total", "agg": "sum", "group": "Amount",
+                 "expr": "IFNULL(u.grand_total, 0)", "format": "money", "tone": "good"},
+            ])
     # A row with no resolved invoice_no (neither a legacy number nor a real
     # submitted Sales Invoice) isn't actually invoiced yet — ms{n}_invoiced
     # can be set from a PIC status change alone, with no invoice document

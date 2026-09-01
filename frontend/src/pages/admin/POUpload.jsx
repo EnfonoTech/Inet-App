@@ -375,7 +375,7 @@ export default function POUpload() {
         <div>
           <h1 className="page-title">PO Upload</h1>
           <div className="page-subtitle">
-            Upload PO data from Excel or CSV.
+            Upload PO data
           </div>
         </div>
       </div>

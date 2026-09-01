@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
@@ -341,6 +343,8 @@ export default function Projects() {
   // the CSS-hide render below. Only growing the limit, or any OTHER filter
   // actually changing, hits the server. See PICTracker.jsx for the reference
   // implementation of this pattern.
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
 
   useEffect(() => {
@@ -353,6 +357,7 @@ export default function Projects() {
       huawei_im: huaweiImFilter || undefined,
       column_filters: Object.keys(colFilters).length ? colFilters : undefined,
     };
+    publishSummaryQuery(params);
     const signature = JSON.stringify([params, refreshKey]);
 
     const prev = lastFetchRef.current;
@@ -389,8 +394,9 @@ export default function Projects() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Projects</h1>
-          <div className="page-subtitle">Manage all INET telecom projects</div>
+          <div className="page-subtitle">All INET projects</div>
         </div>
+        <PageSummary source="projects" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename="projects" rows={projects.slice(0, displayedCount)} />
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New Project</button>

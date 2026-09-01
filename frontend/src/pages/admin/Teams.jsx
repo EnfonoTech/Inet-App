@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -156,6 +158,8 @@ export default function Teams() {
   }, []);
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -203,6 +207,7 @@ export default function Teams() {
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) filters.column_filters = colFilters;
         queryArgsRef.current = filters;
+        publishSummaryQuery(filters);
         const res = await pmApi.listAdminTeams(filters);
         if (!cancelled) setRows(Array.isArray(res) ? res : []);
       } catch {
@@ -405,8 +410,9 @@ export default function Teams() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Teams</h1>
-          <div className="page-subtitle">All INET teams — active projects, domains, and members.</div>
+          <div className="page-subtitle">All INET teams</div>
         </div>
+        <PageSummary source="admin_teams" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename="teams" rows={filteredRows} />
           <button className="btn-secondary" onClick={() => setRefreshKey((k) => k + 1)} disabled={loading}>

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -273,6 +275,8 @@ export default function IMExecution() {
   // so only that tab's own column filters should be sent.
   // Excel column-filter dropdowns. Both tables share one query (scoped by
   // portal.tab), so one ref serves both keys.
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -352,6 +356,7 @@ export default function IMExecution() {
 
         setLoading(true);
         queryArgsRef.current = { portal: portalArg || {}, im: imName, status: statusFilter.length ? statusFilter : undefined };
+        publishSummaryQuery(portalArg || {});
         const res = await pmApi.listIMDailyExecutions(imName, statusFilter.length ? statusFilter : undefined, effectiveRowLimit, portalArg);
         if (cancelled) return;
         const fetchedRows = Array.isArray(res) ? res : [];
@@ -808,6 +813,8 @@ export default function IMExecution() {
         <div>
           <h1 className="page-title">Rollout Work Done</h1>
         </div>
+        <PageSummary source="im_daily_executions" filters={summaryQuery}
+          extra={{ im: imName, execution_status: statusFilter.length ? statusFilter : undefined }} />
         <div className="page-actions">
           <ExportExcelButton filename="im-execution" rows={tab === "internal_done" ? filteredInternalDone.slice(0, displayedInternalCount) : filteredExecutions.slice(0, displayedExecCount)} />
         </div>

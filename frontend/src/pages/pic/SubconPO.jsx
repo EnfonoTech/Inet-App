@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -484,6 +486,8 @@ export default function SubconPO() {
 
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch effect below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   const tabRef = useRef(tab);
   useEffect(() => {
@@ -619,6 +623,7 @@ export default function SubconPO() {
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) portal.column_filters = colFilters;
       queryArgsRef.current = portal;
+      publishSummaryQuery(portal);
       tabRef.current = tab;
       const signature = JSON.stringify([tab, portal, refreshKey]);
 
@@ -992,9 +997,6 @@ export default function SubconPO() {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <h1 className="page-title">Subcon PO</h1>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#f1f5f9", color: "#334155", border: "1px solid #e2e8f0", fontSize: "0.74rem", fontWeight: 700 }}>
-              <span style={{ opacity: 0.85 }}>Total Lines</span> <span>{fmtInt.format(totalCount)}</span>
-            </div>
             {!!totals.expected_ms1 || !!totals.expected_ms2 ? (
               <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", fontSize: "0.74rem", fontWeight: 700 }}>
                 <span style={{ opacity: 0.85 }}>Expected Payout</span>
@@ -1003,9 +1005,10 @@ export default function SubconPO() {
             ) : null}
           </div>
           <div className="page-subtitle">
-            Purchase Orders to subcontractors, priced from the Subcontract Master payout %.
+            POs to subcontractors
           </div>
         </div>
+        <PageSummary source="subcon_po" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename={`subcon-po-${tab}`} rows={rows.slice(0, displayedCount)} />
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>

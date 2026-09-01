@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { pmApi } from "../../services/api";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -92,6 +94,8 @@ export default function PODump() {
   }, []);
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch effect below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -156,6 +160,7 @@ export default function PODump() {
       try {
         const colFilters = JSON.parse(columnFiltersDebounced);
         queryArgsRef.current = { from_date: fromDate, to_date: toDate, statuses: activeStatuses, column_filters: colFilters };
+        publishSummaryQuery({ from_date: fromDate, to_date: toDate, statuses: activeStatuses, column_filters: colFilters });
         const res = await pmApi.exportPODump(fromDate, toDate, activeStatuses, rowLimit, searchDebounced, colFilters);
         if (!cancelled) {
           const nextRows = Array.isArray(res?.rows) ? res.rows : [];
@@ -249,9 +254,10 @@ export default function PODump() {
         <div>
           <h1 className="page-title">PO dump</h1>
           <div className="page-subtitle">
-            PO Intake lines by upload date. Table is compact; click View to see full source columns.
+            PO Intake lines by upload date
           </div>
         </div>
+        <PageSummary source="po_dump" filters={summaryQuery} />
       </div>
 
       <div className="toolbar">

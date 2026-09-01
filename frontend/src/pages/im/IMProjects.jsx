@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
@@ -78,6 +79,8 @@ export default function IMProjects() {
   const [huaweiImFilter, setHuaweiImFilter] = useState("");
   const [detailRow, setDetailRow] = useState(null);
   const [metaProjects, setMetaProjects] = useState([]);
+  // The page is inherently scoped to this IM — nothing else to publish.
+  const summaryQuery = useMemo(() => ({ implementation_manager: imName }), [imName]);
   const [allDomains, setAllDomains] = useState([]);
   const [huaweiIms, setHuaweiIms] = useState([]);
 
@@ -213,10 +216,9 @@ export default function IMProjects() {
       <div className="page-header">
         <div>
           <h1 className="page-title">My Projects</h1>
-          <div className="page-subtitle">
-            Projects where Implementation Manager = <strong>{imName || "—"}</strong>
-          </div>
+          <div className="page-subtitle">IM: <strong>{imName || "—"}</strong></div>
         </div>
+        <PageSummary source="projects" filters={summaryQuery} />
         <div className="page-actions">
           <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
             {displayedCount} project{displayedCount !== 1 ? "s" : ""}

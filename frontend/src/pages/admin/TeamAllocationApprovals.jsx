@@ -116,7 +116,7 @@ export default function TeamAllocationApprovals() {
         <div>
           <h1 className="page-title">Approvals</h1>
           <div className="page-subtitle">
-            Pending requests that need your sign-off.
+            Requests needing sign-off
           </div>
         </div>
         <div className="page-actions">

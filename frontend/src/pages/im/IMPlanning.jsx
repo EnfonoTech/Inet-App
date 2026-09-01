@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -142,6 +144,8 @@ export default function IMPlanning() {
   }, []);
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch effect below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -216,6 +220,7 @@ export default function IMPlanning() {
       setLoading(true);
       try {
         queryArgsRef.current = { portal: portalArg || {}, im: imName, status: statusFilter.length ? statusFilter : undefined };
+        publishSummaryQuery(portalArg || {});
         const res = await pmApi.listIMRolloutPlans(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
         if (cancelled) return;
         const fetchedRows = Array.isArray(res) ? res : [];
@@ -411,6 +416,8 @@ export default function IMPlanning() {
         <div>
           <h1 className="page-title">Rollout Execution</h1>
         </div>
+        <PageSummary source="im_rollout_plans" filters={summaryQuery}
+          extra={{ im: imName, plan_status: statusFilter.length ? statusFilter : undefined }} />
         <div className="page-actions">
           <ExportExcelButton filename="im-planning" rows={filteredPlans.slice(0, displayedCount)} />
           <button type="button" className="btn-secondary" onClick={() => loadPlans()} disabled={loading}>

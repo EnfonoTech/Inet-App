@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -327,6 +329,8 @@ export default function IMDispatch() {
 
   // Set by the row-fetch effect below so the column-options dropdowns always
   // cascade off the query currently on screen.
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({ portal: {}, filters: [] });
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -391,6 +395,7 @@ export default function IMDispatch() {
         // Excel column-filter dropdowns cascade off exactly this query, so
         // hand them the same filters the rows were fetched with.
         queryArgsRef.current = { portal, filters: listFilters };
+        publishSummaryQuery(portal);
         const signature = JSON.stringify([listFilters, portal]);
 
         const prev = lastFetchRef.current;
@@ -1021,8 +1026,9 @@ export default function IMDispatch() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Rollout Planning</h1>
-          <div className="page-subtitle">Dispatch lines assigned to your IM.</div>
+          <div className="page-subtitle">Lines assigned to your IM</div>
         </div>
+        <PageSummary source="po_dispatch" filters={summaryQuery} />
         <div className="page-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
             type="button"

@@ -569,7 +569,7 @@ def _batch_resolve_subcontracts(po_dispatch_names):
 
 # ── List endpoint ────────────────────────────────────────────────────────
 @frappe.whitelist()
-def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=None):
+def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=None, _summary=None):
     """PO Dispatch lines that resolve to a SUB subcontractor, per stage.
 
     ``stage``: to_order / ordered / invoiced / closed / all —
@@ -801,6 +801,21 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _summary:
+        # Subcon PO is the mirror of the customer side: what the subcontractor
+        # is owed, how much of it has an actual PO raised, and how much has
+        # been invoiced back to us.
+        from inet_app.api.command_center import summary_from_query
+        return summary_from_query(
+            _SUBCON_FROM_JOIN.strip().replace("FROM ", "", 1), where_sql, params, [
+                {"key": "lines", "label": "Lines", "agg": "count"},
+                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+                {"key": "subcons", "label": "Subcons", "agg": "count_distinct",
+                 "expr": "NULLIF(IFNULL(pd.contract,''), '')"},
+                {"key": "value", "label": "Value", "agg": "sum",
+                 "expr": "IFNULL(pd.line_amount, 0)", "format": "money", "tone": "good"},
+            ])
 
     # creation DESC, not modified DESC: rows must not reorder under the user
     # when a status update touches one of them mid-review.

@@ -1,5 +1,7 @@
 import { useCallback, useRef, useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
@@ -84,6 +86,8 @@ export default function IMBackend() {
   }, []);
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -128,6 +132,7 @@ export default function IMBackend() {
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) params.column_filters = colFilters;
       queryArgsRef.current = params;
+      publishSummaryQuery(params);
       const res = await pmApi.listBackendDispatches(params);
       setRows(Array.isArray(res) ? res : []);
       setSelected(new Set());
@@ -264,6 +269,7 @@ export default function IMBackend() {
         <div>
           <h1 className="page-title">Backend</h1>
         </div>
+        <PageSummary source="backend_dispatches" filters={summaryQuery} />
         <div className="page-actions">
           <ExportExcelButton filename="im-backend" rows={rows} />
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>

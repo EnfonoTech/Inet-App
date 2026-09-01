@@ -1286,9 +1286,10 @@ def mr_apply_excel_link_filter(col_key, raw_val, filters):
 # derived from the complete aggregate rather than whatever the page holds.
 _STOCK_COL_FIELD = {
     "duid_stock": {
-        "duid": "duid", "project": "project_name", "pending": "pending_count",
+        "duid": "duid", "project": "project_name", "pending": "prepared_count",
         "received": "received_count", "transferred": "transferred_count",
-        "completed": "completed_count", "volume_m": "volume", "latest_date": "latest_date",
+        "completed": "completed_count", "volume_m": "total_volume",
+        "latest_date": "latest_date",
     },
     "stock_balance": {
         "duid": "duid", "project": "project_name", "warehouse": "warehouse_label",
@@ -1302,8 +1303,10 @@ _STOCK_COL_FIELD = {
         "item_code": "item_code", "item_name": "item_name",
         "item": "item_code",   # legacy key, kept so saved filters still resolve
         "warehouse": "warehouse", "current_qty": "current_qty",
-        "received": "received", "transferred": "transferred", "used": "used",
-        "remaining": "remaining", "uom": "uom", "outbound_date": "outbound_date",
+        "received": "received_qty", "transferred": "transferred_qty",
+        # The "Used" column renders issued_qty.
+        "used": "issued_qty", "remaining": "remaining_qty",
+        "uom": "uom", "outbound_date": "outbound_date",
         "status": "status",
     },
 }
@@ -1316,6 +1319,48 @@ def _stock_limit_suffix(limit):
     except (TypeError, ValueError):
         return ""
     return "" if lim <= 0 else f"LIMIT {lim}"
+
+
+def stock_summary(rows, metrics):
+    """Headline figures for an assembled (non-SQL) stock table.
+
+    The three stock tables build their rows in Python, so unlike every other
+    source there is no WHERE to hand to summary_from_query(). Feed this the
+    rows AFTER filter_stock_rows() but BEFORE _stock_apply_limit(), and the
+    figures describe the full filtered set no matter what the row limit is —
+    the same guarantee the SQL-backed sources give.
+
+    Each metric is {key, label, field?, agg: "count"|"sum"|"distinct"|"count_if",
+    test?} plus the usual format/tone/group/hide_if_zero passed straight through.
+    """
+    out = []
+    for m in metrics:
+        agg = m.get("agg", "count")
+        field = m.get("field")
+        if agg == "count":
+            val = len(rows)
+        elif agg == "distinct":
+            val = len({str(r.get(field)) for r in rows if str(r.get(field) or "").strip()})
+        elif agg == "count_if":
+            test = m.get("test") or (lambda r: False)
+            val = sum(1 for r in rows if test(r))
+        else:  # sum
+            total = 0.0
+            for r in rows:
+                try:
+                    total += float(r.get(field) or 0)
+                except (TypeError, ValueError):
+                    pass
+            val = total
+        fmt = m.get("format", "int")
+        out.append({
+            "key": m["key"], "label": m.get("label") or m["key"],
+            "value": int(val) if fmt == "int" else float(val),
+            "format": fmt, "tone": m.get("tone", "default"),
+            "hint": m.get("hint", ""), "group": m.get("group", ""),
+            "hide_if_zero": bool(m.get("hide_if_zero")),
+        })
+    return {"metrics": out, "supported": True}
 
 
 def _stock_apply_limit(rows, limit):
@@ -1486,7 +1531,7 @@ def _apply_material_request_column_filters(filters, column_filters):
 
 @frappe.whitelist()
 def list_material_requests(im=None, status=None, limit=50, column_filters=None, _options=None,
-                            team_id=None, duid=None, from_date=None, to_date=None):
+                            team_id=None, duid=None, from_date=None, to_date=None, _summary=None):
     """List Material Requests (type: Material Transfer) created via INET portal.
 
     IM users see only their own requests (filtered by im custom field).
@@ -1550,6 +1595,30 @@ def list_material_requests(im=None, status=None, limit=50, column_filters=None, 
             _options.get("col_key"), filters,
             _options.get("search"), _options.get("limit"),
         )
+
+    if _summary:
+        # Both request lists share one doctype and one filter dict, so the
+        # summary is a plain ORM count against the SAME filters the row query
+        # runs — no row limit involved.
+        def _n(extra=None):
+            f = dict(filters)
+            if extra:
+                f.update(extra)
+            try:
+                return frappe.db.count("Material Request", filters=f) or 0
+            except Exception:
+                return 0
+        def _m(key, label, value, tone="default", group="", hide=False, hint=""):
+            return {"key": key, "label": label, "value": value, "format": "int",
+                    "tone": tone, "hint": hint, "group": group, "hide_if_zero": hide}
+        return {"supported": True, "metrics": [
+            _m("requests", "Requests", _n()),
+            _m("pending", "Pending", _n({"status": "Pending"}), "warn", "Status", True,
+               "Awaiting action"),
+            _m("draft", "Draft", _n({"status": "Draft"}), "default", "Status", True),
+            _m("transferred", "Transferred", _n({"status": "Transferred"}), "good", "Status", True),
+            _m("cancelled", "Cancelled", _n({"status": "Cancelled"}), "bad", "Status", True),
+        ]}
 
     rows = frappe.db.get_all(
         "Material Request",
@@ -2128,13 +2197,18 @@ def get_im_teams(im=None):
 
 
 @frappe.whitelist()
-def get_duid_stock_summary(column_filters=None, limit=None, _options=None):
+def get_duid_stock_summary(column_filters=None, limit=None, _options=None, _summary=None):
     """DUID-wise summary of INET Huawei Outbound materials in the main warehouse.
 
     Groups all INET Huawei Outbound Plan rows by DUID, showing
     how many shipments arrived (Received) vs. are expected (Prepared).
     DUIDs whose net stock in the source warehouse is zero (fully transferred out) are excluded.
     """
+    # A summary describes the whole filtered set, so it must never run against
+    # the capped SQL below — with limit=1 it would report one DUID and call it
+    # the total. Drop the cap here rather than trusting every caller to.
+    if _summary:
+        limit = 0
     # Grouped in SQL, and — once the exclusion set below is known — filtered
     # and capped there too, so the DB returns only the rows the page shows.
     # This is what makes the row limit real: without it the server builds the
@@ -2390,6 +2464,23 @@ def get_duid_stock_summary(column_filters=None, limit=None, _options=None):
     if _options:
         return stock_column_options(result, "duid_stock", _options.get("col_key"),
                                     _options.get("search"), _options.get("limit"))
+    if _summary:
+        _rows = filter_stock_rows(result, "duid_stock", column_filters)
+        return stock_summary(_rows, [
+            {"key": "duids", "label": "DUIDs", "agg": "count"},
+            {"key": "projects", "label": "Projects", "agg": "distinct", "field": "project_name"},
+            {"key": "volume", "label": "Volume", "agg": "sum", "field": "total_volume",
+             "format": "qty", "tone": "good"},
+            {"key": "pending", "label": "Pending", "agg": "sum", "field": "prepared_count",
+             "group": "Movement", "tone": "warn", "hide_if_zero": True,
+             "hint": "Requested, not yet received on site"},
+            {"key": "received", "label": "Received", "agg": "sum", "field": "received_count",
+             "group": "Movement", "tone": "info", "hide_if_zero": True},
+            {"key": "transferred", "label": "Transferred", "agg": "sum",
+             "field": "transferred_count", "group": "Movement", "hide_if_zero": True},
+            {"key": "completed", "label": "Completed", "agg": "sum", "field": "completed_count",
+             "group": "Movement", "tone": "good", "hide_if_zero": True},
+        ])
     return result
 
 
@@ -3375,7 +3466,7 @@ def _append_stock_rows(rows, items, warehouse_type, warehouse_label, warehouse, 
 
 
 @frappe.whitelist()
-def get_duid_stock_balance(column_filters=None, limit=None, _options=None):
+def get_duid_stock_balance(column_filters=None, limit=None, _options=None, _summary=None):
     """Flattened DUID-wise stock balance across the main warehouse and every
     (permission-scoped) team warehouse — powers the Material Requests
     "Stock Balance" tab for IM and PM.
@@ -3419,6 +3510,16 @@ def get_duid_stock_balance(column_filters=None, limit=None, _options=None):
     if _options:
         return stock_column_options(rows, "stock_balance", _options.get("col_key"),
                                     _options.get("search"), _options.get("limit"))
+    if _summary:
+        _rows = filter_stock_rows(rows, "stock_balance", column_filters)
+        return stock_summary(_rows, [
+            {"key": "lines", "label": "Lines", "agg": "count"},
+            {"key": "items", "label": "Items", "agg": "distinct", "field": "item_code"},
+            {"key": "duids", "label": "DUIDs", "agg": "distinct", "field": "duid"},
+            {"key": "warehouses", "label": "Warehouses", "agg": "distinct", "field": "warehouse_label"},
+            {"key": "qty", "label": "Qty", "agg": "sum", "field": "qty",
+             "format": "qty", "tone": "good"},
+        ])
     return _stock_apply_limit(filter_stock_rows(rows, "stock_balance", column_filters), limit)
 
 
@@ -3984,7 +4085,7 @@ def get_bill_wise_status_by_warehouse(filters=None):
 
 
 @frappe.whitelist()
-def get_bill_wise_material(filters=None, column_filters=None, limit=None, _options=None):
+def get_bill_wise_material(filters=None, column_filters=None, limit=None, _options=None, _summary=None):
     """Portal wrapper over get_bill_wise_status_by_warehouse — powers the
     "Bill Wise Material" tab in Material Management (IM + PM)."""
     if isinstance(filters, str):
@@ -3993,6 +4094,21 @@ def get_bill_wise_material(filters=None, column_filters=None, limit=None, _optio
     if _options:
         return stock_column_options(rows, "bill_wise", _options.get("col_key"),
                                     _options.get("search"), _options.get("limit"))
+    if _summary:
+        _rows = filter_stock_rows(rows, "bill_wise", column_filters)
+        return stock_summary(_rows, [
+            {"key": "lines", "label": "Lines", "agg": "count"},
+            {"key": "bills", "label": "Bills", "agg": "distinct", "field": "bill_no"},
+            {"key": "items", "label": "Items", "agg": "distinct", "field": "item_code"},
+            {"key": "duids", "label": "DUIDs", "agg": "distinct", "field": "du_id"},
+            {"key": "received", "label": "Received", "agg": "sum", "field": "received_qty",
+             "group": "Qty", "format": "qty"},
+            {"key": "used", "label": "Used", "agg": "sum", "field": "issued_qty",
+             "group": "Qty", "format": "qty", "tone": "good"},
+            {"key": "remaining", "label": "Remaining", "agg": "sum", "field": "remaining_qty",
+             "group": "Qty", "format": "qty", "tone": "warn",
+             "hint": "Received but not yet consumed"},
+        ])
     return _stock_apply_limit(filter_stock_rows(rows, "bill_wise", column_filters), limit)
 
 
@@ -4493,7 +4609,7 @@ def _apply_return_request_column_filters(filters, column_filters):
 
 @frappe.whitelist()
 def list_return_requests(team_id=None, status=None, limit=50, column_filters=None,
-                          im=None, duid=None, from_date=None, to_date=None, _options=None):
+                          im=None, duid=None, from_date=None, to_date=None, _options=None, _summary=None):
     """List Material Return Requests.
 
     Field team: sees their team's requests.
@@ -4576,6 +4692,30 @@ def list_return_requests(team_id=None, status=None, limit=50, column_filters=Non
             _options.get("col_key"), filters,
             _options.get("search"), _options.get("limit"),
         )
+
+    if _summary:
+        # Both request lists share one doctype and one filter dict, so the
+        # summary is a plain ORM count against the SAME filters the row query
+        # runs — no row limit involved.
+        def _n(extra=None):
+            f = dict(filters)
+            if extra:
+                f.update(extra)
+            try:
+                return frappe.db.count("Material Request", filters=f) or 0
+            except Exception:
+                return 0
+        def _m(key, label, value, tone="default", group="", hide=False, hint=""):
+            return {"key": key, "label": label, "value": value, "format": "int",
+                    "tone": tone, "hint": hint, "group": group, "hide_if_zero": hide}
+        return {"supported": True, "metrics": [
+            _m("requests", "Requests", _n()),
+            _m("pending", "Pending", _n({"status": "Pending"}), "warn", "Status", True,
+               "Awaiting action"),
+            _m("draft", "Draft", _n({"status": "Draft"}), "default", "Status", True),
+            _m("transferred", "Transferred", _n({"status": "Transferred"}), "good", "Status", True),
+            _m("cancelled", "Cancelled", _n({"status": "Cancelled"}), "bad", "Status", True),
+        ]}
 
     rows = frappe.db.get_all(
         "Material Request",

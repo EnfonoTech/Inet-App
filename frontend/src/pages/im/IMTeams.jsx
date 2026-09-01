@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
 import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -124,6 +125,7 @@ export default function IMTeams() {
   const [categoryFilter, setCategoryFilter] = useState([]);
   const [statFilter, setStatFilter] = useState(null);
   const [dateFilter, setDateFilter] = useState(() => new Date().toISOString().slice(0, 10));
+  const summaryQuery = useMemo(() => ({ for_date: dateFilter }), [dateFilter]);
 
   const [detailRow, setDetailRow] = useState(null);
   const [detailData, setDetailData] = useState(null);
@@ -346,6 +348,8 @@ export default function IMTeams() {
           <h1 className="page-title">My Teams</h1>
           <div className="page-subtitle">{teams.length} teams managed by {imName}</div>
         </div>
+        <PageSummary source="im_teams" filters={summaryQuery}
+          extra={{ im: imName }} />
         <div className="page-actions">
           <button className="btn-secondary" onClick={loadAll} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
           <ExportExcelButton filename="im-teams" rows={filtered} />

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { pmApi } from "../../services/api";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { useDebounced } from "../../hooks/useDebounced";
 
@@ -247,6 +249,10 @@ export default function AdminExpense() {
       .catch(() => {});
   }, []);
 
+  // Published for the header summary — see usePublishedQuery.
+
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
+
   const queryArgsRef = useRef({});
   const load = useCallback(
     async (activeTab = tab, activeFilters = filters) => {
@@ -255,6 +261,7 @@ export default function AdminExpense() {
         const f = { ...activeFilters };
         if (activeTab === "pending") f.approval_status = "Draft";
         queryArgsRef.current = f;
+        publishSummaryQuery(f);
         const rows = await pmApi.listAllExpenseClaims(f);
         setClaims(rows || []);
       } catch {
@@ -342,8 +349,9 @@ export default function AdminExpense() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Project Expense Claims</h1>
-          <p className="page-subtitle">Overview of all team project expense claims across all IMs.</p>
+          <p className="page-subtitle">All team claims</p>
         </div>
+        <PageSummary source="expense_claims" filters={summaryQuery} />
       </div>
 
       <div className="tabs">

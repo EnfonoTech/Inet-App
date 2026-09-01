@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import PageSummary from "../../components/PageSummary";
+import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
@@ -113,6 +115,8 @@ export default function PICCancelled() {
 
   // Excel column-filter dropdowns cascade off exactly the query the rows
   // were fetched with (recorded by the fetch effect below).
+  // Published for the header summary — see usePublishedQuery.
+  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -187,6 +191,7 @@ export default function PICCancelled() {
       setError(null);
       try {
         queryArgsRef.current = portal;
+        publishSummaryQuery(portal);
         const res = await pmApi.listPicRows("cancelled", portal, rowLimit);
         if (cancelled) return;
         const fetchedRows = Array.isArray(res?.rows) ? res.rows : [];
@@ -267,16 +272,11 @@ export default function PICCancelled() {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <h1 className="page-title">Cancelled</h1>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#f1f5f9", color: "#334155", border: "1px solid #e2e8f0", fontSize: "0.74rem", fontWeight: 700 }}>
-              <span style={{ opacity: 0.85 }}>Total Lines</span> <span>{fmtInt.format(totalCount)}</span>
-            </div>
           </div>
-          <div className="page-subtitle">
-            Archive of every POID that's cancelled — either PIC marked a milestone "PO Line Canceled",
-            or the PO itself was cancelled at the dispatch level. Select rows and use "Sync PIC Status"
-            to catch PIC's own status up on the latter.
-          </div>
+          <div className="page-subtitle">Cancelled POIDs</div>
         </div>
+        <PageSummary source="pic_rows" filters={summaryQuery}
+          extra={{ stage: "cancelled" }} />
         <div className="page-actions">
           <ExportExcelButton filename="pic-cancelled" rows={rows.slice(0, displayedCount)} />
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import PageSummary from "../../components/PageSummary";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import DataTableWrapper from "../../components/DataTableWrapper";
@@ -1976,6 +1977,37 @@ export default function IMMaterialRequest() {
   const isAdmin = role === "admin" || role === "warehouse";
 
   const [tab, setTab] = useState("requests");
+
+  // Each tab is its own component holding its own column filters, so the
+  // page-level summary can't read them directly. They already broadcast on
+  // tablepro:filters-changed for DataTablePro's benefit — listen in and keep
+  // the strip describing the same rows the tab is showing.
+  const SUMMARY_TABS = {
+    requests: { source: "material_requests", tableKey: "im-material-requests-v2" },
+    returns:  { source: "return_requests",   tableKey: "im-return-requests-v2" },
+    duid:     { source: "duid_stock",        tableKey: "im-duid-stock-v3" },
+    balance:  { source: "stock_balance",     tableKey: "im-stock-balance-v1" },
+    billwise: { source: "bill_wise",         tableKey: "im-bill-wise-material-v1" },
+  };
+  const [tabColumnFilters, setTabColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      const key = e.detail?.tableKey;
+      if (!key) return;
+      setTabColumnFilters((prev) => (
+        JSON.stringify(prev[key] || {}) === JSON.stringify(e.detail.filters || {})
+          ? prev
+          : { ...prev, [key]: e.detail.filters || {} }
+      ));
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const summaryTab = SUMMARY_TABS[tab];
+  const summaryQuery = useMemo(
+    () => ({ column_filters: tabColumnFilters[summaryTab?.tableKey] || {} }),
+    [tabColumnFilters, summaryTab]
+  );
   const [showNew, setShowNew] = useState(false);
   const [prefillDuid, setPrefillDuid] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -2024,6 +2056,9 @@ export default function IMMaterialRequest() {
             {isAdmin ? "Review and approve material transfer requests." : "Request materials from main warehouse to your team."}
           </div>
         </div>
+        {summaryTab && (
+          <PageSummary source={summaryTab.source} filters={summaryQuery} />
+        )}
         <div className="page-actions">
           <button className="btn-primary" onClick={() => openNew()}>+ New Request</button>
         </div>
