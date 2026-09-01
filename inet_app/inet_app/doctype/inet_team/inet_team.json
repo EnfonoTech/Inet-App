@@ -130,11 +130,12 @@
   },
   {
    "default": "Active",
+   "description": "Active / Inactive / On Vacation all still cost the company — only Disbanded stops cost, and only from the Team Stop Date onward.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Active\nInactive"
+   "options": "Active\nInactive\nOn Vacation\nDisbanded"
   },
   {
    "default": "1",
@@ -161,7 +162,7 @@
    "label": "Team Start Date"
   },
   {
-   "description": "When this team stopped - cost reports don't count days after this date. Leave blank if still active.",
+   "description": "When this team was Disbanded - cost reports don't count days after this date. Required when Status is Disbanded.",
    "fieldname": "end_date",
    "fieldtype": "Date",
    "label": "Team Stop Date"

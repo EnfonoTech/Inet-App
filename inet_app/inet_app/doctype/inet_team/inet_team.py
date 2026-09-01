@@ -5,6 +5,9 @@ from frappe.model.document import Document
 
 class INETTeam(Document):
     def validate(self):
+        if self.status == "Disbanded" and not self.end_date:
+            frappe.throw(_("Team Stop Date is required when Status is Disbanded — cost reports need it to know when this team's cost stopped."))
+
         leads = [r for r in (self.team_members or []) if getattr(r, "is_team_lead", None)]
         if len(leads) > 1:
             frappe.throw(_("Only one Team Lead is allowed per INET Team."))

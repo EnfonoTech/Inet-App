@@ -264,11 +264,11 @@ export default function CommandDashboard() {
       <Section title="Company Financial Summary" accent="company" style={{ marginBottom: 14 }}>
         <div className="dash-kpi-grid dash-kpi-grid--7">
           <Stat label="Total INET Target"  value={sar(company.company_target)} />
-          <Stat label="Target as of Today" value={sar(company.total_target_today)} />
+          <Stat label="Target (Elapsed)"   value={sar(company.total_target_today)} />
           <Stat label="Total Revenue"      value={sar(company.total_achieved)}   color="text-green" />
           <Stat label="Gap"                value={sar(company.company_gap)}
             color={(company.company_gap ?? 0) > 0 ? "text-red" : "text-green"} />
-          <Stat label="Total Cost Today"   value={sar(company.total_cost_today)} />
+          <Stat label="Cost (Elapsed)"     value={sar(company.total_cost_today)} />
           <Stat label="Profit / Loss"      value={sar(company.profit_loss)}
             color={profitColor(company.profit_loss)} />
           <Stat label="Coverage %"
@@ -289,10 +289,15 @@ export default function CommandDashboard() {
               onClick={() => navigate("/po-dump", { state: { poDumpFilters: { showOpen: true, showClosed: false, showCancelled: false } } })} />
             <Stat label="Planned Activities" value={sar(operational.planned_amount ?? 0)}
               sub={`${operational.planned_activities ?? 0} plans`}
-              onClick={() => navigate("/execution", { state: { execFilters: { planStatusFilter: ["Planned"] } } })} />
-            <Stat label="Closed Activities" value={sar(operational.closed_amount ?? 0)}
-              sub={`${operational.closed_activities ?? 0} closed`} color="text-green"
-              onClick={() => navigate("/work-done", { state: { workDoneFilters: { fromDate: range.from, toDate: range.to, excludeBackend: true } } })} />
+              onClick={() => navigate("/execution", { state: { execFilters: { planStatusFilter: ["Planned", "Extended", "Planning with Issue"], fromDate: range.from, toDate: range.to } } })} />
+            <Stat label="In Progress" value={sar(operational.in_progress_amount ?? 0)}
+              sub={`${operational.in_progress_activities ?? 0} activities`}
+              onClick={() => navigate("/execution", { state: { execFilters: { planStatusFilter: ["In Execution", "Completed"], fromDate: range.from, toDate: range.to } } })} />
+            <Stat label="Work Done" value={sar(operational.workdone_amount ?? 0)}
+              sub={`${operational.workdone_activities ?? 0} lines`} color="text-green"
+              onClick={() => navigate("/work-done", { state: { workDoneFilters: { fromDate: range.from, toDate: range.to } } })} />
+            <Stat label="Closed" value={sar(operational.closed_amount ?? 0)}
+              sub={`${operational.closed_activities ?? 0} closed`} color="text-green" />
             <Stat label="Re-Visits" value={fv(operational.revisits ?? 0)}
               color={(operational.revisits ?? 0) > 0 ? "text-amber" : ""}
               sub={(operational.revisits ?? 0) > 0 ? "Needs follow-up" : "None this period"} />
@@ -332,12 +337,12 @@ export default function CommandDashboard() {
           <div className="dash-kpi-grid dash-kpi-grid--2">
             <Stat label="Monthly Cost"         value={sar(inetMonthlyCost)} />
             <Stat label="Monthly Target"       value={sar(inetMonthlyTarget)} />
-            <Stat label="Target as of Today"   value={sar(inetTargetToday)} />
-            <Stat label="Achieved as of Today" value={sar(inetAchieved)} color="text-green" />
-            <Stat label="Gap as of Today"      value={sar(inetGapToday)}
+            <Stat label="Target (Elapsed)"     value={sar(inetTargetToday)} />
+            <Stat label="Achieved"             value={sar(inetAchieved)} color="text-green" />
+            <Stat label="Gap (Elapsed)"        value={sar(inetGapToday)}
               color={inetGapToday >= 0 ? "text-green" : "text-red"}
               sub={inetGapToday >= 0 ? "Ahead of target" : "Behind target"} />
-            <Stat label="Profit / Loss Today"  value={sar(inetProfitLossToday)}
+            <Stat label="Profit / Loss (Elapsed)"  value={sar(inetProfitLossToday)}
               color={inetProfitLossToday >= 0 ? "text-green" : "text-red"} />
           </div>
           {/* Monthly achievement progress */}
