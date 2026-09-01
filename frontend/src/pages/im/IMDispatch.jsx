@@ -2152,11 +2152,6 @@ export default function IMDispatch() {
                           ({rows.length - visibleRows.length} planned hidden)
                         </span>
                       )}
-                      <span style={{ marginLeft: 16, fontSize: "0.82rem", color: "#64748b" }}>
-                        {planScope === "all"
-                          ? <>Re-plan mode: select any row (PLANNED rows create the next visit).</>
-                          : <>Select rows with status <strong>Dispatched</strong> to create rollout plans.</>}
-                      </span>
                     </td>
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
