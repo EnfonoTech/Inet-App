@@ -511,6 +511,16 @@ export default function DataTablePro() {
                 row.appendChild(td);
               }
             });
+            // A totals row needs the cell too. Without it the tfoot is one
+            // cell short per added column, so every total sits one column to
+            // the left of the header it belongs to.
+            table.querySelectorAll("tfoot tr").forEach((row) => {
+              if (!Array.from(row.children).find((c) => c.dataset.colKey === dyn.key)) {
+                const td = document.createElement("td");
+                td.dataset.colKey = dyn.key;
+                row.appendChild(td);
+              }
+            });
 
             let values = {};
             try {
