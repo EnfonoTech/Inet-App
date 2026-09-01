@@ -93,6 +93,35 @@ function detectTableDoctype(pathname, tIdx) {
 /** Monotonic counter so every table instance gets a stable, unique CSS scope for hidden-column rules. */
 let tableproUidCounter = 0;
 
+/**
+ * Options pulled per Excel-filter request. High-cardinality columns (POID has
+ * ~17k distinct values) are searched server-side rather than downloaded whole;
+ * when a column's total fits in one page the panel filters it client-side.
+ */
+const TABLEPRO_EXCEL_FETCH_LIMIT = 500;
+/**
+ * Ceiling on selected values. Each one becomes a placeholder in an IN (...),
+ * and Frappe throws SQLParseError past ~10k tokens — so keep well clear.
+ * Mirrored by the cap in _sanitize_table_pref_config.
+ */
+const TABLEPRO_EXCEL_MAX_SELECTED = 1000;
+
+/**
+ * A per-column filter value is either a legacy substring string or the
+ * Excel-style { values, blanks, bucket, labels } object. Mirrors
+ * _column_filter_is_active() in command_center.py — keep the two in sync:
+ * an emptied selection must read as "no filter", not as an active one.
+ */
+function isExcelFilterActive(v) {
+  if (v && typeof v === "object") {
+    const vals = Array.isArray(v.values) ? v.values : [];
+    return vals.some((x) => String(x ?? "").trim())
+      || !!v.blanks
+      || String(v.contains || "").trim().length > 0;
+  }
+  return String(v || "").trim().length > 0;
+}
+
 export default function DataTablePro() {
   const { pathname } = useLocation();
   const { role, user } = useAuth();
@@ -196,6 +225,31 @@ export default function DataTablePro() {
         });
         const baseColumnKeys = columns.map((c) => c.key);
 
+        // Excel-style filter opt-in, at table level or per column:
+        //   <table data-excel-filter-all="1">  every column, except any
+        //                                      <th data-excel-filter="0">
+        //   <th data-excel-filter="1">         just that column
+        // Scoped per table on purpose rather than defaulted on globally: a
+        // page only gets these once it has wired the options listener, so
+        // tables that have not been converted keep the substring box and
+        // cannot end up with a dropdown nothing answers.
+        const excelFilterAll = table.getAttribute("data-excel-filter-all") === "1";
+        const excelFilterConfig = {};
+        headers.forEach((th, i) => {
+          const flag = th.getAttribute("data-excel-filter");
+          if (flag === "0") return;
+          // A checkbox-only or unlabelled column has nothing to filter on.
+          const labelled = String(th.textContent || "").trim().length > 0;
+          if (!(flag === "1" || (excelFilterAll && labelled))) return;
+          const col = columns[i];
+          if (!col) return;
+          excelFilterConfig[col.key] = {
+            doctype: th.getAttribute("data-excel-filter-doctype") || "",
+            fieldname: th.getAttribute("data-excel-filter-fieldname") || col.key,
+            bucket: th.getAttribute("data-excel-filter-bucket") || null,
+          };
+        });
+
         const userKey = String(user?.email || "user").replace(/[:/\\]+/g, "_");
         const customKey = table.getAttribute("data-table-key");
         const tableId = customKey
@@ -281,7 +335,14 @@ export default function DataTablePro() {
           hidden: new Set(safeHidden),
           frozen: new Set(Array.isArray(saved.frozen) ? saved.frozen : []),
           widths: initialWidths,
-          filters: { ...(saved.filters || {}) },
+          // Deliberately NOT restored from saved prefs. Restoring them showed
+          // the column as filtered ("2 selected") while the rows were the full
+          // unfiltered set, because nothing re-runs the page's backend query on
+          // load — so the header lied about what you were looking at. Column
+          // filters now start clean on every load, matching the row limit,
+          // which resets to 20 for the same reason. Column order / widths /
+          // hidden / frozen still persist.
+          filters: {},
           show_filters: !!saved.show_filters,
           // Row sort: { key: <colKey> | null, dir: "asc" | "desc" }. Sorting
           // is applied to the rendered tbody after every (re-)init so it
@@ -312,13 +373,19 @@ export default function DataTablePro() {
         // listening for their own key); debounced so typing doesn't fire one
         // request per keystroke.
         let filterEventTimer = null;
+        // Read the key off the DOM each time instead of trusting the one
+        // captured at enhancement time. React reuses one <table> across tabs
+        // and swaps data-table-key on it (PO Dispatch: -basic <-> -full); if
+        // the re-init hasn't run yet, the captured key is stale and the owning
+        // page — which listens for the CURRENT key — never hears us.
+        const liveKey = () => table.getAttribute("data-table-key") || customKey;
         const dispatchFiltersChanged = (immediate = false) => {
-          if (!customKey) return;
+          if (!liveKey()) return;
           if (filterEventTimer) clearTimeout(filterEventTimer);
           const fire = () => {
             filterEventTimer = null;
             document.dispatchEvent(new CustomEvent("tablepro:filters-changed", {
-              detail: { tableKey: customKey, filters: { ...state.filters } },
+              detail: { tableKey: liveKey(), filters: { ...state.filters } },
             }));
           };
           if (immediate) fire();
@@ -807,12 +874,31 @@ export default function DataTablePro() {
 
         const applyFilters = () => {
           const bodyRows = Array.from(table.querySelectorAll("tbody tr"));
-          const activeKeys = Object.keys(state.filters).filter((k) => String(state.filters[k] || "").trim());
+          const activeKeys = Object.keys(state.filters).filter((k) => isExcelFilterActive(state.filters[k]));
           bodyRows.forEach((row) => {
             const cells = Array.from(row.children);
             if (!cells.length) return;
             const pass = activeKeys.every((k) => {
-              const val = String(state.filters[k] || "").trim().toLowerCase();
+              const raw = state.filters[k];
+              if (raw && typeof raw === "object") {
+                // Backend-backed columns are resolved by the refetch that
+                // dispatchFiltersChanged() triggers; matching cell TEXT for
+                // those would be wrong wherever display differs from the
+                // stored value (badges, formatted amounts, IM full names).
+                // `local` marks the opposite case — options read from these
+                // very rows — where cell text IS the value.
+                if (!raw.local) return true;
+                const cell = cells.find((c) => c.dataset.colKey === k);
+                if (!cell) return true;
+                const txt = String(cell.textContent || "").trim();
+                const isBlank = !txt || txt === "—";
+                const vals = Array.isArray(raw.values) ? raw.values : [];
+                const needle = String(raw.contains || "").trim().toLowerCase();
+                if (isBlank) return !!raw.blanks;
+                if (needle && txt.toLowerCase().includes(needle)) return true;
+                return vals.includes(txt);
+              }
+              const val = String(raw || "").trim().toLowerCase();
               if (!val) return true;
               const cell = cells.find((c) => c.dataset.colKey === k);
               if (!cell) return true;
@@ -832,7 +918,342 @@ export default function DataTablePro() {
           });
         };
 
+        // ── Excel-style column filter ────────────────────────────────────
+        // Panel lives on <body> as position:fixed, not inside the <th>:
+        // .data-table-wrapper is overflow-x:auto and .data-table-scroll owns
+        // vertical scroll, so anything absolutely positioned in the header
+        // gets clipped the moment it's taller than the row.
+        let openExcelPanel = null; // { key, panelEl, btnEl, onScroll }
+
+        const closeExcelPanel = () => {
+          if (!openExcelPanel) return;
+          const { panelEl, onScroll } = openExcelPanel;
+          window.removeEventListener("scroll", onScroll, true);
+          panelEl.remove();
+          openExcelPanel = null;
+        };
+
+        const excelBtnLabel = (btn, key) => {
+          const v = state.filters[key];
+          const obj = v && typeof v === "object" ? v : null;
+          const contains = String(obj?.contains || "").trim();
+          const n = obj
+            ? (Array.isArray(obj.values) ? obj.values.length : 0) + (obj.blanks ? 1 : 0)
+            : 0;
+          // A substring filter has no count to show — name it instead, so the
+          // header says what it's actually doing.
+          if (contains && !n) btn.textContent = `Contains "${contains}" ▾`;
+          else if (contains) btn.textContent = `${n} + contains ▾`;
+          else btn.textContent = n > 0 ? `${n} selected ▾` : "Filter ▾";
+          btn.classList.toggle("is-active", n > 0 || !!contains);
+        };
+
+        const resetExcelBtns = () => {
+          closeExcelPanel();
+          table.querySelectorAll(".tablepro-excelfilter-btn").forEach((b) => {
+            b.textContent = "Filter ▾";
+            b.classList.remove("is-active");
+          });
+        };
+
+        const requestColumnOptions = (key, cfg, search) => {
+          // Only the owning page knows its current query, so it — not this
+          // component — answers with the cascaded value list.
+          let answer = null;
+          document.dispatchEvent(new CustomEvent("tablepro:request-column-options", {
+            detail: {
+              tableKey: liveKey(),
+              colKey: key,
+              doctype: cfg.doctype,
+              fieldname: cfg.fieldname,
+              bucket: cfg.bucket,
+              search: search || "",
+              limit: TABLEPRO_EXCEL_FETCH_LIMIT,
+              respond: (p) => { answer = p; },
+            },
+          }));
+          return answer;
+        };
+
+        const makeExcelFilterCell = (key, cfg) => {
+          const th = document.createElement("th");
+          th.dataset.colKey = key;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "tablepro-excelfilter-btn";
+          excelBtnLabel(btn, key);
+
+          btn.addEventListener("click", async (ev) => {
+            ev.stopPropagation();
+            if (openExcelPanel?.key === key) { closeExcelPanel(); return; }
+            closeExcelPanel();
+
+            const panel = document.createElement("div");
+            panel.className = "tablepro-excelfilter-panel";
+            panel.innerHTML = `
+              <div class="tablepro-excelfilter-head">
+                <input type="text" class="tablepro-excelfilter-search" placeholder="Search values..." />
+              </div>
+              <div class="tablepro-excelfilter-actions">
+                <button type="button" class="tablepro-excelfilter-all">Select all</button>
+                <button type="button" class="tablepro-excelfilter-none">Clear</button>
+              </div>
+              <div class="tablepro-excelfilter-list"><div class="tablepro-excelfilter-note">Loading...</div></div>
+            `;
+            document.body.appendChild(panel);
+            // Fixed-position panel has to fit the viewport itself — nothing
+            // clips or repositions it. Flip above the button when there is
+            // more room there, and cap the height either way so the value
+            // list always ends on screen with its scrollbar reachable.
+            const rect = btn.getBoundingClientRect();
+            const GAP = 10;
+            const spaceBelow = window.innerHeight - rect.bottom - GAP;
+            const spaceAbove = rect.top - GAP;
+            panel.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 300))}px`;
+            if (spaceBelow < 220 && spaceAbove > spaceBelow) {
+              panel.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+              panel.style.maxHeight = `${Math.max(160, spaceAbove)}px`;
+            } else {
+              panel.style.top = `${rect.bottom + 4}px`;
+              panel.style.maxHeight = `${Math.max(160, spaceBelow)}px`;
+            }
+            // Capture phase, so scrolling any ancestor (page or table wrapper)
+            // closes the panel rather than leaving it detached from its column.
+            // That same capture also sees the panel's OWN list scrolling, which
+            // would slam it shut the instant the user tries to scroll the
+            // values — so ignore events originating inside the panel.
+            const onScroll = (ev) => {
+              if (ev.target && panel.contains(ev.target)) return;
+              closeExcelPanel();
+            };
+            window.addEventListener("scroll", onScroll, true);
+            openExcelPanel = { key, panelEl: panel, btnEl: btn, onScroll };
+
+            const listEl = panel.querySelector(".tablepro-excelfilter-list");
+            const searchEl = panel.querySelector(".tablepro-excelfilter-search");
+            const allBtn = panel.querySelector(".tablepro-excelfilter-all");
+
+            const cur = (state.filters[key] && typeof state.filters[key] === "object")
+              ? state.filters[key]
+              : {};
+            const selected = new Set(Array.isArray(cur.values) ? cur.values : []);
+            let blanksSel = !!cur.blanks;
+            let containsSel = String(cur.contains || "");
+
+            // Server-truth for the current search term. `total` is the real
+            // match count; when it exceeds what we hold, typing has to go
+            // back to the server instead of filtering what's in memory.
+            let opts = null;
+            let serverQuery = "";
+            let reqSeq = 0;
+
+            const commit = () => {
+              // Sorted so JSON.stringify is stable — an unsorted Set order
+              // would re-fire the page's refetch for an identical selection.
+              state.filters[key] = {
+                values: Array.from(selected).sort(),
+                blanks: blanksSel,
+                contains: containsSel,
+                bucket: cfg.bucket || null,
+                // Set when the values came from the DOM — see optionsFromDom.
+                local: !!opts?.local,
+              };
+              excelBtnLabel(btn, key);
+              updateClearFiltersBtn();
+              // Required for local mode — nothing else re-renders those rows.
+              // A no-op for backend-backed columns, whose predicate returns
+              // true until the refetch lands.
+              applyFilters();
+              persist();
+              // Ticking a box is a discrete action, unlike typing — go now
+              // and let the page's own debounce coalesce rapid clicks.
+              dispatchFiltersChanged(true);
+            };
+
+            // Distinct values read straight off the rendered rows. Correct
+            // ONLY for tables that already hold their whole dataset — which is
+            // exactly the case when no page answers the options request: those
+            // tables fetch once and filter in JS. Marking the filter `local`
+            // makes applyFilters() narrow rows here instead of waiting for a
+            // backend refetch that is never coming.
+            const optionsFromDom = () => {
+              const seen = new Map();
+              let blanks = false;
+              table.querySelectorAll("tbody tr").forEach((row) => {
+                const cell = Array.from(row.children).find((c) => c.dataset.colKey === key);
+                if (!cell) return;
+                const txt = String(cell.textContent || "").trim();
+                if (!txt || txt === "—") { blanks = true; return; }
+                if (!seen.has(txt)) seen.set(txt, true);
+              });
+              const vals = Array.from(seen.keys()).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+              return {
+                values: vals.map((v) => ({ value: v, label: v })),
+                has_blanks: blanks,
+                total: vals.length,
+                supported: true,
+                local: true,
+              };
+            };
+
+            const load = async (query) => {
+              const seq = ++reqSeq;
+              const pending = requestColumnOptions(key, cfg, query);
+              // Nobody answered — this table filters client-side, so read the
+              // values out of the rows it already has.
+              if (!pending) return optionsFromDom();
+              const res = await pending;
+              // Ignore a slow response overtaken by a newer keystroke.
+              if (seq !== reqSeq || openExcelPanel?.panelEl !== panel) return null;
+              return res;
+            };
+
+            const render = () => {
+              const typed = String(searchEl.value || "").trim();
+              const q = typed.toLowerCase();
+              const held = opts.values;
+              // When the server returned everything it matched, narrowing
+              // further is pure client-side work — no round trip.
+              const matches = held.filter((o) => !q || String(o.label).toLowerCase().includes(q));
+              const truncated = opts.total > held.length;
+
+              listEl.innerHTML = "";
+              // Substring escape hatch, offered as soon as anything is typed.
+              // Ticking exact values is impractical on free-text columns and
+              // impossible past the selection cap (POID is unique per row), so
+              // this stays available on every column.
+              if (typed || containsSel) {
+                const term = typed || containsSel;
+                const on = containsSel && containsSel === term;
+                const row = document.createElement("label");
+                row.className = "tablepro-excelfilter-row tablepro-excelfilter-contains";
+                row.innerHTML = `<input type="checkbox"${on ? " checked" : ""} /><span>Contains "${escAttr(term)}"</span>`;
+                row.querySelector("input").addEventListener("change", (e) => {
+                  containsSel = e.target.checked ? term : "";
+                  render();
+                  commit();
+                });
+                listEl.appendChild(row);
+              }
+              if (opts.has_blanks && (!q || "(blanks)".includes(q))) {
+                const row = document.createElement("label");
+                row.className = "tablepro-excelfilter-row";
+                row.innerHTML = `<input type="checkbox"${blanksSel ? " checked" : ""} /><em>(Blanks)</em>`;
+                row.querySelector("input").addEventListener("change", (e) => {
+                  blanksSel = e.target.checked;
+                  commit();
+                });
+                listEl.appendChild(row);
+              }
+              matches.forEach((o) => {
+                const row = document.createElement("label");
+                row.className = "tablepro-excelfilter-row";
+                row.innerHTML = `<input type="checkbox"${selected.has(o.value) ? " checked" : ""} /><span>${escAttr(o.label)}</span>`;
+                row.querySelector("input").addEventListener("change", (e) => {
+                  if (e.target.checked) {
+                    if (selected.size >= TABLEPRO_EXCEL_MAX_SELECTED) {
+                      e.target.checked = false;
+                      note(`Limit is ${TABLEPRO_EXCEL_MAX_SELECTED} values — narrow your search instead.`);
+                      return;
+                    }
+                    selected.add(o.value);
+                  } else {
+                    selected.delete(o.value);
+                  }
+                  commit();
+                });
+                listEl.appendChild(row);
+              });
+              if (opts.noValueList) {
+                note(typed
+                  ? "Press the option above to filter by this text."
+                  : "Type to filter this column by text.");
+              } else if (!matches.length) {
+                // Append, never replace — the Contains row above is the whole
+                // point when a free-text search matches no exact value.
+                note("No matching values.");
+              } else if (truncated) {
+                note(`Showing ${held.length} of ${opts.total.toLocaleString()} — type to narrow.`);
+              }
+              // Selecting thousands of values would build an IN (...) large
+              // enough to hit MySQL's token ceiling, so require narrowing.
+              allBtn.disabled = truncated || matches.length > TABLEPRO_EXCEL_MAX_SELECTED;
+              allBtn.title = allBtn.disabled ? "Too many values — narrow your search first" : "";
+            };
+
+            function note(text) {
+              const el = document.createElement("div");
+              el.className = "tablepro-excelfilter-note";
+              el.textContent = text;
+              listEl.appendChild(el);
+            }
+
+            opts = await load("");
+            if (openExcelPanel?.panelEl !== panel) return; // closed mid-flight
+            if (!opts || !Array.isArray(opts.values)) {
+              opts = { values: [], has_blanks: false, total: 0, supported: false };
+            }
+            if (opts.supported === false) {
+              // The backend has no expression for this column, so neither a
+              // value list nor a substring filter would do anything. Say so
+              // instead of offering a control that silently no-ops.
+              listEl.innerHTML = `<div class="tablepro-excelfilter-note">This column can't be filtered.</div>`;
+              searchEl.disabled = true;
+              allBtn.disabled = true;
+              return;
+            }
+            // Supported, but no distinct values to list (or too free-form to
+            // be useful as checkboxes) — the substring option still works.
+            opts.noValueList = opts.total === 0;
+            render();
+
+            let searchTimer = null;
+            searchEl.addEventListener("input", () => {
+              const typed = String(searchEl.value || "").trim();
+              // Full set in hand for the term the server last matched on?
+              // Filter locally and skip the network entirely.
+              const haveAll = opts.total <= opts.values.length
+                && (!serverQuery || typed.toLowerCase().includes(serverQuery.toLowerCase()));
+              if (haveAll) { render(); return; }
+              if (searchTimer) clearTimeout(searchTimer);
+              searchTimer = setTimeout(async () => {
+                const res = await load(typed);
+                if (!res) return;
+                opts = res;
+                serverQuery = typed;
+                render();
+              }, 250);
+            });
+
+            allBtn.addEventListener("click", () => {
+              if (allBtn.disabled) return;
+              const q = String(searchEl.value || "").trim().toLowerCase();
+              // Composes with the search box rather than ignoring it.
+              opts.values
+                .filter((o) => !q || String(o.label).toLowerCase().includes(q))
+                .forEach((o) => {
+                  if (selected.size < TABLEPRO_EXCEL_MAX_SELECTED) selected.add(o.value);
+                });
+              if (opts.has_blanks && !q) blanksSel = true;
+              render();
+              commit();
+            });
+            panel.querySelector(".tablepro-excelfilter-none").addEventListener("click", () => {
+              selected.clear();
+              blanksSel = false;
+              containsSel = "";
+              render();
+              commit();
+            });
+            searchEl.focus();
+          });
+
+          th.appendChild(btn);
+          return th;
+        };
+
         const makeFilterCell = (key) => {
+          if (excelFilterConfig[key]) return makeExcelFilterCell(key, excelFilterConfig[key]);
           const th = document.createElement("th");
           th.dataset.colKey = key;
           const input = document.createElement("input");
@@ -860,11 +1281,25 @@ export default function DataTablePro() {
             state.order.forEach((key) => filterRow.appendChild(makeFilterCell(key)));
             thead.appendChild(filterRow);
           }
-          // Ensure filter cells exist for newly added columns
-          state.order.forEach((key) => {
-            const exists = Array.from(filterRow.children).some((c) => c.dataset.colKey === key);
-            if (!exists) filterRow.appendChild(makeFilterCell(key));
+          // Rebuild the row's cell ORDER to match state.order, not just fill in
+          // gaps. React can add columns in the middle of an existing table (PO
+          // Dispatch reveals Mode / IM / Target Month before Actions when the
+          // Dispatched view is on). Appending the new cells at the end left
+          // every following filter sitting under the wrong header — which with
+          // a plain text box looked fine but silently filtered the wrong
+          // column, and with a value dropdown showed the wrong column's values.
+          const existing = new Map(
+            Array.from(filterRow.children).map((c) => [c.dataset.colKey, c])
+          );
+          state.order.forEach((key, i) => {
+            const cell = existing.get(key) || makeFilterCell(key);
+            existing.delete(key);
+            if (filterRow.children[i] !== cell) {
+              filterRow.insertBefore(cell, filterRow.children[i] || null);
+            }
           });
+          // Drop cells for columns that no longer exist.
+          existing.forEach((cell) => cell.remove());
           filterRow.style.display = state.show_filters ? "" : "none";
           Array.from(filterRow.children).forEach((cell) => {
             cell.style.display = state.hidden.has(cell.dataset.colKey) ? "none" : "";
@@ -1227,7 +1662,7 @@ export default function DataTablePro() {
           if (sortPanel.style.display === "block") renderSortPanel();
         });
         const updateClearFiltersBtn = () => {
-          const hasActive = Object.values(state.filters).some((v) => String(v || "").trim());
+          const hasActive = Object.values(state.filters).some(isExcelFilterActive);
           const btn = toolbar.querySelector(".tablepro-btn-clear-filters");
           if (btn) btn.style.display = hasActive ? "" : "none";
         };
@@ -1251,6 +1686,7 @@ export default function DataTablePro() {
         toolbar.querySelector(".tablepro-btn-clear-filters")?.addEventListener("click", () => {
           state.filters = {};
           table.querySelectorAll(".tablepro-filter-row .tablepro-filter-input").forEach((inp) => { inp.value = ""; });
+          resetExcelBtns();
           updateClearFiltersBtn();
           applyFilters();
           persist();
@@ -1269,6 +1705,7 @@ export default function DataTablePro() {
             if (h.dataset.defaultWidth) state.widths[k] = Number(h.dataset.defaultWidth);
           });
           state.filters = {};
+          resetExcelBtns();
           state.show_filters = false;
           state.sort = { key: null, dir: "desc" };
           state.dynamic_fields = [];
@@ -1281,11 +1718,33 @@ export default function DataTablePro() {
         });
 
         const onDocClick = (ev) => {
+          if (openExcelPanel
+            && !openExcelPanel.panelEl.contains(ev.target)
+            && !openExcelPanel.btnEl.contains(ev.target)) {
+            closeExcelPanel();
+          }
           if (toolbar.contains(ev.target)) return;
           if (panel.style.display !== "none") panel.style.display = "none";
           if (sortPanel.style.display !== "none") sortPanel.style.display = "none";
         };
         document.addEventListener("mousedown", onDocClick);
+        const onDocKeydown = (ev) => { if (ev.key === "Escape") closeExcelPanel(); };
+        document.addEventListener("keydown", onDocKeydown);
+        // Lets a page reset this table's filter row — needed when tabs share
+        // one data-table-key, where switching tab changes the dataset but not
+        // the table identity, so the filters would otherwise carry over.
+        const onClearFilters = (ev) => {
+          const k = ev.detail?.tableKey;
+          if (k && k !== customKey) return;
+          state.filters = {};
+          table.querySelectorAll(".tablepro-filter-row .tablepro-filter-input")
+            .forEach((inp) => { inp.value = ""; });
+          resetExcelBtns();
+          updateClearFiltersBtn();
+          applyFilters();
+          persist();
+        };
+        document.addEventListener("tablepro:clear-filters", onClearFilters);
 
         captureNaturalOrder();
         await applyAll();
@@ -1358,6 +1817,11 @@ export default function DataTablePro() {
         table.dataset.tableproCleanup = "1";
         table._tableproCleanup = () => {
           document.removeEventListener("mousedown", onDocClick);
+          document.removeEventListener("keydown", onDocKeydown);
+          document.removeEventListener("tablepro:clear-filters", onClearFilters);
+          // Panel is parented to <body>, so it outlives the table unless
+          // explicitly removed on unmount / route change.
+          closeExcelPanel();
           wrapResizeObs?.disconnect();
           tbodyMo.disconnect();
           if (tbodyReapplyTimer) clearTimeout(tbodyReapplyTimer);

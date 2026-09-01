@@ -230,8 +230,16 @@ export default function RolloutPlanning() {
   useEffect(() => {
     setColumnFilters({});
   }, [planScope, dummyFilter]);
+  // A filter value is either a legacy substring string or the Excel-style
+  // { values, blanks } object. String(obj) is "[object Object]" — always
+  // truthy — so an emptied Excel selection would never clear without this.
+  // Mirrors _column_filter_is_active() in command_center.py.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim())) || !!v.blanks
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -244,7 +252,11 @@ export default function RolloutPlanning() {
   // OTHER filter actually changing — hits the server.
   const lastFetchRef = useRef({ signature: null, limit: null, rows: [] });
 
-  useEffect(() => {
+  // Single definition of the query this page is showing, shared by the row
+  // fetch below and the Excel column-filter options request — the option
+  // list has to cascade off exactly the same filters, or it would offer
+  // values that return no rows.
+  const queryArgs = useMemo(() => {
     const portal = {};
     if (searchDebounced.trim()) portal.search = searchDebounced.trim();
     const colFilters = JSON.parse(columnFiltersDebounced);
@@ -260,6 +272,37 @@ export default function RolloutPlanning() {
     const filters = planScope === "all" || planScope === "open_dummy"
       ? {}
       : { dispatch_status: "Dispatched" };
+    return { portal, filters };
+  }, [searchDebounced, columnFiltersDebounced, projectFilter, imFilter, duidFilter,
+      fromDate, toDate, planScope, dummyFilter]);
+
+  // Read by the column-options listener so it always sees the current query
+  // without having to re-register on every keystroke.
+  const queryArgsRef = useRef(queryArgs);
+  queryArgsRef.current = queryArgs;
+
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== `admin-rollout-planning-${planScope}`) return;
+      const { portal, filters } = queryArgsRef.current;
+      e.detail.respond(pmApi.getPoDispatchColumnOptions({
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        filters,
+        portal_filters: portal,
+        // Excel keeps a column's own selection out of its own list, so you
+        // can still widen it after filtering.
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, [planScope]);
+
+  useEffect(() => {
+    const { portal, filters } = queryArgs;
 
     const signature = JSON.stringify([filters, portal, refreshKey]);
     const prev = lastFetchRef.current;
@@ -292,7 +335,7 @@ export default function RolloutPlanning() {
       }
     })();
     return () => { cancelled = true; };
-  }, [rowLimit, searchDebounced, projectFilter, imFilter, duidFilter, fromDate, toDate, planScope, dummyFilter, refreshKey, columnFiltersDebounced]);
+  }, [rowLimit, queryArgs, refreshKey]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -677,7 +720,7 @@ export default function RolloutPlanning() {
         )}
 
         <DataTableWrapper loading={loading && rows.length > 0}>
-          <table key={`admin-rollout-planning-${planScope}`} className="data-table" data-table-key={`admin-rollout-planning-${planScope}`}>
+          <table key={`admin-rollout-planning-${planScope}`} className="data-table" data-excel-filter-all="1" data-table-key={`admin-rollout-planning-${planScope}`}>
               <thead>
                 <tr>
                   <th>
@@ -699,9 +742,9 @@ export default function RolloutPlanning() {
                   <th>Center area</th>
                   <th>Region</th>
                   <th>IM</th>
-                  <th>Target Month</th>
+                  <th data-excel-filter-bucket="month">Target Month</th>
                   <th style={{ textAlign: "right" }}>Line Amount</th>
-                  <th>Open</th>
+                  <th data-excel-filter="0">Open</th>
                 </tr>
               </thead>
               <tbody>

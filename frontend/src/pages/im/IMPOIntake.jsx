@@ -214,6 +214,40 @@ export default function IMPOIntake() {
   // value on the backend (see column_filters / col_filter_map in
   // _po_dispatch_portal_sql_where), not blended into the top search box's
   // wide multi-column search.
+  // A filter value is either a legacy substring string or the Excel-style
+  // { values, blanks } object. String(obj) is "[object Object]" — always
+  // truthy — so an emptied Excel selection would never clear without this.
+  // Mirrors _column_filter_is_active() in command_center.py.
+  const isColFilterActive = useCallback((v) => (
+    v && typeof v === "object"
+      ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim())) || !!v.blanks
+      : !!String(v || "").trim()
+  ), []);
+
+  // Each tab's fetch effect records the query it actually ran, keyed by the
+  // table's data-table-key. The Excel column-filter dropdowns read it so
+  // their values cascade off exactly what that tab is showing.
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      const q = queryArgsRef.current[e.detail?.tableKey];
+      if (!q) return; // not one of this page's tables
+      e.detail.respond(pmApi.getPoDispatchColumnOptions({
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        filters: q.filters,
+        portal_filters: q.portal,
+        // Excel keeps a column's own selection out of its own list, so you
+        // can still widen it after filtering.
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+
   const [columnFilters, setColumnFilters] = useState({});
   useEffect(() => {
     const onFiltersChanged = (e) => {
@@ -224,7 +258,7 @@ export default function IMPOIntake() {
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => isColFilterActive(v))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -240,7 +274,7 @@ export default function IMPOIntake() {
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
   const activeDummyColumnFilters = Object.fromEntries(
-    Object.entries(dummyColumnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(dummyColumnFilters).filter(([, v]) => isColFilterActive(v))
   );
   const dummyColumnFiltersKey = JSON.stringify(activeDummyColumnFilters);
   const dummyColumnFiltersDebounced = useDebounced(dummyColumnFiltersKey, 300);
@@ -256,7 +290,7 @@ export default function IMPOIntake() {
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
   const activeOvColumnFilters = Object.fromEntries(
-    Object.entries(ovColumnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(ovColumnFilters).filter(([, v]) => isColFilterActive(v))
   );
   const ovColumnFiltersKey = JSON.stringify(activeOvColumnFilters);
   const ovColumnFiltersDebounced = useDebounced(ovColumnFiltersKey, 300);
@@ -402,6 +436,7 @@ export default function IMPOIntake() {
         if (modeFilter !== "all") portal.dispatch_mode = modeFilter;
         if (projectFilter.length) portal.project_code = projectFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
+        queryArgsRef.current["im-po-intake-v2"] = { portal, filters };
         const signature = JSON.stringify([filters, portal]);
 
         const prev = lastFetchRef.current;
@@ -471,6 +506,7 @@ export default function IMPOIntake() {
         if (dummyToDate) portal.to_date = dummyToDate;
         const dummyColFilters = JSON.parse(dummyColumnFiltersDebounced);
         if (Object.keys(dummyColFilters).length) portal.column_filters = dummyColFilters;
+        queryArgsRef.current["im-po-dummy-v2"] = { portal, filters: [["im", "=", imName]] };
         const signature = JSON.stringify([portal, dummyRefreshKey]);
 
         const prev = lastDummyFetchRef.current;
@@ -517,6 +553,7 @@ export default function IMPOIntake() {
         if (ovDirectCloseOnly) portal.direct_close_only = true;
         const ovColFilters = JSON.parse(ovColumnFiltersDebounced);
         if (Object.keys(ovColFilters).length) portal.column_filters = ovColFilters;
+        queryArgsRef.current["im-po-overview-v2"] = { portal, filters };
         const signature = JSON.stringify([filters, portal, ovRefreshKey]);
 
         const prev = lastOvFetchRef.current;
@@ -1355,7 +1392,7 @@ export default function IMPOIntake() {
           onRowLimitChange={tab === "dummy" || tab === "overview" ? confirmRowLimit : undefined}
         >
           {tab === "transfers" ? (
-              <table key="im-po-transfers" className="data-table" data-table-key="im-po-transfers">
+              <table key="im-po-transfers" className="data-table" data-excel-filter-all="1" data-table-key="im-po-transfers">
                 <thead>
                   <tr>
                     <th>Request</th>
@@ -1368,7 +1405,7 @@ export default function IMPOIntake() {
                     <th style={{ minWidth: 200 }}>Reason</th>
                     <th style={{ minWidth: 200 }}>PM Remark</th>
                     <th>Raised</th>
-                    <th>Actions</th>
+                    <th data-excel-filter="0">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1452,7 +1489,7 @@ export default function IMPOIntake() {
                 )}
               </table>
           ) : tab === "overview" ? (
-              <table key="im-po-overview-v2" className="data-table" data-table-key="im-po-overview-v2" data-tablepro-no-dynamic="true">
+              <table key="im-po-overview-v2" className="data-table" data-excel-filter-all="1" data-table-key="im-po-overview-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
                     <th>POID</th>
@@ -1470,7 +1507,11 @@ export default function IMPOIntake() {
                     <th>Activity Type</th>
                     <th style={{ textAlign: "right" }}>Qty</th>
                     <th style={{ textAlign: "right" }}>Line Amount (SAR)</th>
-                    <th>Target Month</th>
+                    <th data-excel-filter-bucket="month">Target Month</th>
+                    {/* Plan/Issue columns resolve through the current Rollout
+                        Plan (see _current_plan_subquery), not a PO Dispatch
+                        column — they filter across the full dataset like the
+                        rest, not just loaded rows. */}
                     <th>Plan Status</th>
                     <th>Plan Team</th>
                     <th>Plan Date</th>
@@ -1479,7 +1520,7 @@ export default function IMPOIntake() {
                     <th>PM Remark</th>
                     <th>IM Remark</th>
                     <th>TL Remark</th>
-                    <th>Actions</th>
+                    <th data-excel-filter="0">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1579,7 +1620,7 @@ export default function IMPOIntake() {
               </table>
           ) : tab === "intake" ? (
             <>
-              <table key="im-po-intake-v2" className="data-table" data-table-key="im-po-intake-v2">
+              <table key="im-po-intake-v2" className="data-table" data-excel-filter-all="1" data-table-key="im-po-intake-v2">
                 <thead>
                   <tr>
                     <th><input type="checkbox" checked={selected.size === intakeDisplayedCount && intakeDisplayedCount > 0} onChange={toggleAll} /></th>
@@ -1595,12 +1636,15 @@ export default function IMPOIntake() {
                     <th style={{ textAlign: "right" }}>Qty</th>
                     <th style={{ textAlign: "right" }}>Rate (SAR)</th>
                     <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    {/* MS1/MS2 filter by the milestone percentage the cell
+                        shows; rows with no milestone amount fall under
+                        "(Blanks)", matching the "—" they render. */}
                     <th style={{ textAlign: "center" }} title="MS1 milestone closed">MS1</th>
                     <th style={{ textAlign: "center" }} title="MS2 milestone closed">MS2</th>
                     <th>DUID</th>
                     <th>Center area</th>
-                    <th>Dispatched On</th>
-                    <th>Actions</th>
+                    <th data-excel-filter-bucket="day">Dispatched On</th>
+                    <th data-excel-filter="0">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1688,7 +1732,7 @@ export default function IMPOIntake() {
               ) : null}
             </>
           ) : (
-              <table key="im-po-dummy-v2" className="data-table" data-table-key="im-po-dummy-v2" data-tablepro-no-dynamic="true">
+              <table key="im-po-dummy-v2" className="data-table" data-excel-filter-all="1" data-table-key="im-po-dummy-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
                     <th>POID</th>
@@ -1704,14 +1748,14 @@ export default function IMPOIntake() {
                     <th>Activity Type</th>
                     <th style={{ textAlign: "right" }}>Qty</th>
                     <th style={{ textAlign: "right" }}>Line Amount (SAR)</th>
-                    <th>Target Month</th>
+                    <th data-excel-filter-bucket="month">Target Month</th>
                     <th>Dispatch Status</th>
                     <th>Plan Status</th>
                     <th>Plan Team</th>
                     <th>Plan Date</th>
                     <th>Original Dummy POID</th>
-                    <th>Created</th>
-                    <th style={{ minWidth: 220, width: 220, whiteSpace: "nowrap" }} data-default-width="220">Actions</th>
+                    <th data-excel-filter-bucket="day">Created</th>
+                    <th style={{ minWidth: 220, width: 220, whiteSpace: "nowrap" }} data-default-width="220" data-excel-filter="0">Actions</th>
                   </tr>
                 </thead>
                 <tbody>

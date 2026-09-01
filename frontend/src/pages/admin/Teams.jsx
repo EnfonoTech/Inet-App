@@ -13,6 +13,8 @@ function badgeTone(value) {
   const s = String(value || "").toLowerCase();
   if (s === "active" || s === "approved" || s === "inet") return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
   if (s === "inactive" || s === "cancelled" || s === "reject") return { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" };
+  if (s === "on vacation") return { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" };
+  if (s === "disbanded") return { bg: "#f1f5f9", fg: "#475569", dot: "#64748b" };
   if (s === "sub") return { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" };
   if (s === "field team") return { bg: "#f5f3ff", fg: "#6d28d9", dot: "#8b5cf6" };
   if (s === "backend team") return { bg: "#fff7ed", fg: "#c2410c", dot: "#f97316" };
@@ -152,8 +154,36 @@ export default function Teams() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch below).
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "admin-teams-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "admin_teams",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -172,6 +202,7 @@ export default function Teams() {
         if (dateFilter) filters.for_date = dateFilter;
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) filters.column_filters = colFilters;
+        queryArgsRef.current = filters;
         const res = await pmApi.listAdminTeams(filters);
         if (!cancelled) setRows(Array.isArray(res) ? res : []);
       } catch {
@@ -395,7 +426,7 @@ export default function Teams() {
           style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 200 }}
         />
         <SearchableSelect multi value={statusFilter} onChange={setStatusFilter}
-          options={["Active", "Inactive"]} placeholder="All Status" minWidth={130} />
+          options={["Active", "Inactive", "On Vacation", "Disbanded"]} placeholder="All Status" minWidth={130} />
         <SearchableSelect multi value={typeFilter} onChange={setTypeFilter}
           options={["INET", "SUB"]} placeholder="All Types" minWidth={110} />
         <SearchableSelect multi value={categoryFilter} onChange={setCategoryFilter}
@@ -475,10 +506,10 @@ export default function Teams() {
       {/* Table */}
       <div className="page-content">
         <DataTableWrapper>
-            <table className="data-table" data-table-key="admin-teams-v1">
+            <table className="data-table" data-excel-filter-all="1" data-table-key="admin-teams-v1">
               <thead>
                 <tr>
-                  <th style={{ minWidth: 50, width: 50, whiteSpace: "nowrap" }} data-default-width="50">S/N</th>
+                  <th style={{ minWidth: 50, width: 50, whiteSpace: "nowrap" }} data-default-width="50" data-excel-filter="0">S/N</th>
                   <th>Team ID</th>
                   <th>Name</th>
                   <th>Category</th>
@@ -618,6 +649,8 @@ export default function Teams() {
                               <select style={inputStyle} value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
                                 <option value="Active">Active</option>
                                 <option value="Inactive">Inactive</option>
+                                <option value="On Vacation">On Vacation</option>
+                                <option value="Disbanded">Disbanded</option>
                               </select>
                             </EditField>
                             <EditField label="Start Date">

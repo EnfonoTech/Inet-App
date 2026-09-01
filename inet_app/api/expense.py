@@ -1,7 +1,11 @@
 """Project Expense Claim API — team-lead-filed, IM-approved expense claims mapped to DUIDs (sites)."""
 import frappe
 from frappe.utils import flt, nowdate
-from inet_app.api.command_center import _sql_like_pattern
+from inet_app.api.command_center import (
+    _sql_like_pattern,
+    excel_filter_clause,
+    excel_options_from_query,
+)
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
 
@@ -35,6 +39,16 @@ _EXPENSE_COL_FILTER_MAP = {
     "team": "COALESCE(NULLIF(it.team_name,''), ec.inet_team, '')",
     "amount_sar": "CAST(ec.total_claimed_amount AS CHAR)",
     "status": "IFNULL(ec.approval_status,'')",
+    # Expense Type / Description are on the child rows, not the claim. The
+    # column shows them joined, so match the same concatenation.
+    "expense_type": (
+        "IFNULL((SELECT GROUP_CONCAT(DISTINCT ecd.expense_type ORDER BY ecd.expense_type "
+        "SEPARATOR ', ') FROM `tabExpense Claim Detail` ecd WHERE ecd.parent = ec.name), '')"
+    ),
+    "description": (
+        "IFNULL((SELECT GROUP_CONCAT(DISTINCT ecd.description ORDER BY ecd.description "
+        "SEPARATOR ', ') FROM `tabExpense Claim Detail` ecd WHERE ecd.parent = ec.name), '')"
+    ),
     # IMExpense.jsx's own "Payment" column shows a computed Paid/Unpaid label
     # (paymentStatus() — derived from this raw field plus approval_status);
     # matching the raw column is a reasonable approximation without
@@ -52,6 +66,16 @@ def _apply_expense_column_filters(column_filters, conditions, params, has_im_joi
     if not isinstance(column_filters, dict):
         return
     for col_key, raw_val in column_filters.items():
+        # Excel-style value filter — must be handled before
+        # _sql_like_pattern(), which cannot take a dict.
+        if isinstance(raw_val, dict):
+            expr_x = ("IFNULL(im.full_name,'')" if (col_key == "im" and has_im_join)
+                      else _EXPENSE_COL_FILTER_MAP.get(col_key))
+            clause, cparams = excel_filter_clause(expr_x, raw_val)
+            if clause:
+                conditions.append(clause)
+                params.extend(cparams)
+            continue
         pat = _sql_like_pattern(raw_val)
         if not pat:
             continue
@@ -737,7 +761,7 @@ def list_im_all_claims(column_filters=None, limit=None):
 
 
 @frappe.whitelist()
-def list_all_expense_claims(filters=None, limit=None):
+def list_all_expense_claims(filters=None, limit=None, _options=None):
     """Return all project expense claims (admin/PM view). Supports optional filters."""
     import json
 
@@ -767,6 +791,22 @@ def list_all_expense_claims(filters=None, limit=None):
     _apply_expense_column_filters(filters.get("column_filters"), conditions, params, has_im_join=True)
 
     where = " AND ".join(conditions)
+
+    if _options:
+        _ck = _options.get("col_key")
+        _e = ("IFNULL(im.full_name,'')" if _ck == "im"
+              else _EXPENSE_COL_FILTER_MAP.get(_ck))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            "`tabExpense Claim` ec "
+            "LEFT JOIN `tabEmployee` emp ON emp.name = ec.employee "
+            "LEFT JOIN `tabINET Team` it ON it.name = ec.inet_team "
+            "LEFT JOIN `tabIM Master` im ON im.user = ec.expense_approver",
+            where, params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
 
     limit_clause = _expense_limit_suffix(limit)
     if limit_clause is None:

@@ -131,8 +131,36 @@ export default function IssuesRisks() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below).
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "admin-issues-risks-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "issue_risk",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -182,6 +210,7 @@ export default function IssuesRisks() {
 
       setLoading(true);
       try {
+        queryArgsRef.current = portalArg || {};
         const res = await pmApi.listIssueRiskRows("", rowLimit, searchArg, portalArg);
         if (cancelled) return;
         const fetchedRows = Array.isArray(res) ? res : [];
@@ -397,7 +426,7 @@ export default function IssuesRisks() {
       </div>
       <div className="page-content">
         <DataTableWrapper loading={loading && rows.length > 0}>
-          <table className="data-table" data-table-key="admin-issues-risks-v1">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="admin-issues-risks-v1">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>

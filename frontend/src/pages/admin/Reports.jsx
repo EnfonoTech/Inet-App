@@ -630,7 +630,7 @@ export default function Reports() {
               positional key and every report's saved column widths/order
               collide with each other (and it scales automatically to any
               report added to REPORTS in the future — no extra wiring). */
-          <table key={activeKey} className="data-table" data-table-key={`admin-report-${activeKey}`}>
+          <table key={activeKey} className="data-table" data-excel-filter-all="1" data-table-key={`admin-report-${activeKey}`}>
             <thead>
               <tr>
                 {columns.map((col) => (

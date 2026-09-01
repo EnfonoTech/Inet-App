@@ -6,6 +6,7 @@ for inet_app (Frappe 15)
 import calendar
 import csv
 from datetime import date
+import hashlib
 import json
 import os
 import re
@@ -202,8 +203,470 @@ def _sql_in_or_eq(expr, raw):
     return f"{expr} IN ({ph})", vals
 
 
+# Manage Table column key -> physical PO Dispatch column. Shared by the
+# substring filter, the Excel-style value filter and the column-options
+# endpoint so all three agree on what a column means.
+# Excel-filter bucket -> how many leading chars of the value to group on.
+# "2026-08-28 14:23:11" -> "2026-08" (month) / "2026-08-28" (day), matching how
+# date columns are actually displayed instead of listing every timestamp.
+EXCEL_FILTER_BUCKETS = {"month": 7, "day": 10}
+
+
+PO_DISPATCH_COL_FILTER_MAP = {
+    "poid": "poid",
+    "mode": "dispatch_mode",
+    "po_no": "po_no",
+    "project": "project_code",
+    "item": "item_code",
+    "item_code": "item_code",
+    "description": "item_description",
+    "qty": "qty",
+    "rate_sar": "rate",
+    "amount_sar": "line_amount",
+    "amount": "line_amount",
+    "line_amount": "line_amount",
+    "duid": "site_code",
+    "center_area": "center_area",
+    "dispatched_on": "modified",
+    "dummy_poid": "original_dummy_poid",
+    "original_dummy_poid": "original_dummy_poid",
+    "region": "region_type",
+    "target_month": "target_month",
+    "status": "dispatch_status",
+    "dispatch_status": "dispatch_status",
+    "line_amount_sar": "line_amount",
+    "pm_remark": "general_remark",
+    "im_remark": "manager_remark",
+    "tl_remark": "team_lead_remark",
+    "closed_via": "direct_close_by",
+    "created": "creation",
+}
+
+
+def _current_plan_subquery(select_expr, join=""):
+    """Correlated subquery for a PO Dispatch's *current* Rollout Plan.
+
+    "Current" must mean exactly what get_dispatch_plan_summaries() means —
+    highest visit_number, non-cancelled, newest on a tie — or a filter would
+    disagree with the Plan Status / Team / Date the row actually shows.
+    """
+    return (
+        f"IFNULL((SELECT {select_expr} FROM `tabRollout Plan` rp {join} "
+        "WHERE rp.po_dispatch = `tabPO Dispatch`.`name` AND rp.plan_status != 'Cancelled' "
+        "ORDER BY IFNULL(rp.visit_number, 0) DESC, rp.modified DESC LIMIT 1), '')"
+    )
+
+
+def _po_dispatch_excel_expr(col_key, fields):
+    """SQL expression an Excel-style column filter matches against, or None.
+
+    Used by BOTH the value filter in _po_dispatch_portal_sql_where and
+    get_po_dispatch_column_options, so the values a dropdown offers are
+    exactly the values that filter can match — a dropdown can never list
+    something that then returns no rows.
+
+    Every branch is null-safe (IFNULL / CASE returning ''), so callers can
+    test blanks uniformly with `expr = ''`.
+
+    These deliberately MIRROR rather than reuse the substring cases further
+    down: those match a LIKE pattern (and for `im`, match the code OR the
+    full name at once), which is the right behavior for typing but the wrong
+    one for an exact-value IN list. Changing the substring path to share this
+    would alter filtering on every page that uses it.
+    """
+    if col_key == "im" and "im" in fields:
+        # Column displays im_full_name and falls back to the raw code, so the
+        # option list has to resolve the same way or the checkboxes would not
+        # match what's on screen.
+        return (
+            "IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` "
+            "WHERE name = `tabPO Dispatch`.`im`), ''), IFNULL(`im`, ''))"
+        )
+    if col_key == "description" and {"item_description", "is_dummy_po", "manager_remark"} <= set(fields):
+        # Mirrors _apply_dummy_description: dummy POs with no description
+        # display the manager's remark instead.
+        return (
+            "(CASE WHEN IFNULL(`is_dummy_po`,0) = 1 AND IFNULL(`item_description`,'') = '' "
+            "THEN IFNULL(`manager_remark`,'') ELSE IFNULL(`item_description`,'') END)"
+        )
+    if col_key == "activity_type" and "item_code" in fields:
+        # Outer table qualified because tabItem has its own item_code column.
+        return (
+            "IFNULL((SELECT activity_type FROM `tabItem` "
+            "WHERE name = `tabPO Dispatch`.`item_code`), '')"
+        )
+    if col_key == "domain" and "project_code" in fields:
+        return (
+            "IFNULL((SELECT project_domain FROM `tabProject Control Center` "
+            "WHERE name = `tabPO Dispatch`.`project_code`), '')"
+        )
+    if col_key == "huawei_im" and "project_code" in fields:
+        return (
+            "IFNULL((SELECT huawei_im FROM `tabProject Control Center` "
+            "WHERE name = `tabPO Dispatch`.`project_code`), '')"
+        )
+    # MS1/MS2 display "✓ 1,190.00 · 50% · 2026-05-04" — a near-unique string
+    # per row, useless as a checkbox list. The percentage is the part worth
+    # filtering on, so match the pct the cell computes (amount / line_amount)
+    # rather than the stored ms*_pct, which disagrees on a few rows. Empty
+    # when there is no milestone amount, which is exactly when the cell
+    # shows "—", so those land under "(Blanks)".
+    if col_key in ("ms1", "ms2") and f"{col_key}_amount" in fields and "line_amount" in fields:
+        amt = f"`{col_key}_amount`"
+        return (
+            f"(CASE WHEN IFNULL({amt}, 0) <= 0 THEN '' "
+            f"WHEN IFNULL(`line_amount`, 0) > 0 "
+            f"THEN CAST(ROUND({amt} / `line_amount` * 100) AS CHAR) ELSE '0' END)"
+        )
+    # Plan / issue columns live on the current Rollout Plan (and, for the
+    # issue flag, the Work Done behind it). The page fetches them through a
+    # separate get_dispatch_plan_summaries call, so they have no column on
+    # PO Dispatch — these subqueries are what makes them filterable at all.
+    if col_key == "plan_status":
+        return _current_plan_subquery("rp.plan_status")
+    if col_key == "plan_team":
+        # Column shows the team's display name, falling back to its id.
+        return _current_plan_subquery(
+            "IFNULL(NULLIF(it.team_name, ''), rp.team)",
+            "LEFT JOIN `tabINET Team` it ON it.name = rp.team",
+        )
+    if col_key == "plan_date":
+        return _current_plan_subquery("CAST(rp.plan_date AS CHAR)")
+    if col_key == "issue_category":
+        return _current_plan_subquery("rp.issue_category")
+    if col_key == "issue_flag":
+        # Mirrors the nested lookup in get_dispatch_plan_summaries: the first
+        # non-empty issue_flag on Work Done under that plan's executions.
+        return _current_plan_subquery(
+            "(SELECT wd.issue_flag FROM `tabWork Done` wd "
+            "INNER JOIN `tabDaily Execution` de ON de.name = wd.execution "
+            "WHERE de.rollout_plan = rp.name AND IFNULL(wd.issue_flag, '') != '' LIMIT 1)"
+        )
+    if col_key == "billing_status" and "pic_status" in fields:
+        return (
+            "(CASE WHEN `pic_status` IN ('Commercial Invoice Closed', 'PO Line Canceled') THEN 'Closed' "
+            "WHEN `pic_status` IN ('Commercial Invoice Submitted', 'Ready for Invoice', 'Under I-BUY', 'Under ISDP') THEN 'Invoiced' "
+            "WHEN IFNULL(`pic_status`, '') != '' THEN 'Pending' ELSE '' END)"
+        )
+    col = PO_DISPATCH_COL_FILTER_MAP.get(col_key)
+    if not col or col not in fields:
+        return None
+    if col in ("qty", "rate", "line_amount", "modified", "creation"):
+        return f"CAST(`{col}` AS CHAR)"
+    return f"IFNULL(`{col}`, '')"
+
+
+def _column_filter_is_active(v):
+    """True if a Manage Table per-column filter value actually narrows anything.
+
+    A value is either a legacy substring string, or the Excel-style dict
+    {values: [...], blanks: bool, contains: str, bucket: "month"|None}. A dict
+    is NOT active just by existing — an emptied selection must read as "no
+    filter", or every later query stays pinned to the raw-SQL path with a dead
+    clause attached.
+    Mirrored on the frontend by isExcelFilterActive() in DataTablePro.jsx.
+    """
+    if isinstance(v, dict):
+        vals = v.get("values")
+        has_vals = isinstance(vals, list) and any(str(x or "").strip() for x in vals)
+        return bool(has_vals or v.get("blanks") or str(v.get("contains") or "").strip())
+    return bool(str(v or "").strip())
+
+
+# Hard ceiling on values in one IN (...). Each is a bind placeholder and
+# Frappe raises SQLParseError past ~10k tokens. Mirrors
+# TABLEPRO_EXCEL_MAX_SELECTED in DataTablePro.jsx.
+EXCEL_FILTER_MAX_VALUES = 1000
+
+# Column-option lists are pure reads of a query the page is already showing, so
+# a short TTL is enough to make reopening a dropdown instant. The slow case is
+# the FIRST open on an unfiltered large table (~800ms with the plan subqueries
+# at 3-year data volume); every reopen after that is served from Redis.
+EXCEL_OPTIONS_CACHE_TTL = 60
+
+
+# Kept beside list_po_intake_lines' own query so the two cannot drift — the
+# option list must scan exactly the joins the row list scans.
+INTAKE_LINE_FROM_SQL = (
+    "`tabPO Intake Line` pil "
+    "INNER JOIN `tabPO Intake` pi ON pi.name = pil.parent "
+    "LEFT JOIN `tabPO Dispatch` pd ON pd.po_intake = pil.parent AND pd.po_line_no = pil.po_line_no "
+    "LEFT JOIN `tabProject Control Center` pcc_pil ON pcc_pil.name = pil.project_code"
+)
+
+
+# Mirrors col_filter_map in project_management.list_projects — kept here so
+# the options source can resolve a column without importing that module.
+PROJECT_COL_FIELD_MAP = {
+    "region": "region_type",
+    "code": "project_code",
+    "project_code": "project_code",
+    "project_name": "project_name",
+    "customer": "customer",
+    "domain": "project_domain",
+    "huawei_im": "huawei_im",
+    "status": "project_status",
+    "im": "implementation_manager",
+    "area": "center_area",
+    "budget": "budget_amount",
+    "actual_cost": "actual_cost",
+    "completion": "completion_percentage",
+    "progress": "completion_percentage",
+}
+
+
+def excel_orm_filter(field, raw_val):
+    """One Excel-style dict filter as a Frappe ORM filter entry, or None.
+
+    For sources that build get_all() filter lists instead of raw SQL. Entries
+    in such a list are ANDed, so the three parts cannot be OR'd the way
+    excel_filter_clause() does. Precedence: an explicit value selection wins,
+    and a substring is applied only when nothing is ticked — combining both on
+    one column is not expressible here.
+    """
+    if not field or not _column_filter_is_active(raw_val):
+        return None
+    vals = [str(x) for x in (raw_val.get("values") or []) if str(x or "").strip()]
+    vals = vals[:EXCEL_FILTER_MAX_VALUES]
+    if raw_val.get("blanks"):
+        # Both, because a "blank" cell is NULL in some rows and '' in others.
+        vals = vals + ["", None]
+    if vals:
+        return [field, "in", vals]
+    cpat = _sql_like_pattern(raw_val.get("contains"))
+    if cpat:
+        return [field, "like", cpat]
+    return None
+
+
+def excel_options_from_orm(doctype, filters, field, search=None, limit=500):
+    """Option list for an ORM-filtered source.
+
+    Reuses the caller's own get_all() filters — the same guarantee the SQL
+    path gets from sharing a WHERE clause: the dropdown cannot offer a value
+    the row query would return nothing for.
+    """
+    limit = max(1, min(cint(limit) or 500, 2000))
+    # Frappe accepts dict OR list filters but they cannot be concatenated —
+    # list(dict) yields bare keys. Normalise to the list form.
+    if isinstance(filters, dict):
+        base = []
+        for k, v in filters.items():
+            if isinstance(v, (list, tuple)) and len(v) == 2:
+                base.append([k, v[0], v[1]])
+            else:
+                base.append([k, "=", v])
+    else:
+        base = list(filters or [])
+    conds = base + [[field, "not in", ["", None]]]
+    pat = _sql_like_pattern(search)
+    if pat:
+        conds = conds + [[field, "like", pat]]
+    rows = frappe.get_all(
+        doctype, filters=conds, pluck=field, distinct=True,
+        order_by=field, limit_page_length=limit,
+    ) or []
+    values = [{"value": str(v), "label": str(v)} for v in rows if v not in (None, "")]
+    has_blanks = bool(frappe.get_all(
+        doctype, filters=base + [[field, "in", ["", None]]], limit_page_length=1,
+    ))
+    if values and all(_is_numeric_str(v["value"]) for v in values):
+        values.sort(key=lambda o: float(o["value"]))
+        for v in values:
+            v["label"] = _trim_number(v["value"])
+    return {"values": values, "has_blanks": has_blanks, "total": len(values), "supported": True}
+
+
+def _is_numeric_str(v):
+    try:
+        float(v)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _trim_number(v):
+    """"1075.000000000" -> "1075";  "118.080000000" -> "118.08"."""
+    s = str(v)
+    if "." not in s:
+        return s
+    s = s.rstrip("0").rstrip(".")
+    return s or "0"
+
+
+def excel_options_from_query(from_sql, where_sql, params, expr, bucket=None,
+                             search=None, limit=500, label_kind=None):
+    """Build one Excel-filter option list for ANY source.
+
+    Source-agnostic half of the column-options feature: the caller supplies its
+    own FROM (with whatever joins it needs), the WHERE it would use for the row
+    list, and the column's null-safe expression. Everything else — bucketing,
+    server-side search, the true total, the blanks probe, label formatting and
+    numeric ordering — is identical everywhere and lives here.
+
+    Passing the row list's OWN where/params is what guarantees a dropdown can
+    never offer a value that then returns no rows.
+
+    ``label_kind``: "month" | "day" | "money" | "qty" | "percent" | None.
+    -> {"values": [{"value","label"}], "has_blanks": bool, "total": int}
+    """
+    bucket_len = EXCEL_FILTER_BUCKETS.get((bucket or "").strip().lower())
+    if bucket_len:
+        # LEFT(...) not DATE_FORMAT — see excel_filter_clause() for why.
+        expr = f"LEFT({expr}, {bucket_len})"
+
+    limit = max(1, min(cint(limit) or 500, 2000))
+    search_sql = ""
+    search_params = []
+    pat = _sql_like_pattern(search)
+    if pat:
+        search_sql = f" AND {expr} LIKE %s"
+        search_params = [pat]
+    qp = tuple(params) + tuple(search_params)
+
+    # The true match count tells the caller whether it holds the full set (and
+    # can narrow client-side) or has to come back as the user types.
+    total = cint(
+        frappe.db.sql(
+            f"SELECT COUNT(DISTINCT {expr}) FROM {from_sql} "
+            f"WHERE {where_sql} AND {expr} != ''{search_sql}",
+            qp,
+        )[0][0]
+    )
+    rows = frappe.db.sql(
+        f"SELECT DISTINCT {expr} AS val FROM {from_sql} "
+        f"WHERE {where_sql} AND {expr} != ''{search_sql} "
+        f"ORDER BY val LIMIT {limit}",
+        qp,
+        as_dict=True,
+    )
+    # Blanks ignore the search text — the caller decides whether to show the
+    # "(Blanks)" row for what was typed.
+    has_blanks = bool(
+        frappe.db.sql(
+            f"SELECT 1 FROM {from_sql} WHERE {where_sql} AND {expr} = '' LIMIT 1",
+            tuple(params),
+        )
+    )
+
+    def _label(val):
+        # Labels must read like the column does, or the checkboxes won't look
+        # like what's on screen: CAST on a decimal(21,9) yields
+        # "992.000000000", which is not what an Amount column shows.
+        if label_kind == "percent":
+            return f"{val}%"
+        if label_kind == "money":
+            try:
+                return f"{float(val):,.2f}"
+            except Exception:
+                return val
+        if label_kind == "qty":
+            try:
+                return f"{float(val):,.10g}"
+            except Exception:
+                return val
+        if label_kind == "month":
+            try:
+                y, m = val.split("-")
+                return f"{calendar.month_abbr[int(m)]} {y}"
+            except Exception:
+                return val
+        return val  # "day" is already YYYY-MM-DD, as displayed
+
+    values = []
+    for r in rows:
+        val = r.get("val")
+        if val in (None, ""):
+            continue
+        val = str(val)
+        values.append({"value": val, "label": _label(val)})
+
+    # SQL ORDER BY is lexical, which reads wrong for numbers ("100" before
+    # "70", "1075" before "111.6"). Sort numerically whenever the column is
+    # numeric — either because the caller said so, or because every value
+    # parses as a number. The auto-detect matters for sources that don't
+    # classify their columns: a CAST on a decimal(21,9) yields
+    # "1075.000000000", which is neither readable nor correctly ordered.
+    auto_numeric = (
+        label_kind is None
+        and values
+        and all(_is_numeric_str(v["value"]) for v in values)
+    )
+    if label_kind in ("percent", "money", "qty") or auto_numeric:
+        def _num(o):
+            try:
+                return float(o["value"])
+            except Exception:
+                return float("inf")
+        values.sort(key=_num)
+    if auto_numeric:
+        # Trim the storage padding so the list reads like the column:
+        # "1075.000000000" -> "1075", "118.080000000" -> "118.08".
+        for v in values:
+            v["label"] = _trim_number(v["value"])
+
+    return {"values": values, "has_blanks": has_blanks, "total": total, "supported": True}
+
+
+def _excel_options_cache_key(*parts):
+    """Cache key for one column-option lookup.
+
+    The caller MUST include the session user: option lists are derived from
+    whatever filters the page passes, and some pages scope by IM, so a shared
+    key could hand one user another's value list.
+    """
+    raw = json.dumps(parts, sort_keys=True, default=str)
+    return "inet:excel_opts:" + hashlib.md5(raw.encode()).hexdigest()
+
+
+def excel_filter_clause(expr, raw_val):
+    """WHERE clause + params for ONE Excel-style (dict) column filter.
+
+    ``expr`` is the column's null-safe SQL expression (IFNULL/CASE wrapped), so
+    "blank" is uniformly ``= ''``. Returns ``(None, [])`` when the filter is
+    inactive or the column has no expression.
+
+    Every per-column filter loop in this file must route dict values through
+    here — both so the three filter kinds (exact values / blanks / contains)
+    behave identically everywhere, and because the substring path's
+    _sql_like_pattern() does ``(term or "").strip()`` and raises
+    AttributeError on a dict.
+    """
+    if not expr or not _column_filter_is_active(raw_val):
+        return None, []
+    blen = EXCEL_FILTER_BUCKETS.get(raw_val.get("bucket"))
+    if blen:
+        # LEFT(...) not DATE_FORMAT: frappe only collapses the '%%' escape when
+        # bind params are present, so a mask degrades to the literal '%Y-%m'
+        # on a param-less query.
+        expr = f"LEFT({expr}, {blen})"
+
+    conds = []
+    params = []
+    vals = [str(x) for x in (raw_val.get("values") or []) if str(x or "").strip()]
+    vals = vals[:EXCEL_FILTER_MAX_VALUES]
+    if vals:
+        conds.append(f"{expr} IN ({', '.join(['%s'] * len(vals))})")
+        params.extend(vals)
+    if raw_val.get("blanks"):
+        conds.append(f"{expr} = ''")
+    cpat = _sql_like_pattern(raw_val.get("contains"))
+    if cpat:
+        conds.append(f"{expr} LIKE %s")
+        params.append(cpat)
+    if not conds:
+        return None, []
+    return "(" + " OR ".join(conds) + ")", params
+
+
 def _sql_like_pattern(term):
     """Build a LIKE pattern with % wildcards; escape % and _ in user input."""
+    # Fail-safe: an Excel-style column filter is a dict, and there are many
+    # per-column filter loops in this file. One that has not been taught to
+    # route dicts through excel_filter_clause() must degrade to "no filter"
+    # rather than raising AttributeError on .strip() and 500-ing the page.
+    if isinstance(term, (dict, list, tuple, set)):
+        return None
     t = (term or "").strip()
     if not t:
         return None
@@ -628,6 +1091,27 @@ def _sanitize_table_pref_config(config):
         for k, v in filters.items():
             key = str(k).strip()
             if not key:
+                continue
+            # Excel-style column filter: keep the dict shape intact. str(v) here
+            # would persist a Python dict repr and silently corrupt the saved
+            # selection on the next page load.
+            if isinstance(v, dict):
+                raw_vals = v.get("values")
+                vals = (
+                    # Cap mirrors EXCEL_MAX_SELECTED in DataTablePro.jsx and
+                    # keeps the generated IN (...) far below MySQL's 10k
+                    # token ceiling.
+                    [str(x)[:200] for x in raw_vals if str(x or "").strip()][:1000]
+                    if isinstance(raw_vals, list)
+                    else []
+                )
+                blanks = 1 if v.get("blanks") else 0
+                bucket = v.get("bucket") if v.get("bucket") in EXCEL_FILTER_BUCKETS else None
+                contains = str(v.get("contains") or "").strip()[:200]
+                if vals or blanks or contains:
+                    clean_filters[key] = {
+                        "values": vals, "blanks": blanks, "bucket": bucket, "contains": contains,
+                    }
                 continue
             clean_filters[key] = str(v or "")[:200]
         out["filters"] = clean_filters
@@ -1127,7 +1611,7 @@ def backfill_po_dispatch_id_to_poid(limit=500):
 
 
 @frappe.whitelist()
-def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000, search=None, column_filters=None):
+def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000, search=None, column_filters=None, _options=None):
     """
     Export PO Intake lines whose parent PO was created in the date range (upload date).
     Returns uploaded PO lines in source column order for audit/export.
@@ -1283,6 +1767,14 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — must be handled before
+            # _sql_like_pattern(), which raises on a dict.
+            if isinstance(raw_val, dict):
+                clause, cparams = excel_filter_clause(col_filter_map_dump.get(col_key), raw_val)
+                if clause:
+                    where_clauses.append(clause)
+                    params.extend(cparams)
+                continue
             pat_d = _sql_like_pattern(raw_val)
             if not pat_d:
                 continue
@@ -1293,6 +1785,17 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
             params.append(pat_d)
 
     fields_sql = ", ".join(f"pil.`{f}`" for f in fields)
+    if _options:
+        _e = col_filter_map_dump.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            "`tabPO Intake Line` pil JOIN `tabPO Intake` pi ON pi.name = pil.parent",
+            " AND ".join(where_clauses), params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
+
     lines = frappe.db.sql(
         f"""
         SELECT {fields_sql},
@@ -2054,7 +2557,7 @@ def _get_dispatch_for_intake_line(parent_name, po_line_no):
 
 
 @frappe.whitelist()
-def list_po_intake_lines(status="New", limit=None, portal_filters=None):
+def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options=None):
     """
     Return PO Intake child lines that match given po_line_status (or all when status='all').
     Each row is enriched with parent PO Intake fields and, for dispatched lines, dispatch info.
@@ -2100,7 +2603,10 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
     ]
 
     lines = []
-    if _portal_active():
+    # `or _options`: the column-option list is built from the wheres/params
+    # assembled in this branch, so it must be taken even when no portal filter
+    # is active (otherwise the non-SQL path returns rows instead of options).
+    if _portal_active() or _options:
         wheres = ["1=1"]
         params = []
         if filters.get("po_line_status"):
@@ -2162,6 +2668,13 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
             "mode": "COALESCE(NULLIF(pil.dispatch_mode,''), pd.dispatch_mode, '')",
             "target_month": "CAST(pd.target_month AS CHAR)",
             "status": "IFNULL(pil.po_line_status,'')",
+            # Parent PO Intake status, shown as the "PO Status" column.
+            "po_status": "IFNULL(pi.status,'')",
+            # Column shows dispatched_im_full_name (see
+            # _batch_im_master_full_names below) with the code as fallback —
+            # resolve the same way so the dropdown matches the cells.
+            "im": ("IFNULL(NULLIF((SELECT imm_i.full_name FROM `tabIM Master` imm_i "
+                   "WHERE imm_i.name = pd.im), ''), IFNULL(pd.im,''))"),
         }
         if frappe.db.has_column("PO Intake Line", "center_area"):
             col_filter_map_intake["center_area"] = "IFNULL(pil.center_area,'')"
@@ -2183,6 +2696,17 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
                 column_filters_intake = None
         if isinstance(column_filters_intake, dict):
             for col_key, raw_val in column_filters_intake.items():
+                # Excel-style value filter — must be handled before
+                # _sql_like_pattern(), which raises on a dict.
+                if isinstance(raw_val, dict):
+                    # col_filter_map_intake["im"] already resolves the full
+                    # name the column displays — don't override it with the code.
+                    expr_x = col_filter_map_intake.get(col_key)
+                    clause, cparams = excel_filter_clause(expr_x, raw_val)
+                    if clause:
+                        wheres.append(clause)
+                        params.extend(cparams)
+                    continue
                 pat_i = _sql_like_pattern(raw_val)
                 if not pat_i:
                     continue
@@ -2213,6 +2737,20 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None):
         if clause:
             wheres.append(clause)
             params.extend(cparams)
+        # Excel column-filter option list. Answered here rather than from a
+        # separate endpoint so it reuses THIS function's fully-built wheres/
+        # params — the option list can then never offer a value that the row
+        # query would return nothing for.
+        if _options:
+            _ocol = _options.get("col_key")
+            _expr = col_filter_map_intake.get(_ocol)
+            if not _expr:
+                return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+            return excel_options_from_query(
+                INTAKE_LINE_FROM_SQL, " AND ".join(wheres), params, _expr,
+                bucket=_options.get("bucket"), search=_options.get("search"),
+                limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+            )
         id_sql = (
             "SELECT pil.name AS line_id "
             "FROM `tabPO Intake Line` pil "
@@ -2961,7 +3499,7 @@ def _po_dispatch_portal_pf_active(pf):
             cf = frappe.parse_json(cf)
         except Exception:
             cf = None
-    if isinstance(cf, dict) and any(str(v or "").strip() for v in cf.values()):
+    if isinstance(cf, dict) and any(_column_filter_is_active(v) for v in cf.values()):
         return True
     for k in (
         "project_code",
@@ -3112,35 +3650,7 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
     # Per-column "Manage Table" filters — see list_im_rollout_plans for the
     # rationale (each column matched independently and ANDed, not blended
     # into the wide `search` clause below).
-    col_filter_map = {
-        "poid": "poid",
-        "mode": "dispatch_mode",
-        "po_no": "po_no",
-        "project": "project_code",
-        "item": "item_code",
-        "item_code": "item_code",
-        "description": "item_description",
-        "qty": "qty",
-        "rate_sar": "rate",
-        "amount_sar": "line_amount",
-        "amount": "line_amount",
-        "line_amount": "line_amount",
-        "duid": "site_code",
-        "center_area": "center_area",
-        "dispatched_on": "modified",
-        "dummy_poid": "original_dummy_poid",
-        "original_dummy_poid": "original_dummy_poid",
-        "region": "region_type",
-        "target_month": "target_month",
-        "status": "dispatch_status",
-        "dispatch_status": "dispatch_status",
-        "line_amount_sar": "line_amount",
-        "pm_remark": "general_remark",
-        "im_remark": "manager_remark",
-        "tl_remark": "team_lead_remark",
-        "closed_via": "direct_close_by",
-        "created": "creation",
-    }
+    col_filter_map = PO_DISPATCH_COL_FILTER_MAP
     # "domain"/"huawei_im"/"activity_type" are Python post-query enrichments
     # (see _enrich_with_project_fields / the activity_type special case
     # below) - matched here via correlated subquery so Manage Table filters
@@ -3160,6 +3670,25 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style filter: an explicit set of values and/or blanks,
+            # rather than a substring. Must be handled BEFORE
+            # _sql_like_pattern() below, which does (term or "").strip() and
+            # therefore raises AttributeError on a dict.
+            #
+            # NOTE for anyone extending this to another page: the three other
+            # col_filter_map loops in this file (export_po_dump,
+            # list_po_intake_lines, list_execution_monitor_rows) have no such
+            # guard and will 500 on a dict value. Check which backend function
+            # consumes a page's column_filters before opting one of its
+            # columns into the Excel filter.
+            if isinstance(raw_val, dict):
+                clause, cparams = excel_filter_clause(
+                    _po_dispatch_excel_expr(col_key, fields), raw_val
+                )
+                if clause:
+                    wheres.append(clause)
+                    params.extend(cparams)
+                continue
             pat = _sql_like_pattern(raw_val)
             if not pat:
                 continue
@@ -3284,6 +3813,229 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             wheres.append(clause)
 
     return wheres, params
+
+
+def _strip_excluded_column(pf, exclude_column):
+    """Drop a column's own selection from the filters used for its option list.
+
+    Excel keeps the column you are editing out of its own cascade, so you can
+    still widen a selection after applying it.
+    """
+    if not exclude_column:
+        return pf
+    cf = pf.get("column_filters")
+    if isinstance(cf, str):
+        try:
+            cf = frappe.parse_json(cf)
+        except Exception:
+            cf = None
+    if isinstance(cf, dict) and exclude_column in cf:
+        pf = dict(pf)
+        pf["column_filters"] = {k: v for k, v in cf.items() if k != exclude_column}
+    return pf
+
+
+@frappe.whitelist()
+def get_column_filter_options(source, col_key, bucket=None, filters=None, portal_filters=None,
+                              exclude_column=None, search=None, limit=500, extra=None):
+    """Excel-filter option list for any registered source.
+
+    One endpoint for every page: ``source`` picks which table/query the values
+    come from, and each source reuses the SAME where-clause its row list uses,
+    so a dropdown can never offer a value that returns no rows.
+
+    Sources are registered in EXCEL_OPTION_SOURCES. To add one, give it a
+    builder that returns excel_options_from_query(...) using that query's own
+    FROM/WHERE — see _excel_options_po_intake_line for the pattern where the
+    WHERE only exists inside the list function.
+    """
+    # supported=False means the backend has no expression for this column, so
+    # neither a value list NOR a substring filter can work — the UI must say
+    # that rather than offering a filter that silently does nothing.
+    empty = {"values": [], "has_blanks": False, "total": 0, "supported": False}
+    builder = EXCEL_OPTION_SOURCES.get(source)
+    if not builder or not isinstance(col_key, str) or not col_key:
+        return empty
+
+    cache_key = _excel_options_cache_key(
+        frappe.session.user, source, col_key, bucket,
+        filters, portal_filters, exclude_column, search, limit, extra,
+    )
+    # expires=True is required, not cosmetic: without it get_value() memoises
+    # the miss as None into frappe.local.cache, while set_value(expires_in_sec)
+    # deliberately skips that same local cache — so every later lookup in the
+    # process keeps returning the stale None and the cache never hits.
+    cached = frappe.cache().get_value(cache_key, expires=True)
+    if cached is not None:
+        return cached
+
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters) if filters else {}
+    filters = filters or {}
+    pf = _strip_excluded_column(_portal_filters_dict(portal_filters), exclude_column)
+    if isinstance(extra, str):
+        try:
+            extra = frappe.parse_json(extra) if extra else {}
+        except Exception:
+            extra = {}
+    extra = extra if isinstance(extra, dict) else {}
+
+    result = builder(col_key, filters, pf, bucket, search, limit, extra) or empty
+    frappe.cache().set_value(cache_key, result, expires_in_sec=EXCEL_OPTIONS_CACHE_TTL)
+    return result
+
+
+def _excel_options_po_dispatch(col_key, filters, pf, bucket, search, limit, extra):
+    fields = list(frappe.db.get_table_columns("PO Dispatch"))
+    # col_key only ever selects among hardcoded expressions — no user input
+    # reaches the SQL string.
+    expr = _po_dispatch_excel_expr(col_key, fields)
+    if not expr:
+        return None
+    base_col = PO_DISPATCH_COL_FILTER_MAP.get(col_key)
+    if col_key in ("ms1", "ms2"):
+        label_kind = "percent"
+    elif base_col in ("line_amount", "rate"):
+        label_kind = "money"
+    elif base_col == "qty":
+        label_kind = "qty"
+    else:
+        label_kind = (bucket or "").strip().lower() or None
+    wheres, params = _po_dispatch_portal_sql_where(filters, pf, fields)
+    return excel_options_from_query(
+        "`tabPO Dispatch`", " AND ".join(wheres), params, expr,
+        bucket=bucket, search=search, limit=limit, label_kind=label_kind,
+    )
+
+
+def _excel_options_po_intake_line(col_key, filters, pf, bucket, search, limit, extra):
+    # The intake WHERE is built inside list_po_intake_lines and depends on its
+    # `status` argument, so ask that function for the options rather than
+    # duplicating (and risking drift from) its clause building.
+    return list_po_intake_lines(
+        status=extra.get("status") or "New",
+        limit=1,
+        portal_filters=pf,
+        _options={
+            "col_key": col_key, "bucket": bucket, "search": search, "limit": limit,
+            "label_kind": (bucket or "").strip().lower() or None,
+        },
+    )
+
+
+def _excel_options_via(fn, col_key, bucket, opt_search, opt_limit, **call_kwargs):
+    """Ask a list function for its own column options.
+
+    Every source below follows the same shape: the WHERE only exists inside
+    the list function, so that function answers from its own fully-built
+    wheres/params rather than anyone re-deriving them (which would let the
+    option list drift from the rows).
+    """
+    return fn(
+        _options={
+            "col_key": col_key, "bucket": bucket, "search": opt_search, "limit": opt_limit,
+            "label_kind": (bucket or "").strip().lower() or None,
+        },
+        **call_kwargs,
+    )
+
+
+EXCEL_OPTION_SOURCES = {
+    "po_dispatch": _excel_options_po_dispatch,
+    "po_intake_line": _excel_options_po_intake_line,
+    "execution_monitor": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_execution_monitor_rows, ck, b, s, l, filters=pf, limit=1),
+    "work_done": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_work_done_rows, ck, b, s, l, filters=pf, limit=1),
+    "issue_risk": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_issue_risk_rows, ck, b, s, l, portal_filters=pf, limit=1, im=x.get("im")),
+    "execution_time_logs": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_execution_time_logs, ck, b, s, l, filters=pf, limit=1),
+    # These three take their filters as plain kwargs rather than a portal dict,
+    # so unpack whatever the page recorded.
+    "backend_dispatches": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_backend_dispatches, ck, b, s, l, limit=1,
+        column_filters=pf.get("column_filters"), im=pf.get("im"),
+        status=pf.get("status") or "all", project_code=pf.get("project_code"),
+        site_code=pf.get("site_code"), backend_team=pf.get("backend_team")),
+    "admin_teams": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_admin_teams, ck, b, s, l, limit=1,
+        column_filters=pf.get("column_filters"), status=pf.get("status"),
+        team_type=pf.get("team_type"), team_category=pf.get("team_category"),
+        im=pf.get("im"), for_date=pf.get("for_date")),
+    # Sources living in the other api modules. Imported lazily inside the
+    # lambda: those modules import from this one, so a module-level import
+    # here would be circular.
+    "expense_claims": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.expense", fromlist=["x"]).list_all_expense_claims,
+        ck, b, s, l, filters=pf, limit=1),
+    "pic_rows": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.pic", fromlist=["x"]).list_pic_rows,
+        ck, b, s, l, portal_filters=pf, limit=1, stage=x.get("stage")),
+    "subcon_po": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.subcon_po", fromlist=["x"]).list_subcon_po_rows,
+        ck, b, s, l, portal_filters=pf, limit=1, stage=x.get("stage")),
+    # ORM-filtered sources: options come straight from get_all on the same
+    # doctype, so no list-function round trip is needed.
+    "projects": lambda ck, f, pf, b, s, l, x: (
+        (lambda fld: excel_options_from_orm("Project Control Center", [], fld, s, l)
+         if fld else {"values": [], "has_blanks": False, "total": 0, "supported": False})
+        (PROJECT_COL_FIELD_MAP.get(ck))
+    ),
+    "material_requests": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).list_material_requests,
+        ck, b, s, l, limit=1, im=x.get("im"), status=x.get("status")),
+    "po_dump": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        export_po_dump, ck, b, s, l, limit=1,
+        column_filters=pf.get("column_filters"), from_date=x.get("from_date"),
+        to_date=x.get("to_date"), statuses=x.get("statuses"), search=None),
+    "im_daily_executions": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_im_daily_executions, ck, b, s, l, limit=1,
+        portal_filters=pf, im=x.get("im"), execution_status=x.get("execution_status")),
+    "im_rollout_plans": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_im_rollout_plans, ck, b, s, l, limit=1,
+        portal_filters=pf, im=x.get("im"), plan_status=x.get("plan_status")),
+    "return_requests": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).list_return_requests,
+        ck, b, s, l, limit=1, team_id=x.get("team_id"), im=x.get("im")),
+    "invoice_detail": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.pic", fromlist=["x"]).list_invoice_detail_rows,
+        ck, b, s, l, limit=1, portal_filters=pf),
+    # Assembled aggregates — no SQL WHERE, so these filter their built rows.
+    "duid_stock": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).get_duid_stock_summary,
+        ck, b, s, l),
+    "stock_balance": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).get_duid_stock_balance,
+        ck, b, s, l),
+    "bill_wise": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        __import__("inet_app.api.material_management", fromlist=["x"]).get_bill_wise_material,
+        ck, b, s, l),
+    "legacy_resubmit": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_legacy_milestones_needing_resubmission, ck, b, s, l, filters=pf, limit=1),
+    "im_teams": lambda ck, f, pf, b, s, l, x: _excel_options_via(
+        list_im_teams, ck, b, s, l, limit=1,
+        column_filters=pf.get("column_filters"), status=pf.get("status"),
+        team_type=pf.get("team_type"), team_category=pf.get("team_category"),
+        im=pf.get("im"), for_date=pf.get("for_date")),
+}
+
+
+@frappe.whitelist()
+def get_po_dispatch_column_options(
+    col_key, bucket=None, filters=None, portal_filters=None, exclude_column=None,
+    search=None, limit=500,
+):
+    """PO Dispatch column options. Thin alias over get_column_filter_options.
+
+    Kept because pages already call this name; new pages should call
+    get_column_filter_options with an explicit ``source``.
+    """
+    return get_column_filter_options(
+        "po_dispatch", col_key, bucket=bucket, filters=filters,
+        portal_filters=portal_filters, exclude_column=exclude_column,
+        search=search, limit=limit,
+    )
 
 
 @frappe.whitelist()
@@ -6154,7 +6906,7 @@ def _batch_im_master_full_names(im_ids):
 
 
 @frappe.whitelist()
-def list_execution_monitor_rows(filters=None, limit=500):
+def list_execution_monitor_rows(filters=None, limit=500, _options=None):
     """
     Rich rows for PM Execution Monitor (Rollout + latest execution + dispatch context).
 
@@ -6390,6 +7142,14 @@ def list_execution_monitor_rows(filters=None, limit=500):
         "exec_status": _latest_de("execution_status"),
         "im_status": _latest_de("execution_status"),
         "issue_category": _latest_de("issue_category"),
+        # Column shows the IM's full name, falling back to the raw code. The
+        # substring path special-cases `im` before this map, so it had no
+        # entry here and the value dropdown reported it unfilterable.
+        "im": (
+            "IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` "
+            "WHERE name = COALESCE(NULLIF(pd.im,''), rp.im)), ''), "
+            "IFNULL(COALESCE(NULLIF(pd.im,''), rp.im), ''))"
+        ),
         "qc": _latest_de("qc_status"),
         "achieved_qty": f"CAST({_latest_de('achieved_qty')} AS CHAR)",
         "qty": f"CAST({_latest_de('achieved_qty')} AS CHAR)",
@@ -6449,6 +7209,14 @@ def list_execution_monitor_rows(filters=None, limit=500):
             column_filters_em = None
     if isinstance(column_filters_em, dict):
         for col_key, raw_val in column_filters_em.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                if _c:
+                    wheres.append(_c)
+                    params.extend(_p)
+                continue
             pat = _sql_like_pattern(raw_val)
             if not pat:
                 continue
@@ -6537,6 +7305,15 @@ def list_execution_monitor_rows(filters=None, limit=500):
         "LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code "
         f"{rp_im_join} {pd_im_join}"
     )
+    if _options:
+        _e = col_filter_map.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            sql_from.replace("FROM ", "", 1), " AND ".join(wheres), params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
     id_sql = (
         "SELECT rp.name AS plan_id "
         f"{sql_from} "
@@ -6921,7 +7698,7 @@ def get_work_done_summary():
 
 
 @frappe.whitelist()
-def list_work_done_rows(filters=None, limit=500):
+def list_work_done_rows(filters=None, limit=500, _options=None):
     """
     Rich Work Done rows for PM page.
     filters: {
@@ -7212,6 +7989,38 @@ def list_work_done_rows(filters=None, limit=500):
         "billing_status": billing_expr,
         "subcontract": f"IFNULL({_subcon_expr_wd},'')",
         "contract_model": f"IFNULL({_contract_model_expr_wd},'')",
+        # Header labels present on admin/WorkDone.jsx + IMWorkDone.jsx that
+        # had no entry here, so their filters silently did nothing on the
+        # backend. All reachable from joins this query already makes.
+        "dummy_poid": "COALESCE(NULLIF(pd.original_dummy_poid,''), pd_sys.original_dummy_poid, '')",
+        "execution": "IFNULL(wd.execution,'')",
+        "project": "COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code, '')",
+        "site": "COALESCE(NULLIF(pd.site_name,''), pd_sys.site_name, '')",
+        "center_area": "COALESCE(NULLIF(pd.center_area,''), pd_sys.center_area, '')",
+        "team": "IFNULL(it.team_name,'')",
+        "exec_date": "CAST(de.execution_date AS CHAR)",
+        "visit": "CAST(rp.visit_number AS CHAR)",
+        "qty": "CAST(wd.executed_qty AS CHAR)",
+        "po_status": "COALESCE(NULLIF(pd.pic_status,''), pd_sys.pic_status, '')",
+        "domain": (
+            "IFNULL((SELECT project_domain FROM `tabProject Control Center` "
+            "WHERE name = COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code)), '')"
+        ),
+        "huawei_im": (
+            "IFNULL((SELECT huawei_im FROM `tabProject Control Center` "
+            "WHERE name = COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code)), '')"
+        ),
+        "im": (
+            "IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` WHERE name = "
+            "COALESCE(NULLIF(pd.im,''), pd_sys.im)), ''), "
+            "IFNULL(COALESCE(NULLIF(pd.im,''), pd_sys.im), ''))"
+        ),
+        # "Project Name" has no column on PO Dispatch — it comes from the
+        # Project Control Center record the project_code points at.
+        "project_name": (
+            "IFNULL((SELECT project_name FROM `tabProject Control Center` "
+            "WHERE name = COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code)), '')"
+        ),
     }
     im_filter_parts = ["COALESCE(NULLIF(pd.im,''), pd_sys.im, '')"]
     if frappe.db.has_column("Rollout Plan", "im"):
@@ -7246,6 +8055,14 @@ def list_work_done_rows(filters=None, limit=500):
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                if _c:
+                    wheres.append(_c)
+                    params.extend(_p)
+                continue
             expr = col_filter_map.get(col_key)
             if not expr:
                 continue
@@ -7300,6 +8117,25 @@ def list_work_done_rows(filters=None, limit=500):
             wheres.append(clause)
             params.extend(cparams)
 
+    _wd_from = (
+        "`tabWork Done` wd "
+        "LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution "
+        "LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
+        "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+        "LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id "
+        "LEFT JOIN `tabItem` item_wd ON item_wd.name = wd.item_code "
+        "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
+        f"{rp_im_join_wd} {pd_im_join_wd} {subcon_join_wd}"
+    )
+    if _options:
+        _e = col_filter_map.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            _wd_from, " AND ".join(wheres), params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
     id_sql = (
         f"SELECT wd.name AS wd_name, {_subcon_expr_wd} AS subcontractor, "
         f"{_contract_model_expr_wd} AS contract_model "
@@ -7763,6 +8599,14 @@ def _synthesize_subcon_workdone_rows(filters):
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                if _c:
+                    where.append(_c)
+                    params.extend(_p)
+                continue
             pat = _sql_like_pattern(raw_val)
             if not pat:
                 continue
@@ -8135,7 +8979,7 @@ def submit_milestone_to_pic(work_done, milestone):
 
 
 @frappe.whitelist()
-def list_legacy_milestones_needing_resubmission(filters=None, limit=500):
+def list_legacy_milestones_needing_resubmission(filters=None, limit=500, _options=None):
     """All PO Dispatch lines owned by the calling IM with zero Work Done
     records at all — legacy / archive-imported lines whose work (and often
     its original PIC submission) already happened historically, outside
@@ -8203,6 +9047,16 @@ def list_legacy_milestones_needing_resubmission(filters=None, limit=500):
         "pic_status_ms1": "IFNULL(pd.pic_status,'')",
         "pic_status_ms2": "IFNULL(pd.pic_status_ms2,'')",
         "im_note": "IFNULL(pd.im_confirmation_note,'')",
+        # Remaining headers on the Resubmit-to-PIC table.
+        "activity_type": "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pd.item_code), '')",
+        "ms1_amount": "CAST(pd.ms1_amount AS CHAR)",
+        "ms2_amount": "CAST(pd.ms2_amount AS CHAR)",
+        "last_updated": "CAST(pd.modified AS CHAR)",
+        "docs": (
+            "CAST((SELECT COUNT(*) FROM `tabFile` f WHERE f.attached_to_doctype = 'PO Dispatch' "
+            "AND f.attached_to_name = pd.name AND f.attached_to_field IN "
+            "('im_doc1','im_doc2','im_doc2a','im_doc2b','im_doc2c')) AS CHAR)"
+        ),
     }
     column_filters = filters.get("column_filters")
     if isinstance(column_filters, str):
@@ -8212,6 +9066,14 @@ def list_legacy_milestones_needing_resubmission(filters=None, limit=500):
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                if _c:
+                    wheres.append(_c)
+                    params.extend(_p)
+                continue
             expr = col_filter_map.get(col_key)
             if not expr:
                 continue
@@ -8237,6 +9099,16 @@ def list_legacy_milestones_needing_resubmission(filters=None, limit=500):
         if clause:
             wheres.append(clause)
             params.extend(sp)
+
+    if _options:
+        _e = col_filter_map.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            "`tabPO Dispatch` pd", " AND ".join(wheres), params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
 
     rows = frappe.db.sql(
         f"""
@@ -8456,7 +9328,7 @@ def update_subcon_submission(po_dispatch, submission_status, note=None):
 
 
 @frappe.whitelist()
-def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
+def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, _options=None):
     """
     Issue & Risk rows from rollout plans that are in issue state or carry an issue category.
     - Admin roles can view all rows (or filter by im argument).
@@ -8627,6 +9499,8 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
     col_filter_map_ir = {
         "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
         "plan": "rp.name",
+        # Column shows the IM's full name, falling back to the raw code.
+        "im": "IFNULL(NULLIF(im_pd.full_name, ''), IFNULL(pd.im, ''))",
         "item_code": "IFNULL(pd.item_code,'')",
         "description": _desc_expr_ir,
         "project": "IFNULL(pd.project_code,'')",
@@ -8665,6 +9539,14 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             column_filters_ir = None
     if isinstance(column_filters_ir, dict):
         for col_key, raw_val in column_filters_ir.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map_ir.get(col_key), raw_val)
+                if _c:
+                    wheres.append(_c)
+                    params.extend(_p)
+                continue
             pat = _sql_like_pattern(raw_val)
             if not pat:
                 continue
@@ -8718,6 +9600,23 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None):
             wheres.append(clause)
             params.extend(cparams)
 
+    _ir_from = (
+        "`tabRollout Plan` rp "
+        "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+        "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
+        "LEFT JOIN `tabProject Control Center` pcc_ir ON pcc_ir.name = pd.project_code "
+        f"{rp_im_join_ir}"
+        " LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im"
+    )
+    if _options:
+        _e = col_filter_map_ir.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            _ir_from, " AND ".join(wheres), params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
     id_sql = (
         "SELECT rp.name AS plan_id "
         "FROM `tabRollout Plan` rp "
@@ -9528,8 +10427,24 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     if to_date:
         try: last_day = getdate(to_date)
         except Exception: pass
-    days_in_month = _days_in_month(today)
-    day_of_month = min(today.day, 30)   # month basis = 30; cost capped at 30 days
+
+    # Pro-ration basis for the whole "Company Financial Summary" section:
+    # progress through the SELECTED range (first_day..last_day), not through
+    # the calendar month. A fully-past range (last_day before today) is
+    # already 100% elapsed — no pro-rating; a range still in progress (today
+    # falls inside it) pro-rates by how much of it has actually happened;
+    # a range entirely in the future is 0% elapsed. This replaces an earlier
+    # "day_of_month / 30" pro-ration that assumed the range was always
+    # exactly "this month, 1st to today" — silently wrong for any other
+    # from_date/to_date the caller picked.
+    # _month_bounds() returns plain strings (for SQL params below); getdate()
+    # them locally for the arithmetic without disturbing first_day/last_day
+    # themselves — from_date/to_date go through getdate() above already, so
+    # this only matters for the untouched default (no from_date/to_date).
+    _range_start, _range_end = getdate(first_day), getdate(last_day)
+    range_days = (_range_end - _range_start).days + 1
+    elapsed_days = max(0, min(range_days, (today - _range_start).days + 1))
+    range_elapsed_frac = (elapsed_days / range_days) if range_days else 0.0
 
     # ---- Operational KPIs --------------------------------------------------
     # Open lines = PO Intake Lines whose per-line status is NOT terminal.
@@ -9601,62 +10516,107 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )[0][0]
     idle_teams_count = max(0, total_teams - len(non_idle_team_ids))
 
-    planned_activities = frappe.db.sql(
-        """
-        SELECT COUNT(*) AS cnt FROM `tabRollout Plan` rp
-        WHERE rp.plan_status IN ('Planned', 'Extended')
-        AND NOT EXISTS (
-          SELECT 1 FROM `tabRollout Plan` rp_later
-          WHERE rp_later.po_dispatch = rp.po_dispatch
-          AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)
-        )
-        """,
-        as_dict=True,
-    )[0].cnt or 0
-    planned_amount = frappe.db.sql(
-        """
-        SELECT COALESCE(SUM(rp.target_amount), 0) AS amt FROM `tabRollout Plan` rp
-        WHERE rp.plan_status IN ('Planned', 'Extended')
-        AND NOT EXISTS (
-          SELECT 1 FROM `tabRollout Plan` rp_later
-          WHERE rp_later.po_dispatch = rp.po_dispatch
-          AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)
-        )
-        """,
-        as_dict=True,
-    )[0].amt or 0
+    # These 4 pipeline tiles (Planned -> In Progress -> Work Done -> Closed)
+    # each reuse the SAME function their own drill-down page calls, with the
+    # SAME filters the click-through passes — count/amount = len()/sum() over
+    # that exact result set. This is deliberate, not just convenient: a
+    # bespoke COUNT query here previously drifted from what the routed-to
+    # page actually showed (missing "Extended"/"Planning with Issue", no
+    # latest-visit exclusion, an excludeBackend flag the destination page
+    # never read, etc) — every one of those was a real reported bug. Reusing
+    # the exact function makes tile and page permanently identical by
+    # construction, the same fix already applied to "Total Work Done" earlier.
+    #
+    # All 4 tiles are scoped to first_day/last_day (rp.plan_date for the
+    # first two) so the count always matches what you land on after
+    # clicking through with the same range — a tile that doesn't move with
+    # the date picker but a destination page that does is exactly the kind
+    # of drift this whole rewrite was meant to eliminate.
+    _planned_rows = list_execution_monitor_rows(
+        filters={
+            "status": ["Planned", "Extended", "Planning with Issue"],
+            "from_date": str(first_day), "to_date": str(last_day),
+        }, limit=0
+    ) or []
+    planned_activities = len(_planned_rows)
+    planned_amount = sum(flt(r.get("target_amount")) for r in _planned_rows)
 
+    # "In Progress" = actively executing, OR execution finished but Work Done
+    # hasn't been generated yet. list_execution_monitor_rows already hides a
+    # "Completed" row once it's fully closed (QC/CIAG pass + a real Work Done
+    # record exists) — see its own unconditional hide-clause — so filtering
+    # to just these two statuses naturally yields exactly "In Execution" plus
+    # "Completed, still needs Generate Work Done", with no extra logic needed.
+    _in_progress_rows = list_execution_monitor_rows(
+        filters={
+            "status": ["In Execution", "Completed"],
+            "from_date": str(first_day), "to_date": str(last_day),
+        }, limit=0
+    ) or []
+    in_progress_activities = len(_in_progress_rows)
+    in_progress_amount = sum(flt(r.get("target_amount")) for r in _in_progress_rows)
+
+    _workdone_rows = list_work_done_rows(
+        filters={"tab": "all", "from_date": str(first_day), "to_date": str(last_day)}, limit=0
+    ) or []
+    workdone_activities = len(_workdone_rows)
+    workdone_amount = sum(flt(r.get("revenue_sar")) for r in _workdone_rows)
+
+    # Closed = every milestone a Work Done row represents has reached a
+    # terminal PIC status — the exact inverse of list_work_done_rows' own
+    # default-hide rule (_DATA_INTEGRITY_TERMINAL_MS), so "Closed" and "Work
+    # Done" above partition the same universe with no overlap and no gap.
+    # No drill-down route yet (list_work_done_rows has no "resolved only"
+    # mode to route to) — a standalone query for now; if a route is added
+    # later this should switch to reusing that mode instead, for the same
+    # by-construction-consistency reason as the other 3 tiles.
+    _closed_terminal_ms = list(_DATA_INTEGRITY_TERMINAL_MS)
+    _closed_ph = ", ".join(["%s"] * len(_closed_terminal_ms))
+    _closed_ms1 = "IFNULL(COALESCE(pd.pic_status, pd_sys.pic_status), '')"
+    _closed_ms2 = "IFNULL(COALESCE(pd.pic_status_ms2, pd_sys.pic_status_ms2), '')"
+    _closed_ms2_amt = "COALESCE(pd.ms2_amount, pd_sys.ms2_amount, 0)"
     closed_activities = frappe.db.sql(
-        """
+        f"""
         SELECT COUNT(*) AS cnt
         FROM `tabWork Done` wd
-        INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
-        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        LEFT JOIN `tabINET Team` it ON it.name = de.team
-        WHERE pd.dispatch_status != 'Backend Assigned'
-        AND IFNULL(it.team_category, '') != 'Backend Team'
-        AND de.execution_date BETWEEN %s AND %s
+        LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id
+        LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
+        LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE COALESCE(de.execution_date, DATE(wd.creation)) BETWEEN %s AND %s
+        AND (
+          (IFNULL(wd.ms1_closed,0) = 1 AND IFNULL(wd.ms2_closed,0) = 0 AND {_closed_ms1} IN ({_closed_ph}))
+          OR
+          (IFNULL(wd.ms2_closed,0) = 1 AND IFNULL(wd.ms1_closed,0) = 0 AND {_closed_ms2} IN ({_closed_ph}))
+          OR
+          (IFNULL(wd.ms1_closed,0) = IFNULL(wd.ms2_closed,0)
+            AND {_closed_ms1} IN ({_closed_ph})
+            AND ({_closed_ms2_amt} = 0 OR {_closed_ms2} IN ({_closed_ph})))
+        )
         """,
-        (first_day, last_day),
+        (first_day, last_day) + tuple(_closed_terminal_ms) * 4,
         as_dict=True,
     )[0].cnt or 0
     closed_amount = frappe.db.sql(
-        """
-        SELECT COALESCE(SUM(d.amt), 0) AS total
-        FROM (
-          SELECT DISTINCT de.rollout_plan, rp.target_amount AS amt
-          FROM `tabWork Done` wd
-          INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
-          INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-          INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-          LEFT JOIN `tabINET Team` it ON it.name = de.team
-          WHERE pd.dispatch_status != 'Backend Assigned'
-          AND IFNULL(it.team_category, '') != 'Backend Team'
-          AND de.execution_date BETWEEN %s AND %s
-        ) d
+        f"""
+        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS total
+        FROM `tabWork Done` wd
+        LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id
+        LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
+        LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE COALESCE(de.execution_date, DATE(wd.creation)) BETWEEN %s AND %s
+        AND (
+          (IFNULL(wd.ms1_closed,0) = 1 AND IFNULL(wd.ms2_closed,0) = 0 AND {_closed_ms1} IN ({_closed_ph}))
+          OR
+          (IFNULL(wd.ms2_closed,0) = 1 AND IFNULL(wd.ms1_closed,0) = 0 AND {_closed_ms2} IN ({_closed_ph}))
+          OR
+          (IFNULL(wd.ms1_closed,0) = IFNULL(wd.ms2_closed,0)
+            AND {_closed_ms1} IN ({_closed_ph})
+            AND ({_closed_ms2_amt} = 0 OR {_closed_ms2} IN ({_closed_ph})))
+        )
         """,
-        (first_day, last_day),
+        (first_day, last_day) + tuple(_closed_terminal_ms) * 4,
         as_dict=True,
     )[0].total or 0
 
@@ -9675,16 +10635,20 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         open_dummy_pos = frappe.db.count("PO Dispatch", {"is_dummy_po": 1}) or 0
 
     # ---- INET KPIs ---------------------------------------------------------
+    # Not status-filtered here — Active/Inactive/On Vacation all still cost
+    # the company, only Disbanded stops (see _team_cost_days below, which
+    # clips to end_date). active_inet_teams stays a literal "status=Active"
+    # headcount tile, computed separately from the same rows so it doesn't
+    # silently start counting Inactive/On Vacation/Disbanded teams too.
     inet_teams = frappe.db.sql(
         """
-        SELECT name, team_id, daily_cost, im, start_date, end_date
+        SELECT name, team_id, daily_cost, im, start_date, end_date, status
         FROM `tabINET Team`
-        WHERE status = 'Active'
-        AND team_type = 'INET'
+        WHERE team_type = 'INET'
         AND IFNULL(team_category, '') != 'Backend Team'
         """, as_dict=True
     )
-    active_inet_teams = len(inet_teams)
+    active_inet_teams = sum(1 for t in inet_teams if (t.status or "Active") == "Active")
 
     # Teams are monthly-paid (fixed salary): cost = daily_cost × days, where
     # days is however much of [first_day, last_day] this team was actually
@@ -9698,11 +10662,12 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_monthly_target = round(inet_monthly_cost * 1.25)
 
     # Pro-rate linearly by calendar day (day 15 of 30 = 50%), matches Excel logic
-    inet_target_today = round(inet_monthly_target * (day_of_month / 30))
+    inet_target_today = round(inet_monthly_target * range_elapsed_frac)
 
-    # Achieved as of today: sum PO Dispatch line_amount for INET teams (excl. backend)
-    # Always uses current month 1st → today, independent of the date range filter
-    _ach_first = get_first_day(today)
+    # Achieved: sum PO Dispatch line_amount for INET teams (excl. backend)
+    # within the selected range — this used to be hardcoded to "current
+    # month 1st -> today" regardless of from_date/to_date, which is why
+    # Total Revenue never changed when a different range was picked.
     inet_achieved_rows = frappe.db.sql(
         """
         SELECT COALESCE(SUM(pd.line_amount), 0) AS total
@@ -9714,7 +10679,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         AND IFNULL(it.team_category, '') != 'Backend Team'
         AND exe.execution_date BETWEEN %s AND %s
         """,
-        (_ach_first, today),
+        (first_day, last_day),
         as_dict=True,
     )
     inet_achieved = flt(inet_achieved_rows[0].total if inet_achieved_rows else 0)
@@ -9808,14 +10773,15 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     backend_completed_value = flt(_backend_done_rows[0].val if _backend_done_rows else 0)
 
     # ---- Company-level KPIs ------------------------------------------------
-    day_progress_pct = round(day_of_month / 30 * 100, 1)
+    day_progress_pct = round(range_elapsed_frac * 100, 1)
 
-    # INET cost pro-rated to today (teams are monthly-paid, linear over 30 days)
-    inet_cost_today = round(inet_monthly_cost * (day_of_month / 30), 2)
+    # INET cost pro-rated to however much of the selected range has elapsed
+    # so far (1.0 / no reduction for a range that's already fully in the past).
+    inet_cost_today = round(inet_monthly_cost * range_elapsed_frac, 2)
     inet_profit_loss_today = round(inet_achieved - inet_cost_today, 2)
 
-    # Sub-Con target pro-rated to today (same 30-day linear basis)
-    sub_target_today = round(sub_target * (day_of_month / 30), 2)
+    # Sub-Con target pro-rated the same way
+    sub_target_today = round(sub_target * range_elapsed_frac, 2)
     total_target_today = round(inet_target_today + sub_target_today, 2)
 
     # Total Revenue = INET achieved + INET's margin from sub-con (not full sub-con revenue)
@@ -9842,13 +10808,16 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         (first_day, last_day), as_dict=True,
     )
     _tt_rev_by_team = {r.team: r for r in _tt_rev_rows}
+    # Not status-filtered — a Disbanded team that earned revenue during this
+    # period should still show its cost/profit for it; _team_cost_days below
+    # already zeroes out any days past its end_date. Naturally self-limiting
+    # anyway since this only ever keeps the top 5 by revenue.
     _tt_team_rows = frappe.db.sql(
         """
         SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type,
                start_date, end_date
         FROM `tabINET Team`
-        WHERE IFNULL(status, 'Active') = 'Active'
-          AND IFNULL(team_category, '') != 'Backend Team'
+        WHERE IFNULL(team_category, '') != 'Backend Team'
         """,
         as_dict=True,
     )
@@ -9907,9 +10876,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         """,
         (first_day, last_day), as_dict=True,
     )
+    # Not status-filtered — pure cost-rate lookup keyed by team name, only
+    # ever consulted for teams that already have real revenue in this period
+    # (_ip_team_cost_rows above), so there's no "0-revenue placeholder" risk
+    # from including Inactive/On Vacation/Disbanded teams here too.
     _ip_team_info_rows = frappe.db.sql(
         "SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type, start_date, end_date "
-        "FROM `tabINET Team` WHERE IFNULL(status,'Active')='Active'",
+        "FROM `tabINET Team`",
         as_dict=True,
     )
     _ip_team_info = {r.name: r for r in _ip_team_info_rows}
@@ -10050,6 +11023,10 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "idle_teams": idle_teams_count,
             "planned_activities": planned_activities,
             "planned_amount": planned_amount,
+            "in_progress_activities": in_progress_activities,
+            "in_progress_amount": in_progress_amount,
+            "workdone_activities": workdone_activities,
+            "workdone_amount": workdone_amount,
             "closed_activities": closed_activities,
             "closed_amount": closed_amount,
             "revisits": revisits,
@@ -10311,11 +11288,15 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         """,
         (fd, td), as_dict=True,
     )
+    # Not status-filtered — pure cost-rate lookup, only ever consulted for
+    # teams already known to have real revenue in this period (team_cost_rows
+    # above), so including Inactive/On Vacation/Disbanded teams here can't
+    # create a spurious 0-revenue row; _team_cost_days handles a Disbanded
+    # team's end_date cutoff.
     team_info_rows = frappe.db.sql(
         """
         SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type, start_date, end_date
         FROM `tabINET Team`
-        WHERE IFNULL(status, 'Active') = 'Active'
         """,
         as_dict=True,
     )
@@ -10457,10 +11438,9 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     team_info_rows = frappe.db.sql(
         """
         SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type,
-               start_date, end_date
+               start_date, end_date, status
         FROM `tabINET Team`
-        WHERE IFNULL(status, 'Active') = 'Active'
-          AND IFNULL(team_category, '') != 'Backend Team'
+        WHERE IFNULL(team_category, '') != 'Backend Team'
         """,
         as_dict=True,
     )
@@ -10469,8 +11449,18 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     rev_by_team = {r.team: r for r in rev_rows}
 
     data = []
-    # Iterate over ALL active teams so teams with 0 revenue still appear
-    for team, ti in team_info.items():
+    # Every non-Disbanded team appears even at 0 revenue (Active/Inactive/On
+    # Vacation all still cost the company, so an idle one is worth showing) —
+    # PLUS any Disbanded team that has real revenue in this period (its cost
+    # up to its end_date still needs to surface; once no period has revenue
+    # for it, it naturally stops appearing rather than cluttering the report
+    # forever as a dead 0-revenue row).
+    report_teams = [
+        name for name, ti in team_info.items()
+        if (ti.status or "Active") != "Disbanded" or name in rev_by_team
+    ]
+    for team in report_teams:
+        ti = team_info[team]
         r           = rev_by_team.get(team, frappe._dict(revenue=0, avg_inet_margin=100, days_worked=0))
         p           = plan_by_team.get(team, frappe._dict(assigned_lines=0, completed_lines=0))
         assigned    = cint(p.assigned_lines)
@@ -10856,7 +11846,7 @@ def get_revenue_forecast_report(**kwargs):
 
 
 @frappe.whitelist()
-def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=None):
+def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=None, _options=None):
     """Rollout plans for this IM (join PO Dispatch — works before im backfill on Rollout Plan)."""
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
@@ -10963,6 +11953,14 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                if _c:
+                    portal_clause += f" AND {_c}"
+                    params.extend(_p)
+                continue
             expr = col_filter_map.get(col_key)
             if not expr:
                 continue
@@ -11030,6 +12028,22 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         im_plan_extras.append("NULL AS internal_domain")
     im_plan_extra_sql = ", " + ", ".join(im_plan_extras)
     lim_rp = _portal_row_limit(limit, 500)
+    if _options:
+        _e = col_filter_map.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            "`tabRollout Plan` rp "
+            "INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+            "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
+            "LEFT JOIN `tabProject Control Center` pcc_rp ON pcc_rp.name = pd.project_code "
+            f"{rp_im_join} "
+            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im",
+            f"pd.im IN ({ph}){status_clause}{portal_clause}", params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
+
     rows = frappe.db.sql(
         f"""
         SELECT rp.name, rp.modified, rp.po_dispatch AS system_id, rp.po_dispatch,
@@ -11079,7 +12093,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
 
 
 @frappe.whitelist()
-def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_filters=None):
+def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_filters=None, _options=None):
     """Daily executions for this IM's dispatches."""
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
     if not im_identifiers:
@@ -11272,6 +12286,14 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                if _c:
+                    portal_clause += f" AND {_c}"
+                    params.extend(_p)
+                continue
             expr = col_filter_map.get(col_key)
             if not expr:
                 continue
@@ -11346,6 +12368,23 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     access_time_sel = "rp.access_time" if frappe.db.has_column("Rollout Plan", "access_time") else "NULL"
     access_period_sel = "rp.access_period" if frappe.db.has_column("Rollout Plan", "access_period") else "NULL"
     lim_de = _portal_row_limit(limit, 500)
+    if _options:
+        _e = col_filter_map.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            "`tabDaily Execution` de "
+            "INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
+            "INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
+            "LEFT JOIN `tabINET Team` it ON it.name = de.team "
+            "LEFT JOIN `tabProject Control Center` pcc_ex ON pcc_ex.name = pd.project_code "
+            f"{rp_im_join_ex} "
+            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im",
+            f"pd.im IN ({ph}){status_clause}{portal_clause}", params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
+
     rows = frappe.db.sql(
         f"""
         SELECT de.name, de.modified, rp.po_dispatch AS system_id, de.rollout_plan,
@@ -13338,7 +14377,7 @@ def save_execution_time_log_manual(rollout_plan, start_time, end_time, notes=Non
 
 
 @frappe.whitelist()
-def list_execution_time_logs(filters=None, limit=100, offset=0):
+def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None):
     """
     List execution time logs with role-based scoping.
     filters (JSON): team_id, im, user, rollout_plan, from_date, to_date, is_running,
@@ -13421,7 +14460,10 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
         k: v for k, v in (column_filters_etl or {}).items() if str(v or "").strip()
     } if isinstance(column_filters_etl, dict) else {}
 
-    if like_tokens_etl or active_col_filters_etl:
+    # `or _options`: the column-option list is built from the wheres/params
+    # assembled in this branch, so it must be taken even when nothing is
+    # filtered (otherwise the plain path returns rows instead of options).
+    if like_tokens_etl or active_col_filters_etl or _options:
         wheres = ["1=1"]
         params = []
         joins = (
@@ -13479,17 +14521,33 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
 
         col_filter_map_etl = {
             "id": "IFNULL(etl.name,'')",
-            "team": "IFNULL(etl.team_id,'')",
+            # Column renders team_name with a team_id fallback (see
+            # Timesheets.jsx), so the option list must resolve the same way —
+            # otherwise the dropdown offers "Team-01" for a cell reading
+            # "Irfan/Rafeeq". INET Team.name == its team_id.
+            "team": ("IFNULL(NULLIF((SELECT it_t.team_name FROM `tabINET Team` it_t "
+                     "WHERE it_t.name = etl.team_id), ''), IFNULL(etl.team_id,''))"),
             "rollout": "IFNULL(etl.rollout_plan,'')",
             "work": "CONCAT_WS(' ', IFNULL(pd.item_description,''), IFNULL(pd.project_code,''))",
             "work_project": "CONCAT_WS(' ', IFNULL(pd.item_description,''), IFNULL(pd.project_code,''))",
             "start": "CAST(etl.start_time AS CHAR)",
             "end": "CAST(etl.end_time AS CHAR)",
             "hours": "CAST(etl.duration_hours AS CHAR)",
+            # Column shows the user's full name, falling back to the login id.
+            # The tabUser join already exists for the search clause.
+            "user": "IFNULL(NULLIF(u.full_name, ''), IFNULL(etl.user, ''))",
         }
         # Not backend-filterable: "state"/"status" is a client-computed
         # Running/Done label derived from is_running, not a plain column.
         for col_key, raw_val in active_col_filters_etl.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map_etl.get(col_key), raw_val)
+                if _c:
+                    wheres.append(_c)
+                    params.extend(_p)
+                continue
             pat = _sql_like_pattern(raw_val)
             if not pat:
                 continue
@@ -13513,6 +14571,15 @@ def list_execution_time_logs(filters=None, limit=100, offset=0):
             wheres.append(f"({ors_etl})")
             params.extend(like_tokens_etl)
 
+        if _options:
+            _e = col_filter_map_etl.get(_options.get("col_key"))
+            if not _e:
+                return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+            return excel_options_from_query(
+                f"`tabExecution Time Log` etl {joins}", " AND ".join(wheres), params, _e,
+                bucket=_options.get("bucket"), search=_options.get("search"),
+                limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+            )
         wc = " AND ".join(wheres)
         total = int(
             frappe.db.sql(
@@ -14916,7 +15983,7 @@ def mark_backend_work_done(po_dispatch=None, po_dispatches=None, completed_on=No
 def list_backend_dispatches(
     im=None, search=None, status="all", limit=300,
     project_code=None, site_code=None, backend_team=None,
-    column_filters=None,
+    column_filters=None, _options=None,
 ):
     """Sub-Contract list feed.
 
@@ -14987,6 +16054,14 @@ def list_backend_dispatches(
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map_backend.get(col_key), raw_val)
+                if _c:
+                    where.append(_c)
+                    params.extend(_p)
+                continue
             pat_bk = _sql_like_pattern(raw_val)
             if not pat_bk:
                 continue
@@ -15007,6 +16082,19 @@ def list_backend_dispatches(
         if clause:
             where.append(clause)
             params.extend(like_params)
+
+    if _options:
+        _e = col_filter_map_backend.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            "`tabPO Dispatch` pd "
+            "LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team "
+            "LEFT JOIN `tabProject Control Center` pcc_bk ON pcc_bk.name = pd.project_code",
+            " AND ".join(where), params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
 
     limit_int = int(limit) if limit else 300
     sql = f"""
@@ -17539,7 +18627,7 @@ _ADMIN_TEAM_EDITABLE_FIELDS = [
 
 
 @frappe.whitelist()
-def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None, column_filters=None):
+def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None, column_filters=None, _options=None):
     """List all INET Teams with active project/domain for the PM admin Teams page.
 
     for_date: ISO date string (YYYY-MM-DD).  Defaults to today when omitted.
@@ -17580,6 +18668,8 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
     # param ordering to `for_date` in a fragile way, so those stay
     # client-side only for now (same graceful-degradation approach used for
     # genuinely Python-only columns elsewhere).
+    # Escaped literal, not a bind param — see the note in col_filter_map_teams.
+    _date_lit = frappe.db.escape(date_val) if date_val else "CURDATE()"
     col_filter_map_teams = {
         "team_id": "it.team_id",
         "name": "it.team_name",
@@ -17587,6 +18677,55 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
         "type": "it.team_type",
         "status": "it.status",
         "members": "CAST((SELECT COUNT(*) FROM `tabINET Team Member` itm WHERE itm.parent = it.name) AS CHAR)",
+        # The computed columns the page shows. They mirror the SELECT's own
+        # subqueries so a filter matches exactly what's rendered. The date is
+        # inlined as an escaped literal rather than a bind param: this
+        # expression lands in both the SELECT and the WHERE of the options
+        # query, so a placeholder here would break param ordering.
+        "im": "IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` WHERE name = it.im), ''), IFNULL(it.im,''))",
+        "current_domain": (
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT IFNULL(pcc_t.project_domain,'') "
+            "ORDER BY pcc_t.project_domain SEPARATOR ', ') "
+            "FROM `tabRollout Plan` rp_t "
+            "INNER JOIN `tabPO Dispatch` pd_t ON pd_t.name = rp_t.po_dispatch "
+            "LEFT JOIN `tabProject Control Center` pcc_t ON pcc_t.name = pd_t.project_code "
+            "WHERE (rp_t.team = it.name OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_t "
+            "WHERE rpt_t.parent = rp_t.name AND rpt_t.team = it.name)) "
+            "AND rp_t.plan_status IN ('Planned','In Execution','Extended','Completed') "
+            f"AND {_date_lit} BETWEEN rp_t.plan_date AND IFNULL(rp_t.plan_end_date, rp_t.plan_date) "
+            "AND IFNULL(pcc_t.project_domain,'') != ''), '')"
+        ),
+        "current_project": (
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT IFNULL(pd_p.project_code,'') "
+            "ORDER BY pd_p.project_code SEPARATOR ', ') "
+            "FROM `tabRollout Plan` rp_p "
+            "INNER JOIN `tabPO Dispatch` pd_p ON pd_p.name = rp_p.po_dispatch "
+            "WHERE (rp_p.team = it.name OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_p "
+            "WHERE rpt_p.parent = rp_p.name AND rpt_p.team = it.name)) "
+            "AND rp_p.plan_status IN ('Planned','In Execution','Extended','Completed') "
+            f"AND {_date_lit} BETWEEN rp_p.plan_date AND IFNULL(rp_p.plan_end_date, rp_p.plan_date) "
+            "AND IFNULL(pd_p.project_code,'') != ''), '')"
+        ),
+        "active_plans": (
+            "CAST((SELECT COUNT(*) FROM `tabRollout Plan` rp_a "
+            "WHERE (rp_a.team = it.name OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_a "
+            "WHERE rpt_a.parent = rp_a.name AND rpt_a.team = it.name)) "
+            "AND rp_a.plan_status IN ('Planned','In Execution','Extended') "
+            f"AND {_date_lit} BETWEEN rp_a.plan_date AND IFNULL(rp_a.plan_end_date, rp_a.plan_date)"
+            ") AS CHAR)"
+        ),
+        "today": (
+            "IFNULL(CASE WHEN IFNULL(it.team_category,'') = 'Backend Team' THEN '' "
+            "WHEN EXISTS (SELECT 1 FROM `tabDaily Execution` de_t WHERE de_t.team = it.name "
+            f"AND (de_t.execution_date = {_date_lit} OR de_t.last_progress_date = {_date_lit}) "
+            "AND de_t.execution_status NOT IN ('Cancelled')) THEN 'In Execution' "
+            "WHEN EXISTS (SELECT 1 FROM `tabRollout Plan` rp_s WHERE (rp_s.team = it.name "
+            "OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_s WHERE rpt_s.parent = rp_s.name "
+            "AND rpt_s.team = it.name)) "
+            "AND rp_s.plan_status IN ('Planned','In Execution','Extended','Completed') "
+            f"AND {_date_lit} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)) "
+            "THEN 'Planned' ELSE 'Idle' END, '')"
+        ),
     }
     if isinstance(column_filters, str):
         try:
@@ -17595,6 +18734,14 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map_teams.get(col_key), raw_val)
+                if _c:
+                    wheres.append(_c)
+                    params.extend(_p)
+                continue
             pat2 = _sql_like_pattern(raw_val)
             if not pat2:
                 continue
@@ -17611,6 +18758,17 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             params.append(pat2)
 
     where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+    if _options:
+        # Only the WHERE is needed here — the date params belong to the main
+        # SELECT's computed subqueries, not to these clauses.
+        _e = col_filter_map_teams.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            "`tabINET Team` it", " AND ".join(wheres) if wheres else "1=1", params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
 
     # Date placeholder: use the supplied date literal or fall back to CURDATE()
     date_expr = "%s" if date_val else "CURDATE()"
@@ -17718,7 +18876,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
 
 
 @frappe.whitelist()
-def list_im_teams(im=None, status=None, team_type=None, team_category=None, search=None, limit=500, for_date=None, column_filters=None):
+def list_im_teams(im=None, status=None, team_type=None, team_category=None, search=None, limit=500, for_date=None, column_filters=None, _options=None):
     """Same computed fields as list_admin_teams but accessible to IM role."""
     import re as _re
     if for_date and not _re.match(r"^\d{4}-\d{2}-\d{2}$", str(for_date)):
@@ -17749,6 +18907,8 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
     # Per-column "Manage Table" filters — see list_admin_teams / list_im_rollout_plans
     # for the rationale. Date-scoped subquery columns (current project/domain,
     # active plans, today) stay client-side only — see the comment there.
+    # Escaped literal, not a bind param — see the note in col_filter_map_teams.
+    _date_lit = frappe.db.escape(date_val) if date_val else "CURDATE()"
     col_filter_map_teams = {
         "team_id": "it.team_id",
         "name": "it.team_name",
@@ -17756,6 +18916,55 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
         "type": "it.team_type",
         "status": "it.status",
         "members": "CAST((SELECT COUNT(*) FROM `tabINET Team Member` itm WHERE itm.parent = it.name) AS CHAR)",
+        # The computed columns the page shows. They mirror the SELECT's own
+        # subqueries so a filter matches exactly what's rendered. The date is
+        # inlined as an escaped literal rather than a bind param: this
+        # expression lands in both the SELECT and the WHERE of the options
+        # query, so a placeholder here would break param ordering.
+        "im": "IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` WHERE name = it.im), ''), IFNULL(it.im,''))",
+        "current_domain": (
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT IFNULL(pcc_t.project_domain,'') "
+            "ORDER BY pcc_t.project_domain SEPARATOR ', ') "
+            "FROM `tabRollout Plan` rp_t "
+            "INNER JOIN `tabPO Dispatch` pd_t ON pd_t.name = rp_t.po_dispatch "
+            "LEFT JOIN `tabProject Control Center` pcc_t ON pcc_t.name = pd_t.project_code "
+            "WHERE (rp_t.team = it.name OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_t "
+            "WHERE rpt_t.parent = rp_t.name AND rpt_t.team = it.name)) "
+            "AND rp_t.plan_status IN ('Planned','In Execution','Extended','Completed') "
+            f"AND {_date_lit} BETWEEN rp_t.plan_date AND IFNULL(rp_t.plan_end_date, rp_t.plan_date) "
+            "AND IFNULL(pcc_t.project_domain,'') != ''), '')"
+        ),
+        "current_project": (
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT IFNULL(pd_p.project_code,'') "
+            "ORDER BY pd_p.project_code SEPARATOR ', ') "
+            "FROM `tabRollout Plan` rp_p "
+            "INNER JOIN `tabPO Dispatch` pd_p ON pd_p.name = rp_p.po_dispatch "
+            "WHERE (rp_p.team = it.name OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_p "
+            "WHERE rpt_p.parent = rp_p.name AND rpt_p.team = it.name)) "
+            "AND rp_p.plan_status IN ('Planned','In Execution','Extended','Completed') "
+            f"AND {_date_lit} BETWEEN rp_p.plan_date AND IFNULL(rp_p.plan_end_date, rp_p.plan_date) "
+            "AND IFNULL(pd_p.project_code,'') != ''), '')"
+        ),
+        "active_plans": (
+            "CAST((SELECT COUNT(*) FROM `tabRollout Plan` rp_a "
+            "WHERE (rp_a.team = it.name OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_a "
+            "WHERE rpt_a.parent = rp_a.name AND rpt_a.team = it.name)) "
+            "AND rp_a.plan_status IN ('Planned','In Execution','Extended') "
+            f"AND {_date_lit} BETWEEN rp_a.plan_date AND IFNULL(rp_a.plan_end_date, rp_a.plan_date)"
+            ") AS CHAR)"
+        ),
+        "today": (
+            "IFNULL(CASE WHEN IFNULL(it.team_category,'') = 'Backend Team' THEN '' "
+            "WHEN EXISTS (SELECT 1 FROM `tabDaily Execution` de_t WHERE de_t.team = it.name "
+            f"AND (de_t.execution_date = {_date_lit} OR de_t.last_progress_date = {_date_lit}) "
+            "AND de_t.execution_status NOT IN ('Cancelled')) THEN 'In Execution' "
+            "WHEN EXISTS (SELECT 1 FROM `tabRollout Plan` rp_s WHERE (rp_s.team = it.name "
+            "OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_s WHERE rpt_s.parent = rp_s.name "
+            "AND rpt_s.team = it.name)) "
+            "AND rp_s.plan_status IN ('Planned','In Execution','Extended','Completed') "
+            f"AND {_date_lit} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)) "
+            "THEN 'Planned' ELSE 'Idle' END, '')"
+        ),
     }
     if isinstance(column_filters, str):
         try:
@@ -17764,6 +18973,14 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — handled before _sql_like_pattern(),
+            # which cannot take a dict. See excel_filter_clause().
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map_teams.get(col_key), raw_val)
+                if _c:
+                    wheres.append(_c)
+                    params.extend(_p)
+                continue
             pat2 = _sql_like_pattern(raw_val)
             if not pat2:
                 continue
@@ -17778,6 +18995,17 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
             params.append(pat2)
 
     where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+    if _options:
+        # Only the WHERE is needed here — the date params belong to the main
+        # SELECT's computed subqueries, not to these clauses.
+        _e = col_filter_map_teams.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            "`tabINET Team` it", " AND ".join(wheres) if wheres else "1=1", params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
     date_expr = "%s" if date_val else "CURDATE()"
     # 6 copies — see list_admin_teams' comment on this same count.
     params_date = [date_val] * 6 if date_val else []

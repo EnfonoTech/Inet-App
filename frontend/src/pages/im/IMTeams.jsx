@@ -10,6 +10,8 @@ function badgeTone(value) {
   const s = String(value || "").toLowerCase();
   if (s === "active" || s === "approved" || s === "inet") return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
   if (s === "inactive" || s === "cancelled" || s === "reject") return { bg: "#fef2f2", fg: "#b91c1c", dot: "#ef4444" };
+  if (s === "on vacation") return { bg: "#fffbeb", fg: "#b45309", dot: "#f59e0b" };
+  if (s === "disbanded") return { bg: "#f1f5f9", fg: "#475569", dot: "#64748b" };
   if (s === "sub") return { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" };
   if (s === "field team") return { bg: "#f5f3ff", fg: "#6d28d9", dot: "#8b5cf6" };
   if (s === "backend team") return { bg: "#fff7ed", fg: "#c2410c", dot: "#f97316" };
@@ -395,7 +397,7 @@ export default function IMTeams() {
           <SearchableSelect multi value={categoryFilter} onChange={setCategoryFilter}
             options={[{ id: "Field Team", label: "Field Team" }, { id: "Backend Team", label: "Backend Team" }]} placeholder="All Categories" minWidth={150} />
           <SearchableSelect multi value={statusFilter} onChange={setStatusFilter}
-            options={[{ id: "Active", label: "Active" }, { id: "Inactive", label: "Inactive" }]} placeholder="All Status" minWidth={130} />
+            options={[{ id: "Active", label: "Active" }, { id: "Inactive", label: "Inactive" }, { id: "On Vacation", label: "On Vacation" }, { id: "Disbanded", label: "Disbanded" }]} placeholder="All Status" minWidth={130} />
           {tab === "my" && (
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600, whiteSpace: "nowrap" }}>Date</span>
@@ -449,7 +451,7 @@ export default function IMTeams() {
       <div className="page-content">
         <DataTableWrapper loadedCount={loading ? null : sourceList.length} filteredCount={filtered.length} filterActive={hasFilters}>
           {(tab === "my" || tab === "all") ? (
-              <table className="data-table" data-table-key="im-teams-list-v1">
+              <table className="data-table" data-excel-filter-all="1" data-table-key="im-teams-list-v1">
                 <thead>
                   <tr>
                     <th style={{ minWidth: 50, width: 50, whiteSpace: "nowrap" }} data-default-width="50">S/N</th>
@@ -552,7 +554,7 @@ export default function IMTeams() {
             (() => {
               const list = tab === "outgoing" ? outgoing : incoming;
               return (
-                <table className="data-table" data-table-key="im-teams-requests-v1">
+                <table className="data-table" data-excel-filter-all="1" data-table-key="im-teams-requests-v1">
                   <thead>
                     <tr>
                       <th>Team</th>
@@ -689,6 +691,12 @@ export default function IMTeams() {
                     <select value={editForm.status} onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}>
                       <option value="Active">Active</option>
                       <option value="Inactive">Inactive</option>
+                      <option value="On Vacation">On Vacation</option>
+                      {/* Disbanding requires a Stop Date, which this form has no field for —
+                          that's an admin-only action on the Admin Teams page. Kept here, disabled,
+                          only so an already-Disbanded team still displays its real status instead
+                          of silently falling back to whatever option happens to be first. */}
+                      <option value="Disbanded" disabled>Disbanded</option>
                     </select>
                   </div>
                   <div className="form-group" style={{ gridColumn: "1 / span 2" }}>

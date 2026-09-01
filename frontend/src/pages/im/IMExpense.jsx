@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useRef, useEffect, useMemo, useState } from "react";
 import { pmApi } from "../../services/api";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -327,8 +327,38 @@ export default function IMExpense({ isAdmin = false }) {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, [isAdmin]);
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below).
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    // Own copy of the key — the one above is scoped inside that effect.
+    const optKey = `im-expense-v1-${isAdmin ? "admin" : "im"}`;
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== optKey) return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "expense_claims",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, [isAdmin]);
+
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -349,6 +379,7 @@ export default function IMExpense({ isAdmin = false }) {
         if (tab === "all" && statusFilter) {
           adminFilters.approval_status = statusFilter === "Pending" ? "Draft" : statusFilter;
         }
+        queryArgsRef.current = adminFilters;
         const all = await pmApi.listAllExpenseClaims(adminFilters, rowLimit);
         const rows = all || [];
         setAllClaims(rows);
@@ -512,7 +543,7 @@ export default function IMExpense({ isAdmin = false }) {
           filterActive={hasFilters}
           loading={loading && rows.length > 0}
         >
-          <table className="data-table" data-table-key={`im-expense-v1-${isAdmin ? "admin" : "im"}`}>
+          <table className="data-table" data-excel-filter-all="1" data-table-key={`im-expense-v1-${isAdmin ? "admin" : "im"}`}>
                 <thead>
                   <tr>
                     <th>Claim #</th>
@@ -523,7 +554,7 @@ export default function IMExpense({ isAdmin = false }) {
                     <th style={{ textAlign: "right" }}>Amount (SAR)</th>
                     <th>Status</th>
                     <th>Payment</th>
-                    <th>Actions</th>
+                    <th data-excel-filter="0">Actions</th>
                   </tr>
                 </thead>
                 <tbody>

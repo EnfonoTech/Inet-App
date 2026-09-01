@@ -23,7 +23,7 @@ import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-const PLAN_STATUS_OPTIONS = ["", "Planned", "In Execution", "Completed", "Cancelled", "Planning with Issue"];
+const PLAN_STATUS_OPTIONS = ["", "Planned", "Planning with Issue", "In Execution", "Overdue", "Not Attended", "Extended", "Completed", "Cancelled"];
 
 function badgeTone(value) {
   const s = String(value || "").toLowerCase();
@@ -156,8 +156,8 @@ export default function ExecutionMonitor() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [fromDate, setFromDate] = useState(_navExec?.fromDate ?? "");
+  const [toDate, setToDate] = useState(_navExec?.toDate ?? "");
   const [tab, setTab] = useState("all"); // "all" | "internal_done"
   // "All" is stored per-path, not per-tab — the backend fetch is tab-scoped
   // (filters.tab below), so switching tabs is a genuinely different,
@@ -208,10 +208,39 @@ export default function ExecutionMonitor() {
   // `filters.tab` below), only that tab's own column filters should be
   // sent - merging in the other (inactive) tab's filters would narrow this
   // tab's results using a value the user typed somewhere else entirely.
+  // Excel column-filter dropdowns cascade off exactly the query the rows were
+  // fetched with. Both tables share one query (scoped by filters.tab), so one
+  // ref serves both keys.
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      const k = e.detail?.tableKey;
+      if (k !== "execution-monitor-main" && k !== "execution-monitor-internal-done") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "execution_monitor",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
     Object.entries(
       columnFiltersByTable[tab === "internal_done" ? "execution-monitor-internal-done" : "execution-monitor-main"] || {}
-    ).filter(([, v]) => String(v || "").trim())
+    ).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -289,6 +318,7 @@ export default function ExecutionMonitor() {
         if (internalToDate) filters.internal_to_date = internalToDate;
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) filters.column_filters = colFilters;
+        queryArgsRef.current = filters;
         const signature = JSON.stringify([filters]);
 
         const prev = lastFetchRef.current;
@@ -555,7 +585,7 @@ export default function ExecutionMonitor() {
 
         <DataTableWrapper loading={loading && rows.length > 0}>
           {tab === "internal_done" ? (
-            <table key="execution-monitor-internal-done" className="data-table" data-table-key="execution-monitor-internal-done">
+            <table key="execution-monitor-internal-done" className="data-table" data-excel-filter-all="1" data-table-key="execution-monitor-internal-done">
               <thead>
                 <tr>
                   <th>Plan</th>
@@ -568,12 +598,12 @@ export default function ExecutionMonitor() {
                   <th>IM</th>
                   <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
                   <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
-                  <th style={{ whiteSpace: "nowrap" }}>Access</th>
+                  <th style={{ whiteSpace: "nowrap" }} data-excel-filter="0">Access</th>
                   <th>TL Status</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
-                  <th>Open</th>
+                  <th data-excel-filter="0">Open</th>
                 </tr>
               </thead>
               <tbody>
@@ -655,7 +685,7 @@ export default function ExecutionMonitor() {
               )}
             </table>
           ) : (
-            <table key="execution-monitor-main" className="data-table" data-table-key="execution-monitor-main">
+            <table key="execution-monitor-main" className="data-table" data-excel-filter-all="1" data-table-key="execution-monitor-main">
               <thead>
                 <tr>
                   <th>Plan</th>
@@ -674,7 +704,7 @@ export default function ExecutionMonitor() {
                   <th>IM</th>
                   <th>Plan Date</th>
                   <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
-                  <th style={{ whiteSpace: "nowrap" }}>Access</th>
+                  <th style={{ whiteSpace: "nowrap" }} data-excel-filter="0">Access</th>
                   <th>Visit Type</th>
                   <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit No</th>
                   <th style={{ textAlign: "right" }}>Target</th>
@@ -687,7 +717,7 @@ export default function ExecutionMonitor() {
                   <th title="Remark set by PM">General</th>
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
-                  <th>Open</th>
+                  <th data-excel-filter="0">Open</th>
                 </tr>
               </thead>
               <tbody>

@@ -3,7 +3,7 @@ import os
 import re
 
 import frappe
-from frappe.utils import flt, now, nowdate
+from frappe.utils import cint, flt, now, nowdate
 
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
@@ -1139,6 +1139,267 @@ def _request_status(status, transfer_status, has_pending_se=False, is_return=Fal
     return status or "Draft"
 
 
+# Direct col_key -> Material Request field mappings, shared by the two column
+# filter loops. Deliberately partial: "poid", "team" and "im" resolve through
+# another doctype (dispatch names / warehouses) rather than a field on this
+# one, so excel_orm_filter cannot express them and they stay substring-only.
+def mr_column_options(col_key, base_filters=None, search=None, limit=500):
+    """Excel-filter option list for a Material Request column.
+
+    Handles the columns whose displayed value is not a field on this doctype:
+    the linked POID / team name / IM full name, and the Python-computed
+    Status label. Anything else falls through to the plain ORM path.
+    """
+    from inet_app.api.command_center import (
+        _sql_like_pattern,
+        excel_options_from_orm,
+    )
+
+    empty = {"values": [], "has_blanks": False, "total": 0, "supported": False}
+    base = dict(base_filters or {})
+    # The column being edited must not constrain its own option list.
+    pat = _sql_like_pattern(search)
+    lim = max(1, min(int(limit or 500), 2000))
+
+    def _wrap(labels, has_blanks=False):
+        labels = sorted({str(l) for l in labels if str(l or "").strip()})
+        if pat:
+            needle = str(search).strip().lower()
+            labels = [l for l in labels if needle in l.lower()]
+        return {
+            "values": [{"value": l, "label": l} for l in labels[:lim]],
+            "has_blanks": has_blanks,
+            "total": len(labels),
+            "supported": True,
+        }
+
+    def _mr_field_values(field):
+        """Distinct values of a raw MR field under the caller's own filters."""
+        return set(frappe.get_all(
+            "Material Request", filters=base, pluck=field, distinct=True,
+            limit_page_length=0,
+        ) or [])
+
+    if col_key in ("poid", "team", "im", "status"):
+        # These four are shown as something other than what MR stores, so map
+        # the stored keys (already scoped by `base`) to their display labels.
+        if col_key == "poid":
+            keys = {k for k in _mr_field_values("poid") if k}
+            if not keys:
+                return _wrap([])
+            return _wrap(frappe.get_all(
+                "PO Dispatch", filters=[["name", "in", list(keys)]],
+                pluck="poid", distinct=True, limit_page_length=0) or [])
+        if col_key == "team":
+            whs = {w for w in _mr_field_values("set_warehouse") if w}
+            if not whs:
+                return _wrap([])
+            return _wrap(frappe.get_all(
+                "INET Team", filters=[["warehouse", "in", list(whs)]],
+                pluck="team_name", distinct=True, limit_page_length=0) or [])
+        if col_key == "im":
+            ims = {i for i in _mr_field_values("im") if i}
+            if not ims:
+                return _wrap([])
+            rows = frappe.get_all(
+                "IM Master", filters=[["name", "in", list(ims)]],
+                fields=["name", "user"], limit_page_length=0) or []
+            names = {r["user"]: r["name"] for r in rows if r.get("user")}
+            full = {}
+            if names:
+                for u in frappe.get_all("User", filters=[["name", "in", list(names)]],
+                                        fields=["name", "full_name"], limit_page_length=0) or []:
+                    full[names[u["name"]]] = u.get("full_name") or names[u["name"]]
+            return _wrap([full.get(i, i) for i in ims])
+        # status: _request_status() over the scoped rows — not a column, so
+        # derive the labels exactly as the list function does.
+        rows = frappe.get_all(
+            "Material Request", filters=base,
+            fields=["status", "transfer_status", "pending_transfer_se"],
+            limit_page_length=0) or []
+        return _wrap({
+            _request_status(r.get("status"), r.get("transfer_status"),
+                            has_pending_se=bool(r.get("pending_transfer_se")))
+            for r in rows
+        })
+
+    fld = _MR_COL_FIELD.get(col_key)
+    if not fld:
+        return empty
+    return excel_options_from_orm("Material Request", base, fld, search, limit)
+
+
+def mr_apply_excel_link_filter(col_key, raw_val, filters):
+    """Apply an Excel-style dict filter for a Material Request column whose
+    displayed value lives on ANOTHER doctype.
+
+    MR stores the PO Dispatch docname in `poid`, a warehouse in
+    `set_warehouse` and an IM code in `im`, while the table shows the POID,
+    the team name and the IM's full name. Resolve the picked labels back to
+    the keys actually stored, mirroring the substring branches below.
+    Returns True when it handled the column.
+    """
+    from inet_app.api.command_center import _sql_like_pattern
+
+    vals = [str(x) for x in (raw_val.get("values") or []) if str(x or "").strip()]
+    cpat = _sql_like_pattern(raw_val.get("contains"))
+    if not vals and not cpat:
+        return col_key in ("poid", "team", "im")
+
+    def _resolve(sql_in, sql_like, field):
+        out = set()
+        if vals:
+            ph = ", ".join(["%s"] * len(vals))
+            out |= set(frappe.db.sql_list(sql_in.format(ph=ph), tuple(vals)) or [])
+        if cpat:
+            out |= set(frappe.db.sql_list(sql_like, (cpat,)) or [])
+        filters[field] = ["in", list(out) or ["__none__"]]
+
+    if col_key == "poid":
+        _resolve("SELECT name FROM `tabPO Dispatch` WHERE poid IN ({ph})",
+                 "SELECT name FROM `tabPO Dispatch` WHERE poid LIKE %s", "poid")
+        return True
+    if col_key == "team":
+        _resolve("SELECT warehouse FROM `tabINET Team` WHERE team_name IN ({ph}) AND IFNULL(warehouse,'') != ''",
+                 "SELECT warehouse FROM `tabINET Team` WHERE team_name LIKE %s AND IFNULL(warehouse,'') != ''",
+                 "set_warehouse")
+        return True
+    if col_key == "im":
+        existing = filters.get("im")
+        tmp = {}
+        _resolve("SELECT imm.name FROM `tabIM Master` imm INNER JOIN `tabUser` u ON u.name = imm.user WHERE u.full_name IN ({ph})",
+                 "SELECT imm.name FROM `tabIM Master` imm INNER JOIN `tabUser` u ON u.name = imm.user WHERE u.full_name LIKE %s",
+                 "im")
+        tmp["im"] = filters["im"]
+        if existing and not isinstance(existing, (list, tuple)):
+            # Non-admin callers are already scoped to one IM — never widen it.
+            filters["im"] = existing if existing in set(tmp["im"][1]) else ["in", ["__none__"]]
+        return True
+    return False
+
+
+# ── Assembled-aggregate column filters ──────────────────────────────────
+# The three stock tabs are built in Python (Bin lookups per warehouse, then
+# enrichment), not by one SQL statement, so there is no WHERE to attach a
+# clause to. Filtering therefore happens on the assembled rows — server-side,
+# so the dropdown and the row payload both shrink, and so the option list is
+# derived from the complete aggregate rather than whatever the page holds.
+_STOCK_COL_FIELD = {
+    "duid_stock": {
+        "duid": "duid", "project": "project_name", "pending": "pending_count",
+        "received": "received_count", "transferred": "transferred_count",
+        "completed": "completed_count", "volume_m": "volume", "latest_date": "latest_date",
+    },
+    "stock_balance": {
+        "duid": "duid", "project": "project_name", "warehouse": "warehouse_label",
+        # Item Code and Item Name are separate columns, so each filters on its own.
+        "item_code": "item_code", "item_name": "item_name",
+        "item": "item_code",   # legacy key, kept so saved filters still resolve
+        "type": "warehouse_type", "qty": "qty", "uom": "uom",
+    },
+    "bill_wise": {
+        "bill_no": "bill_no", "duid": "du_id", "project": "project_name",
+        "item_code": "item_code", "item_name": "item_name",
+        "item": "item_code",   # legacy key, kept so saved filters still resolve
+        "warehouse": "warehouse", "current_qty": "current_qty",
+        "received": "received", "transferred": "transferred", "used": "used",
+        "remaining": "remaining", "uom": "uom", "outbound_date": "outbound_date",
+        "status": "status",
+    },
+}
+
+
+def _stock_limit_suffix(limit):
+    """LIMIT clause for an aggregate query. 0 / None = no cap."""
+    try:
+        lim = int(limit)
+    except (TypeError, ValueError):
+        return ""
+    return "" if lim <= 0 else f"LIMIT {lim}"
+
+
+def _stock_apply_limit(rows, limit):
+    """Row-limit an assembled aggregate. Applied AFTER filtering so the
+    selector means the same thing here as on every SQL-backed page: how many
+    of the MATCHING rows to return. 0 / None = no cap.
+    """
+    try:
+        lim = int(limit)
+    except (TypeError, ValueError):
+        return rows
+    return rows if lim <= 0 else rows[:lim]
+
+
+def _stock_row_matches(row, field, raw_val):
+    """True when one assembled row passes one column filter."""
+    val = "" if row.get(field) is None else str(row.get(field))
+    if isinstance(raw_val, dict):
+        vals = [str(x) for x in (raw_val.get("values") or []) if str(x or "").strip()]
+        blanks = bool(raw_val.get("blanks"))
+        contains = str(raw_val.get("contains") or "").strip().lower()
+        if not vals and not blanks and not contains:
+            return True
+        if not val.strip():
+            return blanks
+        if vals and val in vals:
+            return True
+        if contains and contains in val.lower():
+            return True
+        return False
+    term = str(raw_val or "").strip().lower()
+    return (term in val.lower()) if term else True
+
+
+def filter_stock_rows(rows, table, column_filters):
+    """Apply per-column filters to assembled aggregate rows."""
+    col_map = _STOCK_COL_FIELD.get(table) or {}
+    if isinstance(column_filters, str):
+        try:
+            column_filters = frappe.parse_json(column_filters)
+        except Exception:
+            column_filters = None
+    if not isinstance(column_filters, dict) or not column_filters:
+        return rows
+    active = [(col_map[k], v) for k, v in column_filters.items() if col_map.get(k)]
+    if not active:
+        return rows
+    return [r for r in rows if all(_stock_row_matches(r, f, v) for f, v in active)]
+
+
+def stock_column_options(rows, table, col_key, search=None, limit=500):
+    """Option list for an assembled aggregate column."""
+    field = (_STOCK_COL_FIELD.get(table) or {}).get(col_key)
+    if not field:
+        return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+    labels, has_blanks = set(), False
+    for r in rows:
+        v = r.get(field)
+        v = "" if v is None else str(v)
+        if not v.strip():
+            has_blanks = True
+        else:
+            labels.add(v)
+    out = sorted(labels)
+    needle = str(search or "").strip().lower()
+    if needle:
+        out = [l for l in out if needle in l.lower()]
+    total = len(out)
+    lim = max(1, min(int(limit or 500), 2000))
+    return {
+        "values": [{"value": l, "label": l} for l in out[:lim]],
+        "has_blanks": has_blanks, "total": total, "supported": True,
+    }
+
+
+_MR_COL_FIELD = {
+    "request_no": "name",
+    "name": "name",
+    "date": "transaction_date",
+    "duid": "duid",
+    "reason": "return_reason",
+}
+
+
 def _apply_material_request_column_filters(filters, column_filters):
     """Per-column "Manage Table" filters for list_material_requests /
     list_return_requests — see list_im_rollout_plans (in command_center.py)
@@ -1156,7 +1417,7 @@ def _apply_material_request_column_filters(filters, column_filters):
     client-side only, same graceful-degradation approach used for other
     genuinely-computed columns elsewhere.
     """
-    from inet_app.api.command_center import _sql_like_pattern
+    from inet_app.api.command_center import _sql_like_pattern, excel_orm_filter
 
     if isinstance(column_filters, str):
         try:
@@ -1167,6 +1428,17 @@ def _apply_material_request_column_filters(filters, column_filters):
         return
 
     for col_key, raw_val in column_filters.items():
+        # ORM filter list, not SQL — see excel_orm_filter(). These loops map
+        # each col_key to its field inline below, so resolve the dict against
+        # that same field rather than duplicating the mapping here.
+        if isinstance(raw_val, dict):
+            if mr_apply_excel_link_filter(col_key, raw_val, filters):
+                continue
+            _f = _MR_COL_FIELD.get(col_key)
+            _entry = excel_orm_filter(_f, raw_val) if _f else None
+            if _entry:
+                filters[_entry[0]] = [_entry[1], _entry[2]]
+            continue
         val = str(raw_val or "").strip()
         if not val:
             continue
@@ -1213,7 +1485,7 @@ def _apply_material_request_column_filters(filters, column_filters):
 
 
 @frappe.whitelist()
-def list_material_requests(im=None, status=None, limit=50, column_filters=None,
+def list_material_requests(im=None, status=None, limit=50, column_filters=None, _options=None,
                             team_id=None, duid=None, from_date=None, to_date=None):
     """List Material Requests (type: Material Transfer) created via INET portal.
 
@@ -1251,7 +1523,33 @@ def list_material_requests(im=None, status=None, limit=50, column_filters=None,
     elif to_date:
         filters["transaction_date"] = ["<=", to_date]
 
+    # "Status" is _request_status(), computed after the query — a dict filter
+    # on it cannot become an ORM condition, so pull it out and apply it to the
+    # enriched rows below.
+    _wanted_status = None
+    _cf_parsed = column_filters
+    if isinstance(_cf_parsed, str):
+        try:
+            _cf_parsed = frappe.parse_json(_cf_parsed)
+        except Exception:
+            _cf_parsed = None
+    if isinstance(_cf_parsed, dict):
+        _sv = _cf_parsed.get("status")
+        if isinstance(_sv, dict):
+            _wanted_status = {str(x) for x in (_sv.get("values") or []) if str(x or "").strip()}
+            _sc = str(_sv.get("contains") or "").strip().lower()
+            if not _wanted_status and _sc:
+                _wanted_status = ("~", _sc)
+
     _apply_material_request_column_filters(filters, column_filters)
+
+    if _options:
+        # Answer from the filters THIS function assembled, so the option list
+        # can never offer a value the row query would return nothing for.
+        return mr_column_options(
+            _options.get("col_key"), filters,
+            _options.get("search"), _options.get("limit"),
+        )
 
     rows = frappe.db.get_all(
         "Material Request",
@@ -1304,6 +1602,18 @@ def list_material_requests(im=None, status=None, limit=50, column_filters=None,
         r["im_full_name"] = im_fullname_map.get(r.get("im") or "", r.get("im") or "")
         if r.get("poid"):
             r["poid"] = poid_map.get(r["poid"], r["poid"])
+
+    if _wanted_status:
+        if isinstance(_wanted_status, tuple):
+            rows = [r for r in rows if _wanted_status[1] in (r["request_status"] or "").lower()]
+        else:
+            rows = [r for r in rows if r["request_status"] in _wanted_status]
+
+    if _wanted_status:
+        if isinstance(_wanted_status, tuple):
+            rows = [r for r in rows if _wanted_status[1] in (r["request_status"] or "").lower()]
+        else:
+            rows = [r for r in rows if r["request_status"] in _wanted_status]
 
     if status:
         rows = [r for r in rows if r["request_status"] == status]
@@ -1818,43 +2128,80 @@ def get_im_teams(im=None):
 
 
 @frappe.whitelist()
-def get_duid_stock_summary():
+def get_duid_stock_summary(column_filters=None, limit=None, _options=None):
     """DUID-wise summary of INET Huawei Outbound materials in the main warehouse.
 
     Groups all INET Huawei Outbound Plan rows by DUID, showing
     how many shipments arrived (Received) vs. are expected (Prepared).
     DUIDs whose net stock in the source warehouse is zero (fully transferred out) are excluded.
     """
+    # Grouped in SQL, and — once the exclusion set below is known — filtered
+    # and capped there too, so the DB returns only the rows the page shows.
+    # This is what makes the row limit real: without it the server builds the
+    # whole aggregate and throws the tail away.
+    def _grouped_duids(exclude, col_filters, lim):
+        from inet_app.api.command_center import _sql_like_pattern, excel_filter_clause
+        where = ["subcon = 'INET'", "IFNULL(du_id, '') != ''"]
+        params = []
+        if exclude:
+            ph = ", ".join(["%s"] * len(exclude))
+            where.append(f"du_id NOT IN ({ph})")
+            params.extend(list(exclude))
+        # Raw columns filter in WHERE, aggregates in HAVING.
+        raw = {"duid": "du_id", "project": "IFNULL(project_name,'')"}
+        agg = {
+            "received": "SUM(CASE WHEN outbound_status = 'Received' THEN 1 ELSE 0 END)",
+            "pending": "SUM(CASE WHEN outbound_status = 'Received' THEN 0 ELSE 1 END)",
+            "volume_m": "ROUND(SUM(IFNULL(total_volume,0)), 4)",
+            "latest_date": "IFNULL(MAX(outbound_date), '')",
+        }
+        having = []
+        if isinstance(col_filters, str):
+            try:
+                col_filters = frappe.parse_json(col_filters)
+            except Exception:
+                col_filters = None
+        if isinstance(col_filters, dict):
+            for ck, cv in col_filters.items():
+                expr = raw.get(ck) or agg.get(ck)
+                if not expr:
+                    continue
+                if isinstance(cv, dict):
+                    clause, p = excel_filter_clause(f"CAST({expr} AS CHAR)", cv)
+                else:
+                    pat = _sql_like_pattern(cv)
+                    clause, p = (f"CAST({expr} AS CHAR) LIKE %s", [pat]) if pat else (None, [])
+                if not clause:
+                    continue
+                (where if ck in raw else having).append(clause)
+                params.extend(p)
+        sql = f"""
+            SELECT du_id AS duid,
+                   ROUND(SUM(IFNULL(total_volume, 0)), 4) AS total_volume,
+                   SUM(CASE WHEN outbound_status = 'Received' THEN 1 ELSE 0 END) AS received_count,
+                   SUM(CASE WHEN outbound_status = 'Received' THEN 0 ELSE 1 END) AS prepared_count,
+                   IFNULL(MAX(outbound_date), '') AS latest_date,
+                   SUBSTRING_INDEX(
+                       GROUP_CONCAT(IFNULL(project_name, '')
+                                    ORDER BY outbound_date DESC SEPARATOR '\x1f'),
+                       '\x1f', 1) AS project_name
+            FROM `tabHuawei Outbound Plan`
+            WHERE {" AND ".join(where)}
+            GROUP BY du_id
+            {("HAVING " + " AND ".join(having)) if having else ""}
+            ORDER BY received_count DESC, latest_date ASC, du_id ASC
+            {_stock_limit_suffix(lim)}
+        """
+        return frappe.db.sql(sql, tuple(params), as_dict=True) or []
+
+    # Only the material_receipt -> duid mapping still needs the plan rows, and
+    # only for receipts, so fetch that narrow slice rather than every column.
     plans = frappe.db.get_all(
         "Huawei Outbound Plan",
         filters={"subcon": "INET"},
-        fields=["du_id", "bill_no", "outbound_status", "material_receipt",
-                "total_volume", "outbound_date", "project_name"],
-        order_by="outbound_date desc",
-        limit=5000,
+        fields=["du_id", "material_receipt"],
+        limit_page_length=0,
     )
-    by_duid = {}
-    for p in plans:
-        duid = (p["du_id"] or "").strip()
-        if not duid:
-            continue
-        if duid not in by_duid:
-            by_duid[duid] = {
-                "duid": duid,
-                "total_volume": 0.0,
-                "received_count": 0,
-                "prepared_count": 0,
-                "latest_date": str(p["outbound_date"] or ""),
-                "project_name": p["project_name"] or "",
-            }
-        g = by_duid[duid]
-        g["total_volume"] = round(g["total_volume"] + flt(p["total_volume"]), 4)
-        if p["outbound_status"] == "Received":
-            g["received_count"] += 1
-        else:
-            g["prepared_count"] += 1
-        if str(p["outbound_date"] or "") > g["latest_date"]:
-            g["latest_date"] = str(p["outbound_date"])
 
     # Build set of DUIDs that are fully transferred out of source warehouse.
     # Two checks — either is sufficient to mark a DUID as fully transferred:
@@ -1941,6 +2288,22 @@ def get_duid_stock_summary():
 
     # Compute has_requestable_items: DUIDs that have at least one item with
     # remaining qty (received total minus active MR requested total) > 0.
+    # Options must describe the COMPLETE aggregate, so they ignore the page's
+    # filters and limit; the row path pushes both into the query.
+    grouped = _grouped_duids(fully_transferred, None if _options else column_filters,
+                             0 if _options else limit)
+    by_duid = {
+        g["duid"]: {
+            "duid": g["duid"],
+            "total_volume": flt(g["total_volume"]),
+            "received_count": cint(g["received_count"]),
+            "prepared_count": cint(g["prepared_count"]),
+            "latest_date": str(g["latest_date"] or ""),
+            "project_name": g["project_name"] or "",
+        }
+        for g in grouped
+    }
+
     receipt_to_duid = {}
     for p in plans:
         if p.get("material_receipt") and (p["du_id"] or "").strip():
@@ -2022,12 +2385,11 @@ def get_duid_stock_summary():
             elif bill_fully_transferred:
                 g["transferred_count"] += 1
 
-    # Sort: received first, then by latest date; exclude fully-transferred DUIDs
-    result = sorted(
-        (v for v in by_duid.values() if v["duid"] not in fully_transferred),
-        key=lambda x: (-x["received_count"], x["latest_date"]),
-        reverse=False,
-    )
+    # Already excluded, filtered, ordered and capped by _grouped_duids.
+    result = list(by_duid.values())
+    if _options:
+        return stock_column_options(result, "duid_stock", _options.get("col_key"),
+                                    _options.get("search"), _options.get("limit"))
     return result
 
 
@@ -2722,23 +3084,58 @@ def get_team_material_stock(team_id=None):
             ignore_permissions=True,
         )
 
+    # Batched across every team warehouse rather than 3 queries per team:
+    # with 20-100 active teams that was 60-300 round trips on one page load.
+    # Same data, same per-team logic below — only the fetch is hoisted.
+    _all_whs = [t.get("warehouse") for t in teams if t.get("warehouse")]
+    _bins_by_wh, _in_by_wh, _out_by_wh = {}, {}, {}
+    if _all_whs:
+        _ph_wh = ", ".join(["%s"] * len(_all_whs))
+        for r in frappe.db.sql(
+            f"""SELECT b.warehouse, b.item_code,
+                       IFNULL(i.item_name, b.item_code) AS item_name,
+                       b.actual_qty                     AS qty,
+                       IFNULL(i.stock_uom, '')          AS uom
+                FROM `tabBin` b
+                LEFT JOIN `tabItem` i ON i.name = b.item_code
+                WHERE b.warehouse IN ({_ph_wh}) AND b.actual_qty > 0
+                ORDER BY i.item_name""",
+            tuple(_all_whs), as_dict=True,
+        ) or []:
+            _bins_by_wh.setdefault(r["warehouse"], []).append(r)
+        for r in frappe.db.sql(
+            f"""SELECT sed.t_warehouse AS wh, sed.item_code, sed.to_duid AS duid,
+                       SUM(sed.qty) AS qty
+                FROM `tabStock Entry Detail` sed
+                JOIN `tabStock Entry` se ON se.name = sed.parent
+                WHERE se.docstatus = 1
+                  AND se.stock_entry_type = 'Material Transfer'
+                  AND sed.t_warehouse IN ({_ph_wh})
+                  AND sed.to_duid IS NOT NULL AND sed.to_duid != ''
+                GROUP BY sed.t_warehouse, sed.item_code, sed.to_duid""",
+            tuple(_all_whs), as_dict=True,
+        ) or []:
+            _in_by_wh.setdefault(r["wh"], []).append(r)
+        for r in frappe.db.sql(
+            f"""SELECT sed.s_warehouse AS wh, sed.item_code, sed.duid,
+                       SUM(sed.qty) AS qty
+                FROM `tabStock Entry Detail` sed
+                JOIN `tabStock Entry` se ON se.name = sed.parent
+                WHERE se.docstatus = 1
+                  AND se.stock_entry_type = 'Material Issue'
+                  AND sed.s_warehouse IN ({_ph_wh})
+                  AND sed.duid IS NOT NULL AND sed.duid != ''
+                GROUP BY sed.s_warehouse, sed.item_code, sed.duid""",
+            tuple(_all_whs), as_dict=True,
+        ) or []:
+            _out_by_wh.setdefault(r["wh"], []).append(r)
+
     out = []
     for team in teams:
         wh = team.get("warehouse") or ""
         items = []
         if wh:
-            # ── Step 1: total qty per item from Bin (ground truth) ──
-            bins = frappe.db.sql(
-                """SELECT b.item_code,
-                          IFNULL(i.item_name, b.item_code) AS item_name,
-                          b.actual_qty                     AS qty,
-                          IFNULL(i.stock_uom, '')          AS uom
-                   FROM `tabBin` b
-                   LEFT JOIN `tabItem` i ON i.name = b.item_code
-                   WHERE b.warehouse = %s AND b.actual_qty > 0
-                   ORDER BY i.item_name""",
-                (wh,), as_dict=True,
-            )
+            bins = _bins_by_wh.get(wh, [])
 
             # ── Step 2: per-DUID balance from SE Detail ──
             # SLE does not carry the duid inventory dimension column in this
@@ -2747,40 +3144,15 @@ def get_team_material_stock(team_id=None):
             #   Issue SE     → items consumed  (s_warehouse=team, duid set)
             duid_balance = {}   # (item_code, duid) → net qty
             if bins:
-                ic_list = [r["item_code"] for r in bins]
-                placeholders = ", ".join(["%s"] * len(ic_list))
-
-                # Items transferred IN to this warehouse
-                in_rows = frappe.db.sql(
-                    f"""SELECT sed.item_code, sed.to_duid AS duid, SUM(sed.qty) AS qty
-                        FROM `tabStock Entry Detail` sed
-                        JOIN `tabStock Entry` se ON se.name = sed.parent
-                        WHERE se.docstatus             = 1
-                          AND se.stock_entry_type      = 'Material Transfer'
-                          AND sed.t_warehouse          = %s
-                          AND sed.to_duid IS NOT NULL AND sed.to_duid != ''
-                          AND sed.item_code IN ({placeholders})
-                        GROUP BY sed.item_code, sed.to_duid""",
-                    (wh, *ic_list), as_dict=True,
-                )
-                for r in in_rows:
+                _ics = {r["item_code"] for r in bins}
+                for r in _in_by_wh.get(wh, []):
+                    if r["item_code"] not in _ics:
+                        continue
                     key = (r["item_code"], r["duid"])
                     duid_balance[key] = duid_balance.get(key, 0.0) + flt(r["qty"])
-
-                # Items issued OUT from this warehouse
-                out_rows = frappe.db.sql(
-                    f"""SELECT sed.item_code, sed.duid, SUM(sed.qty) AS qty
-                        FROM `tabStock Entry Detail` sed
-                        JOIN `tabStock Entry` se ON se.name = sed.parent
-                        WHERE se.docstatus         = 1
-                          AND se.stock_entry_type  = 'Material Issue'
-                          AND sed.s_warehouse      = %s
-                          AND sed.duid IS NOT NULL AND sed.duid != ''
-                          AND sed.item_code IN ({placeholders})
-                        GROUP BY sed.item_code, sed.duid""",
-                    (wh, *ic_list), as_dict=True,
-                )
-                for r in out_rows:
+                for r in _out_by_wh.get(wh, []):
+                    if r["item_code"] not in _ics:
+                        continue
                     key = (r["item_code"], r["duid"])
                     duid_balance[key] = duid_balance.get(key, 0.0) - flt(r["qty"])
 
@@ -3003,7 +3375,7 @@ def _append_stock_rows(rows, items, warehouse_type, warehouse_label, warehouse, 
 
 
 @frappe.whitelist()
-def get_duid_stock_balance():
+def get_duid_stock_balance(column_filters=None, limit=None, _options=None):
     """Flattened DUID-wise stock balance across the main warehouse and every
     (permission-scoped) team warehouse — powers the Material Requests
     "Stock Balance" tab for IM and PM.
@@ -3044,7 +3416,10 @@ def get_duid_stock_balance():
 
     # Untagged ("No DUID") rows sort after every real DUID, per warehouse.
     rows.sort(key=lambda r: (r["duid"] or "￿", r["warehouse_type"], r["item_code"]))
-    return rows
+    if _options:
+        return stock_column_options(rows, "stock_balance", _options.get("col_key"),
+                                    _options.get("search"), _options.get("limit"))
+    return _stock_apply_limit(filter_stock_rows(rows, "stock_balance", column_filters), limit)
 
 
 @frappe.whitelist()
@@ -3609,12 +3984,16 @@ def get_bill_wise_status_by_warehouse(filters=None):
 
 
 @frappe.whitelist()
-def get_bill_wise_material(filters=None):
+def get_bill_wise_material(filters=None, column_filters=None, limit=None, _options=None):
     """Portal wrapper over get_bill_wise_status_by_warehouse — powers the
     "Bill Wise Material" tab in Material Management (IM + PM)."""
     if isinstance(filters, str):
         filters = frappe.parse_json(filters) or {}
-    return get_bill_wise_status_by_warehouse(filters)
+    rows = get_bill_wise_status_by_warehouse(filters)
+    if _options:
+        return stock_column_options(rows, "bill_wise", _options.get("col_key"),
+                                    _options.get("search"), _options.get("limit"))
+    return _stock_apply_limit(filter_stock_rows(rows, "bill_wise", column_filters), limit)
 
 
 @frappe.whitelist()
@@ -4012,7 +4391,7 @@ def _apply_return_request_column_filters(filters, column_filters):
     _apply_material_request_column_filters above for the rationale. "Team"
     resolves via set_from_warehouse (opposite field from list_material_requests'
     set_warehouse); "Status" stays client-side only (same reason as above)."""
-    from inet_app.api.command_center import _sql_like_pattern
+    from inet_app.api.command_center import _sql_like_pattern, excel_orm_filter
 
     if isinstance(column_filters, str):
         try:
@@ -4023,6 +4402,17 @@ def _apply_return_request_column_filters(filters, column_filters):
         return
 
     for col_key, raw_val in column_filters.items():
+        # ORM filter list, not SQL — see excel_orm_filter(). These loops map
+        # each col_key to its field inline below, so resolve the dict against
+        # that same field rather than duplicating the mapping here.
+        if isinstance(raw_val, dict):
+            if mr_apply_excel_link_filter(col_key, raw_val, filters):
+                continue
+            _f = _MR_COL_FIELD.get(col_key)
+            _entry = excel_orm_filter(_f, raw_val) if _f else None
+            if _entry:
+                filters[_entry[0]] = [_entry[1], _entry[2]]
+            continue
         val = str(raw_val or "").strip()
         if not val:
             continue
@@ -4064,7 +4454,7 @@ def _apply_return_request_column_filters(filters, column_filters):
 
 @frappe.whitelist()
 def list_return_requests(team_id=None, status=None, limit=50, column_filters=None,
-                          im=None, duid=None, from_date=None, to_date=None):
+                          im=None, duid=None, from_date=None, to_date=None, _options=None):
     """List Material Return Requests.
 
     Field team: sees their team's requests.
@@ -4123,7 +4513,30 @@ def list_return_requests(team_id=None, status=None, limit=50, column_filters=Non
     elif to_date:
         filters["transaction_date"] = ["<=", to_date]
 
+    # Same computed-Status handling as list_material_requests — the label is
+    # _request_status(), not a column.
+    _wanted_status = None
+    _cf_r = column_filters
+    if isinstance(_cf_r, str):
+        try:
+            _cf_r = frappe.parse_json(_cf_r)
+        except Exception:
+            _cf_r = None
+    if isinstance(_cf_r, dict):
+        _sv = _cf_r.get("status")
+        if isinstance(_sv, dict):
+            _wanted_status = {str(x) for x in (_sv.get("values") or []) if str(x or "").strip()}
+            _sc = str(_sv.get("contains") or "").strip().lower()
+            if not _wanted_status and _sc:
+                _wanted_status = ("~", _sc)
+
     _apply_return_request_column_filters(filters, column_filters)
+
+    if _options:
+        return mr_column_options(
+            _options.get("col_key"), filters,
+            _options.get("search"), _options.get("limit"),
+        )
 
     rows = frappe.db.get_all(
         "Material Request",

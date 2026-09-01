@@ -90,8 +90,35 @@ export default function PODump() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below).
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "admin-po-dump-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "po_dump",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: { column_filters: queryArgsRef.current.column_filters },
+        extra: queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -128,6 +155,7 @@ export default function PODump() {
       setError(null);
       try {
         const colFilters = JSON.parse(columnFiltersDebounced);
+        queryArgsRef.current = { from_date: fromDate, to_date: toDate, statuses: activeStatuses, column_filters: colFilters };
         const res = await pmApi.exportPODump(fromDate, toDate, activeStatuses, rowLimit, searchDebounced, colFilters);
         if (!cancelled) {
           const nextRows = Array.isArray(res?.rows) ? res.rows : [];
@@ -313,7 +341,7 @@ export default function PODump() {
 
       <div className="page-content">
         <DataTableWrapper loading={loading && rows.length > 0}>
-            <table className="data-table" data-table-key="admin-po-dump-v1">
+            <table className="data-table" data-excel-filter-all="1" data-table-key="admin-po-dump-v1">
               <thead>
                 <tr>
                   <th>POID</th>
@@ -329,7 +357,7 @@ export default function PODump() {
                   <th style={{ textAlign: "right" }}>Amount</th>
                   <th>Start Date</th>
                   <th>End Date</th>
-                  <th>Action</th>
+                  <th data-excel-filter="0">Action</th>
                 </tr>
               </thead>
               <tbody>

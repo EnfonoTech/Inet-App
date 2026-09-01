@@ -137,8 +137,36 @@ export default function FieldHistory() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below).
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "field-history-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "execution_monitor",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -181,6 +209,7 @@ export default function FieldHistory() {
         // forced the table to render with mostly empty cells.
         const teamFilters = { team: teamId };
         if (Object.keys(colFilters).length) teamFilters.column_filters = colFilters;
+        queryArgsRef.current = teamFilters;
         const list = await pmApi.listExecutionMonitorRows(teamFilters, rowLimit);
         // History = rows where the field team has actually started or
         // recorded execution. Plain plans with no Daily Execution yet
@@ -242,7 +271,7 @@ export default function FieldHistory() {
       {/* ── Desktop table ─────────────────────────────────── */}
       <div className="page-content field-desktop-only">
         <DataTableWrapper loading={loading && records.length > 0}>
-          <table className="data-table" data-table-key="field-history-v1">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="field-history-v1">
             <thead>
               <tr>
                 <th>Execution ID</th>

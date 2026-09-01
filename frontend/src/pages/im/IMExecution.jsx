@@ -271,6 +271,27 @@ export default function IMExecution() {
   }, []);
   // The backend query is scoped to the active tab (see `portal.tab` below),
   // so only that tab's own column filters should be sent.
+  // Excel column-filter dropdowns. Both tables share one query (scoped by
+  // portal.tab), so one ref serves both keys.
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      const k = e.detail?.tableKey;
+      if (k !== "im-execution-poid-work" && k !== "im-execution-internal-done") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "im_daily_executions",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current.portal,
+        extra: { im: queryArgsRef.current.im, execution_status: queryArgsRef.current.status },
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
   const activeColumnFilters = Object.fromEntries(
     Object.entries(
       columnFiltersByTable[tab === "internal_done" ? "im-execution-internal-done" : "im-execution-poid-work"] || {}
@@ -330,6 +351,7 @@ export default function IMExecution() {
         }
 
         setLoading(true);
+        queryArgsRef.current = { portal: portalArg || {}, im: imName, status: statusFilter.length ? statusFilter : undefined };
         const res = await pmApi.listIMDailyExecutions(imName, statusFilter.length ? statusFilter : undefined, effectiveRowLimit, portalArg);
         if (cancelled) return;
         const fetchedRows = Array.isArray(res) ? res : [];
@@ -1285,7 +1307,7 @@ export default function IMExecution() {
       <div className="page-content">
         <DataTableWrapper loading={loading && executions.length > 0}>
           {tab === "internal_done" ? (
-              <table key="im-execution-internal-done" className="data-table" data-table-key="im-execution-internal-done">
+              <table key="im-execution-internal-done" className="data-table" data-excel-filter-all="1" data-table-key="im-execution-internal-done">
                 <thead>
                   <tr>
                     <th>Execution</th>
@@ -1298,12 +1320,12 @@ export default function IMExecution() {
                     <th>IM</th>
                     <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
                     <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
-                    <th style={{ whiteSpace: "nowrap" }}>Access</th>
+                    <th style={{ whiteSpace: "nowrap" }} data-excel-filter="0">Access</th>
                     <th>TL Status</th>
                     <th style={{ textAlign: "right" }}>Qty</th>
                     <th>IM Note</th>
                     <th>TL Remark</th>
-                    <th>Actions</th>
+                    <th data-excel-filter="0">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1387,7 +1409,7 @@ export default function IMExecution() {
               </table>
           ) : (
             <>
-            <table key="im-execution-poid-work" className="data-table" data-table-key="im-execution-poid-work">
+            <table key="im-execution-poid-work" className="data-table" data-excel-filter-all="1" data-table-key="im-execution-poid-work">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -1423,7 +1445,7 @@ export default function IMExecution() {
                   <th>IM</th>
                   <th style={{ whiteSpace: "nowrap" }}>Plan Period</th>
                   <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
-                  <th style={{ whiteSpace: "nowrap" }}>Access</th>
+                  <th style={{ whiteSpace: "nowrap" }} data-excel-filter="0">Access</th>
                   <th style={{ whiteSpace: "nowrap" }}>Exec Date</th>
                   <th>TL Status</th>
                   <th>Execution Status</th>

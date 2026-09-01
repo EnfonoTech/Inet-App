@@ -302,8 +302,34 @@ export default function Projects() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns. These sources filter through the ORM, so
+  // options come straight from the doctype rather than a list-function call.
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "admin-projects-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "projects",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -418,7 +444,7 @@ export default function Projects() {
       {/* Table — scrollable on narrow viewports (data-table-wrapper) */}
       <div className="page-content">
         <DataTableWrapper loading={loading && projects.length > 0}>
-          <table className="data-table" data-table-key="admin-projects-v1">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="admin-projects-v1">
             <thead>
               <tr>
                 <th>Code</th>

@@ -140,8 +140,35 @@ export default function IMPlanning() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below).
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "im-planning-rollout") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "im_rollout_plans",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current.portal,
+        extra: { im: queryArgsRef.current.im, plan_status: queryArgsRef.current.status },
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -188,6 +215,7 @@ export default function IMPlanning() {
 
       setLoading(true);
       try {
+        queryArgsRef.current = { portal: portalArg || {}, im: imName, status: statusFilter.length ? statusFilter : undefined };
         const res = await pmApi.listIMRolloutPlans(imName, statusFilter.length ? statusFilter : undefined, rowLimit, portalArg);
         if (cancelled) return;
         const fetchedRows = Array.isArray(res) ? res : [];
@@ -484,7 +512,7 @@ export default function IMPlanning() {
       <div className="page-content">
         <DataTableWrapper loading={loading && plans.length > 0}>
           <>
-            <table className="data-table" data-table-key="im-planning-rollout">
+            <table className="data-table" data-excel-filter-all="1" data-table-key="im-planning-rollout">
               <thead>
                 <tr>
                   <th>
@@ -509,7 +537,7 @@ export default function IMPlanning() {
                   <th>IM</th>
                   <th>Plan Date</th>
                   <th style={{ whiteSpace: "nowrap" }}>Access Time</th>
-                  <th style={{ whiteSpace: "nowrap" }}>Access</th>
+                  <th style={{ whiteSpace: "nowrap" }} data-excel-filter="0">Access</th>
                   <th>End Date</th>
                   <th>Visit</th>
                   <th style={{ textAlign: "right" }} title="Which visit this plan is (1, 2, 3…)">Visit No</th>

@@ -592,6 +592,37 @@ export const pmApi = {
       { doctype, fields: JSON.stringify(fields || []) },
       300_000,
     ),
+  // Excel-style column filter options for any registered backend source
+  // (see EXCEL_OPTION_SOURCES in command_center.py). Deliberately NOT
+  // callCached: the list cascades off the page's other active filters, so a
+  // client cache would show values that are no longer valid. The server
+  // caches it for 60s instead, keyed on the same inputs plus the user.
+  getColumnFilterOptions: ({ source, col_key, bucket, filters, portal_filters,
+                             exclude_column, search, limit, extra }) =>
+    call("inet_app.api.command_center.get_column_filter_options", {
+      source,
+      col_key,
+      bucket: bucket || "",
+      filters: JSON.stringify(filters || {}),
+      portal_filters: JSON.stringify(portal_filters || {}),
+      exclude_column: exclude_column || "",
+      search: search || "",
+      limit: limit || 500,
+      extra: JSON.stringify(extra || {}),
+    }),
+  // Excel-style column filter options. Deliberately NOT callCached: the list
+  // cascades off the page's other active filters, which are part of the
+  // input, so a cached response would show values that are no longer valid.
+  getPoDispatchColumnOptions: ({ col_key, bucket, filters, portal_filters, exclude_column, search, limit }) =>
+    call("inet_app.api.command_center.get_po_dispatch_column_options", {
+      col_key,
+      bucket: bucket || "",
+      filters: JSON.stringify(filters || {}),
+      portal_filters: JSON.stringify(portal_filters || {}),
+      exclude_column: exclude_column || "",
+      search: search || "",
+      limit: limit || 500,
+    }),
   saveTablePreferences: (table_id, config) =>
     call("inet_app.api.command_center.save_table_preferences", {
       table_id,
@@ -888,7 +919,7 @@ export const pmApi = {
   getImTeams:              (im)     => call("inet_app.api.material_management.get_im_teams", im ? { im } : {}),
   searchPoDispatches:      (args)   => call("inet_app.api.material_management.search_po_dispatches", args || {}),
   searchDuids:             (args)   => call("inet_app.api.material_management.search_duids", args || {}),
-  getDuidStockSummary:     ()       => call("inet_app.api.material_management.get_duid_stock_summary", {}),
+  getDuidStockSummary:     (o)      => call("inet_app.api.material_management.get_duid_stock_summary", { column_filters: JSON.stringify(o?.column_filters || {}), limit: o?.limit ?? 0 }),
   getDuidReceivedItems:    (duid)   => call("inet_app.api.material_management.get_duid_received_items", { duid }),
   getDuidBillMaterials:    (duid)   => call("inet_app.api.material_management.get_duid_bill_materials", { duid }),
   searchItems:             (args)   => call("inet_app.api.material_management.search_items", args || {}),
@@ -905,8 +936,8 @@ export const pmApi = {
   getDuidHuaweiAvailability: (duid, team_id)        => call("inet_app.api.material_management.get_duid_huawei_availability", { duid, ...(team_id ? { team_id } : {}) }),
   getTeamMaterialStock:    (team_id)               => call("inet_app.api.material_management.get_team_material_stock", team_id ? { team_id } : {}),
   getMainWarehouseStock:   ()                      => call("inet_app.api.material_management.get_main_warehouse_stock", {}),
-  getDuidStockBalance:     ()                      => call("inet_app.api.material_management.get_duid_stock_balance", {}),
-  getBillWiseMaterial:     (filters)                => call("inet_app.api.material_management.get_bill_wise_material", { filters: JSON.stringify(filters || {}) }),
+  getDuidStockBalance:     (o)                     => call("inet_app.api.material_management.get_duid_stock_balance", { column_filters: JSON.stringify(o?.column_filters || {}), limit: o?.limit ?? 0 }),
+  getBillWiseMaterial:     (o)                     => call("inet_app.api.material_management.get_bill_wise_material", { filters: JSON.stringify(o?.filters || {}), column_filters: JSON.stringify(o?.column_filters || {}), limit: o?.limit ?? 0 }),
   getBillCandidates:       (item_code, duid, warehouse) => call("inet_app.api.material_management.get_bill_candidates", { item_code, duid, warehouse }),
   getBillCandidatesBulk:   (item_codes, duid, opts)     => call("inet_app.api.material_management.get_bill_candidates_bulk", { item_codes: JSON.stringify(item_codes || []), duid, ...(opts || {}) }),
   // ── Material Return Flow ────────────────────────────────────

@@ -32,6 +32,8 @@ from inet_app.api.command_center import (
     _portal_row_limit,
     _sql_in_or_eq,
     _sql_like_pattern,
+    excel_filter_clause,
+    excel_options_from_query,
     _sql_limit_suffix,
     _sql_search_clause,
 )
@@ -567,7 +569,7 @@ def _batch_resolve_subcontracts(po_dispatch_names):
 
 # ── List endpoint ────────────────────────────────────────────────────────
 @frappe.whitelist()
-def list_subcon_po_rows(stage=None, portal_filters=None, limit=500):
+def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=None):
     """PO Dispatch lines that resolve to a SUB subcontractor, per stage.
 
     ``stage``: to_order / ordered / invoiced / closed / all —
@@ -676,9 +678,58 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500):
         "supplier": "IFNULL(sm.supplier,'')",
         "payout_pct": "CAST(sm.sub_payout_pct AS CHAR)",
         "dispatch_status": "IFNULL(pd.dispatch_status,'')",
+        # Header labels that slug differently from the keys above.
+        "rate": "CAST(pd.rate AS CHAR)",
+        "po_status": "IFNULL(pd.dispatch_status,'')",
+        "subcon_status": "IFNULL(pd.subcon_status,'')",
+        "amount": "CAST(pd.line_amount AS CHAR)",
+        "payout": "CAST(sm.sub_payout_pct AS CHAR)",
+        # Remaining header slugs on SubconPO.jsx. These mirror the SELECT's
+        # own computed expressions so a filter matches what's rendered.
+        # "Cust. MS1/MS2" render the PIC (customer-side) milestone STATUS
+        # badge, and "Subcon MS1/MS2" the sub-PO status badge — not amounts.
+        # Check the cell, not the header wording: an earlier pass mapped these
+        # to ms*_amount and the dropdowns offered money on a status column.
+        "cust_ms1": "IF(IFNULL(pd.pic_status,'') = '', 'Work Not Done', pd.pic_status)",
+        "cust_ms2": "IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2)",
+        "payout_ms1": f"CAST({_expected_payout_sql(1)} AS CHAR)",
+        "payout_ms2": f"CAST({_expected_payout_sql(2)} AS CHAR)",
+        "vat_ms1": f"CAST({_vat_sql(1)} AS CHAR)",
+        "vat_ms2": f"CAST({_vat_sql(2)} AS CHAR)",
+        # PicStatusBadge / SubPoStatusBadge substitute these labels for an
+        # empty value, so the option list must too — otherwise the dropdown
+        # offers "(Blanks)" for cells that visibly read "Work Not Done" /
+        # "Not Ordered", and never offers the label that IS on screen.
+        "subcon_ms1": "IF(IFNULL(pd.sub_po_status_ms1,'') = '', 'Not Ordered', pd.sub_po_status_ms1)",
+        "subcon_ms2": "IF(IFNULL(pd.sub_po_status_ms2,'') = '', 'Not Ordered', pd.sub_po_status_ms2)",
+        # Purchase Orders / Invoices are attached by _batch_linked_purchase_docs()
+        # after the main query. Mirror that lookup (same child->parent hop and
+        # same "PO-0001|MS1|Submitted" formatting) so these columns filter too.
+        "purchase_orders": (
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT CONCAT(p_o.name, '|', "
+            "UPPER(IFNULL(c_o.milestone, '')), '|', "
+            "CASE WHEN p_o.docstatus = 1 THEN 'Submitted' "
+            "WHEN p_o.docstatus = 0 THEN 'Draft' "
+            "WHEN p_o.docstatus = 2 THEN 'Cancelled' ELSE '?' END) "
+            "ORDER BY p_o.name SEPARATOR ', ') "
+            "FROM `tabPurchase Order Item` c_o "
+            "JOIN `tabPurchase Order` p_o ON p_o.name = c_o.parent "
+            "WHERE c_o.poid = pd.name), '')"
+        ),
+        "purchase_invoices": (
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT CONCAT(p_i.name, '|', "
+            "UPPER(IFNULL(c_i.milestone, '')), '|', "
+            "CASE WHEN p_i.docstatus = 1 THEN 'Submitted' "
+            "WHEN p_i.docstatus = 0 THEN 'Draft' "
+            "WHEN p_i.docstatus = 2 THEN 'Cancelled' ELSE '?' END) "
+            "ORDER BY p_i.name SEPARATOR ', ') "
+            "FROM `tabPurchase Invoice Item` c_i "
+            "JOIN `tabPurchase Invoice` p_i ON p_i.name = c_i.parent "
+            "WHERE c_i.poid = pd.name), '')"
+        ),
         "im": "IFNULL(imm.full_name,'')",
-        "pic_status_ms1": "IFNULL(pd.pic_status,'')",
-        "pic_status_ms2": "IFNULL(pd.pic_status_ms2,'')",
+        "pic_status_ms1": "IF(IFNULL(pd.pic_status,'') = '', 'Work Not Done', pd.pic_status)",
+        "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2)",
         "ms1": "CAST(pd.ms1_pct AS CHAR)",
         "ms2": "CAST(pd.ms2_pct AS CHAR)",
         "ms1_amt": "CAST(pd.ms1_amount AS CHAR)",
@@ -706,6 +757,14 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500):
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # Excel-style value filter — must be handled before
+            # _sql_like_pattern(), which cannot take a dict.
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                if _c:
+                    where.append(_c)
+                    params.extend(_p)
+                continue
             pat = _sql_like_pattern(raw_val)
             expr = col_filter_map.get(col_key)
             if pat and expr:
@@ -732,6 +791,16 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500):
             params.extend(like_params)
 
     where_sql = " AND ".join(where)
+
+    if _options:
+        _e = col_filter_map.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            _SUBCON_FROM_JOIN.strip().replace("FROM ", "", 1), where_sql, params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
 
     # creation DESC, not modified DESC: rows must not reorder under the user
     # when a status update touches one of them mid-review.

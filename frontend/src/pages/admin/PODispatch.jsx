@@ -168,7 +168,7 @@ const INTEGRITY_TABS = {
 function IntegrityTable({ rows, loading, selected, toggleRow, toggleAll, tabKey, showMs, fmt }) {
   const colCount = showMs ? 10 : 9;
   return (
-    <table className="data-table" data-table-key={`admin-po-dispatch-${tabKey}`}>
+    <table className="data-table" data-excel-filter-all="1" data-table-key={`admin-po-dispatch-${tabKey}`}>
       <thead>
         <tr>
           <th style={{ width: 36 }}>
@@ -387,14 +387,52 @@ export default function PODispatch() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, [showDispatched]);
+  const queryArgsRef = useRef({ portal: {}, status: "New" });
+  useEffect(() => {
+    const key = `admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`;
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== key) return;
+      const { portal, status } = queryArgsRef.current;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "po_intake_line",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: portal,
+        extra: { status },
+        // Excel keeps a column's own selection out of its own list.
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, [showDispatched]);
+
   // "New" (basic columns) and "Dispatched"/"all" (full columns) are now
   // distinct table identities (see data-table-key above) - don't carry a
   // typed column filter across that boundary.
+  // Dispatched and All Lines share one data-table-key (same columns, so they
+  // share a saved layout), which means a filter set on one carried straight
+  // over to the other and silently narrowed it. Clear on every tab change,
+  // and tell DataTablePro to clear its own filter row too — otherwise the
+  // header keeps showing "2 selected" for a filter the page no longer applies.
   useEffect(() => {
     setColumnFilters({});
-  }, [showDispatched]);
+    document.dispatchEvent(new CustomEvent("tablepro:clear-filters", {
+      detail: { tableKey: `admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}` },
+    }));
+  }, [activeTab, showDispatched]);
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -409,6 +447,12 @@ export default function PODispatch() {
           setLoading(true);
           const res = await pmApi.listDataIntegrityIssues(integrityDef.category);
           if (!cancelled) setRows(Array.isArray(res) ? res : []);
+          // This tab overwrites `rows` with a completely different dataset but
+          // never touches lastFetchRef. Without clearing it, returning to the
+          // tab we came from matches its old signature, hits the
+          // "already have enough" skip, and leaves the integrity rows on
+          // screen as if they were that tab's data.
+          lastFetchRef.current = { signature: null, limit: null, rows: [], refreshKey: null };
           return;
         }
         const status = activeTab;
@@ -429,6 +473,8 @@ export default function PODispatch() {
         if (toDate) portal.to_date = toDate;
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+        // Excel column-filter dropdowns cascade off exactly this query.
+        queryArgsRef.current = { portal, status };
         const signature = JSON.stringify([portal]);
 
         const prev = lastFetchRef.current;
@@ -1066,7 +1112,7 @@ export default function PODispatch() {
               amount: acc.amount + (parseFloat(r.line_amount) || 0),
             }), { qty: 0, amount: 0 });
             return (
-            <table className="data-table" data-table-key={`admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`}>
+            <table className="data-table" data-excel-filter-all="1" data-table-key={`admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`}>
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -1101,7 +1147,7 @@ export default function PODispatch() {
                       <th>Target Month</th>
                     </>
                   )}
-                  <th>Action</th>
+                  <th data-excel-filter="0">Action</th>
                 </tr>
               </thead>
               <tbody>

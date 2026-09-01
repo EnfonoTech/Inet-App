@@ -247,12 +247,14 @@ export default function AdminExpense() {
       .catch(() => {});
   }, []);
 
+  const queryArgsRef = useRef({});
   const load = useCallback(
     async (activeTab = tab, activeFilters = filters) => {
       setLoading(true);
       try {
         const f = { ...activeFilters };
         if (activeTab === "pending") f.approval_status = "Draft";
+        queryArgsRef.current = f;
         const rows = await pmApi.listAllExpenseClaims(f);
         setClaims(rows || []);
       } catch {
@@ -279,8 +281,35 @@ export default function AdminExpense() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below).
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "admin-expense-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "expense_claims",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -358,7 +387,7 @@ export default function AdminExpense() {
         )}
 
         <DataTableWrapper ref={tableRef}>
-          <table className="data-table" data-table-key="admin-expense-v1">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="admin-expense-v1">
             <thead>
               <tr>
                 <th>Claim #</th>
@@ -368,7 +397,7 @@ export default function AdminExpense() {
                 <th>IM</th>
                 <th style={{ textAlign: "right" }}>Amount (SAR)</th>
                 <th>Status</th>
-                <th>Actions</th>
+                <th data-excel-filter="0">Actions</th>
               </tr>
             </thead>
             <tbody>

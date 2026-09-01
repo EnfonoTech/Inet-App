@@ -87,6 +87,50 @@ export default function PICCancelled() {
   const [toastMsg, setToastMsg] = useState(null);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
+
+  // Per-column "Manage Table" filters — matched against that column only on
+  // the backend (col_filter_map in list_pic_rows), not blended into the top
+  // search box. This page previously had no column-filter plumbing at all.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "pic-cancelled-v3") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below).
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "pic-cancelled-v3") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "pic_rows",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        extra: { stage: "cancelled" },
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [subconFilter, setSubconFilter] = useState([]);
@@ -120,6 +164,8 @@ export default function PICCancelled() {
       if (projectFilter.length) portal.project_code = projectFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
       if (subconFilter.length) portal.subcontractor = subconFilter;
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) portal.column_filters = colFilters;
       const signature = JSON.stringify([portal, refreshKey]);
 
       const prev = lastFetchRef.current;
@@ -140,6 +186,7 @@ export default function PICCancelled() {
       setLoading(true);
       setError(null);
       try {
+        queryArgsRef.current = portal;
         const res = await pmApi.listPicRows("cancelled", portal, rowLimit);
         if (cancelled) return;
         const fetchedRows = Array.isArray(res?.rows) ? res.rows : [];
@@ -156,7 +203,7 @@ export default function PICCancelled() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, projectFilter, duidFilter, subconFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, subconFilter, rowLimit, refreshKey]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
   const projectOptions = dispOpts.project_code || [];
@@ -286,7 +333,7 @@ export default function PICCancelled() {
 
       <div className="page-content">
         <DataTableWrapper loading={loading && rows.length > 0}>
-          <table className="data-table" data-table-key="pic-cancelled-v3">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="pic-cancelled-v3">
             <thead>
               <tr>
                 <th style={{ width: 36 }}>

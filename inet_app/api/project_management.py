@@ -1,4 +1,8 @@
 import frappe
+from inet_app.api.command_center import (
+    excel_orm_filter,
+    excel_options_from_orm,
+)
 from frappe import _
 from frappe.utils import cint, flt
 
@@ -59,6 +63,7 @@ def list_projects(
     # so a plain ["field", "like", pattern] per active column is enough here
     # — no raw SQL needed for this single-table, join-free query.
     col_filter_map = {
+        "region": "region_type",
         "code": "project_code",
         "project_code": "project_code",
         "project_name": "project_name",
@@ -82,6 +87,12 @@ def list_projects(
             column_filters = None
     if isinstance(column_filters, dict):
         for col_key, raw_val in column_filters.items():
+            # ORM filter list, not SQL — see excel_orm_filter().
+            if isinstance(raw_val, dict):
+                _entry = excel_orm_filter(col_filter_map.get(col_key), raw_val)
+                if _entry:
+                    filters.append(_entry)
+                continue
             val = str(raw_val or "").strip()
             if not val:
                 continue

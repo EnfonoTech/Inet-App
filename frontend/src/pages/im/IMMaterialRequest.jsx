@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { pmApi } from "../../services/api";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import SearchableSelect from "../../components/SearchableSelect";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -474,12 +475,49 @@ function DuidStockTab({ onRequest }) {
   const [dateRange, setDateRange] = useState({ from: "", to: "" }); // against latest_date
   const [viewDuid, setViewDuid] = useState("");
 
+  // Per-column filters go to the backend: these aggregates are assembled in
+  // Python, so the server filters the built rows (see filter_stock_rows) —
+  // the option list is derived from the COMPLETE aggregate, not the page.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-duid-stock-v3") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "im-duid-stock-v3") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "duid_stock",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+  const columnFiltersKey = JSON.stringify(
+    Object.fromEntries(Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    )))
+  );
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+  const { rowLimit: stockRowLimit } = useTableRowLimit();
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError("");
     try {
-      const res = await pmApi.getDuidStockSummary();
+      const res = await pmApi.getDuidStockSummary({ column_filters: JSON.parse(columnFiltersDebounced), limit: stockRowLimit });
       setRows(Array.isArray(res) ? res : []);
     } catch (e) {
       setError(e.message || "Failed to load");
@@ -487,7 +525,7 @@ function DuidStockTab({ onRequest }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [columnFiltersDebounced, stockRowLimit]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -507,6 +545,12 @@ function DuidStockTab({ onRequest }) {
     if (dateRange.to && (!r.latest_date || r.latest_date > dateRange.to)) return false;
     return true;
   });
+  // These endpoints return the whole aggregate (no server-side limit), so the
+  // shared row-limit selector is applied here instead. Rows past the limit are
+  // hidden via CSS rather than sliced — a style change on already-mounted rows,
+  // so shrinking is instant and DataTablePro's childList observer never fires.
+  const displayLimit = stockRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : stockRowLimit;
+  const displayedCount = Math.min(visible.length, displayLimit);
 
   const hasFilters = search.trim() || projectFilter || statusFilter || duidFilter.length || dateRange.from || dateRange.to;
 
@@ -555,8 +599,8 @@ function DuidStockTab({ onRequest }) {
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
-      <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
-          <table className="data-table" data-table-key="im-duid-stock-v3">
+      <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={displayedCount} filterActive={!!hasFilters}>
+          <table className="data-table" data-excel-filter-all="1" data-table-key="im-duid-stock-v3">
             <thead>
               <tr>
                 <th>DUID</th>
@@ -585,8 +629,8 @@ function DuidStockTab({ onRequest }) {
                     )}
                   </td>
                 </tr>
-              ) : visible.map((row) => (
-                <tr key={row.duid} onClick={() => setViewDuid(row.duid)} style={{ cursor: "pointer" }}>
+              ) : visible.map((row, idx) => (
+                <tr key={row.duid} onClick={() => setViewDuid(row.duid)} style={{ cursor: "pointer", display: idx >= displayedCount ? "none" : undefined }}>
                   <td style={{ fontFamily: "monospace", fontSize: "0.8rem", fontWeight: 600 }}>{row.duid}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.project_name}>{row.project_name || "—"}</td>
                   <td style={{ textAlign: "center" }}>
@@ -672,12 +716,48 @@ function StockBalanceTab() {
   const [teamFilter, setTeamFilter] = useState("");           // "" | team_id
   const [viewDuid, setViewDuid] = useState("");
 
+  // Per-column filters go to the backend: these aggregates are assembled in
+  // Python, so the server filters the built rows (see filter_stock_rows) —
+  // the option list is derived from the COMPLETE aggregate, not the page.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-stock-balance-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "im-stock-balance-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "stock_balance",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+  const columnFiltersKey = JSON.stringify(
+    Object.fromEntries(Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    )))
+  );
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError("");
     try {
-      const res = await pmApi.getDuidStockBalance();
+      const res = await pmApi.getDuidStockBalance({ column_filters: JSON.parse(columnFiltersDebounced), limit: 0 });
       setRows(Array.isArray(res) ? res : []);
     } catch (e) {
       setError(e.message || "Failed to load");
@@ -685,7 +765,7 @@ function StockBalanceTab() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [columnFiltersDebounced]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -769,14 +849,18 @@ function StockBalanceTab() {
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
-      <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
-          <table className="data-table" data-table-key="im-stock-balance-v1">
+      {/* No row-limit footer: this aggregate is built in full server-side,
+          so a limit would only hide rows without saving any work.
+          The toolbar above shows the row count instead. */}
+      <DataTableWrapper>
+          <table className="data-table" data-excel-filter-all="1" data-table-key="im-stock-balance-v1">
             <thead>
               <tr>
                 <th>DUID</th>
                 <th>Project</th>
                 <th>Warehouse</th>
-                <th>Item</th>
+                <th>Item Code</th>
+                  <th>Item Name</th>
                 <th>Type</th>
                 <th style={{ textAlign: "right" }}>Qty</th>
                 <th>UOM</th>
@@ -785,7 +869,7 @@ function StockBalanceTab() {
             <tbody>
               {visible.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: 0 }}>
+                  <td colSpan={8} style={{ padding: 0 }}>
                     {loading ? (
                       <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
                     ) : (
@@ -818,11 +902,9 @@ function StockBalanceTab() {
                         ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700, background: "#f1f5f9", color: "#334155" }}>Main</span>
                         : row.warehouse_label}
                     </td>
-                    <td style={{ fontSize: "0.82rem" }}>
-                      <div style={{ fontWeight: 600 }}>{row.item_code}</div>
-                      {row.item_name && row.item_name !== row.item_code && (
-                        <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{row.item_name}</div>
-                      )}
+                    <td style={{ fontSize: "0.82rem", fontWeight: 600 }}>{row.item_code}</td>
+                    <td style={{ fontSize: "0.82rem", color: "#475569", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_name || ""}>
+                      {row.item_name && row.item_name !== row.item_code ? row.item_name : "—"}
                     </td>
                     <td>{row.item_type === "customer" ? <HuaweiBadge /> : <CompanyBadge />}</td>
                     <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{row.qty}</td>
@@ -833,9 +915,9 @@ function StockBalanceTab() {
             </tbody>
             {visible.length > 0 && (
               <tfoot>
-                {/* DUID·Project·Warehouse·Item·Type = 5 columns, then Qty, then UOM */}
+                {/* DUID·Project·Warehouse·Item Code·Item Name·Type = 6 columns, then Qty, then UOM */}
                 <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                  <td colSpan={5} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
+                  <td colSpan={6} style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                     {visible.length} row{visible.length !== 1 ? "s" : ""}
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", fontFamily: "monospace" }}>
@@ -883,12 +965,48 @@ function BillWiseMaterialTab() {
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
   const [viewDuid, setViewDuid] = useState("");
 
+  // Per-column filters go to the backend: these aggregates are assembled in
+  // Python, so the server filters the built rows (see filter_stock_rows) —
+  // the option list is derived from the COMPLETE aggregate, not the page.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "im-bill-wise-material-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "im-bill-wise-material-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "bill_wise",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+  const columnFiltersKey = JSON.stringify(
+    Object.fromEntries(Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    )))
+  );
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError("");
     try {
-      const res = await pmApi.getBillWiseMaterial();
+      const res = await pmApi.getBillWiseMaterial({ column_filters: JSON.parse(columnFiltersDebounced), limit: 0 });
       setRows(Array.isArray(res) ? res : []);
     } catch (e) {
       setError(e.message || "Failed to load");
@@ -896,7 +1014,7 @@ function BillWiseMaterialTab() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [columnFiltersDebounced]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -966,14 +1084,18 @@ function BillWiseMaterialTab() {
       {error && <div className="notice error" style={{ margin: "0 16px 12px" }}>{error}</div>}
 
       <div className="page-content">
-      <DataTableWrapper loadedCount={loading ? null : rows.length} filteredCount={visible.length} filterActive={!!hasFilters}>
-          <table className="data-table" data-table-key="im-bill-wise-material-v1">
+      {/* No row-limit footer: this aggregate is built in full server-side,
+          so a limit would only hide rows without saving any work.
+          The toolbar above shows the row count instead. */}
+      <DataTableWrapper>
+          <table className="data-table" data-excel-filter-all="1" data-table-key="im-bill-wise-material-v1">
             <thead>
               <tr>
                 <th>Bill No.</th>
                 <th>DUID</th>
                 <th>Project</th>
-                <th>Item</th>
+                <th>Item Code</th>
+                  <th>Item Name</th>
                 <th>Warehouse</th>
                 <th style={{ textAlign: "right" }}>Current Qty</th>
                 <th style={{ textAlign: "right" }}>Received</th>
@@ -988,7 +1110,7 @@ function BillWiseMaterialTab() {
             <tbody>
               {visible.length === 0 ? (
                 <tr>
-                  <td colSpan={13} style={{ padding: 0 }}>
+                  <td colSpan={14} style={{ padding: 0 }}>
                     {loading ? (
                       <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
                     ) : (
@@ -1007,11 +1129,9 @@ function BillWiseMaterialTab() {
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.bill_no}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.du_id || "—"}</td>
                   <td style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.project_name}>{row.project_name || "—"}</td>
-                  <td style={{ fontSize: "0.82rem" }}>
-                    <div style={{ fontWeight: 600 }}>{row.item_code}</div>
-                    {row.item_name && row.item_name !== row.item_code && (
-                      <div style={{ fontSize: "0.72rem", color: "#64748b" }}>{row.item_name}</div>
-                    )}
+                  <td style={{ fontSize: "0.82rem", fontWeight: 600 }}>{row.item_code}</td>
+                  <td style={{ fontSize: "0.82rem", color: "#475569", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_name || ""}>
+                    {row.item_name && row.item_name !== row.item_code ? row.item_name : "—"}
                   </td>
                   <td style={{ fontSize: "0.8rem" }}>{row.warehouse || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
                   <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{row.current_qty}</td>
@@ -1080,17 +1200,46 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns. These sources filter through the ORM, so
+  // options come straight from the doctype rather than a list-function call.
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "im-material-requests-v2") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "material_requests",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Both list endpoints take a real `limit`, so the footer selector
+  // actually reduces what the query returns (0 = All).
+  const { rowLimit: mrRowLimit } = useTableRowLimit();
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const args = { limit: 100 };
+      const args = { limit: mrRowLimit };
       if (statusFilter) args.status = statusFilter;
       if (!isAdmin && imName) args.im = imName;
       if (isAdmin && imFilter) args.im = imFilter;
@@ -1109,7 +1258,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, imName, statusFilter, teamFilter, duidFilter, dateRange.from, dateRange.to, imFilter, columnFiltersDebounced]);
+  }, [isAdmin, imName, statusFilter, teamFilter, duidFilter, dateRange.from, dateRange.to, imFilter, columnFiltersDebounced, mrRowLimit]);
 
   useEffect(() => { load(); }, [load, refresh]);
 
@@ -1175,7 +1324,7 @@ function RequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) {
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!hasToolbarFilters}>
-          <table className="data-table" data-table-key="im-material-requests-v2">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="im-material-requests-v2">
             <thead>
               <tr>
                 <th>Request No.</th>
@@ -1399,7 +1548,8 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
   // Each column's typed value is matched only against that column's own
   // value on the backend (see column_filters /
   // _apply_return_request_column_filters in material_management.py).
-  // "Status" stays client-side only (computed label, no simple SQL match).
+  // "Status" is a computed label — list_return_requests applies a value
+  // selection on it after the query (see _wanted_status there).
   const [columnFilters, setColumnFilters] = useState({});
   useEffect(() => {
     const onFiltersChanged = (e) => {
@@ -1409,17 +1559,40 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "im-return-requests-v2") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "return_requests",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
 
+  // Both list endpoints take a real `limit`, so the footer selector
+  // actually reduces what the query returns (0 = All).
+  const { rowLimit: mrRowLimit } = useTableRowLimit();
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const args = { limit: 100 };
+      const args = { limit: mrRowLimit };
       if (statusFilter) args.status = statusFilter;
       if (!isAdmin && imName) args.im = imName;
       if (isAdmin && imFilter) args.im = imFilter;
@@ -1436,7 +1609,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
     } catch (e) {
       setError(e.message || "Failed to load");
     } finally { setLoading(false); }
-  }, [isAdmin, imName, statusFilter, teamFilter, duidFilter, dateRange.from, dateRange.to, imFilter, columnFiltersDebounced]);
+  }, [isAdmin, imName, statusFilter, teamFilter, duidFilter, dateRange.from, dateRange.to, imFilter, columnFiltersDebounced, mrRowLimit]);
 
   useEffect(() => { load(); }, [load, refresh]);
 
@@ -1579,7 +1752,7 @@ function ReturnRequestsTab({ isAdmin, imName, refresh, onPendingCount, teams }) 
 
       <div className="page-content">
       <DataTableWrapper loadedCount={loading ? null : rows.length} filterActive={!!hasToolbarFilters}>
-          <table className="data-table" data-table-key="im-return-requests-v2">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="im-return-requests-v2">
             <thead>
               <tr>
                 <th>Request No.</th>

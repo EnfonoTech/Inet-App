@@ -122,6 +122,47 @@ export default function PICInvoiceDetail() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
+
+  // Per-column "Manage Table" filters, applied on the report's outer wrapper
+  // (see _INVOICE_DETAIL_COL_MAP in pic.py) so they cover all 13k+ rows, not
+  // just the page currently loaded.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "pic-invoice-detail-v1") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
+  const queryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "pic-invoice-detail-v1") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "invoice_detail",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [imFilter, setImFilter] = useState([]);
@@ -144,6 +185,12 @@ export default function PICInvoiceDetail() {
       if (imFilter.length) portal.im = imFilter;
       if (monthFilter.length) portal.invoice_month = monthFilter;
       if (acceptanceFilter.length) portal.acceptance = acceptanceFilter;
+      // Must fold in BEFORE the signature — the skip-refetch guard below
+      // compares it, so a column-filter change added afterwards would look
+      // identical and the fetch would be skipped entirely.
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+      queryArgsRef.current = portal;
       const signature = JSON.stringify([portal, refreshKey]);
 
       const prev = lastFetchRef.current;
@@ -171,7 +218,7 @@ export default function PICInvoiceDetail() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, projectFilter, duidFilter, imFilter, monthFilter, acceptanceFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, imFilter, monthFilter, acceptanceFilter, rowLimit, refreshKey]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
@@ -247,7 +294,7 @@ export default function PICInvoiceDetail() {
 
       <div className="page-content">
         <DataTableWrapper loading={loading && rows.length > 0}>
-          <table className="data-table" data-table-key="pic-invoice-detail-v1">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="pic-invoice-detail-v1">
             <thead>
               <tr>
                 <th>Contract</th>

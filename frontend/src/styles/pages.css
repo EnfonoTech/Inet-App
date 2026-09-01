@@ -983,6 +983,142 @@
   border-color: #fca5a5 !important;
 }
 
+/* ── Excel-style column filter ──────────────────────────────── */
+/* Trigger matches .tablepro-filter-input's footprint so the filter row's
+   height doesn't jump for an opted-in column. */
+.tablepro-excelfilter-btn {
+  width: 100%;
+  padding: 5px 7px;
+  font-size: 0.72rem;
+  text-align: left;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tablepro-excelfilter-btn.is-active {
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  font-weight: 600;
+}
+
+/* Parented to <body> (see DataTablePro.jsx) — the table wrapper's overflow
+   would clip it otherwise, so position is fixed and set from JS. */
+.tablepro-excelfilter-panel {
+  position: fixed;
+  /* Column layout so the value list is the part that scrolls when JS caps
+     the panel's height to the space available in the viewport. */
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: 300px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+  padding: 8px;
+  z-index: 9999;
+}
+
+.tablepro-excelfilter-search {
+  width: 100%;
+  padding: 5px 7px;
+  font-size: 0.78rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.tablepro-excelfilter-actions {
+  display: flex;
+  gap: 8px;
+  padding: 6px 2px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.tablepro-excelfilter-actions button {
+  font-size: 0.72rem;
+  color: #1d4ed8;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.tablepro-excelfilter-actions button:hover {
+  text-decoration: underline;
+}
+
+.tablepro-excelfilter-list {
+  flex: 1 1 auto;
+  /* min-height:0 lets this shrink below its content inside the flex parent —
+     without it the list refuses to scroll and overflows the panel instead. */
+  min-height: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-top: 4px;
+}
+
+.tablepro-excelfilter-head,
+.tablepro-excelfilter-actions {
+  flex: none;
+}
+
+.tablepro-excelfilter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  font-size: 0.8rem;
+  color: #334155;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.tablepro-excelfilter-row:hover {
+  background: #f1f5f9;
+}
+
+.tablepro-excelfilter-row input {
+  flex: none;
+  cursor: pointer;
+}
+
+/* Substring option sits above the value list and is a different kind of
+   filter, so it reads as its own thing rather than another value. */
+.tablepro-excelfilter-contains {
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 2px;
+  padding-bottom: 6px;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.tablepro-excelfilter-contains span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tablepro-excelfilter-row em {
+  color: #64748b;
+  font-style: italic;
+}
+
+.tablepro-excelfilter-note {
+  padding: 8px 6px;
+  font-size: 0.74rem;
+  color: #94a3b8;
+  text-align: center;
+}
+
 .tablepro-resize-handle {
   position: absolute;
   top: 0;

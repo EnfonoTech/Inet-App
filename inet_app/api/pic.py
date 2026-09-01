@@ -27,6 +27,8 @@ from inet_app.api.command_center import (
     _portal_row_limit,
     _sql_in_or_eq,
     _sql_like_pattern,
+    excel_filter_clause,
+    excel_options_from_query,
     _sql_like_tokens,
     _sql_limit_suffix,
     _sql_search_clause,
@@ -202,7 +204,7 @@ def _pic_role_or_throw():
 
 
 @frappe.whitelist()
-def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0, stage=None):
+def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0, stage=None, _options=None):
     """Return PO Dispatch rows enriched with PIC fields + initial-state rule.
 
     ``filters`` (legacy): currently unused; reserved for symmetry with the
@@ -370,8 +372,28 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         "tax_rate": "IFNULL(pd.tax_rate,'')",
         "payment_terms": "IFNULL(pd.payment_terms,'')",
         "im_status": "IFNULL(wd_sub.im_submission_status,'')",
-        "pic_status_ms1": f"({_PIC_INITIAL_RULE_SQL.strip()})",
+        # PicStatusBadge renders "Work Not Done" for an empty value — mirror
+        # that so the dropdown offers the label the column actually shows.
+        "pic_status_ms1": f"IF(({_PIC_INITIAL_RULE_SQL.strip()}) = '', 'Work Not Done', ({_PIC_INITIAL_RULE_SQL.strip()}))",
         "pic_rejection_reason": _pic_rej_bare,
+        "customer": "IFNULL(proj.customer,'')",
+        # Linked Invoice is fetched by _batch_linked_invoices() after the main
+        # query, so it has no column here. Mirror that lookup as a correlated
+        # subquery — same Sales Invoice Item -> Sales Invoice hop and the same
+        # "SI-0001|Submitted" formatting the column renders.
+        "linked_invoice": (
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT CONCAT(si_l.name, '|', "
+            "CASE WHEN si_l.docstatus = 1 THEN 'Submitted' "
+            "WHEN si_l.docstatus = 0 THEN 'Draft' ELSE '?' END) "
+            "ORDER BY si_l.name SEPARATOR ', ') "
+            "FROM `tabSales Invoice Item` sii_l "
+            "JOIN `tabSales Invoice` si_l ON si_l.name = sii_l.parent AND si_l.docstatus < 2 "
+            "WHERE sii_l.poid = pd.name), '')"
+        ),
+        # Column shows the IM's full name, falling back to the raw code.
+        "im": "IFNULL(NULLIF(imm.full_name,''), IFNULL(pd.im,''))",
+        "invoicing_month_ms1": "IFNULL(pd.ms1_invoice_month,'')",
+        "invoicing_month_ms2": "IFNULL(pd.ms2_invoice_month,'')",
         "isdp_owner": "IFNULL(pd.isdp_owner,'')",
         "ibuy_owner": "IFNULL(pd.ibuy_owner,'')",
         "applied_date_ms1": "CAST(pd.ms1_applied_date AS CHAR)",
@@ -379,7 +401,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         "ms1_amt": "CAST(pd.ms1_amount AS CHAR)",
         "ms1_invoiced": "CAST(pd.ms1_invoiced AS CHAR)",
         "ms1_unbilled": "CAST(pd.ms1_unbilled AS CHAR)",
-        "pic_status_ms2": "IFNULL(pd.pic_status_ms2,'')",
+        "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2)",
         "applied_date_ms2": "CAST(pd.ms2_applied_date AS CHAR)",
         "ms2": "CAST(pd.ms2_pct AS CHAR)",
         "ms2_amt": "CAST(pd.ms2_amount AS CHAR)",
@@ -394,6 +416,14 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
             column_filters_pic = None
     if isinstance(column_filters_pic, dict):
         for col_key, raw_val in column_filters_pic.items():
+            # Excel-style value filter — must be handled before
+            # _sql_like_pattern(), which cannot take a dict.
+            if isinstance(raw_val, dict):
+                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                if _c:
+                    where.append(_c)
+                    params.extend(_p)
+                continue
             pat = _sql_like_pattern(raw_val)
             if not pat:
                 continue
@@ -501,6 +531,16 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     ORDER BY pd.modified DESC
     {_sql_limit_suffix(limit_page_length)}
     """
+    if _options:
+        _e = col_filter_map.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            from_clause.strip().replace("FROM ", "", 1), " AND ".join(where), params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
+
     # Total matching count + MS1/MS2 sums, independent of the row-limit cap
     # above — the FE "Total Lines" indicator and KPI strip must reflect
     # every row matching the filters, not just however many were fetched
@@ -627,6 +667,39 @@ def _vat_on_sql(amount_expr, tax_col="pd.tax_rate"):
     return f"IFNULL({amount_expr}, 0) * ({frac})"
 
 
+# Invoice Detail column filters. The report is a UNION of the MS1/MS2 blocks
+# wrapped in `SELECT * FROM (...) u`, so every column is filterable on the
+# outer alias — no need to push conditions into both blocks.
+_INVOICE_DETAIL_COL_MAP = {
+    "contract": "IFNULL(u.contract,'')",
+    "sub_contract": "IFNULL(u.sub_contract,'')",
+    "sub_contract_no": "IFNULL(u.subcontract_no,'')",
+    "project_domain": "IFNULL(u.project_domain,'')",
+    "project": "IFNULL(u.project_code,'')",
+    "poid": "IFNULL(u.poid,'')",
+    "duid": "IFNULL(u.duid,'')",
+    "invoice_no": "IFNULL(u.invoice_no,'')",
+    "invoice_date": "CAST(u.invoice_date AS CHAR)",
+    "customer": "IFNULL(u.customer,'')",
+    "tax_amount": "CAST(u.invoice_tax_amount AS CHAR)",
+    "invoice_amt_incl_tax": "CAST(u.invoice_amount_incl_tax AS CHAR)",
+    "po_type": "IFNULL(u.po_type,'')",
+    "po_no": "IFNULL(u.po_no,'')",
+    "item": "IFNULL(u.item_code,'')",
+    "description": "IFNULL(u.item_description,'')",
+    "qty": "CAST(u.qty AS CHAR)",
+    "rate": "CAST(u.rate AS CHAR)",
+    "invoiced_amount": "CAST(u.invoiced_amount AS CHAR)",
+    "acceptance": "IFNULL(u.acceptance,'')",
+    "vat_amount": "CAST(u.vat_amount AS CHAR)",
+    "grand_total": "CAST(u.grand_total AS CHAR)",
+    "payment_terms": "IFNULL(u.payment_terms,'')",
+    # Column shows the IM's full name; the union carries the code.
+    "im": ("IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` WHERE name = u.im), ''), "
+           "IFNULL(u.im,''))"),
+}
+
+
 def _invoice_detail_milestone_sql(ms, where_extra):
     """SELECT block for one milestone (1 or 2) of the Invoice Detail report.
 
@@ -726,7 +799,7 @@ def _invoice_detail_milestone_sql(ms, where_extra):
 
 
 @frappe.whitelist()
-def list_invoice_detail_rows(portal_filters=None, limit=500):
+def list_invoice_detail_rows(portal_filters=None, limit=500, _options=None):
     """Row-level Invoice Detail report — mirrors the historical "Invoices
     Data" Excel sheet 1:1 (same columns, same order, same sort). Only
     legacy_ms{1,2}_invoice_no/legacy_po_type have no live equivalent and
@@ -804,6 +877,42 @@ def list_invoice_detail_rows(portal_filters=None, limit=500):
         return {"rows": [], "total_count": 0}
 
     union_sql = "\nUNION ALL\n".join(blocks)
+
+    # Per-column filters applied on the wrapper, after the UNION.
+    outer_where = ["u.invoice_no IS NOT NULL", "u.invoice_no != ''"]
+    outer_params = []
+    _cf = pf.get("column_filters")
+    if isinstance(_cf, str):
+        try:
+            _cf = frappe.parse_json(_cf)
+        except Exception:
+            _cf = None
+    if isinstance(_cf, dict):
+        for _ck, _cv in _cf.items():
+            _expr = _INVOICE_DETAIL_COL_MAP.get(_ck)
+            if not _expr:
+                continue
+            if isinstance(_cv, dict):
+                _c, _p = excel_filter_clause(_expr, _cv)
+                if _c:
+                    outer_where.append(_c)
+                    outer_params.extend(_p)
+            else:
+                _pat = _sql_like_pattern(_cv)
+                if _pat:
+                    outer_where.append(f"{_expr} LIKE %s")
+                    outer_params.append(_pat)
+    outer_sql = " AND ".join(outer_where)
+
+    if _options:
+        _e = _INVOICE_DETAIL_COL_MAP.get(_options.get("col_key"))
+        if not _e:
+            return {"values": [], "has_blanks": False, "total": 0, "supported": False}
+        return excel_options_from_query(
+            f"({union_sql}) u", outer_sql, list(all_params) + outer_params, _e,
+            bucket=_options.get("bucket"), search=_options.get("search"),
+            limit=_options.get("limit"), label_kind=_options.get("label_kind"),
+        )
     # A row with no resolved invoice_no (neither a legacy number nor a real
     # submitted Sales Invoice) isn't actually invoiced yet — ms{n}_invoiced
     # can be set from a PIC status change alone, with no invoice document
@@ -812,14 +921,14 @@ def list_invoice_detail_rows(portal_filters=None, limit=500):
     # verbatim by both the data query and the count query below.
     full_sql = f"""
     SELECT * FROM ({union_sql}) u
-    WHERE u.invoice_no IS NOT NULL AND u.invoice_no != ''
+    WHERE {outer_sql}
     ORDER BY u.invoice_no ASC, u.poid ASC
     {_sql_limit_suffix(limit_page_length)}
     """
-    rows = frappe.db.sql(full_sql, tuple(all_params), as_dict=True)
+    rows = frappe.db.sql(full_sql, tuple(all_params) + tuple(outer_params), as_dict=True)
 
-    count_sql = f"SELECT COUNT(*) AS total FROM ({union_sql}) u WHERE u.invoice_no IS NOT NULL AND u.invoice_no != ''"
-    total_count = cint((frappe.db.sql(count_sql, tuple(all_params), as_dict=True) or [{}])[0].get("total") or 0)
+    count_sql = f"SELECT COUNT(*) AS total FROM ({union_sql}) u WHERE {outer_sql}"
+    total_count = cint((frappe.db.sql(count_sql, tuple(all_params) + tuple(outer_params), as_dict=True) or [{}])[0].get("total") or 0)
 
     if rows:
         im_ids = list({r["im"] for r in rows if r.get("im")})

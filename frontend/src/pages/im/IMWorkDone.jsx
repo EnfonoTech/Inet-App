@@ -286,7 +286,7 @@ function LegacyResubmitTable({ rows, loading, selectedRows, onToggleRow, onToggl
   const visible = rows.slice(0, displayLimit);
   const allSelected = visible.length > 0 && visible.every((r) => selectedRows.has(r.name));
   return (
-    <table className="data-table" data-table-key="im-workdone-v1-legacy">
+    <table className="data-table" data-excel-filter-all="1" data-table-key="im-workdone-v1-legacy">
       <thead>
         <tr>
           <th><input type="checkbox" checked={allSelected} onChange={onToggleAll} /></th>
@@ -441,8 +441,40 @@ export default function IMWorkDone() {
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
   }, []);
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below). Tabs share the
+  // im-workdone-v1-* key prefix, same as the filters listener above.
+  const queryArgsRef = useRef({});
+  const legacyQueryArgsRef = useRef({});
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (!e.detail?.tableKey?.startsWith("im-workdone-v1-")) return;
+      // The "Resubmit to PIC" tab is a different dataset (and backend) from
+      // the other tabs, so it answers from its own source + recorded query.
+      const isLegacy = e.detail.tableKey === "im-workdone-v1-legacy";
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: isLegacy ? "legacy_resubmit" : "work_done",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: isLegacy ? legacyQueryArgsRef.current : queryArgsRef.current,
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
+  // Either a legacy substring string or the Excel-style { values, blanks,
+  // contains } object. String(obj) is "[object Object]" — always truthy — so
+  // an emptied Excel selection would never clear without this.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
@@ -484,6 +516,7 @@ export default function IMWorkDone() {
     }
 
     setLegacyLoading(true);
+    legacyQueryArgsRef.current = filters;
     pmApi.listLegacyMilestonesNeedingResubmission(filters, effectiveRowLimit)
       .then((res) => {
         if (cancelled) return;
@@ -823,6 +856,7 @@ export default function IMWorkDone() {
         }
 
         setLoading(true);
+        queryArgsRef.current = filters;
         const list = await pmApi.listWorkDoneRows(filters, effectiveRowLimit);
         if (cancelled) return;
         const fetchedRows = Array.isArray(list) ? list : [];
@@ -1132,7 +1166,7 @@ export default function IMWorkDone() {
             />
           ) : (
           <>
-            <table key={`im-workdone-v1-${tab}`} className="data-table" data-table-key={`im-workdone-v1-${tab}`}>
+            <table key={`im-workdone-v1-${tab}`} className="data-table" data-excel-filter-all="1" data-table-key={`im-workdone-v1-${tab}`}>
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -1183,7 +1217,7 @@ export default function IMWorkDone() {
                   <th>Source</th>
                   <th title="Which milestones are closed for this Work Done">Milestone</th>
                   <th>Issue Flag</th>
-                  <th>Actions</th>
+                  <th data-excel-filter="0">Actions</th>
                 </tr>
               </thead>
               <tbody>

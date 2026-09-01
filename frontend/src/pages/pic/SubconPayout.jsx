@@ -135,7 +135,7 @@ export default function SubconPayout() {
       <div className="page-content">
         <DataTableWrapper loading={loading && !!data}>
           {tab === "supplier" ? (
-            <table key="supplier" className="data-table" data-table-key="subcon-payout-supplier-v5">
+            <table key="supplier" className="data-table" data-excel-filter-all="1" data-table-key="subcon-payout-supplier-v5">
               <thead>
                 <tr>
                   <th>Supplier</th>
@@ -216,7 +216,7 @@ export default function SubconPayout() {
               )}
             </table>
           ) : tab === "line" ? (
-            <table key="line" className="data-table" data-table-key="subcon-payout-line-v2">
+            <table key="line" className="data-table" data-excel-filter-all="1" data-table-key="subcon-payout-line-v2">
               <thead>
                 <tr>
                   <th>Line Status</th>
@@ -270,7 +270,7 @@ export default function SubconPayout() {
               )}
             </table>
           ) : (
-            <table key="status" className="data-table" data-table-key="subcon-payout-status-v5">
+            <table key="status" className="data-table" data-excel-filter-all="1" data-table-key="subcon-payout-status-v5">
               <thead>
                 <tr>
                   <th>Milestone Status</th>

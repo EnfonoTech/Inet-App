@@ -451,6 +451,58 @@ export default function SubconPO() {
 
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
+
+  // Per-column "Manage Table" filters. Each column's value is matched only
+  // against that column on the backend (col_filter_map in list_subcon_po_rows),
+  // not blended into the top search box.
+  const [columnFilters, setColumnFilters] = useState({});
+  useEffect(() => {
+    const onFiltersChanged = (e) => {
+      if (e.detail?.tableKey !== "subcon-po-v6") return;
+      setColumnFilters(e.detail.filters || {});
+    };
+    document.addEventListener("tablepro:filters-changed", onFiltersChanged);
+    return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
+  }, []);
+  // Tabs are different datasets through one table key — don't carry a filter across.
+  useEffect(() => {
+    setColumnFilters({});
+    document.dispatchEvent(new CustomEvent("tablepro:clear-filters", {
+      detail: { tableKey: "subcon-po-v6" },
+    }));
+  }, [tab]);
+  const activeColumnFilters = Object.fromEntries(
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim()))
+          || !!v.blanks || !!String(v.contains || "").trim()
+        : String(v || "").trim()
+    ))
+  );
+  const columnFiltersKey = JSON.stringify(activeColumnFilters);
+  const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
+  // Excel column-filter dropdowns cascade off exactly the query the rows
+  // were fetched with (recorded by the fetch effect below).
+  const queryArgsRef = useRef({});
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== "subcon-po-v6") return;
+      e.detail.respond(pmApi.getColumnFilterOptions({
+        source: "subcon_po",
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        portal_filters: queryArgsRef.current,
+        extra: { stage: tabRef.current },
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, []);
   const [projectFilter, setProjectFilter] = useState([]);
   const [subconFilter, setSubconFilter] = useState([]);
   const [supplierFilter, setSupplierFilter] = useState([]);
@@ -564,6 +616,10 @@ export default function SubconPO() {
       if (poFilter.length) portal.purchase_order = poFilter;
       if (dateRange.from) portal.from_date = dateRange.from;
       if (dateRange.to) portal.to_date = dateRange.to;
+      const colFilters = JSON.parse(columnFiltersDebounced);
+      if (Object.keys(colFilters).length) portal.column_filters = colFilters;
+      queryArgsRef.current = portal;
+      tabRef.current = tab;
       const signature = JSON.stringify([tab, portal, refreshKey]);
 
       const prev = lastFetchRef.current;
@@ -599,7 +655,7 @@ export default function SubconPO() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, searchDebounced, projectFilter, subconFilter, supplierFilter, modelFilter,
+  }, [tab, searchDebounced, columnFiltersDebounced, projectFilter, subconFilter, supplierFilter, modelFilter,
       statusFilter, duidFilter, poFilter, dateRange, rowLimit, refreshKey]);
 
   const projectOptions = options.project_code || [];
@@ -1048,7 +1104,7 @@ export default function SubconPO() {
           {/* v2: the column set changed (added Status) — a data-table-key must
               never be reused across different column sets or DataTablePro's
               saved widths/filters desync from the body cells. */}
-          <table className="data-table" data-table-key="subcon-po-v6">
+          <table className="data-table" data-excel-filter-all="1" data-table-key="subcon-po-v6">
             <thead>
               <tr>
                 <th>
@@ -1091,7 +1147,7 @@ export default function SubconPO() {
                 {/* Remarks captured by Mark Ready / Close / Update Status had
                     nowhere to be read back — this is that column. */}
                 <th>Remark</th>
-                <th>View</th>
+                <th data-excel-filter="0">View</th>
               </tr>
             </thead>
             <tbody>

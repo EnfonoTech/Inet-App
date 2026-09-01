@@ -311,11 +311,42 @@ export default function IMDispatch() {
   useEffect(() => {
     setColumnFilters({});
   }, [planScope]);
+  // A filter value is either a legacy substring string or the Excel-style
+  // { values, blanks } object. String(obj) is "[object Object]" — always
+  // truthy — so an emptied Excel selection would never clear without this.
+  // Mirrors _column_filter_is_active() in command_center.py.
   const activeColumnFilters = Object.fromEntries(
-    Object.entries(columnFilters).filter(([, v]) => String(v || "").trim())
+    Object.entries(columnFilters).filter(([, v]) => (
+      v && typeof v === "object"
+        ? (Array.isArray(v.values) && v.values.some((x) => String(x ?? "").trim())) || !!v.blanks
+        : String(v || "").trim()
+    ))
   );
   const columnFiltersKey = JSON.stringify(activeColumnFilters);
   const columnFiltersDebounced = useDebounced(columnFiltersKey, 300);
+
+  // Set by the row-fetch effect below so the column-options dropdowns always
+  // cascade off the query currently on screen.
+  const queryArgsRef = useRef({ portal: {}, filters: [] });
+  useEffect(() => {
+    const onRequestOptions = (e) => {
+      if (e.detail?.tableKey !== `im-dispatch-${planScope}`) return;
+      const { portal, filters } = queryArgsRef.current;
+      e.detail.respond(pmApi.getPoDispatchColumnOptions({
+        col_key: e.detail.colKey,
+        bucket: e.detail.bucket,
+        search: e.detail.search,
+        limit: e.detail.limit,
+        filters,
+        portal_filters: portal,
+        // Excel keeps a column's own selection out of its own list, so you
+        // can still widen it after filtering.
+        exclude_column: e.detail.colKey,
+      }));
+    };
+    document.addEventListener("tablepro:request-column-options", onRequestOptions);
+    return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
+  }, [planScope]);
 
   useEffect(() => {
     let cancelled = false;
@@ -357,6 +388,9 @@ export default function IMDispatch() {
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
         const portalArg = Object.keys(portal).length ? portal : undefined;
+        // Excel column-filter dropdowns cascade off exactly this query, so
+        // hand them the same filters the rows were fetched with.
+        queryArgsRef.current = { portal, filters: listFilters };
         const signature = JSON.stringify([listFilters, portal]);
 
         const prev = lastFetchRef.current;
@@ -1899,7 +1933,7 @@ export default function IMDispatch() {
         )}
 
         <DataTableWrapper loading={loading && rows.length > 0}>
-          <table key={`im-dispatch-${planScope}`} className="data-table" data-table-key={`im-dispatch-${planScope}`}>
+          <table key={`im-dispatch-${planScope}`} className="data-table" data-excel-filter-all="1" data-table-key={`im-dispatch-${planScope}`}>
               <thead>
                 <tr>
                   <th style={{ width: 40 }}>
@@ -1910,6 +1944,10 @@ export default function IMDispatch() {
                       onChange={toggleAllPlanable}
                     />
                   </th>
+                  {/* Every value column uses the Excel-style multi-select
+                      filter. High-cardinality ones (POID ~17k, PO No ~10k)
+                      are searched server-side, so they cost the same as a
+                      small column to open. */}
                   <th>POID</th>
                   <th>Mode</th>
                   <th>Dummy POID</th>
@@ -1927,7 +1965,7 @@ export default function IMDispatch() {
                   <th>Center area</th>
                   <th>Region</th>
                   <th>Status</th>
-                  <th style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }}>Actions</th>
+                  <th style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }} data-excel-filter="0">Actions</th>
                 </tr>
               </thead>
               <tbody>
