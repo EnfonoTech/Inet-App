@@ -1,1 +1,0 @@
-import{r as e}from"./index.js";function o(){const[s,n]=e.useState(void 0),u=e.useRef(null),l=e.useCallback(r=>{const t=JSON.stringify(r??null);t!==u.current&&(u.current=t,n(r))},[]);return[s,l]}export{o as u};

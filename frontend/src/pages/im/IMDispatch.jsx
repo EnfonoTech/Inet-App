@@ -395,7 +395,7 @@ export default function IMDispatch() {
         // Excel column-filter dropdowns cascade off exactly this query, so
         // hand them the same filters the rows were fetched with.
         queryArgsRef.current = { portal, filters: listFilters };
-        publishSummaryQuery(portal);
+        publishSummaryQuery({ portal, filters: listFilters });
         const signature = JSON.stringify([listFilters, portal]);
 
         const prev = lastFetchRef.current;

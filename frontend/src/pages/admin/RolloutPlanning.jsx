@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
-import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -280,11 +279,8 @@ export default function RolloutPlanning() {
 
   // Read by the column-options listener so it always sees the current query
   // without having to re-register on every keystroke.
-  // Published for the header summary — see usePublishedQuery.
-  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
   const queryArgsRef = useRef(queryArgs);
   queryArgsRef.current = queryArgs;
-  publishSummaryQuery(queryArgs);
 
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -553,7 +549,7 @@ export default function RolloutPlanning() {
           </h1>
           <div className="page-subtitle">Plan dispatched lines to teams</div>
         </div>
-        <PageSummary source="po_dispatch" filters={summaryQuery} />
+        <PageSummary source="po_dispatch" filters={queryArgs} />
         <div className="page-actions">
           <ExportExcelButton
             filename="rollout-planning"

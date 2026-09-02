@@ -4209,12 +4209,21 @@ def get_page_summary(source, portal_filters=None, extra=None):
 def _summary_po_dispatch(pf, extra):
     """Headline figures for the PO Dispatch-backed pages.
 
-    Rollout Planning, IM Dispatch and IM PO Intake all read PO Dispatch rows
-    through the same where-builder the row list uses, so the figures track
-    whatever the page has filtered to.
+    Rollout Planning, IM Dispatch and IM PO Intake scope their rows with TWO
+    things: a portal dict AND an ORM-style filter list — and the second is
+    where the IM scoping lives (``[["im", "=", imName]]``), along with each
+    page's plan-scope status filter. They already keep the pair together for
+    the column-filter dropdowns, so accept that same {portal, filters} shape
+    here. Taking only the portal would count every IM's lines on a page that
+    shows one IM's.
     """
+    if isinstance(pf, dict) and ("portal" in pf or "filters" in pf):
+        filters = pf.get("filters") or {}
+        pf = _portal_filters_dict(pf.get("portal") or {})
+    else:
+        filters = extra.get("filters") or {}
     fields = list(frappe.db.get_table_columns("PO Dispatch"))
-    wheres, params = _po_dispatch_portal_sql_where({}, pf, fields)
+    wheres, params = _po_dispatch_portal_sql_where(filters, pf, fields)
     have = set(fields)
     metrics = [{"key": "lines", "label": "Lines", "agg": "count"}]
     if "site_code" in have:
@@ -4240,19 +4249,51 @@ def _summary_po_dispatch(pf, extra):
             {"key": "cancelled", "label": "Cancelled", "agg": "count_if", "group": "Pipeline",
              "cond": f"{_st} = 'Cancelled'", "tone": "bad", "hide_if_zero": True},
         ]
-    # Planning gaps a PM/IM can act on: a line with no target month can't be
-    # scheduled, and one with no IM has nobody accountable for it.
-    if "dispatch_target_month" in have:
+    # Planning gaps a PM/IM can act on. Both are skipped when the view is
+    # ALREADY scoped to that gap — a "No month" chip on PO Control's intake
+    # tab (which shows exactly the lines with no month) just restates the
+    # total, and a chip that always equals the total tells you nothing.
+    scoped_by_month = str(pf.get("has_target_month") or "").strip().lower() in ("yes", "no")
+    if "dispatch_target_month" in have and not scoped_by_month:
         metrics.append({"key": "no_month", "label": "No month", "agg": "count_if",
                         "group": "Gaps", "cond": "IFNULL(`dispatch_target_month`,'') = ''",
                         "tone": "warn", "hide_if_zero": True,
                         "hint": "No target month set — cannot be scheduled"})
-    if "im" in have:
+    if "im" in have and not _has_im_filter(filters, pf):
         metrics.append({"key": "no_im", "label": "No IM", "agg": "count_if",
                         "group": "Gaps", "cond": "IFNULL(`im`,'') = ''",
                         "tone": "bad", "hide_if_zero": True,
                         "hint": "No Implementation Manager assigned"})
+    # Dummy POIDs are a PO Control concern only — show the split when the page
+    # is looking at them, and stay out of the way otherwise.
+    dummy_preset = str(pf.get("dummy_preset") or "").strip()
+    if dummy_preset in ("dummy_any", "mapped_dummy", "dummy") and "is_dummy_po" in have:
+        metrics.append({"key": "dummy_open", "label": "Open", "agg": "count_if",
+                        "group": "Dummy", "cond": "IFNULL(`is_dummy_po`, 0) = 1",
+                        "tone": "warn", "hide_if_zero": True,
+                        "hint": "Dummy POID not yet mapped to a real PO line"})
+        if "was_dummy_po" in have:
+            metrics.append({"key": "dummy_mapped", "label": "Mapped", "agg": "count_if",
+                            "group": "Dummy", "tone": "good", "hide_if_zero": True,
+                            "cond": "(IFNULL(`was_dummy_po`, 0) = 1 AND IFNULL(`is_dummy_po`, 0) = 0)"})
     return summary_from_query("`tabPO Dispatch`", " AND ".join(wheres), params, metrics)
+
+
+def _has_im_filter(filters, pf):
+    """True when the caller already scoped to specific IMs.
+
+    An IM's own pages are scoped to them, so "No IM" there is always 0 —
+    a permanently blank chip. Only the PM views, which span every IM, can
+    actually have unassigned lines worth flagging.
+    """
+    if _ensure_list(pf.get("im")):
+        return True
+    if isinstance(filters, dict):
+        return bool(filters.get("im"))
+    for cond in (filters or []):
+        if isinstance(cond, (list, tuple)) and len(cond) == 3 and cond[0] == "im":
+            return True
+    return False
 
 
 def _excel_options_po_dispatch(col_key, filters, pf, bucket, search, limit, extra):

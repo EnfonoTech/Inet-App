@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
-import { usePublishedQuery } from "../../hooks/usePublishedQuery";
+import { usePublishedQueries } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -229,8 +229,10 @@ export default function IMPOIntake() {
   // Each tab's fetch effect records the query it actually ran, keyed by the
   // table's data-table-key. The Excel column-filter dropdowns read it so
   // their values cascade off exactly what that tab is showing.
-  // Published for the header summary — see usePublishedQuery.
-  const [summaryQuery, publishSummaryQuery] = usePublishedQuery();
+  // Each tab runs its own PO Dispatch query, so the summary follows the tab.
+  // (Transfers is a different doctype entirely and has no chip strip.)
+  const [tabQueries, publishTabQuery] = usePublishedQueries();
+  const SUMMARY_TABS = { intake: "im-po-intake-v2", dummy: "im-po-dummy-v2", overview: "im-po-overview-v2" };
   const queryArgsRef = useRef({});
   useEffect(() => {
     const onRequestOptions = (e) => {
@@ -441,7 +443,7 @@ export default function IMPOIntake() {
         if (projectFilter.length) portal.project_code = projectFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
         queryArgsRef.current["im-po-intake-v2"] = { portal, filters };
-        publishSummaryQuery(portal);
+        publishTabQuery("im-po-intake-v2", { portal, filters });
         const signature = JSON.stringify([filters, portal]);
 
         const prev = lastFetchRef.current;
@@ -512,6 +514,7 @@ export default function IMPOIntake() {
         const dummyColFilters = JSON.parse(dummyColumnFiltersDebounced);
         if (Object.keys(dummyColFilters).length) portal.column_filters = dummyColFilters;
         queryArgsRef.current["im-po-dummy-v2"] = { portal, filters: [["im", "=", imName]] };
+        publishTabQuery("im-po-dummy-v2", { portal, filters: [["im", "=", imName]] });
         const signature = JSON.stringify([portal, dummyRefreshKey]);
 
         const prev = lastDummyFetchRef.current;
@@ -559,6 +562,7 @@ export default function IMPOIntake() {
         const ovColFilters = JSON.parse(ovColumnFiltersDebounced);
         if (Object.keys(ovColFilters).length) portal.column_filters = ovColFilters;
         queryArgsRef.current["im-po-overview-v2"] = { portal, filters };
+        publishTabQuery("im-po-overview-v2", { portal, filters });
         const signature = JSON.stringify([filters, portal, ovRefreshKey]);
 
         const prev = lastOvFetchRef.current;
@@ -1182,10 +1186,8 @@ export default function IMPOIntake() {
               : "All your POIDs across every status — full overview."}
           </div>
         </div>
-        {/* The intake tab is the PO Dispatch-backed one; the others are
-            different datasets with their own queries. */}
-        {tab === "intake" && (
-          <PageSummary source="po_dispatch" filters={summaryQuery} />
+        {SUMMARY_TABS[tab] && (
+          <PageSummary source="po_dispatch" filters={tabQueries[SUMMARY_TABS[tab]]} />
         )}
         <div className="page-actions">
           {tab === "intake" && <ExportExcelButton filename="im-po-intake" rows={rows.slice(0, intakeDisplayedCount)} />}

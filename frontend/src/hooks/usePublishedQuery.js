@@ -37,3 +37,32 @@ export function usePublishedQuery() {
 
   return [value, publish];
 }
+
+/**
+ * Same idea, for a page whose tabs each run their own query.
+ *
+ * PO Control and Material Management keep one table per tab, each with its
+ * own filters and its own fetch. Publishing under the tab's key lets the
+ * header summary follow whichever tab is showing instead of being stuck on
+ * whichever one happened to load first.
+ *
+ *   const [tabQueries, publishTabQuery] = usePublishedQueries();
+ *   ...
+ *   publishTabQuery("intake", { portal, filters });
+ *   ...
+ *   <PageSummary source="po_dispatch" filters={tabQueries[tab]} />
+ */
+export function usePublishedQueries() {
+  const [values, setValues] = useState({});
+  const keysRef = useRef({});
+
+  const publish = useCallback((key, next) => {
+    if (!key) return;
+    const encoded = JSON.stringify(next ?? null);
+    if (keysRef.current[key] === encoded) return;
+    keysRef.current[key] = encoded;
+    setValues((prev) => ({ ...prev, [key]: next }));
+  }, []);
+
+  return [values, publish];
+}
