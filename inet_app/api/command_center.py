@@ -2838,9 +2838,13 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             # value actually shown on screen.
             "pic_status_ms1": "IF(IFNULL(pd.pic_status,'')='', 'Work Not Done', pd.pic_status)",
             "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'')='', 'Work Not Done', pd.pic_status_ms2)",
-            "work_done": (
-                "(CASE WHEN EXISTS (SELECT 1 FROM `tabWork Done` wd WHERE wd.system_id = pd.name) "
-                "THEN 'Yes' ELSE 'No' END)"
+            "work_done_status": (
+                "IFNULL((SELECT wd.billing_status FROM `tabWork Done` wd "
+                "WHERE wd.system_id = pd.name ORDER BY wd.modified DESC LIMIT 1), '')"
+            ),
+            "work_done_revenue": (
+                "CAST(IFNULL((SELECT SUM(wd.revenue_sar) FROM `tabWork Done` wd "
+                "WHERE wd.system_id = pd.name), 0) AS CHAR)"
             ),
         }
         if frappe.db.has_column("PO Intake Line", "center_area"):
@@ -3110,13 +3114,13 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
     for line in lines:
         line["activity_type"] = act_map_pil.get(line.get("item_code") or "")
 
-    # Plan Status / Work Done (admin/PODispatch.jsx "All Lines" tab) - where a
-    # Dispatched/Completed line actually is right now across the wider
-    # pipeline (Planning/In Execution/... -> Work Done -> PIC), shown as
-    # their own columns rather than one collapsed "Current Stage" string
-    # (which hid whichever of these wasn't picked, and couldn't be
-    # backend-filtered at all). pic_status/pic_status_ms2 are already set on
-    # `line` above (real PO Dispatch columns, both shown as their own
+    # Plan Status / Work Done Status / Work Done Revenue (admin/PODispatch.jsx
+    # "All Lines" tab) - where a Dispatched/Completed line actually is right
+    # now across the wider pipeline (Planning/In Execution/... -> Work Done ->
+    # PIC), shown as their own columns rather than one collapsed "Current
+    # Stage" string (which hid whichever of these wasn't picked, and couldn't
+    # be backend-filtered at all). pic_status/pic_status_ms2 are already set
+    # on `line` above (real PO Dispatch columns, both shown as their own
     # columns too). Batched + chunked (see _chunked) so this stays safe at
     # the same "All Lines, row limit All" scale that caused the earlier
     # SQLParseError.
@@ -3125,14 +3129,26 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
         for line in lines
         if line.get("dispatch_name") and line.get("po_line_status") in ("Dispatched", "Completed")
     })
-    work_done_dispatches = set()
+    work_done_status = {}
+    work_done_revenue = {}
     latest_plan_status = {}
     if stage_dispatch_names:
+        wd_rows_for_stage = []
         for chunk in _chunked(stage_dispatch_names):
-            for r in frappe.get_all(
-                "Work Done", filters={"system_id": ["in", chunk]}, fields=["system_id"],
-            ):
-                work_done_dispatches.add(r.system_id)
+            wd_rows_for_stage.extend(frappe.get_all(
+                "Work Done",
+                filters={"system_id": ["in", chunk]},
+                fields=["system_id", "billing_status", "revenue_sar", "modified"],
+                order_by="modified desc",
+            ))
+        for r in wd_rows_for_stage:
+            # Revenue sums across every WD row behind this dispatch (a
+            # milestone-split line can have more than one); status takes the
+            # most recently touched row, same "latest wins" rule as plan
+            # status below.
+            work_done_revenue[r.system_id] = work_done_revenue.get(r.system_id, 0) + flt(r.revenue_sar or 0)
+            if r.system_id not in work_done_status:
+                work_done_status[r.system_id] = r.billing_status
         plan_rows_for_stage = []
         for chunk in _chunked(stage_dispatch_names):
             plan_rows_for_stage.extend(frappe.get_all(
@@ -3148,7 +3164,8 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
     for line in lines:
         dispatch_name = line.get("dispatch_name")
         line["plan_status"] = latest_plan_status.get(dispatch_name)
-        line["work_done"] = "Yes" if dispatch_name in work_done_dispatches else "No"
+        line["work_done_status"] = work_done_status.get(dispatch_name)
+        line["work_done_revenue"] = work_done_revenue.get(dispatch_name) or 0
 
     return lines
 

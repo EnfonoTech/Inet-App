@@ -80,13 +80,13 @@ function planStatusTone(value) {
   return { bg: "#f1f5f9", fg: "#475569" };
 }
 
-function WorkDoneBadge({ value }) {
-  const yes = value === "Yes";
-  return (
-    <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: yes ? "#ecfdf5" : "#f1f5f9", color: yes ? "#047857" : "#94a3b8" }}>
-      {value || "No"}
-    </span>
-  );
+// Colors for the "Work Done Status" column (Work Done.billing_status).
+function workDoneStatusTone(value) {
+  const s = String(value || "").toLowerCase();
+  if (s === "closed") return { bg: "#ecfdf5", fg: "#047857" };
+  if (s === "invoiced") return { bg: "#eff6ff", fg: "#1d4ed8" };
+  if (s === "pending") return { bg: "#fffbeb", fg: "#b45309" };
+  return { bg: "#f1f5f9", fg: "#94a3b8" };
 }
 
 function DetailItem({ label, value }) {
@@ -1139,13 +1139,19 @@ export default function PODispatch() {
               fmt={fmtAmt}
             />
           ) : (() => {
-            const colCount = showDispatched ? 27 : 24;
+            // Plan Status / PIC Status (MS1/MS2) / Work Done Status / Work Done
+            // Revenue only make sense — and are only worth the extra query
+            // cost — on the "All Lines" view where a PM is looking across the
+            // whole pipeline. Pending Dispatch/Dispatched don't need that
+            // much detail, so those 5 columns are "all"-tab only.
+            const colCount = activeTab === "all" ? 28 : showDispatched ? 23 : 20;
             const totals = rows.slice(0, displayedCount).reduce((acc, r) => ({
               qty: acc.qty + (parseFloat(r.qty) || 0),
               amount: acc.amount + (parseFloat(r.line_amount) || 0),
-            }), { qty: 0, amount: 0 });
+              workDoneRevenue: acc.workDoneRevenue + (parseFloat(r.work_done_revenue) || 0),
+            }), { qty: 0, amount: 0, workDoneRevenue: 0 });
             return (
-            <table className="data-table" data-excel-filter-all="1" data-table-key={`admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`}>
+            <table className="data-table" data-excel-filter-all="1" data-table-key={`admin-po-dispatch-v1-${activeTab === "all" ? "all" : showDispatched ? "full" : "basic"}`}>
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
@@ -1157,10 +1163,15 @@ export default function PODispatch() {
                   <th>POID</th>
                   <th>Status</th>
                   <th>PO Status</th>
-                  <th>Plan Status</th>
-                  <th>PIC Status (MS1)</th>
-                  <th>PIC Status (MS2)</th>
-                  <th>Work Done</th>
+                  {activeTab === "all" && (
+                    <>
+                      <th>Plan Status</th>
+                      <th>PIC Status (MS1)</th>
+                      <th>PIC Status (MS2)</th>
+                      <th>Work Done Status</th>
+                      <th style={{ textAlign: "right" }}>Work Done Revenue</th>
+                    </>
+                  )}
                   <th>System ID</th>
                   <th>PO No</th>
                   <th>Shipment No</th>
@@ -1237,19 +1248,35 @@ export default function PODispatch() {
                           );
                         })() : "—"}
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>
-                        {row.plan_status ? (() => {
-                          const t = planStatusTone(row.plan_status);
-                          return (
-                            <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: t.bg, color: t.fg }}>
-                              {row.plan_status}
-                            </span>
-                          );
-                        })() : "—"}
-                      </td>
-                      <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status} /></td>
-                      <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status_ms2} /></td>
-                      <td style={{ whiteSpace: "nowrap" }}><WorkDoneBadge value={row.work_done} /></td>
+                      {activeTab === "all" && (
+                        <>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {row.plan_status ? (() => {
+                              const t = planStatusTone(row.plan_status);
+                              return (
+                                <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: t.bg, color: t.fg }}>
+                                  {row.plan_status}
+                                </span>
+                              );
+                            })() : "—"}
+                          </td>
+                          <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status} /></td>
+                          <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status_ms2} /></td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {row.work_done_status ? (() => {
+                              const t = workDoneStatusTone(row.work_done_status);
+                              return (
+                                <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: t.bg, color: t.fg }}>
+                                  {row.work_done_status}
+                                </span>
+                              );
+                            })() : "—"}
+                          </td>
+                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                            {row.work_done_revenue ? fmtAmt.format(row.work_done_revenue) : "—"}
+                          </td>
+                        </>
+                      )}
                       <td style={{ fontFamily: "monospace", fontSize: "0.76rem", whiteSpace: "nowrap" }}>{row.system_id || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.po_no}</td>
                       <td>{row.shipment_number}</td>
@@ -1293,10 +1320,11 @@ export default function PODispatch() {
               </tbody>
               {rows.length > 0 && (
                 <tfoot>
-                  {/* checkbox·POID·Status·PO Status·Plan Status·PIC Status (MS1)·PIC Status (MS2)·
-                      Work Done·System ID·PO No·Shipment No·Item Code·Description·Activity Type =
-                      14 columns, then Qty·Rate·Amount, then everything after Amount (Project..Action,
-                      count varies by showDispatched) */}
+                  {/* checkbox·POID·Status·PO Status = 4 fixed columns, then (All Lines tab only)
+                      Plan Status·PIC Status (MS1)·PIC Status (MS2)·Work Done Status·Work Done
+                      Revenue = 5 more, then System ID·PO No·Shipment No·Item Code·Description·
+                      Activity Type·Qty·Rate·Amount = 9 fixed, then everything after Amount
+                      (Project..Action, count varies by showDispatched) */}
                   <tr>
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
@@ -1313,14 +1341,15 @@ export default function PODispatch() {
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
-                    <td
-                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
-                    <td
-                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
-                    <td
-                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
-                    <td
-                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    {activeTab === "all" && (
+                      <>
+                        <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                        <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                        <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                        <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                        <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmtAmt.format(totals.workDoneRevenue || 0)}</td>
+                      </>
+                    )}
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                     <td
@@ -1339,7 +1368,7 @@ export default function PODispatch() {
                     {/* Project..Action — one <td> per remaining column (DataTablePro's footer
                         colspan logic treats every non-first cell as exactly one real column;
                         a colSpan here would desync it from the header and misplace the row) */}
-                    {Array.from({ length: colCount - 17 }).map((_, i) => (
+                    {Array.from({ length: colCount - 13 - (activeTab === "all" ? 5 : 0) }).map((_, i) => (
                       <td key={i} style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     ))}
                   </tr>
