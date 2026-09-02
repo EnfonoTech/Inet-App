@@ -2828,6 +2828,15 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
                 "WHERE rp.po_dispatch = pd.name AND rp.plan_status != 'Cancelled' "
                 "ORDER BY IFNULL(rp.visit_number,0) DESC, rp.modified DESC LIMIT 1), '')"
             ),
+            # IFNULL wraps the CAST, not just the subquery — CAST(NULL AS CHAR)
+            # is NULL, and NULL never equals '' in SQL, so has_blanks/ != ''
+            # checks elsewhere in excel_options_from_query would silently
+            # never treat a blank plan_date as blank.
+            "plan_date": (
+                "IFNULL(CAST((SELECT rp.plan_date FROM `tabRollout Plan` rp "
+                "WHERE rp.po_dispatch = pd.name AND rp.plan_status != 'Cancelled' "
+                "ORDER BY IFNULL(rp.visit_number,0) DESC, rp.modified DESC LIMIT 1) AS CHAR), '')"
+            ),
             # Keys must match DataTablePro's auto-derived col_key for the
             # header text — "PIC Status (MS1)"/"PIC Status (MS2)" both slugify
             # to pic_status_ms1/pic_status_ms2 (see keyFromLabel in
@@ -2838,13 +2847,9 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             # value actually shown on screen.
             "pic_status_ms1": "IF(IFNULL(pd.pic_status,'')='', 'Work Not Done', pd.pic_status)",
             "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'')='', 'Work Not Done', pd.pic_status_ms2)",
-            "work_done_revenue": (
-                "CAST(IFNULL((SELECT SUM(wd.revenue_sar) FROM `tabWork Done` wd "
-                "WHERE wd.system_id = pd.name), 0) AS CHAR)"
-            ),
             # How the line got its Work Done — Rollout Execution / Backend /
             # Direct Close (Work Done.source). Blank until work is actually
-            # recorded, same as work_done_revenue.
+            # recorded.
             "work_type": (
                 "IFNULL((SELECT wd.source FROM `tabWork Done` wd "
                 "WHERE wd.system_id = pd.name ORDER BY wd.modified DESC LIMIT 1), '')"
@@ -2857,8 +2862,9 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
                 "IFNULL(NULLIF((SELECT bt.team_name FROM `tabINET Team` bt "
                 "WHERE bt.name = pd.backend_team), ''), IFNULL(pd.backend_team,''))"
             ),
-            "ms1_amount": "CAST(pd.ms1_amount AS CHAR)",
-            "ms2_amount": "CAST(pd.ms2_amount AS CHAR)",
+            "subcon_completed_on": "IFNULL(CAST(pd.subcon_completed_on AS CHAR), '')",
+            "ms1_amount": "IFNULL(CAST(pd.ms1_amount AS CHAR), '')",
+            "ms2_amount": "IFNULL(CAST(pd.ms2_amount AS CHAR), '')",
         }
         if frappe.db.has_column("PO Intake Line", "center_area"):
             col_filter_map_intake["center_area"] = "IFNULL(pil.center_area,'')"
@@ -3033,7 +3039,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             "name", "po_intake", "po_line_no", "system_id", "im", "huawei_im",
             "dispatch_mode", "target_month", "region_type", "center_area",
             "ms1_amount", "ms2_amount", "pic_status", "pic_status_ms2", "dispatch_status",
-            "subcon_status", "backend_team",
+            "subcon_status", "backend_team", "subcon_completed_on",
         ]
         disp_fields_base = [
             "name", "po_intake", "po_line_no", "system_id", "im",
@@ -3105,6 +3111,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             line["huawei_im"] = dispatch_data.get("huawei_im")
             line["subcon_status"] = dispatch_data.get("subcon_status")
             line["backend_team"] = dispatch_data.get("backend_team")
+            line["subcon_completed_on"] = dispatch_data.get("subcon_completed_on")
 
         if not line.get("region_type"):
             line["region_type"] = region_type_from_center_area(line.get("center_area"))
@@ -3160,24 +3167,21 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
         for line in lines
         if line.get("dispatch_name") and line.get("po_line_status") in ("Dispatched", "Completed")
     })
-    work_done_revenue = {}
     work_type = {}
     latest_plan_status = {}
+    latest_plan_date = {}
     if stage_dispatch_names:
         wd_rows_for_stage = []
         for chunk in _chunked(stage_dispatch_names):
             wd_rows_for_stage.extend(frappe.get_all(
                 "Work Done",
                 filters={"system_id": ["in", chunk]},
-                fields=["system_id", "source", "revenue_sar", "modified"],
+                fields=["system_id", "source", "modified"],
                 order_by="modified desc",
             ))
         for r in wd_rows_for_stage:
-            # Revenue sums across every WD row behind this dispatch (a
-            # milestone-split line can have more than one); work type takes
-            # the most recently touched row, same "latest wins" rule as plan
-            # status below.
-            work_done_revenue[r.system_id] = work_done_revenue.get(r.system_id, 0) + flt(r.revenue_sar or 0)
+            # Work type takes the most recently touched row, same "latest
+            # wins" rule as plan status/date below.
             if r.system_id not in work_type:
                 work_type[r.system_id] = r.source
         plan_rows_for_stage = []
@@ -3185,17 +3189,18 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             plan_rows_for_stage.extend(frappe.get_all(
                 "Rollout Plan",
                 filters={"po_dispatch": ["in", chunk]},
-                fields=["po_dispatch", "plan_status", "visit_number", "modified"],
+                fields=["po_dispatch", "plan_status", "plan_date", "visit_number", "modified"],
                 order_by="visit_number desc, modified desc",
             ))
         for r in plan_rows_for_stage:
             if r.po_dispatch not in latest_plan_status:
                 latest_plan_status[r.po_dispatch] = r.plan_status
+                latest_plan_date[r.po_dispatch] = r.plan_date
 
     for line in lines:
         dispatch_name = line.get("dispatch_name")
         line["plan_status"] = latest_plan_status.get(dispatch_name)
-        line["work_done_revenue"] = work_done_revenue.get(dispatch_name) or 0
+        line["plan_date"] = latest_plan_date.get(dispatch_name)
         line["work_type"] = work_type.get(dispatch_name)
 
     return lines

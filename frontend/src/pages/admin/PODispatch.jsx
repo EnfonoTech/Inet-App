@@ -395,17 +395,17 @@ export default function PODispatch() {
   // multi-column search.
   const [columnFilters, setColumnFilters] = useState({});
   useEffect(() => {
-    const key = `admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`;
+    const key = `admin-po-dispatch-v1-${activeTab === "all" ? "all" : showDispatched ? "full" : "basic"}`;
     const onFiltersChanged = (e) => {
       if (e.detail?.tableKey !== key) return;
       setColumnFilters(e.detail.filters || {});
     };
     document.addEventListener("tablepro:filters-changed", onFiltersChanged);
     return () => document.removeEventListener("tablepro:filters-changed", onFiltersChanged);
-  }, [showDispatched]);
+  }, [activeTab, showDispatched]);
   const queryArgsRef = useRef({ portal: {}, status: "New" });
   useEffect(() => {
-    const key = `admin-po-dispatch-v1-${showDispatched ? "full" : "basic"}`;
+    const key = `admin-po-dispatch-v1-${activeTab === "all" ? "all" : showDispatched ? "full" : "basic"}`;
     const onRequestOptions = (e) => {
       if (e.detail?.tableKey !== key) return;
       const { portal, status } = queryArgsRef.current;
@@ -423,7 +423,7 @@ export default function PODispatch() {
     };
     document.addEventListener("tablepro:request-column-options", onRequestOptions);
     return () => document.removeEventListener("tablepro:request-column-options", onRequestOptions);
-  }, [showDispatched]);
+  }, [activeTab, showDispatched]);
 
   // "New" (basic columns) and "Dispatched"/"all" (full columns) are now
   // distinct table identities (see data-table-key above) - don't carry a
@@ -964,8 +964,8 @@ export default function PODispatch() {
               // Pipeline detail — same fields shown as their own columns on
               // the All Lines tab, surfaced here too regardless of which
               // tab the row was opened from.
-              "dispatch_status", "plan_status", "pic_status", "pic_status_ms2",
-              "work_type", "work_done_revenue", "subcon_status", "backend_team",
+              "dispatch_status", "plan_status", "plan_date", "pic_status", "pic_status_ms2",
+              "work_type", "subcon_status", "subcon_completed_on", "backend_team",
               "ms1_amount", "ms2_amount", "huawei_im", "project_domain",
               "po_no", "po_intake", "parent", "name", "system_id",
               "po_line_no", "shipment_number", "dispatch_name",
@@ -1158,14 +1158,13 @@ export default function PODispatch() {
             // cost — on the "All Lines" view where a PM is looking across the
             // whole pipeline. Pending Dispatch/Dispatched don't need that
             // much detail, so those 5 columns are "all"-tab only.
-            const colCount = activeTab === "all" ? 32 : showDispatched ? 23 : 20;
+            const colCount = activeTab === "all" ? 33 : showDispatched ? 23 : 20;
             const totals = rows.slice(0, displayedCount).reduce((acc, r) => ({
               qty: acc.qty + (parseFloat(r.qty) || 0),
               amount: acc.amount + (parseFloat(r.line_amount) || 0),
-              workDoneRevenue: acc.workDoneRevenue + (parseFloat(r.work_done_revenue) || 0),
               ms1Amount: acc.ms1Amount + (parseFloat(r.ms1_amount) || 0),
               ms2Amount: acc.ms2Amount + (parseFloat(r.ms2_amount) || 0),
-            }), { qty: 0, amount: 0, workDoneRevenue: 0, ms1Amount: 0, ms2Amount: 0 });
+            }), { qty: 0, amount: 0, ms1Amount: 0, ms2Amount: 0 });
             return (
             <table className="data-table" data-excel-filter-all="1" data-table-key={`admin-po-dispatch-v1-${activeTab === "all" ? "all" : showDispatched ? "full" : "basic"}`}>
               <thead>
@@ -1182,11 +1181,12 @@ export default function PODispatch() {
                   {activeTab === "all" && (
                     <>
                       <th>Plan Status</th>
+                      <th>Plan Date</th>
                       <th>PIC Status (MS1)</th>
                       <th>PIC Status (MS2)</th>
-                      <th style={{ textAlign: "right" }}>Work Done Revenue</th>
                       <th>Work Type</th>
                       <th>Subcon Status</th>
+                      <th>Subcon Completed On</th>
                       <th>Backend Team</th>
                       <th style={{ textAlign: "right" }}>MS1 Amount</th>
                       <th style={{ textAlign: "right" }}>MS2 Amount</th>
@@ -1280,11 +1280,11 @@ export default function PODispatch() {
                               );
                             })() : "—"}
                           </td>
+                          <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>
+                            {row.plan_date ? new Date(row.plan_date).toLocaleDateString("en", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                          </td>
                           <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status} /></td>
                           <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status_ms2} /></td>
-                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                            {row.work_done_revenue ? fmtAmt.format(row.work_done_revenue) : "—"}
-                          </td>
                           <td style={{ whiteSpace: "nowrap" }}>
                             {row.work_type ? (() => {
                               const t = workTypeTone(row.work_type);
@@ -1304,6 +1304,9 @@ export default function PODispatch() {
                                 </span>
                               );
                             })() : "—"}
+                          </td>
+                          <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>
+                            {row.subcon_completed_on ? new Date(row.subcon_completed_on).toLocaleDateString("en", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
                           </td>
                           <td style={{ whiteSpace: "nowrap", fontSize: "0.82rem" }}>{row.backend_team || "—"}</td>
                           <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -1358,11 +1361,11 @@ export default function PODispatch() {
               {rows.length > 0 && (
                 <tfoot>
                   {/* checkbox·POID·Status·PO Status = 4 fixed columns, then (All Lines tab only)
-                      Plan Status·PIC Status (MS1)·PIC Status (MS2)·Work Done Revenue·Work Type·
-                      Subcon Status·Backend Team·MS1 Amount·MS2 Amount = 9 more, then System ID·
-                      PO No·Shipment No·Item Code·Description·Activity Type·Qty·Rate·Amount = 9
-                      fixed, then everything after Amount (Project..Action, count varies by
-                      showDispatched) */}
+                      Plan Status·Plan Date·PIC Status (MS1)·PIC Status (MS2)·Work Type·
+                      Subcon Status·Subcon Completed On·Backend Team·MS1 Amount·MS2 Amount = 10
+                      more, then System ID·PO No·Shipment No·Item Code·Description·Activity
+                      Type·Qty·Rate·Amount = 9 fixed, then everything after Amount
+                      (Project..Action, count varies by showDispatched) */}
                   <tr>
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
@@ -1384,7 +1387,8 @@ export default function PODispatch() {
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
-                        <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmtAmt.format(totals.workDoneRevenue || 0)}</td>
+                        <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                        <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
@@ -1410,7 +1414,7 @@ export default function PODispatch() {
                     {/* Project..Action — one <td> per remaining column (DataTablePro's footer
                         colspan logic treats every non-first cell as exactly one real column;
                         a colSpan here would desync it from the header and misplace the row) */}
-                    {Array.from({ length: colCount - 13 - (activeTab === "all" ? 9 : 0) }).map((_, i) => (
+                    {Array.from({ length: colCount - 13 - (activeTab === "all" ? 10 : 0) }).map((_, i) => (
                       <td key={i} style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     ))}
                   </tr>
