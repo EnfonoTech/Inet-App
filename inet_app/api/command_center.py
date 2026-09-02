@@ -2838,14 +2838,27 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             # value actually shown on screen.
             "pic_status_ms1": "IF(IFNULL(pd.pic_status,'')='', 'Work Not Done', pd.pic_status)",
             "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'')='', 'Work Not Done', pd.pic_status_ms2)",
-            "work_done_status": (
-                "IFNULL((SELECT wd.billing_status FROM `tabWork Done` wd "
-                "WHERE wd.system_id = pd.name ORDER BY wd.modified DESC LIMIT 1), '')"
-            ),
             "work_done_revenue": (
                 "CAST(IFNULL((SELECT SUM(wd.revenue_sar) FROM `tabWork Done` wd "
                 "WHERE wd.system_id = pd.name), 0) AS CHAR)"
             ),
+            # How the line got its Work Done — Rollout Execution / Backend /
+            # Direct Close (Work Done.source). Blank until work is actually
+            # recorded, same as work_done_revenue.
+            "work_type": (
+                "IFNULL((SELECT wd.source FROM `tabWork Done` wd "
+                "WHERE wd.system_id = pd.name ORDER BY wd.modified DESC LIMIT 1), '')"
+            ),
+            "subcon_status": "IFNULL(pd.subcon_status,'')",
+            # Column shows the team's display name (see the backend_team_name_map
+            # resolution below) with the code as fallback — resolve the same
+            # way so the dropdown matches the cells, same pattern as "im".
+            "backend_team": (
+                "IFNULL(NULLIF((SELECT bt.team_name FROM `tabINET Team` bt "
+                "WHERE bt.name = pd.backend_team), ''), IFNULL(pd.backend_team,''))"
+            ),
+            "ms1_amount": "CAST(pd.ms1_amount AS CHAR)",
+            "ms2_amount": "CAST(pd.ms2_amount AS CHAR)",
         }
         if frappe.db.has_column("PO Intake Line", "center_area"):
             col_filter_map_intake["center_area"] = "IFNULL(pil.center_area,'')"
@@ -3020,6 +3033,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             "name", "po_intake", "po_line_no", "system_id", "im", "huawei_im",
             "dispatch_mode", "target_month", "region_type", "center_area",
             "ms1_amount", "ms2_amount", "pic_status", "pic_status_ms2", "dispatch_status",
+            "subcon_status", "backend_team",
         ]
         disp_fields_base = [
             "name", "po_intake", "po_line_no", "system_id", "im",
@@ -3089,6 +3103,8 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             line["pic_status"] = dispatch_data.get("pic_status")
             line["pic_status_ms2"] = dispatch_data.get("pic_status_ms2")
             line["huawei_im"] = dispatch_data.get("huawei_im")
+            line["subcon_status"] = dispatch_data.get("subcon_status")
+            line["backend_team"] = dispatch_data.get("backend_team")
 
         if not line.get("region_type"):
             line["region_type"] = region_type_from_center_area(line.get("center_area"))
@@ -3105,6 +3121,21 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
         imn = line.get("dispatched_im")
         if imn:
             line["dispatched_im_full_name"] = im_fn_map.get(imn)
+
+    # Backend Team — show the display name (falls back to the code), same
+    # idea as dispatched_im_full_name above.
+    backend_team_ids = list({line.get("backend_team") for line in lines if line.get("backend_team")})
+    backend_team_name_map = {}
+    if backend_team_ids:
+        for chunk in _chunked(backend_team_ids):
+            for t in frappe.get_all(
+                "INET Team", filters={"name": ["in", chunk]}, fields=["name", "team_name"],
+            ):
+                backend_team_name_map[t.name] = t.team_name
+    for line in lines:
+        bt = line.get("backend_team")
+        if bt:
+            line["backend_team"] = backend_team_name_map.get(bt) or bt
 
     _enrich_with_project_fields(lines)
     # Pre-existing gap: this function never populated activity_type at all
@@ -3129,8 +3160,8 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
         for line in lines
         if line.get("dispatch_name") and line.get("po_line_status") in ("Dispatched", "Completed")
     })
-    work_done_status = {}
     work_done_revenue = {}
+    work_type = {}
     latest_plan_status = {}
     if stage_dispatch_names:
         wd_rows_for_stage = []
@@ -3138,17 +3169,17 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             wd_rows_for_stage.extend(frappe.get_all(
                 "Work Done",
                 filters={"system_id": ["in", chunk]},
-                fields=["system_id", "billing_status", "revenue_sar", "modified"],
+                fields=["system_id", "source", "revenue_sar", "modified"],
                 order_by="modified desc",
             ))
         for r in wd_rows_for_stage:
             # Revenue sums across every WD row behind this dispatch (a
-            # milestone-split line can have more than one); status takes the
-            # most recently touched row, same "latest wins" rule as plan
+            # milestone-split line can have more than one); work type takes
+            # the most recently touched row, same "latest wins" rule as plan
             # status below.
             work_done_revenue[r.system_id] = work_done_revenue.get(r.system_id, 0) + flt(r.revenue_sar or 0)
-            if r.system_id not in work_done_status:
-                work_done_status[r.system_id] = r.billing_status
+            if r.system_id not in work_type:
+                work_type[r.system_id] = r.source
         plan_rows_for_stage = []
         for chunk in _chunked(stage_dispatch_names):
             plan_rows_for_stage.extend(frappe.get_all(
@@ -3164,8 +3195,8 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
     for line in lines:
         dispatch_name = line.get("dispatch_name")
         line["plan_status"] = latest_plan_status.get(dispatch_name)
-        line["work_done_status"] = work_done_status.get(dispatch_name)
         line["work_done_revenue"] = work_done_revenue.get(dispatch_name) or 0
+        line["work_type"] = work_type.get(dispatch_name)
 
     return lines
 
