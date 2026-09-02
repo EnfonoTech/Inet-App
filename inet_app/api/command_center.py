@@ -12565,6 +12565,346 @@ def get_revenue_forecast_report(**kwargs):
     return {"columns": columns, "data": data}
 
 
+# ── Rollout Planning — weekly dashboard ─────────────────────────────────────
+# Buckets the Rollout Plan statuses into the four the weekly view speaks in.
+# Written out rather than inferred so it is obvious what lands where, and so
+# the four together are a real partition of everything except Cancelled.
+ROLLOUT_WEEK_BUCKETS = {
+    "planned": ("Planned", "Planning with Issue"),
+    "in_progress": ("In Execution", "Extended"),
+    "completed": ("Completed",),
+    "delayed": ("Overdue", "Not Attended"),
+}
+ROLLOUT_WEEK_EXCLUDED = ("Cancelled",)
+
+
+def _rollout_scope_clause(im, alias="pd"):
+    """(clause, params, resolved_im) for the rollout dashboards.
+
+    An IM only ever sees their own lines. A PM asking for no particular IM sees
+    every one — that is the whole difference between the two pages, so it lives
+    here rather than in two near-identical endpoints.
+    """
+    roles = set(frappe.get_roles(frappe.session.user))
+    is_admin = bool(roles & {"Administrator", "System Manager", "INET Admin"})
+    if is_admin and not im:
+        return "1=1", [], None
+    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
+    if not im_identifiers:
+        return None, [], im_resolved
+    ph = ", ".join(["%s"] * len(im_identifiers))
+    return f"{alias}.im IN ({ph})", list(im_identifiers), im_resolved
+
+
+def _rollout_week_bounds(week_start=None):
+    """Monday..Sunday containing `week_start` (today when unset)."""
+    anchor_day = getdate(week_start) if week_start else getdate(nowdate())
+    monday = add_days(anchor_day, -anchor_day.weekday())
+    return monday, add_days(monday, 6)
+
+
+@frappe.whitelist()
+def get_rollout_week_dashboard(im=None, week_start=None, portal_filters=None):
+    """Everything the Rollout Planning weekly view shows, in one round trip.
+
+    One query over the week's Rollout Plans feeds the plan grid, the status
+    tiles, the activity split, the team workload and the per-day calendar —
+    they are five readings of the same set, so computing them separately would
+    be five chances for them to disagree.
+    """
+    scope_clause, scope_params, im_resolved = _rollout_scope_clause(im)
+    monday, sunday = _rollout_week_bounds(week_start)
+    empty = {
+        "week": {"start": str(monday), "end": str(sunday), "days": []},
+        "summary": {k: 0 for k in ("total", "planned", "in_progress", "completed", "delayed", "cancelled")},
+        "activity": [], "teams": [], "rows": [], "im": im_resolved,
+    }
+    if scope_clause is None:
+        return empty
+
+    pf = _portal_filters_dict(portal_filters)
+    wheres = [
+        scope_clause,
+        "rp.plan_date IS NOT NULL",
+        # A plan counts as "in the week" when its span overlaps the week, not
+        # only when it starts inside it — a Thu-to-Tue plan belongs to both.
+        "rp.plan_date <= %s",
+        "COALESCE(rp.plan_end_date, rp.plan_date) >= %s",
+    ]
+    params = list(scope_params) + [str(sunday), str(monday)]
+
+    for col, key in (("pd.project_code", "project_code"),
+                     ("rp.team", "team"),
+                     ("pd.site_code", "site_code"),
+                     ("pd.dispatch_mode", "dispatch_mode"),
+                     # Narrows WITHIN the scope clause above, never past it —
+                     # an IM cannot widen their own view by naming another IM.
+                     ("pd.im", "im")):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            wheres.append(c)
+            params.extend(p)
+
+    # Dummy / internal presets: the pages keep these selectors visible on the
+    # weekly view, so they have to mean something here too rather than sit
+    # there doing nothing.
+    dummy_preset = (pf.get("dummy_preset") or "").strip()
+    if dummy_preset == "dummy":
+        wheres.append("IFNULL(pd.is_dummy_po, 0) = 1")
+    elif dummy_preset == "standard":
+        wheres.append("IFNULL(pd.is_dummy_po, 0) = 0")
+    elif dummy_preset == "mapped_dummy":
+        wheres.append("(IFNULL(pd.was_dummy_po, 0) = 1 AND IFNULL(pd.is_dummy_po, 0) = 0)")
+    elif dummy_preset == "dummy_any":
+        wheres.append("(IFNULL(pd.is_dummy_po, 0) = 1 OR IFNULL(pd.was_dummy_po, 0) = 1)")
+
+    internal_preset = (pf.get("internal_preset") or "").strip()
+    if internal_preset == "only":
+        wheres.append("IFNULL(pd.is_internal_work, 0) = 1")
+    elif internal_preset != "include":
+        wheres.append("IFNULL(pd.is_internal_work, 0) = 0")
+
+    like_pat = _sql_like_pattern(pf.get("search") or "")
+    if like_pat:
+        wheres.append(
+            "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''), "
+            "IFNULL(pd.project_code,''), IFNULL(pd.site_code,''), "
+            "IFNULL(pd.site_name,''), IFNULL(it.team_name,'')) LIKE %s"
+        )
+        params.append(like_pat)
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT rp.name AS plan, rp.plan_date, rp.plan_end_date, rp.plan_status,
+               IFNULL(rp.completion_pct, 0) AS completion_pct,
+               rp.team, IFNULL(it.team_name, rp.team) AS team_name,
+               rp.visit_type, rp.visit_number,
+               pd.name AS po_dispatch, IFNULL(pd.poid, pd.name) AS poid,
+               IFNULL(pd.dispatch_mode, '') AS mode,
+               IFNULL(pd.project_code, '') AS project_code,
+               IFNULL(pcc.project_domain, '') AS domain,
+               IFNULL(pd.site_code, '') AS duid,
+               IFNULL(pd.item_description, '') AS item_description,
+               IFNULL(itm.activity_type, '') AS activity_type,
+               IFNULL(pd.line_amount, 0) AS line_amount
+        FROM `tabRollout Plan` rp
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+        LEFT JOIN `tabItem` itm ON itm.name = pd.item_code
+        WHERE {" AND ".join(wheres)}
+        ORDER BY rp.plan_date ASC, pd.poid ASC
+        """,
+        tuple(params),
+        as_dict=True,
+    ) or []
+
+    bucket_of = {}
+    for bucket, statuses in ROLLOUT_WEEK_BUCKETS.items():
+        for st in statuses:
+            bucket_of[st] = bucket
+
+    summary = {k: 0 for k in ("total", "planned", "in_progress", "completed", "delayed", "cancelled")}
+    activity_counts, team_counts = {}, {}
+    days = [{"date": str(add_days(monday, i)), "planned": 0, "in_progress": 0,
+             "completed": 0, "delayed": 0} for i in range(7)]
+
+    out_rows = []
+    for r in rows:
+        status = (r.get("plan_status") or "").strip()
+        if status in ROLLOUT_WEEK_EXCLUDED:
+            summary["cancelled"] += 1
+            continue
+        bucket = bucket_of.get(status, "planned")
+        summary["total"] += 1
+        summary[bucket] += 1
+
+        act = (r.get("activity_type") or "").strip() or "Unspecified"
+        activity_counts[act] = activity_counts.get(act, 0) + 1
+        if r.get("team"):
+            key = (r["team"], r.get("team_name") or r["team"])
+            team_counts[key] = team_counts.get(key, 0) + 1
+
+        # Clip the plan's span to the week so the grid can lay it out directly.
+        start = getdate(r["plan_date"])
+        end = getdate(r.get("plan_end_date") or r["plan_date"])
+        if end < start:
+            end = start
+        clipped_start = max(start, monday)
+        clipped_end = min(end, sunday)
+        offset = (clipped_start - monday).days
+        span = (clipped_end - clipped_start).days + 1
+        for i in range(offset, offset + span):
+            days[i][bucket] += 1
+
+        out_rows.append({
+            "plan": r["plan"], "po_dispatch": r["po_dispatch"], "poid": r["poid"],
+            "mode": r["mode"], "project_code": r["project_code"], "domain": r["domain"],
+            "duid": r["duid"], "activity_type": r["activity_type"],
+            "item_description": r["item_description"],
+            "team": r.get("team"), "team_name": r.get("team_name"),
+            "visit_type": r.get("visit_type"), "visit_number": r.get("visit_number"),
+            "plan_status": status, "bucket": bucket,
+            "completion_pct": flt(r.get("completion_pct")),
+            "line_amount": flt(r.get("line_amount")),
+            "plan_date": str(start), "plan_end_date": str(end),
+            "day_offset": offset, "day_span": span,
+        })
+
+    total = summary["total"] or 1
+    activity = sorted(
+        ({"label": k, "count": v, "pct": round(v * 100.0 / total, 1)}
+         for k, v in activity_counts.items()),
+        key=lambda a: -a["count"],
+    )
+    teams = sorted(
+        ({"team": k[0], "team_name": k[1], "planned": v} for k, v in team_counts.items()),
+        key=lambda t: -t["planned"],
+    )
+    for i, d in enumerate(days):
+        d["label"] = frappe.utils.formatdate(d["date"], "EEE d")
+        d["index"] = i
+
+    return {
+        "week": {"start": str(monday), "end": str(sunday), "days": days},
+        "summary": summary,
+        "activity": activity,
+        "teams": teams,
+        "rows": out_rows,
+        "im": im_resolved,
+    }
+
+
+def fiscal_quarter_of(day):
+    """Quarter containing `day`, aligned to the site's Fiscal Year.
+
+    This bench's fiscal year runs 1 Apr - 31 Mar, so Apr-Jun is Q1 and Jul-Sep
+    is Q2 — NOT the calendar Q3 a naive month/3 would give. Reading the start
+    month off the Fiscal Year record means a site configured differently gets
+    its own quarters without a code change.
+
+    -> {"from", "to", "label"}
+    """
+    day = getdate(day)
+    start_month = 1
+    fy_name = ""
+    try:
+        rows = frappe.get_all(
+            "Fiscal Year", filters={"disabled": 0}, fields=["name", "year_start_date"],
+            order_by="year_start_date desc", limit=1, ignore_permissions=True,
+        )
+        if rows and rows[0].get("year_start_date"):
+            start_month = getdate(rows[0]["year_start_date"]).month
+            fy_name = rows[0].get("name") or ""
+    except Exception:
+        pass
+
+    # Months since the fiscal year began, so quarter 1 starts at start_month.
+    offset = (day.month - start_month) % 12
+    q = offset // 3
+    q_start_month = ((start_month - 1 + q * 3) % 12) + 1
+    # The fiscal year begins in the calendar year before `day` when the quarter
+    # has wrapped past December.
+    year = day.year if day.month >= q_start_month else day.year - 1
+    q_from = getdate(f"{year}-{q_start_month:02d}-01")
+    end_month = ((q_start_month - 1 + 2) % 12) + 1
+    end_year = year if end_month >= q_start_month else year + 1
+    q_to = get_last_day(getdate(f"{end_year}-{end_month:02d}-01"))
+
+    span = f"{q_from.strftime('%b')}–{q_to.strftime('%b %Y')}"
+    label = f"Q{q + 1} {fy_name}" if fy_name else f"Q{q + 1} {q_from.year}"
+    return {"from": str(q_from), "to": str(q_to), "label": label, "span": span}
+
+
+@frappe.whitelist()
+def get_rollout_fiscal_quarter(day=None):
+    """Fiscal quarter bounds for a date — the weekly dashboard asks for the
+    quarter its displayed week falls in."""
+    return fiscal_quarter_of(day or nowdate())
+
+
+@frappe.whitelist()
+def get_rollout_commercial_summary(im=None, from_date=None, to_date=None, project_code=None, filter_im=None):
+    """Money behind this IM's rollout plans over a date range.
+
+    Every figure here is read off PO Dispatch for the lines that have a plan in
+    the range — "planned value" is the value of what is scheduled, not a
+    separate budget field, because there isn't one.
+
+    Collected is the invoiced amount on milestones whose payment_received_date
+    is set; a milestone invoiced but not yet paid falls into the pending slice.
+    """
+    scope_clause, scope_params, im_resolved = _rollout_scope_clause(im)
+    empty = {
+        "top": {k: 0.0 for k in ("planned", "invoiced", "collected", "pending", "not_invoiced")},
+        "projects": [], "from_date": from_date, "to_date": to_date, "im": im_resolved,
+    }
+    if scope_clause is None:
+        return empty
+
+    wheres = [scope_clause, "IFNULL(pd.is_internal_work, 0) = 0"]
+    params = list(scope_params)
+    if from_date:
+        wheres.append("rp.plan_date >= %s")
+        params.append(from_date)
+    if to_date:
+        wheres.append("rp.plan_date <= %s")
+        params.append(to_date)
+    for col, val in (("pd.project_code", project_code), ("pd.im", filter_im)):
+        c, p = _sql_in_or_eq(col, val)
+        if c:
+            wheres.append(c)
+            params.extend(p)
+
+    # DISTINCT on the dispatch: a line replanned across several visits must not
+    # have its value counted once per visit.
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.project_code,
+               COUNT(*) AS line_count,
+               COALESCE(SUM(pd.line_amount), 0) AS planned,
+               COALESCE(SUM(IFNULL(pd.ms1_invoiced,0) + IFNULL(pd.ms2_invoiced,0)), 0) AS invoiced,
+               COALESCE(SUM(
+                 IF(pd.ms1_payment_received_date IS NOT NULL, IFNULL(pd.ms1_invoiced,0), 0)
+                 + IF(pd.ms2_payment_received_date IS NOT NULL, IFNULL(pd.ms2_invoiced,0), 0)
+               ), 0) AS collected
+        FROM (
+          SELECT DISTINCT rp.po_dispatch
+          FROM `tabRollout Plan` rp
+          INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+          WHERE {" AND ".join(wheres)}
+        ) planned_lines
+        INNER JOIN `tabPO Dispatch` pd ON pd.name = planned_lines.po_dispatch
+        GROUP BY pd.project_code
+        ORDER BY planned DESC
+        """,
+        tuple(params),
+        as_dict=True,
+    ) or []
+
+    top = {
+        "planned": sum(flt(r["planned"]) for r in rows),
+        "invoiced": sum(flt(r["invoiced"]) for r in rows),
+        "collected": sum(flt(r["collected"]) for r in rows),
+        "lines": sum(cint(r["line_count"]) for r in rows),
+    }
+    # The three slices of the breakdown donut, and they add to planned by
+    # construction rather than by three separate queries agreeing.
+    top["pending"] = max(top["invoiced"] - top["collected"], 0.0)
+    top["not_invoiced"] = max(top["planned"] - top["invoiced"], 0.0)
+
+    return {
+        "top": top,
+        "projects": [
+            {"project_code": r["project_code"] or "—", "lines": cint(r["line_count"]),
+             "planned": flt(r["planned"]), "invoiced": flt(r["invoiced"]),
+             "collected": flt(r["collected"])}
+            for r in rows
+        ],
+        "from_date": from_date, "to_date": to_date, "im": im_resolved,
+    }
+
+
 @frappe.whitelist()
 def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=None, _options=None, _summary=None):
     """Rollout plans for this IM (join PO Dispatch — works before im backfill on Rollout Plan)."""

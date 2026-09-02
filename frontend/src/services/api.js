@@ -787,6 +787,27 @@ export const pmApi = {
     to_date: to_date || "",
     etag: etag || "",
   }),
+  // Rollout Planning weekly dashboard — one call feeds the plan grid, the
+  // status tiles, the activity split, team workload and the day calendar.
+  getRolloutWeekDashboard: ({ im, week_start, portal_filters }) =>
+    call("inet_app.api.command_center.get_rollout_week_dashboard", {
+      im: im || "",
+      week_start: week_start || "",
+      portal_filters: JSON.stringify(portal_filters || {}),
+    }),
+  getRolloutFiscalQuarter: (day) =>
+    call("inet_app.api.command_center.get_rollout_fiscal_quarter", { day: day || "" }),
+
+  getRolloutCommercialSummary: ({ im, from_date, to_date, project_code, filter_im }) =>
+    call("inet_app.api.command_center.get_rollout_commercial_summary", {
+      im: im || "",
+      from_date: from_date || "",
+      to_date: to_date || "",
+      project_code: project_code && project_code.length ? JSON.stringify(project_code) : "",
+      // Narrows within the session's scope — the PM's toolbar IM filter.
+      filter_im: filter_im && filter_im.length ? JSON.stringify(filter_im) : "",
+    }),
+
   getPicReport: (kind, params) => call("inet_app.api.pic.get_pic_report", {
     kind: kind || "pipeline",
     from_date: params?.from_date || "",

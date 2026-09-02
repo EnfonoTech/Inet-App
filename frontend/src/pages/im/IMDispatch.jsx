@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
+import RolloutWeeklyPlan from "../../components/RolloutWeeklyPlan";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
@@ -194,6 +195,9 @@ export default function IMDispatch() {
   // "All POIDs (re-plan)" shows them so the IM can pick one and create the
   // next sequential visit (visit_number auto-increments).
   const [planScope, setPlanScope] = useState("unplanned"); // "unplanned" | "all"
+  // "table" keeps the existing dispatch table; "week" is the client's weekly
+  // planning dashboard (RolloutWeeklyPlan). Both read the same filters.
+  const [view, setView] = useState("table");
   // "All" is stored per-path, not per-scope — the backend fetch is scoped by
   // planScope (listFilters below), so switching scope is a genuinely
   // different, separately-limited fetch. Without this, picking "All" on one
@@ -1108,7 +1112,7 @@ export default function IMDispatch() {
       {/* KPI row + scope toggle share the same line to save vertical
           space. Toggle uses a stronger active state so it reads as a
           clickable tab control, not a label. */}
-      {!loading && hasAnyDispatches && (
+      {(view === "week" || (!loading && hasAnyDispatches)) && (
         <div style={{ display: "flex", gap: 8, margin: "0 16px 6px", flexWrap: "wrap", alignItems: "center" }}>
           <div style={{
             display: "inline-flex", alignItems: "center", gap: 6,
@@ -1156,18 +1160,26 @@ export default function IMDispatch() {
             background: "#f1f5f9", borderRadius: 8,
             border: "1px solid #e2e8f0",
           }}>
+            {/* Three ways to look at the same IM's work: two table scopes and
+                the weekly dashboard. One control, because to the user they are
+                one choice — even though scope and view are separate state. */}
             {[
-              { id: "unplanned", label: "Unplanned" },
-              { id: "all",       label: "All POIDs (re-plan)" },
+              { id: "unplanned", label: "Unplanned", view: "table" },
+              { id: "all",       label: "All POIDs (re-plan)", view: "table" },
+              { id: "week",      label: "🗓 Weekly Plan", view: "week" },
             ].map((tab) => {
-              const active = planScope === tab.id;
+              const active = tab.view === "week" ? view === "week" : (view === "table" && planScope === tab.id);
               return (
                 <button
                   key={tab.id}
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  onClick={() => { setSelected(new Set()); setPlanScope(tab.id); }}
+                  onClick={() => {
+                    setSelected(new Set());
+                    setView(tab.view);
+                    if (tab.view === "table") setPlanScope(tab.id);
+                  }}
                   onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "#e2e8f0"; }}
                   onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
                   style={{
@@ -1976,6 +1988,15 @@ export default function IMDispatch() {
           </div>
         )}
 
+        {view === "week" && (
+          <RolloutWeeklyPlan imName={imName} portal={summaryQuery?.portal} refreshKey={refreshKey} />
+        )}
+        {/* Hidden, never unmounted. DataTablePro observes THIS wrapper's inner
+            node to know when to re-enhance; unmounting it takes the observer
+            with it, so on the way back the new table gets no Manage Table,
+            no filters and no column state. Same reason the row-limit shrink
+            hides rows instead of dropping them. */}
+        <div style={view === "table" ? undefined : { display: "none" }}>
         <DataTableWrapper loading={loading && rows.length > 0}>
           <table key={`im-dispatch-${planScope}`} className="data-table" data-excel-filter-all="1" data-table-key={`im-dispatch-${planScope}`}>
               <thead>
@@ -2216,6 +2237,7 @@ export default function IMDispatch() {
           value={effectiveRowLimit}
           onChange={confirmRowLimit}
         />
+        </div>
       </div>
 
       {showBackendModal && (

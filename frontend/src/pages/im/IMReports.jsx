@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import RolloutCommercialReport from "../../components/RolloutCommercialReport";
 import { pmApi } from "../../services/api";
 import MiniTable from "../../components/MiniTable";
 
@@ -11,13 +13,19 @@ const TABS = [
   { key: "rollouts", label: "Rollout plans" },
   { key: "executions", label: "Executions (MTD)" },
   { key: "work_done", label: "Work done (MTD)" },
-  { key: "projects", label: "Projects" },
+  { key: "commercial", label: "Commercial" },
 ];
 
 export default function IMReports() {
   const { imName } = useAuth();
-  const [activeTab, setActiveTab] = useState("overview");
+  // Rollout Planning's "View commercial report" deep-links here with the tab
+  // (and optionally the project) it was looking at.
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(
+    () => (TABS.some((t) => t.key === searchParams.get("tab")) ? searchParams.get("tab") : "overview")
+  );
   const [payload, setPayload] = useState(null);
+  const commProject = searchParams.get("project") || "";
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -281,24 +289,8 @@ export default function IMReports() {
             </div>
           )}
 
-          {activeTab === "projects" && (
-            <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-              <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Projects (IM on PCC)</h3>
-              <MiniTable
-                resizable
-                tableKey="im-reports-projects"
-                columns={[
-                  { label: "Code", key: "project_code" },
-                  { label: "Name", key: "project_name" },
-                  { label: "Status", key: "status" },
-                  { label: "Completion %", key: "completion_pct", align: "right", render: (v) => `${Number(v) || 0}%` },
-                  { label: "Budget SAR", key: "budget", align: "right", render: (v) => fmt.format(Number(v) || 0) },
-                  { label: "Actual SAR", key: "actual_cost", align: "right", render: (v) => fmt.format(Number(v) || 0) },
-                ]}
-                rows={payload.projects || []}
-                emptyText="No projects linked to this IM."
-              />
-            </div>
+          {activeTab === "commercial" && (
+            <RolloutCommercialReport imName={imName} initialProject={commProject} />
           )}
 
           {payload.last_updated && (

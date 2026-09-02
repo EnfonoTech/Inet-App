@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
+import RolloutWeeklyPlan from "../../components/RolloutWeeklyPlan";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -140,6 +141,10 @@ export default function RolloutPlanning() {
   // by dummyFilter (open-only by default, with mapped/all as an in-tab
   // filter rather than their own top-level tabs).
   const [planScope, setPlanScope] = useState(location.state?.planScope ?? "unplanned");
+  // "table" is the dispatch table; "week" is the weekly planning dashboard.
+  // Same component the IM page uses — with no IM passed it covers every IM,
+  // which is the only difference between the two pages.
+  const [view, setView] = useState("table");
   // "open" = is_dummy_po=1 (default) | "mapped" = was_dummy_po=1 | "all" = both
   const [dummyFilter, setDummyFilter] = useState("open");
 
@@ -597,11 +602,14 @@ export default function RolloutPlanning() {
             border: "1px solid #e2e8f0",
           }}>
             {[
-              { id: "unplanned",   label: "Unplanned" },
-              { id: "all",         label: "All POIDs (re-plan)" },
-              { id: "open_dummy",  label: "Dummy POs" },
+              { id: "unplanned",   label: "Unplanned",           view: "table" },
+              { id: "all",         label: "All POIDs (re-plan)", view: "table" },
+              { id: "open_dummy",  label: "Dummy POs",           view: "table" },
+              { id: "week",        label: "🗓 Weekly Plan",       view: "week" },
             ].map((tab) => {
-              const active = planScope === tab.id;
+              const active = tab.view === "week"
+                ? view === "week"
+                : (view === "table" && planScope === tab.id);
               const isDummy = tab.id === "open_dummy";
               const activeBg = isDummy ? "#b45309" : "#1d4ed8";
               const activeShadow = isDummy ? "0 1px 3px rgba(180,83,9,0.3)" : "0 1px 3px rgba(29,78,216,0.3)";
@@ -611,7 +619,11 @@ export default function RolloutPlanning() {
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  onClick={() => { setSelected(new Set()); setPlanScope(tab.id); }}
+                  onClick={() => {
+                    setSelected(new Set());
+                    setView(tab.view);
+                    if (tab.view === "table") setPlanScope(tab.id);
+                  }}
                   onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "#e2e8f0"; }}
                   onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
                   style={{
@@ -628,7 +640,7 @@ export default function RolloutPlanning() {
               );
             })}
           </div>
-          {planScope === "open_dummy" && (
+          {view === "table" && planScope === "open_dummy" && (
             <div role="tablist" aria-label="Dummy filter" style={{
               display: "inline-flex", padding: 3,
               background: "#fffbeb", borderRadius: 8,
@@ -728,6 +740,13 @@ export default function RolloutPlanning() {
           </div>
         )}
 
+        {view === "week" && (
+          <RolloutWeeklyPlan portal={queryArgs?.portal} refreshKey={refreshKey} reportHref="/reports?tab=rollout_commercial" />
+        )}
+        {/* Hidden, never unmounted — DataTablePro's observer lives on this
+            wrapper, so unmounting it costs the table its Manage Table,
+            filters and column state on the way back. */}
+        <div style={view === "table" ? undefined : { display: "none" }}>
         <DataTableWrapper loading={loading && rows.length > 0}>
           <table key={`admin-rollout-planning-${planScope}`} className="data-table" data-excel-filter-all="1" data-table-key={`admin-rollout-planning-${planScope}`}>
               <thead>
@@ -923,6 +942,7 @@ export default function RolloutPlanning() {
           filteredCount={displayedCount}
           filterActive={filterActiveForFooter}
         />
+        </div>
       </div>
 
       {/* ── Create Plans Modal ────────────────────────────────── */}

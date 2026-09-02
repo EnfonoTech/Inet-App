@@ -62,6 +62,7 @@ const MONTH_OPTIONS = (() => {
 /* Reports that render their own grid rather than the shared {columns,data}
    table. Lazily imported so a report's code only downloads when opened. */
 const TeamIdleDomainReport = lazy(() => import("./TeamDomainReport"));
+const RolloutCommercialReport = lazy(() => import("../../components/RolloutCommercialReport"));
 
 /* Every report declares a `category` purely for grouping in the catalog.
    Adding a report = one entry here; nothing else needs touching. */
@@ -153,6 +154,15 @@ const REPORTS = [
     api: "reportRevenueForecast",
     description: "6-month rolling forecast — run-rate projection vs planned revenue",
     hasFilters: false,
+  },
+  {
+    key: "rollout_commercial",
+    category: "Client / Domain Reports",
+    title: "Rollout Commercial",
+    // Renders its own filters + grid; same component the IM's Reports page
+    // uses, with no IM passed so it spans every IM.
+    component: RolloutCommercialReport,
+    description: "Planned vs invoiced vs collected on planned rollout work, by project",
   },
   {
     key: "team_idle_domain",
