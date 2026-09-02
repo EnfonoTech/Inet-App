@@ -7,7 +7,8 @@
  "engine": "InnoDB",
  "field_order": [
   "contract_model_name",
-  "description"
+  "description",
+  "block_direct_close"
  ],
  "fields": [
   {
@@ -23,6 +24,14 @@
    "fieldname": "description",
    "fieldtype": "Small Text",
    "label": "Description"
+  },
+  {
+   "default": "0",
+   "description": "Subcontractors on this contract model are hidden from the Direct Close subcontractor picker and rejected server-side if used anyway — these POIDs must go through Rollout Plan → Execution → Work Done.",
+   "fieldname": "block_direct_close",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Block Direct Close"
   }
  ],
  "links": [],

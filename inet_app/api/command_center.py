@@ -16195,17 +16195,25 @@ def get_my_record_execution_capability(im=None):
 
 @frappe.whitelist()
 def get_subcontractors_by_type(close_type):
-    """Return subcontractors from Subcontract Master filtered by their own type field."""
+    """Return subcontractors from Subcontract Master filtered by their own type field.
+
+    Excludes subcontractors whose Contract Model has `block_direct_close`
+    checked — admin-configured per contract model, not a hardcoded list. See
+    `Contract Model.block_direct_close` and the matching server-side check in
+    `_direct_close_one`.
+    """
     role = _user_role_class()
     if role not in ("pm", "im"):
         frappe.throw("Not permitted", frappe.PermissionError)
     sql = """
-        SELECT name, subcontractor_name AS label
-        FROM `tabSubcontract Master`
-        WHERE type = %s
-          AND IFNULL(status, 'Active') = 'Active'
-          AND IFNULL(approved_flag, 0) = 1
-        ORDER BY subcontractor_name
+        SELECT sm.name, sm.subcontractor_name AS label
+        FROM `tabSubcontract Master` sm
+        LEFT JOIN `tabContract Model` cm ON cm.name = sm.contract_model
+        WHERE sm.type = %s
+          AND IFNULL(sm.status, 'Active') = 'Active'
+          AND IFNULL(sm.approved_flag, 0) = 1
+          AND IFNULL(cm.block_direct_close, 0) = 0
+        ORDER BY sm.subcontractor_name
     """
     return frappe.db.sql(sql, (close_type,), as_dict=True) or []
 
@@ -16296,6 +16304,12 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
 
     if not subcontractor:
         return False, {"po_dispatch": name, "poid": poid, "error": "Subcontractor is required"}
+
+    sub_contract_model = frappe.db.get_value("Subcontract Master", subcontractor, "contract_model")
+    if sub_contract_model and cint(frappe.db.get_value("Contract Model", sub_contract_model, "block_direct_close")):
+        return False, {"po_dispatch": name, "poid": poid,
+                       "error": f"{subcontractor} is a {sub_contract_model} subcontractor — not eligible for "
+                                f"Direct Close. Route this POID through Rollout Plan -> Execution -> Work Done."}
 
     # ── Milestone close path ─────────────────────────────────────────────
     if milestone:
