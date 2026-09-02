@@ -18,6 +18,13 @@ import { handleSearchPaste } from "../../utils/searchPaste";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
+// Full Select-field option lists — used as filter option sources instead of
+// deriving them from whatever rows are currently loaded/filtered, which
+// self-narrows (pick a status -> rows shrink to just that status -> the
+// dropdown's own option list shrinks to match, hiding every other status).
+const PO_DISPATCH_STATUS_OPTIONS = ["Pending", "Dispatched", "Planned", "Backend Assigned", "Completed", "Partially Submitted", "Submitted", "Partially Closed", "Closed", "Cancelled"];
+const ROLLOUT_PLAN_STATUS_OPTIONS = ["Planned", "Planning with Issue", "In Execution", "Overdue", "Not Attended", "Extended", "Completed", "Cancelled"];
+
 function todayMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -339,13 +346,18 @@ export default function IMPOIntake() {
   const [dcProjectDomain, setDcProjectDomain] = useState("");
 
   // ── Huawei IM / Project Domain option lists — override pickers on
-  // Assign to Backend and Direct Close. Fetched once on mount.
+  // Assign to Backend and Direct Close, and also (mapped below) the
+  // Overview tab's Domain filter. Fetched once on mount.
   const [huaweiIms, setHuaweiIms] = useState([]);
   const [projectDomains, setProjectDomains] = useState([]);
+  // Full Team list — same "don't derive from currently-loaded/filtered
+  // rows" reasoning as the status/domain option lists below.
+  const [allTeamOptions, setAllTeamOptions] = useState([]);
   useEffect(() => {
     let cancelled = false;
     pmApi.listHuaweiIMs().then((res) => { if (!cancelled) setHuaweiIms(res || []); }).catch(() => {});
     pmApi.listProjectDomains().then((res) => { if (!cancelled) setProjectDomains(res || []); }).catch(() => {});
+    pmApi.getTeamOptions().then((res) => { if (!cancelled) setAllTeamOptions(res || []); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -1105,18 +1117,23 @@ export default function IMPOIntake() {
   }, [planSummaries]);
 
   // ── Overview computed ────────────────────────────────────────────────
-  const ovDomainOptions = useMemo(() => {
-    const seen = new Set();
-    return ovRows.map((r) => r.project_domain).filter(Boolean)
-      .filter((d) => { if (seen.has(d)) return false; seen.add(d); return true; }).sort();
-  }, [ovRows]);
+  // NOTE: none of these four are derived from ovRows/ovPlanSummaries — that
+  // data is already narrowed by whichever of these same filters the user has
+  // picked, so a dropdown built from it would only ever offer values that
+  // survived its own (and the others') current selection, hiding everything
+  // else the moment you pick one (e.g. select a Status -> rows shrink to
+  // just that status -> the Status dropdown "loses" every other status).
+  // Each of these instead comes from a source that's independent of the
+  // current filter state — same reasoning as ovDuidOptions below.
+  const ovDomainOptions = useMemo(
+    () => projectDomains.map((d) => d.domain_name || d.name).filter(Boolean).sort(),
+    [projectDomains]
+  );
 
-  const ovStatusOptions = useMemo(() => {
-    const seen = new Set();
-    return ovRows.map((r) => r.dispatch_status || "Pending").filter(Boolean)
-      .filter((s) => { if (seen.has(s)) return false; seen.add(s); return true; }).sort()
-      .map((s) => ({ id: s, label: s }));
-  }, [ovRows]);
+  const ovStatusOptions = useMemo(
+    () => PO_DISPATCH_STATUS_OPTIONS.map((s) => ({ id: s, label: s })),
+    []
+  );
 
   // NOTE: intentionally NOT derived from ovRows — that would only ever list
   // DUIDs already present in the currently-loaded (row-limited) Overview
@@ -1125,22 +1142,12 @@ export default function IMPOIntake() {
   // comprehensive across all PO Dispatch rows regardless of what's loaded.
   const ovDuidOptions = duidOptions;
 
-  const ovTeamOptions = useMemo(() => {
-    const seen = new Set();
-    return Object.values(ovPlanSummaries)
-      .filter((ps) => ps?.team)
-      .map((ps) => ({ id: ps.team, label: ps.team_name || ps.team }))
-      .filter((o) => { if (seen.has(o.id)) return false; seen.add(o.id); return true; })
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [ovPlanSummaries]);
+  const ovTeamOptions = allTeamOptions;
 
-  const ovPlanStatusOptions = useMemo(() => {
-    const seen = new Set();
-    return Object.values(ovPlanSummaries)
-      .map((ps) => ps?.plan_status).filter(Boolean)
-      .filter((s) => { if (seen.has(s)) return false; seen.add(s); return true; }).sort()
-      .map((s) => ({ id: s, label: s }));
-  }, [ovPlanSummaries]);
+  const ovPlanStatusOptions = useMemo(
+    () => ROLLOUT_PLAN_STATUS_OPTIONS.map((s) => ({ id: s, label: s })),
+    []
+  );
 
   const ovFilteredRows = useMemo(() => {
     let r = ovRows;
