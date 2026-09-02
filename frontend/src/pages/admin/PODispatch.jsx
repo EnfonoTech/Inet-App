@@ -12,6 +12,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { PicStatusBadge } from "../pic/picShared";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -67,19 +68,25 @@ function poLineStatusTone(value) {
   return { bg: "#f1f5f9", fg: "#475569" };
 }
 
-// Colors for the richer "Current Stage" column (current_stage) - covers PIC
-// sub-statuses and Rollout Plan statuses in addition to the plain
-// po_line_status values already handled by poLineStatusTone above.
-function currentStageTone(value) {
-  const s = String(value || "");
-  if (s.startsWith("PIC:")) return { bg: "#f5f3ff", fg: "#6d28d9" };
-  if (s === "Work Done") return { bg: "#ecfeff", fg: "#0e7490" };
-  const sl = s.toLowerCase();
-  if (sl === "in execution") return { bg: "#eff6ff", fg: "#1d4ed8" };
-  if (sl === "planned") return { bg: "#eff6ff", fg: "#1d4ed8" };
-  if (sl === "planning with issue" || sl === "overdue" || sl === "not attended") return { bg: "#fffbeb", fg: "#b45309" };
+// Colors for the "Plan Status" column (Rollout Plan.plan_status) — same
+// mapping the old collapsed "Current Stage" column used for these same
+// values, just no longer merged together with PIC/Work Done into one string.
+function planStatusTone(value) {
+  const sl = String(value || "").toLowerCase();
+  if (sl === "in execution" || sl === "planned") return { bg: "#eff6ff", fg: "#1d4ed8" };
+  if (sl === "planning with issue" || sl === "overdue" || sl === "not attended" || sl === "extended") return { bg: "#fffbeb", fg: "#b45309" };
   if (sl === "completed") return { bg: "#ecfdf5", fg: "#047857" };
-  return poLineStatusTone(value);
+  if (sl === "cancelled") return { bg: "#fef2f2", fg: "#b91c1c" };
+  return { bg: "#f1f5f9", fg: "#475569" };
+}
+
+function WorkDoneBadge({ value }) {
+  const yes = value === "Yes";
+  return (
+    <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: yes ? "#ecfdf5" : "#f1f5f9", color: yes ? "#047857" : "#94a3b8" }}>
+      {value || "No"}
+    </span>
+  );
 }
 
 function DetailItem({ label, value }) {
@@ -1132,7 +1139,7 @@ export default function PODispatch() {
               fmt={fmtAmt}
             />
           ) : (() => {
-            const colCount = showDispatched ? 24 : 21;
+            const colCount = showDispatched ? 27 : 24;
             const totals = rows.slice(0, displayedCount).reduce((acc, r) => ({
               qty: acc.qty + (parseFloat(r.qty) || 0),
               amount: acc.amount + (parseFloat(r.line_amount) || 0),
@@ -1150,7 +1157,10 @@ export default function PODispatch() {
                   <th>POID</th>
                   <th>Status</th>
                   <th>PO Status</th>
-                  <th>Current Stage</th>
+                  <th>Plan Status</th>
+                  <th>PIC Status (MS1)</th>
+                  <th>PIC Status (MS2)</th>
+                  <th>Work Done</th>
                   <th>System ID</th>
                   <th>PO No</th>
                   <th>Shipment No</th>
@@ -1228,15 +1238,18 @@ export default function PODispatch() {
                         })() : "—"}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>
-                        {row.current_stage ? (() => {
-                          const t = currentStageTone(row.current_stage);
+                        {row.plan_status ? (() => {
+                          const t = planStatusTone(row.plan_status);
                           return (
                             <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: t.bg, color: t.fg }}>
-                              {row.current_stage}
+                              {row.plan_status}
                             </span>
                           );
                         })() : "—"}
                       </td>
+                      <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status} /></td>
+                      <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status_ms2} /></td>
+                      <td style={{ whiteSpace: "nowrap" }}><WorkDoneBadge value={row.work_done} /></td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.76rem", whiteSpace: "nowrap" }}>{row.system_id || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.po_no}</td>
                       <td>{row.shipment_number}</td>
@@ -1280,9 +1293,10 @@ export default function PODispatch() {
               </tbody>
               {rows.length > 0 && (
                 <tfoot>
-                  {/* checkbox·POID·Status·PO Status·Current Stage·System ID·PO No·Shipment No·
-                      Item Code·Description·Activity Type = 11 columns, then Qty·Rate·Amount,
-                      then everything after Amount (Project..Action, count varies by showDispatched) */}
+                  {/* checkbox·POID·Status·PO Status·Plan Status·PIC Status (MS1)·PIC Status (MS2)·
+                      Work Done·System ID·PO No·Shipment No·Item Code·Description·Activity Type =
+                      14 columns, then Qty·Rate·Amount, then everything after Amount (Project..Action,
+                      count varies by showDispatched) */}
                   <tr>
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
@@ -1313,13 +1327,19 @@ export default function PODispatch() {
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
+                    <td
+                      style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(totals.qty)}</td>{/* Qty */}
                     <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />{/* Rate */}
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmtAmt.format(totals.amount)}</td>{/* Amount */}
                     {/* Project..Action — one <td> per remaining column (DataTablePro's footer
                         colspan logic treats every non-first cell as exactly one real column;
                         a colSpan here would desync it from the header and misplace the row) */}
-                    {Array.from({ length: colCount - 14 }).map((_, i) => (
+                    {Array.from({ length: colCount - 17 }).map((_, i) => (
                       <td key={i} style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     ))}
                   </tr>

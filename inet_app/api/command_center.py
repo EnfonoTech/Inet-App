@@ -2820,6 +2820,28 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             # resolve the same way so the dropdown matches the cells.
             "im": ("IFNULL(NULLIF((SELECT imm_i.full_name FROM `tabIM Master` imm_i "
                    "WHERE imm_i.name = pd.im), ''), IFNULL(pd.im,''))"),
+            # Replaces the old collapsed, unfilterable "current_stage" column
+            # with its own real pieces — each one backend-filterable, unlike
+            # the composite string it replaced.
+            "plan_status": (
+                "IFNULL((SELECT rp.plan_status FROM `tabRollout Plan` rp "
+                "WHERE rp.po_dispatch = pd.name AND rp.plan_status != 'Cancelled' "
+                "ORDER BY IFNULL(rp.visit_number,0) DESC, rp.modified DESC LIMIT 1), '')"
+            ),
+            # Keys must match DataTablePro's auto-derived col_key for the
+            # header text — "PIC Status (MS1)"/"PIC Status (MS2)" both slugify
+            # to pic_status_ms1/pic_status_ms2 (see keyFromLabel in
+            # DataTablePro.jsx), not "pic_status". The cell renders via
+            # PicStatusBadge, which displays "Work Not Done" for a blank
+            # value rather than leaving it empty — match that here too, or
+            # the dropdown's "(Blanks)" option wouldn't correspond to any
+            # value actually shown on screen.
+            "pic_status_ms1": "IF(IFNULL(pd.pic_status,'')='', 'Work Not Done', pd.pic_status)",
+            "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'')='', 'Work Not Done', pd.pic_status_ms2)",
+            "work_done": (
+                "(CASE WHEN EXISTS (SELECT 1 FROM `tabWork Done` wd WHERE wd.system_id = pd.name) "
+                "THEN 'Yes' ELSE 'No' END)"
+            ),
         }
         if frappe.db.has_column("PO Intake Line", "center_area"):
             col_filter_map_intake["center_area"] = "IFNULL(pil.center_area,'')"
@@ -2828,11 +2850,6 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
         col_filter_map_intake["activity_type"] = (
             "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pil.item_code), '')"
         )
-        # Not backend-filterable: "current_stage" is a Python-side derived
-        # value (Work Done / latest Rollout Plan / pic_status, computed
-        # after this query) - use the dedicated "Status" dropdown
-        # (po_line_status, via portal_filters.line_status) instead, which
-        # IS fully backend-filterable.
         column_filters_intake = pf.get("column_filters")
         if isinstance(column_filters_intake, str):
             try:
@@ -3093,13 +3110,16 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
     for line in lines:
         line["activity_type"] = act_map_pil.get(line.get("item_code") or "")
 
-    # "Current Stage" (admin/PODispatch.jsx "All Lines" tab) - where a
+    # Plan Status / Work Done (admin/PODispatch.jsx "All Lines" tab) - where a
     # Dispatched/Completed line actually is right now across the wider
-    # pipeline (Planning/In Execution/... -> Work Done -> PIC), not just the
-    # flat po_line_status. New/Closed/Cancelled show that status verbatim -
-    # no need to dig further for those. Batched + chunked (see _chunked) so
-    # this stays safe at the same "All Lines, row limit All" scale that
-    # caused the earlier SQLParseError.
+    # pipeline (Planning/In Execution/... -> Work Done -> PIC), shown as
+    # their own columns rather than one collapsed "Current Stage" string
+    # (which hid whichever of these wasn't picked, and couldn't be
+    # backend-filtered at all). pic_status/pic_status_ms2 are already set on
+    # `line` above (real PO Dispatch columns, both shown as their own
+    # columns too). Batched + chunked (see _chunked) so this stays safe at
+    # the same "All Lines, row limit All" scale that caused the earlier
+    # SQLParseError.
     stage_dispatch_names = list({
         line.get("dispatch_name")
         for line in lines
@@ -3126,20 +3146,9 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
                 latest_plan_status[r.po_dispatch] = r.plan_status
 
     for line in lines:
-        status = line.get("po_line_status")
         dispatch_name = line.get("dispatch_name")
-        if status in ("New", "Closed", "Cancelled") or not dispatch_name:
-            line["current_stage"] = status or "New"
-            continue
-        pic = (line.get("pic_status") or "").strip() or (line.get("pic_status_ms2") or "").strip()
-        if pic:
-            line["current_stage"] = f"PIC: {pic}"
-        elif dispatch_name in work_done_dispatches:
-            line["current_stage"] = "Work Done"
-        elif dispatch_name in latest_plan_status:
-            line["current_stage"] = latest_plan_status[dispatch_name]
-        else:
-            line["current_stage"] = "Dispatched"
+        line["plan_status"] = latest_plan_status.get(dispatch_name)
+        line["work_done"] = "Yes" if dispatch_name in work_done_dispatches else "No"
 
     return lines
 
