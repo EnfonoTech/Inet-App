@@ -867,6 +867,7 @@ export const pmApi = {
   // Backend-team assignment flow — IM-driven, lives outside the rollout chain
   getMyBackendCapability: (im) => call("inet_app.api.command_center.get_my_backend_capability", im ? { im } : {}),
   getMyDirectCloseCapability: () => call("inet_app.api.command_center.get_my_direct_close_capability", {}),
+  getMyRecordExecutionCapability: (im) => call("inet_app.api.command_center.get_my_record_execution_capability", im ? { im } : {}),
   getSubcontractorsByType: (close_type) => call("inet_app.api.command_center.get_subcontractors_by_type", { close_type }),
   directCloseDispatches: (po_dispatches, close_type, subcontractor, note, milestone) => call("inet_app.api.command_center.direct_close_dispatches", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),

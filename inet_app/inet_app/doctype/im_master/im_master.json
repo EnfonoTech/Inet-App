@@ -16,6 +16,7 @@
   "can_assign_backend",
   "can_direct_close",
   "can_milestone_close",
+  "can_record_execution",
   "section_break_cost",
   "monthly_cost_sar",
   "column_break_pozg",
@@ -92,6 +93,12 @@
    "fieldname": "can_milestone_close",
    "fieldtype": "Check",
    "label": "Can Milestone Close"
+  },
+  {
+   "default": "0",
+   "fieldname": "can_record_execution",
+   "fieldtype": "Check",
+   "label": "Can Record Execution (Rollout Execution bulk action)"
   },
   {
    "fieldname": "section_break_cost",

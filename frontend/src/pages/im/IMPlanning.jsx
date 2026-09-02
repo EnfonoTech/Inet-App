@@ -108,6 +108,18 @@ export default function IMPlanning() {
 
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // ── Record Execution capability check ────────────────────────────────
+  // Gated by IM Master.can_record_execution — only some IMs may bulk-record
+  // execution from this page; PM/admin always can.
+  const [canRecordExecution, setCanRecordExecution] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.getMyRecordExecutionCapability().then((res) => {
+      if (!cancelled) setCanRecordExecution(!!res?.can_record_execution);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const loadPlans = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   useEffect(() => {
@@ -504,15 +516,17 @@ export default function IMPlanning() {
               Extend End Date ({extendablePlans.length})
             </button>
           )}
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={!executionSelectionOk}
-            title={recordExecutionTitle()}
-            onClick={() => setExecutionModalOpen(true)}
-          >
-            Record execution ({eligiblePlans.length}{skippedCount > 0 ? ` / ${selected.size}` : ""})
-          </button>
+          {canRecordExecution && (
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!executionSelectionOk}
+              title={recordExecutionTitle()}
+              onClick={() => setExecutionModalOpen(true)}
+            >
+              Record execution ({eligiblePlans.length}{skippedCount > 0 ? ` / ${selected.size}` : ""})
+            </button>
+          )}
         </div>
       </div>
 

@@ -49,6 +49,7 @@ export default function IMPlanningExecutionModal({ open, onClose, selectedPlans,
             execution_status: execStatus,
             achieved_qty: defaultQty,
             remarks: remarks || undefined,
+            via_im_bulk_record: 1,
           });
         } catch (err) {
           failures.push({ plan: p.name, error: err?.message || "Failed" });

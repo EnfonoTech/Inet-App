@@ -6417,6 +6417,20 @@ def update_execution(payload):
         if not rollout_plan:
             frappe.throw("rollout_plan is required when creating a new Daily Execution.")
 
+        # IMPlanningExecutionModal.jsx (the "Record execution" bulk action on
+        # the Rollout Execution page) marks its calls with this flag so this
+        # one gate doesn't touch the field app's own execution recording,
+        # IMExecution.jsx, QC/CIAG updates, etc. — all of which also create/
+        # update Daily Execution through this same shared endpoint.
+        if payload.get("via_im_bulk_record") and _user_role_class() == "im":
+            im_resolved, im_identifiers, _ = resolve_im_for_session(None)
+            flag, _target = _im_master_flag(im_resolved, im_identifiers, "can_record_execution")
+            if not flag:
+                frappe.throw(
+                    "You do not have permission to record execution here. Ask admin to enable it in IM Master.",
+                    frappe.PermissionError,
+                )
+
         # Multi-team upsert: key Daily Execution by (plan, team) so each
         # team's TL gets their own row. With single-team plans this
         # collapses to the legacy "one DE per plan" behaviour.
@@ -16100,6 +16114,42 @@ def get_my_direct_close_capability(im=None):
         flag = cint(vals.get("can_direct_close") or 0)
         milestone_flag = cint(vals.get("can_milestone_close") or 0)
     return {"role": role, "can_direct_close": bool(flag), "can_milestone_close": bool(milestone_flag), "im": target}
+
+
+def _im_master_flag(im_resolved, im_identifiers, fieldname):
+    """Resolve the session's IM Master record and read one Check field off it.
+
+    Returns (bool flag, IM Master name or None). Shared by the capability
+    getters and the matching server-side enforcement so both agree on which
+    record they resolved to.
+    """
+    target = im_resolved if im_resolved and frappe.db.exists("IM Master", im_resolved) else None
+    if not target:
+        for ident in (im_identifiers or []):
+            if frappe.db.exists("IM Master", ident):
+                target = ident
+                break
+    if not target:
+        return False, None
+    return bool(cint(frappe.db.get_value("IM Master", target, fieldname) or 0)), target
+
+
+@frappe.whitelist()
+def get_my_record_execution_capability(im=None):
+    """Return whether the current session can bulk-record execution from the
+    Rollout Execution page (IMPlanning.jsx "Record execution" action).
+
+    PM/admin: always True. IM: True only if `IM Master.can_record_execution = 1`.
+    Field: never.
+    """
+    role = _user_role_class()
+    if role == "pm":
+        return {"role": role, "can_record_execution": True, "im": None}
+    if role != "im":
+        return {"role": role, "can_record_execution": False, "im": None}
+    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
+    flag, target = _im_master_flag(im_resolved, im_identifiers, "can_record_execution")
+    return {"role": role, "can_record_execution": flag, "im": target}
 
 
 @frappe.whitelist()
