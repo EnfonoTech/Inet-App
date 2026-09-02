@@ -15321,6 +15321,144 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
     return {"logs": logs, "total": total}
 
 
+@frappe.whitelist()
+def get_daily_time_totals(filters=None):
+    """
+    Daily hours per (date, user): first clock-in to last clock-out that day,
+    not a sum of individual session durations — "door to door" time, so a
+    day with two visits and a gap between them still reads as one span
+    covering the whole day, the way a manager actually thinks about
+    "how many hours did this person work today".
+
+    filters (JSON): team_id, im, user, from_date, to_date, search — same
+    role scoping as list_execution_time_logs (Admin sees everyone, IM sees
+    their own teams, Field Team sees only their own logs).
+
+    Returns rows with:
+      log_date, user, user_full_name, team_id, team_name,
+      first_start, last_end (None if every session that day is still
+      running — nothing to close the span with yet),
+      span_hours (last_end - first_start; None if last_end is None),
+      logged_hours (sum of each session's own duration_hours — the
+      "actually working" time, vs span_hours' "present at all" time; the
+      gap between them is idle/break time within the day),
+      sessions (count), has_running (bool — today's number can still grow).
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters or "{}")
+    if not isinstance(filters, dict):
+        filters = {}
+
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+    is_desk_admin = "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles
+    is_im = "INET IM" in roles
+    is_field = "INET Field Team" in roles
+
+    wheres = ["1=1"]
+    params = []
+
+    if is_desk_admin:
+        tid = filters.get("team_id")
+        if tid:
+            vals = tid if isinstance(tid, list) else [tid]
+            ph = ", ".join(["%s"] * len(vals))
+            wheres.append(f"etl.team_id IN ({ph})")
+            params.extend(vals)
+        if filters.get("user"):
+            wheres.append("etl.user = %s")
+            params.append(filters["user"])
+    elif is_im:
+        team_ids = _im_team_ids_for_filter(filters.get("im"))
+        tid = filters.get("team_id")
+        if tid:
+            allowed = [t for t in (tid if isinstance(tid, list) else [tid]) if t in set(team_ids)]
+            if not allowed:
+                return {"rows": []}
+            ph = ", ".join(["%s"] * len(allowed))
+            wheres.append(f"etl.team_id IN ({ph})")
+            params.extend(allowed)
+        else:
+            if not team_ids:
+                return {"rows": []}
+            ph = ", ".join(["%s"] * len(team_ids))
+            wheres.append(f"etl.team_id IN ({ph})")
+            params.extend(team_ids)
+        if filters.get("user"):
+            wheres.append("etl.user = %s")
+            params.append(filters["user"])
+    elif is_field:
+        wheres.append("etl.user = %s")
+        params.append(user)
+        ft_team = _session_inet_field_team_id()
+        if ft_team:
+            wheres.append("etl.team_id = %s")
+            params.append(ft_team)
+    else:
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    from_date = filters.get("from_date")
+    to_date = filters.get("to_date")
+    if from_date:
+        wheres.append("DATE(etl.start_time) >= %s")
+        params.append(from_date)
+    if to_date:
+        wheres.append("DATE(etl.start_time) <= %s")
+        params.append(to_date)
+
+    search = (filters.get("search") or filters.get("q") or "").strip()
+    if search:
+        like_tokens = _sql_like_tokens(search)
+        if like_tokens:
+            concat_expr = "CONCAT_WS(' ', IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.team_id,''))"
+            ors = " OR ".join([f"{concat_expr} LIKE %s"] * len(like_tokens))
+            wheres.append(f"({ors})")
+            params.extend(like_tokens)
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT DATE(etl.start_time) AS log_date,
+               etl.user,
+               etl.team_id,
+               MIN(etl.start_time) AS first_start,
+               MAX(CASE WHEN etl.is_running = 0 THEN etl.end_time END) AS last_end,
+               SUM(IFNULL(etl.duration_minutes, 0)) / 60 AS logged_hours,
+               COUNT(*) AS sessions,
+               MAX(IFNULL(etl.is_running, 0)) AS has_running
+        FROM `tabExecution Time Log` etl
+        LEFT JOIN `tabUser` u ON u.name = etl.user
+        WHERE {' AND '.join(wheres)}
+        GROUP BY DATE(etl.start_time), etl.user, etl.team_id
+        ORDER BY log_date DESC, first_start DESC
+        """,
+        tuple(params),
+        as_dict=True,
+    ) or []
+
+    out = []
+    for r in rows:
+        first_start = r.get("first_start")
+        last_end = r.get("last_end")
+        span_hours = None
+        if first_start and last_end:
+            span_hours = round(time_diff_in_seconds(get_datetime(last_end), get_datetime(first_start)) / 3600, 2)
+        out.append({
+            "log_date": str(r.get("log_date")) if r.get("log_date") else None,
+            "user": r.get("user"),
+            "user_full_name": frappe.get_cached_value("User", r.get("user"), "full_name") or r.get("user"),
+            "team_id": r.get("team_id"),
+            "team_name": (frappe.get_cached_value("INET Team", r.get("team_id"), "team_name") or r.get("team_id")) if r.get("team_id") else None,
+            "first_start": str(first_start) if first_start else None,
+            "last_end": str(last_end) if last_end else None,
+            "span_hours": span_hours,
+            "logged_hours": round(flt(r.get("logged_hours")), 2),
+            "sessions": cint(r.get("sessions")),
+            "has_running": bool(r.get("has_running")),
+        })
+
+    return {"rows": out}
+
+
 # ---------------------------------------------------------------------------
 # Timesheet APIs — ERPNext Timesheet (legacy; portal uses Execution Time Log)
 # ---------------------------------------------------------------------------

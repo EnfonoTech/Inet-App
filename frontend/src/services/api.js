@@ -466,6 +466,8 @@ export const pmApi = {
       limit: limit ?? 100,
       offset: offset ?? 0,
     }),
+  getDailyTimeTotals:         (filters) =>
+    call("inet_app.api.command_center.get_daily_time_totals", { filters: JSON.stringify(filters || {}) }),
   saveExecutionTimeLogManual: (rollout_plan, start_time, end_time, notes) =>
     call("inet_app.api.command_center.save_execution_time_log_manual", {
       rollout_plan,
