@@ -11446,9 +11446,26 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     sub_target_today = round(sub_target * range_elapsed_frac, 2)
     total_target_today = round(inet_target_today + sub_target_today, 2)
 
-    # Total Revenue = INET achieved + INET's margin from sub-con (not full sub-con revenue)
+    # Direct Close revenue — has no team at all, so it's invisible to
+    # inet_achieved/sub_revenue above (both require a Daily Execution ->
+    # INET Team join). Backend already has its own tracked tile
+    # (backend_completed_value, via PO Dispatch fields, not Work Done) kept
+    # deliberately separate; Direct Close has no equivalent anywhere in this
+    # dashboard at all, so Total Revenue silently omitted it entirely.
+    _direct_close_achieved_rows = frappe.db.sql(
+        """
+        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS total
+        FROM `tabWork Done` wd
+        WHERE wd.source = 'Direct Close'
+          AND DATE(wd.creation) BETWEEN %s AND %s
+        """,
+        (first_day, last_day), as_dict=True,
+    )
+    direct_close_achieved = flt(_direct_close_achieved_rows[0].total if _direct_close_achieved_rows else 0)
+
+    # Total Revenue = INET achieved + INET's margin from sub-con (not full sub-con revenue) + Direct Close
     company_target = inet_monthly_target + sub_target
-    total_achieved = inet_achieved + inet_margin_sub
+    total_achieved = inet_achieved + inet_margin_sub + direct_close_achieved
     # Total Cost Today = pro-rated INET cost + sub-con expense (actual, not pro-rated)
     total_cost_today = round(inet_cost_today + sub_expense, 2)
     company_gap = company_target - total_achieved
@@ -11560,19 +11577,41 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             _tc_cost = flt(_ti.daily_cost if _ti else 0) * _ip_days
         _ip_cost_by_im[_tc.im] = _ip_cost_by_im.get(_tc.im, 0.0) + _tc_cost
 
-    _ip_rev_by_im  = {r.im: r for r in _ip_rev_rows}
+    _ip_rev_by_im  = {r.im: flt(r.revenue) for r in _ip_rev_rows}
+    _ip_team_count_by_im = {r.im: cint(r.team_count) for r in _ip_rev_rows}
+
+    # Direct Close / Backend revenue — wd.execution is blank for these (no
+    # Daily Execution/Rollout Plan ever exists), so the rollout-execution
+    # query above never sees them. Dated by wd.creation (when the close
+    # happened) instead of an execution date it doesn't have. No team_count
+    # contribution — these closes have no team by design.
+    _ip_rev_direct_rows = frappe.db.sql(
+        """
+        SELECT pd.im, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE IFNULL(wd.execution, '') = ''
+          AND DATE(wd.creation) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
+        GROUP BY pd.im
+        """,
+        (first_day, last_day), as_dict=True,
+    )
+    for _r in _ip_rev_direct_rows:
+        _ip_rev_by_im[_r.im] = _ip_rev_by_im.get(_r.im, 0.0) + flt(_r.revenue)
+
     _ip_all_ims    = frappe.db.sql(
         "SELECT name, COALESCE(full_name, name) AS im_name FROM `tabIM Master`",
         as_dict=True,
     )
     im_perf = []
     for _im_rec in _ip_all_ims:
-        _r    = _ip_rev_by_im.get(_im_rec.name, frappe._dict(revenue=0, team_count=0))
-        _rev  = flt(_r.revenue)
+        _rev  = _ip_rev_by_im.get(_im_rec.name, 0.0)
+        _team_count = _ip_team_count_by_im.get(_im_rec.name, 0)
         _cost = round(_ip_cost_by_im.get(_im_rec.name, 0.0), 0)
         im_perf.append({
             "im":        _im_rec.im_name,
-            "teams":     cint(_r.team_count),
+            "teams":     _team_count,
             "revenue":   round(_rev, 0),
             "team_cost": _cost,
             "profit":    round(_rev - _cost, 0),
@@ -11878,12 +11917,14 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     """
     fd, td = _perf_date_range(from_date, to_date)
 
-    # Plans: assigned/completed lines + distinct teams per IM
+    # Plans: assigned/completed lines per IM. Team count is NOT derived here —
+    # rp.team is only the plan's lead team; a multi-team split (Rollout Plan
+    # Team child rows) puts the other teams nowhere this query can see them,
+    # which silently undercounted "Teams" on this report. See teams_by_im below.
     plan_rows = frappe.db.sql(
         """
         SELECT pd.im,
                COALESCE(imm.full_name, pd.im) AS im_name,
-               COUNT(DISTINCT rp.team)         AS teams,
                COUNT(DISTINCT rp.name)         AS assigned_lines,
                SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines
         FROM `tabRollout Plan` rp
@@ -11898,26 +11939,69 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         (fd, td), as_dict=True,
     )
 
-    # Target = SUM of line_amount on distinct PO Dispatches that had plans in the period
+    # Teams per IM — union of each plan's lead team (rp.team) with every team
+    # in its Rollout Plan Team split, so a multi-team plan counts all of its
+    # teams, not just the lead. Kept as a separate query (not joined into
+    # plan_rows above) so the team fan-out can't double-count assigned/
+    # completed lines.
+    team_split_rows = frappe.db.sql(
+        """
+        SELECT pd.im, t.team
+        FROM `tabRollout Plan` rp
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        JOIN (
+            SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
+            UNION
+            SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
+        ) t ON t.plan = rp.name
+        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
+          AND IFNULL(pd.is_internal_work, 0) = 0
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+          AND t.team IS NOT NULL AND t.team != ''
+        GROUP BY pd.im, t.team
+        """,
+        (fd, td), as_dict=True,
+    )
+    teams_by_im = {}
+    for r in team_split_rows:
+        teams_by_im.setdefault(r.im, set()).add(r.team)
+
+    # Target = SUM of line_amount on distinct PO Dispatches that either had
+    # plans in the period, OR were closed directly (Direct Close / Backend —
+    # no Rollout Plan at all, so the first branch alone never sees them; an
+    # IM who only ever direct-closes would show Target=0 forever otherwise).
     target_rows = frappe.db.sql(
         """
         SELECT pd.im, COALESCE(SUM(pd.line_amount), 0) AS target
         FROM (
-            SELECT DISTINCT rp.po_dispatch
+            SELECT DISTINCT rp.po_dispatch AS po_dispatch
             FROM `tabRollout Plan` rp
             WHERE DATE(rp.plan_date) BETWEEN %s AND %s
               AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+            UNION
+            SELECT DISTINCT wd.system_id AS po_dispatch
+            FROM `tabWork Done` wd
+            WHERE IFNULL(wd.execution, '') = ''
+              AND DATE(wd.creation) BETWEEN %s AND %s
         ) plans
         JOIN `tabPO Dispatch` pd ON pd.name = plans.po_dispatch
         WHERE pd.im IS NOT NULL AND pd.im != ''
           AND IFNULL(pd.is_internal_work, 0) = 0
         GROUP BY pd.im
         """,
-        (fd, td), as_dict=True,
+        (fd, td, fd, td), as_dict=True,
     )
     target_by_im = {r.im: flt(r.target) for r in target_rows}
 
-    # Revenue per IM from Work Done
+    # Revenue per IM from Work Done. Two sources: normal rollout execution
+    # (via Daily Execution -> Rollout Plan -> PO Dispatch, dated by when the
+    # field work happened) and Direct Close / Backend (wd.execution is blank
+    # for these — no Daily Execution ever exists — so wd.system_id -> pd
+    # directly, dated by when the WD record itself was created, i.e. when
+    # the IM did the direct close / marked the backend line done). Without
+    # the second query, an IM who only ever direct-closes showed 0 revenue
+    # here no matter how much they'd actually closed.
     rev_rows = frappe.db.sql(
         """
         SELECT pd.im, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
@@ -11932,6 +12016,53 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         (fd, td), as_dict=True,
     )
     rev_by_im = {r.im: flt(r.revenue) for r in rev_rows}
+
+    rev_rows_direct = frappe.db.sql(
+        """
+        SELECT pd.im, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE IFNULL(wd.execution, '') = ''
+          AND DATE(wd.creation) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
+        GROUP BY pd.im
+        """,
+        (fd, td), as_dict=True,
+    )
+    for r in rev_rows_direct:
+        rev_by_im[r.im] = rev_by_im.get(r.im, 0.0) + flt(r.revenue)
+
+    # Direct Close / Backend lines, kept SEPARATE from the rollout-execution
+    # Assigned/Completed rather than blended in — the client's whole reason
+    # for the Contract Model gating earlier was visibility into how much of
+    # an IM's throughput is real field execution vs. the Direct Close/Backend
+    # shortcut, so folding them together would hide exactly that signal.
+    # Same "no Rollout Plan at all" gap as target/revenue above (plan_rows
+    # never sees these), counted as DISTINCT po_dispatch (not per WD row) so
+    # a milestone-split line with 2 WD rows (MS1 + MS2) is still one line.
+    # "Completed" requires dispatch_status = 'Completed', which
+    # _direct_close_one only sets once BOTH milestones are closed — an
+    # MS1-only close counts as touched but not yet completed.
+    direct_source_rows = frappe.db.sql(
+        """
+        SELECT pd.im, wd.source,
+               COUNT(DISTINCT pd.name) AS assigned_lines,
+               COUNT(DISTINCT CASE WHEN pd.dispatch_status = 'Completed' THEN pd.name END) AS completed_lines
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE IFNULL(wd.execution, '') = ''
+          AND DATE(wd.creation) BETWEEN %s AND %s
+          AND pd.im IS NOT NULL AND pd.im != ''
+        GROUP BY pd.im, wd.source
+        """,
+        (fd, td), as_dict=True,
+    )
+    direct_by_im = {}
+    backend_by_im = {}
+    for r in direct_source_rows:
+        target_map = direct_by_im if r.source == "Direct Close" else backend_by_im if r.source == "Backend" else None
+        if target_map is not None:
+            target_map[r.im] = r
 
     # Team costs per IM — aggregate individual team costs grouped by IM
     team_cost_rows = frappe.db.sql(
@@ -11987,38 +12118,54 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     data = []
     total_assigned = 0
     total_completed = 0
+    total_overall_assigned = 0
+    total_overall_completed = 0
     total_target = 0.0
     total_revenue = 0.0
     for im_rec in all_ims:
         im_id     = im_rec.name
-        r         = plan_by_im.get(im_id, frappe._dict(teams=0, assigned_lines=0, completed_lines=0))
+        r         = plan_by_im.get(im_id, frappe._dict(assigned_lines=0, completed_lines=0))
+        dc        = direct_by_im.get(im_id, frappe._dict(assigned_lines=0, completed_lines=0))
+        bk        = backend_by_im.get(im_id, frappe._dict(assigned_lines=0, completed_lines=0))
         assigned  = cint(r.assigned_lines)
         completed = cint(r.completed_lines)
+        dc_assigned, dc_completed = cint(dc.assigned_lines), cint(dc.completed_lines)
+        bk_assigned, bk_completed = cint(bk.assigned_lines), cint(bk.completed_lines)
+        overall_assigned  = assigned + dc_assigned + bk_assigned
+        overall_completed = completed + dc_completed + bk_completed
         target    = target_by_im.get(im_id, 0.0)
         revenue   = rev_by_im.get(im_id, 0.0)
         team_cost = round(cost_by_im.get(im_id, 0.0), 0)
         profit    = round(revenue - team_cost, 0)
         compl_pct = round(completed / assigned * 100, 1) if assigned > 0 else 0.0
+        overall_compl_pct = round(overall_completed / overall_assigned * 100, 1) if overall_assigned > 0 else 0.0
         ach_pct   = round(revenue / target * 100, 1) if target > 0 else 0.0
         total_assigned += assigned
         total_completed += completed
+        total_overall_assigned += overall_assigned
+        total_overall_completed += overall_completed
         total_target += target
         total_revenue += revenue
         rating    = ("Excellent"        if ach_pct >= 100 else
                      "Good"             if ach_pct >= 85  else
                      "Need Improvement" if ach_pct >= 70  else "Idle")
         data.append({
-            "im":              im_rec.im_name,
-            "teams":           cint(r.teams),
-            "assigned_lines":  assigned,
-            "completed_lines": completed,
-            "completion_pct":  compl_pct,
-            "target":          round(target, 0),
-            "revenue":         round(revenue, 0),
-            "achievement_pct": ach_pct,
-            "team_cost":       team_cost,
-            "profit":          profit,
-            "rating":          rating,
+            "im":                  im_rec.im_name,
+            "teams":               len(teams_by_im.get(im_id, ())),
+            "assigned_lines":      assigned,
+            "completed_lines":     completed,
+            "completion_pct":      compl_pct,
+            "direct_backend_closed": (
+                f"{dc_completed + bk_completed}/{dc_assigned + bk_assigned}"
+                if (dc_assigned + bk_assigned) else "—"
+            ),
+            "overall_completion_pct": overall_compl_pct,
+            "target":              round(target, 0),
+            "revenue":             round(revenue, 0),
+            "achievement_pct":     ach_pct,
+            "team_cost":           team_cost,
+            "profit":              profit,
+            "rating":              rating,
         })
     data.sort(key=lambda x: x["revenue"], reverse=True)
 
@@ -12028,6 +12175,8 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         {"fieldname": "assigned_lines",  "label": "Assigned",        "fieldtype": "Int"},
         {"fieldname": "completed_lines", "label": "Completed",       "fieldtype": "Int"},
         {"fieldname": "completion_pct",  "label": "Completion %",    "fieldtype": "Percent"},
+        {"fieldname": "direct_backend_closed", "label": "Direct/Backend Closed", "fieldtype": "Data"},
+        {"fieldname": "overall_completion_pct", "label": "Overall Completion %", "fieldtype": "Percent"},
         {"fieldname": "target",          "label": "Target (SAR)",    "fieldtype": "Currency"},
         {"fieldname": "revenue",         "label": "Revenue (SAR)",   "fieldtype": "Currency"},
         {"fieldname": "achievement_pct", "label": "Achievement %",   "fieldtype": "Percent"},
@@ -12040,6 +12189,10 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     # averaging would weight a 1-line IM the same as one with hundreds.
     totals = {
         "completion_pct": round(total_completed / total_assigned * 100, 1) if total_assigned > 0 else None,
+        "overall_completion_pct": (
+            round(total_overall_completed / total_overall_assigned * 100, 1)
+            if total_overall_assigned > 0 else None
+        ),
         "achievement_pct": round(total_revenue / total_target * 100, 1) if total_target > 0 else None,
     }
     return {"columns": columns, "data": data, "totals": totals}
@@ -12075,23 +12228,62 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         (fd, td), as_dict=True,
     )
 
-    # Plans: assigned lines + completed lines per team
+    # Plans: assigned lines + completed lines per team. Joined through the
+    # union of rp.team (lead) and every Rollout Plan Team split row, so a
+    # multi-team plan credits ALL of its teams, not just the lead — a plan
+    # split Team A + Team B previously gave Team B's row a silent 0 here.
     plan_rows = frappe.db.sql(
         """
-        SELECT rp.team,
+        SELECT t.team,
                COUNT(DISTINCT rp.name) AS assigned_lines,
                SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines
         FROM `tabRollout Plan` rp
+        JOIN (
+            SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
+            UNION
+            SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
+        ) t ON t.plan = rp.name
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
-          AND rp.team IS NOT NULL AND rp.team != ''
+          AND t.team IS NOT NULL AND t.team != ''
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
-        GROUP BY rp.team
+        GROUP BY t.team
         """,
         (fd, td), as_dict=True,
     )
     plan_by_team = {r.team: r for r in plan_rows}
 
-    # Most frequent IM per team — via Work Done → PO Dispatch.im
+    # Most frequent IM per team. Plan-based (Rollout Plan -> PO Dispatch.im)
+    # is the primary source — it has a row as soon as a plan is assigned,
+    # not only once Work Done/revenue exists, so a team whose plans in this
+    # window haven't been executed yet still shows its IM instead of "—".
+    # Revenue-based Work Done is kept as a fallback for the rare team that
+    # has neither (legacy data). Both go through the same multi-team union
+    # as plan_rows above, so a split plan's IM is counted for every team
+    # it's assigned to, not just the lead.
+    im_plan_rows = frappe.db.sql(
+        """
+        SELECT t.team, pd.im, COUNT(*) AS cnt
+        FROM `tabRollout Plan` rp
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        JOIN (
+            SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
+            UNION
+            SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
+        ) t ON t.plan = rp.name
+        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+          AND t.team IS NOT NULL AND t.team != ''
+          AND pd.im IS NOT NULL AND pd.im != ''
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+        GROUP BY t.team, pd.im
+        ORDER BY t.team, cnt DESC
+        """,
+        (fd, td), as_dict=True,
+    )
+    im_by_team = {}
+    for row in im_plan_rows:
+        if row.team not in im_by_team:
+            im_by_team[row.team] = row.im
+
     im_rows = frappe.db.sql(
         """
         SELECT de.team, pd.im, COUNT(*) AS cnt
@@ -12106,7 +12298,6 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         """,
         (fd, td), as_dict=True,
     )
-    im_by_team = {}
     for row in im_rows:
         if row.team not in im_by_team:
             im_by_team[row.team] = row.im
@@ -12227,23 +12418,38 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
     team_params = []
     if raw_team:
         ph = ", ".join(["%s"] * len(raw_team))
-        team_cond   = f" AND rp.team IN ({ph})"
+        team_cond   = f" AND t.team IN ({ph})"
         team_params = list(raw_team)
 
+    # Joined through Rollout Plan Team so a multi-team split plan credits
+    # EVERY team it's split across, not just the lead (rp.team). Target uses
+    # each team's own assigned_amount (already prorated by assigned_qty in
+    # _sync_plan_teams) rather than the plan's full target_amount, or a
+    # split plan would inflate the sum of all teams' targets past the plan's
+    # real value. Plans that predate the multi-team feature (no Rollout Plan
+    # Team rows at all) fall back to the plan's own team + full target.
     plan_rows = frappe.db.sql(
         f"""
         SELECT DATE(rp.plan_date) AS plan_date,
-               rp.team,
+               t.team,
                COUNT(DISTINCT rp.name) AS planned_lines,
                SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines,
-               COALESCE(SUM(rp.target_amount), 0) AS target
+               COALESCE(SUM(t.amount), 0) AS target
         FROM `tabRollout Plan` rp
+        JOIN (
+            SELECT rpt.parent AS plan, rpt.team AS team, rpt.assigned_amount AS amount
+            FROM `tabRollout Plan Team` rpt
+            UNION ALL
+            SELECT rp2.name AS plan, rp2.team AS team, rp2.target_amount AS amount
+            FROM `tabRollout Plan` rp2
+            WHERE NOT EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt2 WHERE rpt2.parent = rp2.name)
+        ) t ON t.plan = rp.name
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
-          AND rp.team IS NOT NULL AND rp.team != ''
+          AND t.team IS NOT NULL AND t.team != ''
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
           {team_cond}
-        GROUP BY DATE(rp.plan_date), rp.team
-        ORDER BY plan_date, rp.team
+        GROUP BY DATE(rp.plan_date), t.team
+        ORDER BY plan_date, t.team
         """,
         (fd, td, *team_params), as_dict=True,
     )
@@ -12323,7 +12529,6 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
                MIN(DATE(rp.plan_date))           AS week_start,
                COUNT(DISTINCT rp.name)           AS assigned_lines,
                SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines,
-               COUNT(DISTINCT rp.team)           AS active_teams,
                COUNT(CASE WHEN LOWER(IFNULL(rp.visit_type,'')) LIKE '%%re%%visit%%' THEN 1 END) AS revisits,
                COALESCE(SUM(rp.target_amount), 0) AS target
         FROM `tabRollout Plan` rp
@@ -12334,6 +12539,30 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
         """,
         (fd, td), as_dict=True,
     )
+
+    # Active teams per week — separate query (not joined into plan_rows above,
+    # which would fan out and double-count assigned/completed/target for any
+    # multi-team plan). Unions rp.team (lead) with every Rollout Plan Team
+    # split row so a multi-team plan counts all of its teams.
+    team_split_rows = frappe.db.sql(
+        """
+        SELECT YEARWEEK(rp.plan_date, 1) AS yw, t.team
+        FROM `tabRollout Plan` rp
+        JOIN (
+            SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
+            UNION
+            SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
+        ) t ON t.plan = rp.name
+        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+          AND t.team IS NOT NULL AND t.team != ''
+        GROUP BY YEARWEEK(rp.plan_date, 1), t.team
+        """,
+        (fd, td), as_dict=True,
+    )
+    active_teams_by_yw = {}
+    for r in team_split_rows:
+        active_teams_by_yw.setdefault(r.yw, set()).add(r.team)
 
     rev_rows = frappe.db.sql(
         """
@@ -12367,7 +12596,7 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
         data.append({
             "sn":              i,
             "week_start":      str(r.week_start),
-            "active_teams":    cint(r.active_teams),
+            "active_teams":    len(active_teams_by_yw.get(r.yw, ())),
             "assigned_lines":  assigned,
             "completed_lines": completed,
             "completion_pct":  compl_pct,
@@ -12429,6 +12658,31 @@ def get_revenue_tracking_report(from_date=None, to_date=None, **kwargs):
         """,
         (fd, td), as_dict=True,
     )
+
+    # Direct Close / Backend — no team/Daily Execution at all, so the query
+    # above never sees them; bucketed by wd.creation's month instead of an
+    # execution date it doesn't have. There's no INET Team.team_type to read
+    # for these, so subcontract_cost_sar > 0 (set when the direct close was
+    # done as type "SUB") stands in for the same INET/SUB split, reusing the
+    # identical subcon_expense formula.
+    direct_rows = frappe.db.sql(
+        """
+        SELECT
+            DATE_FORMAT(wd.creation, '%%Y-%%m') AS month,
+            (CASE WHEN IFNULL(wd.subcontract_cost_sar, 0) > 0 THEN 'SUB' ELSE 'INET' END) AS team_type,
+            COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
+            COALESCE(SUM(
+                wd.revenue_sar * (100 - COALESCE(NULLIF(wd.inet_margin_pct, 0), 100)) / 100
+            ), 0) AS subcon_expense
+        FROM `tabWork Done` wd
+        WHERE IFNULL(wd.execution, '') = ''
+          AND DATE(wd.creation) BETWEEN %s AND %s
+        GROUP BY DATE_FORMAT(wd.creation, '%%Y-%%m'),
+                 (CASE WHEN IFNULL(wd.subcontract_cost_sar, 0) > 0 THEN 'SUB' ELSE 'INET' END)
+        """,
+        (fd, td), as_dict=True,
+    )
+    rows = list(rows) + list(direct_rows)
 
     # Aggregate per month
     month_data = {}
@@ -12517,6 +12771,22 @@ def get_revenue_forecast_report(**kwargs):
         as_dict=True,
     )
     achieved_by_month = {r.month: flt(r.achieved) for r in achieved_rows}
+
+    # Direct Close / Backend — no team/Daily Execution, so invisible above;
+    # bucketed by wd.creation's month instead of an execution date it
+    # doesn't have.
+    direct_achieved_rows = frappe.db.sql(
+        """
+        SELECT DATE_FORMAT(wd.creation, '%%Y-%%m') AS month,
+               COALESCE(SUM(wd.revenue_sar), 0)     AS achieved
+        FROM `tabWork Done` wd
+        WHERE IFNULL(wd.execution, '') = ''
+        GROUP BY DATE_FORMAT(wd.creation, '%%Y-%%m')
+        """,
+        as_dict=True,
+    )
+    for r in direct_achieved_rows:
+        achieved_by_month[r.month] = achieved_by_month.get(r.month, 0.0) + flt(r.achieved)
 
     # Build 6 rows: current month + 5 ahead
     data = []
@@ -12699,6 +12969,26 @@ def get_rollout_week_dashboard(im=None, week_start=None, portal_filters=None):
         as_dict=True,
     ) or []
 
+    # Team workload ("teams" below) must count EVERY team a plan is split
+    # across (Rollout Plan Team), not just rp.team (the lead) — fetched as a
+    # separate query keyed by plan name rather than joined into `rows` above,
+    # since `rows` feeds the plan grid / daily buckets / activity split too
+    # and must stay one row per plan there.
+    plan_names = [r["plan"] for r in rows]
+    plan_teams_map = {}
+    if plan_names:
+        ph = ", ".join(["%s"] * len(plan_names))
+        for t in frappe.db.sql(
+            f"""
+            SELECT rpt.parent AS plan, rpt.team AS team, IFNULL(it.team_name, rpt.team) AS team_name
+            FROM `tabRollout Plan Team` rpt
+            LEFT JOIN `tabINET Team` it ON it.name = rpt.team
+            WHERE rpt.parent IN ({ph})
+            """,
+            tuple(plan_names), as_dict=True,
+        ):
+            plan_teams_map.setdefault(t.plan, set()).add((t.team, t.team_name))
+
     bucket_of = {}
     for bucket, statuses in ROLLOUT_WEEK_BUCKETS.items():
         for st in statuses:
@@ -12721,7 +13011,15 @@ def get_rollout_week_dashboard(im=None, week_start=None, portal_filters=None):
 
         act = (r.get("activity_type") or "").strip() or "Unspecified"
         activity_counts[act] = activity_counts.get(act, 0) + 1
-        if r.get("team"):
+        # plan_teams_map has one entry per team in the plan's real split
+        # (including the lead, per _sync_plan_teams) whenever the plan has
+        # been through the multi-team flow; legacy/unsplit plans fall back
+        # to rp.team alone, same as before.
+        split_teams = plan_teams_map.get(r["plan"])
+        if split_teams:
+            for key in split_teams:
+                team_counts[key] = team_counts.get(key, 0) + 1
+        elif r.get("team"):
             key = (r["team"], r.get("team_name") or r["team"])
             team_counts[key] = team_counts.get(key, 0) + 1
 
@@ -13944,6 +14242,29 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     revenue = flt(revenue_rows[0].revenue if revenue_rows else 0)
     cost = flt(revenue_rows[0].cost if revenue_rows else 0)
 
+    # Direct Close / Backend revenue for this IM — wd.execution is blank for
+    # these (no Daily Execution/Rollout Plan, no team), so the team-scoped
+    # query above never sees them; scoped by pd.im instead, dated by
+    # wd.creation since there's no execution date. Without this, an IM who
+    # only direct-closes/backend-closes showed 0 here even after the same
+    # gap was fixed on the IM Performance Scorecard.
+    _direct_ph = ", ".join(["%s"] * len(im_identifiers))
+    direct_revenue_rows = frappe.db.sql(
+        f"""
+        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
+               COALESCE(SUM(wd.total_cost_sar), 0) AS cost
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE IFNULL(wd.execution, '') = ''
+          AND DATE(wd.creation) BETWEEN %s AND %s
+          AND pd.im IN ({_direct_ph})
+        """,
+        (first_day, last_day) + tuple(im_identifiers),
+        as_dict=True,
+    )
+    revenue += flt(direct_revenue_rows[0].revenue if direct_revenue_rows else 0)
+    cost += flt(direct_revenue_rows[0].cost if direct_revenue_rows else 0)
+
     # Add approved project expense claims filed against this IM's teams
     im_users = [u for u in [frappe.db.get_value("IM Master", im_resolved, "user")] if u]
     if im_users:
@@ -14053,7 +14374,19 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
                    COUNT(rp.name) AS sites_done
             FROM `tabINET Team` t
             LEFT JOIN `tabRollout Plan` rp
-                ON rp.team = t.name
+                ON (
+                    EXISTS (
+                        SELECT 1 FROM `tabRollout Plan Team` rpt
+                        WHERE rpt.parent = rp.name AND rpt.team = t.name
+                    )
+                    -- Legacy plans with no multi-team split rows at all fall
+                    -- back to the plan's own lead team, same as before this
+                    -- multi-team-aware attribution was added.
+                    OR (
+                        rp.team = t.name
+                        AND NOT EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt2 WHERE rpt2.parent = rp.name)
+                    )
+                )
                 AND rp.plan_status = 'Completed'
                 AND rp.plan_date BETWEEN %s AND %s
             WHERE t.name IN ({placeholders})
@@ -14417,6 +14750,36 @@ def get_im_reports():
             total_cnt += c
             total_rev += rev
         wd_mtd = {"count": total_cnt, "revenue_sar": total_rev, "by_billing": by_billing}
+
+    # Direct Close / Backend Work Done for this IM — no team at all, so the
+    # team-scoped query above (and its `if team_ids:` gate) never sees these;
+    # scoped by pd.im instead, dated by wd.creation since there's no
+    # execution date to filter by. Runs unconditionally so an IM whose only
+    # activity is direct/backend closes (or who has no teams at all) still
+    # gets a non-zero Work Done MTD tile.
+    direct_wd_rows = frappe.db.sql(
+        """
+        SELECT wd.billing_status AS billing_status,
+               COUNT(*) AS c,
+               COALESCE(SUM(wd.revenue_sar), 0) AS rev
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE IFNULL(wd.execution, '') = ''
+          AND DATE(wd.creation) BETWEEN %s AND %s
+          AND pd.im IN %s
+        GROUP BY wd.billing_status
+        """,
+        (first_day, last_day, tuple(im_identifiers)),
+        as_dict=True,
+    ) or []
+    for w in direct_wd_rows:
+        bs = (w.get("billing_status") or "").strip() or "Pending"
+        c = cint(w.get("c"))
+        rev = flt(w.get("rev"))
+        existing = wd_mtd["by_billing"].get(bs, {"count": 0, "revenue_sar": 0.0})
+        wd_mtd["by_billing"][bs] = {"count": existing["count"] + c, "revenue_sar": existing["revenue_sar"] + rev}
+        wd_mtd["count"] += c
+        wd_mtd["revenue_sar"] += rev
 
     projects = frappe.get_all(
         "Project Control Center",
@@ -20861,7 +21224,12 @@ def _team_planning_rows(fd, td, single_day):
             IFNULL(pd.project_code,'') AS project_code,
             IFNULL(pd.project_domain,'') AS project_domain
         FROM `tabRollout Plan` rp
-        INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
+        JOIN (
+            SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
+            UNION
+            SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
+        ) rpteam ON rpteam.plan = rp.name
+        INNER JOIN `tabINET Team` it ON it.name = rpteam.team AND it.team_category = 'Field Team'
         LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
@@ -20977,7 +21345,12 @@ def _daily_execution_report_rows(fd, td, single_day, with_activity_status):
             {activity_sql}
         FROM `tabDaily Execution` de
         INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-        INNER JOIN `tabINET Team` it ON it.name = rp.team AND it.team_category = 'Field Team'
+        -- de.team, not rp.team: Daily Execution is multi-team aware (a plan
+        -- split across teams gets one DE row per team, see
+        -- _populate_execution_team_members), so rp.team (the plan's lead
+        -- team only) attributed every execution to the wrong team whenever
+        -- the actual executing team was a secondary split member.
+        INNER JOIN `tabINET Team` it ON it.name = de.team AND it.team_category = 'Field Team'
         LEFT JOIN `tabEmployee` e ON e.user_id = it.field_user
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabIM Master` imm ON imm.name = pd.im

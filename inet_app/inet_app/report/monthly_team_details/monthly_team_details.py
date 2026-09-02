@@ -55,7 +55,7 @@ def execute(filters=None):
         team_vals = [team_vals]
     if team_vals:
         ph = ", ".join(["%s"] * len(team_vals))
-        wheres.append(f"rp.team IN ({ph})")
+        wheres.append(f"rpteam.team IN ({ph})")
         params.extend(team_vals)
 
     im_vals = filters.get("im") or []
@@ -74,7 +74,7 @@ def execute(filters=None):
         """
         SELECT
             it.team_id,
-            COALESCE(it.team_name, rp.team) AS team_name,
+            COALESCE(it.team_name, rpteam.team) AS team_name,
             {im_col} AS im_name,
             SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s THEN 1 ELSE 0 END) AS w1_planned,
             SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s THEN 1 ELSE 0 END) AS w2_planned,
@@ -86,21 +86,29 @@ def execute(filters=None):
             SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s AND rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS w3_completed,
             SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s AND rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS w4_completed,
             SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s AND rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS w5_completed,
-            COUNT(rp.name) AS total_planned,
+            COUNT(DISTINCT rp.name) AS total_planned,
             SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS total_completed,
             ROUND(
-                CASE WHEN COUNT(rp.name) > 0
+                CASE WHEN COUNT(DISTINCT rp.name) > 0
                 THEN SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END)
-                     / COUNT(rp.name) * 100
+                     / COUNT(DISTINCT rp.name) * 100
                 ELSE 0 END, 1
             ) AS utilization_pct
         FROM `tabRollout Plan` rp
-        LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        -- rpteam unions rp.team (lead) with every Rollout Plan Team split
+        -- row, so a multi-team plan counts for EVERY team it's split
+        -- across, not just the lead.
+        JOIN (
+            SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
+            UNION
+            SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
+        ) rpteam ON rpteam.plan = rp.name
+        LEFT JOIN `tabINET Team` it ON it.name = rpteam.team
         {pd_join}
         {rp_im_join}
         {pd_im_join}
         WHERE {wheres}
-        GROUP BY rp.team
+        GROUP BY rpteam.team
         ORDER BY it.team_name
         """.format(
             im_col=im_col,

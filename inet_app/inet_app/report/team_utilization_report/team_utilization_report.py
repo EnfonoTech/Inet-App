@@ -29,7 +29,7 @@ def execute(filters=None):
         team_vals = [team_vals]
     if team_vals:
         ph = ", ".join(["%s"] * len(team_vals))
-        wheres.append(f"rp.team IN ({ph})")
+        wheres.append(f"rpteam.team IN ({ph})")
         params.extend(team_vals)
 
     im_vals = filters.get("im") or []
@@ -57,7 +57,7 @@ def execute(filters=None):
         """
         SELECT
             it.team_id,
-            COALESCE(it.team_name, rp.team) AS team_name,
+            COALESCE(it.team_name, rpteam.team) AS team_name,
             {im_col} AS im_name,
             rp.plan_date,
             COUNT(DISTINCT rp.name) AS planned_activities,
@@ -73,14 +73,25 @@ def execute(filters=None):
             ) AS achievement_pct,
             COALESCE(SUM(de.achieved_amount), 0) AS achieved_amount
         FROM `tabRollout Plan` rp
-        LEFT JOIN `tabINET Team` it ON it.name = rp.team
+        -- rpteam unions rp.team (lead) with every Rollout Plan Team split
+        -- row, so a multi-team plan is counted for EVERY team it's split
+        -- across, not just the lead — and de.team = rpteam.team (not just
+        -- de.rollout_plan = rp.name) keeps each team's achieved qty/amount
+        -- to its OWN Daily Execution rows, not the whole plan's total.
+        JOIN (
+            SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
+            UNION
+            SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
+        ) rpteam ON rpteam.plan = rp.name
+        LEFT JOIN `tabINET Team` it ON it.name = rpteam.team
         LEFT JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
             AND de.execution_status != 'Cancelled'
+            AND de.team = rpteam.team
         {pd_join}
         {rp_im_join}
         {pd_im_join}
         WHERE {wheres}
-        GROUP BY rp.team, rp.plan_date
+        GROUP BY rpteam.team, rp.plan_date
         ORDER BY rp.plan_date DESC, it.team_name
         LIMIT 3000
         """.format(
