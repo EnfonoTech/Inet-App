@@ -869,18 +869,22 @@ export const pmApi = {
   getMyDirectCloseCapability: () => call("inet_app.api.command_center.get_my_direct_close_capability", {}),
   getMyRecordExecutionCapability: (im) => call("inet_app.api.command_center.get_my_record_execution_capability", im ? { im } : {}),
   getSubcontractorsByType: (close_type) => call("inet_app.api.command_center.get_subcontractors_by_type", { close_type }),
-  directCloseDispatches: (po_dispatches, close_type, subcontractor, note, milestone) => call("inet_app.api.command_center.direct_close_dispatches", {
+  directCloseDispatches: (po_dispatches, close_type, subcontractor, note, milestone, overrides) => call("inet_app.api.command_center.direct_close_dispatches", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
     close_type,
     subcontractor: subcontractor || "",
     note: note || "",
     milestone: milestone || "",
+    huawei_im: overrides?.huawei_im || "",
+    project_domain: overrides?.project_domain || "",
   }),
   listBackendTeamsForPicker: (search) => call("inet_app.api.command_center.list_backend_teams_for_picker", { search: search || "", limit: 200 }),
-  assignBackend: (po_dispatches, backend_team, remark) => call("inet_app.api.command_center.assign_backend", {
+  assignBackend: (po_dispatches, backend_team, remark, overrides) => call("inet_app.api.command_center.assign_backend", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
     backend_team: backend_team,
     remark: remark || "",
+    huawei_im: overrides?.huawei_im || "",
+    project_domain: overrides?.project_domain || "",
   }),
   markBackendWorkDone: (po_dispatches, completed_on, remark) => call("inet_app.api.command_center.mark_backend_work_done", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),

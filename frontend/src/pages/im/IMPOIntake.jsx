@@ -320,6 +320,8 @@ export default function IMPOIntake() {
   const [backendRemark, setBackendRemark] = useState("");
   const [backendBusy, setBackendBusy] = useState(false);
   const [backendError, setBackendError] = useState(null);
+  const [backendHuaweiIm, setBackendHuaweiIm] = useState("");
+  const [backendProjectDomain, setBackendProjectDomain] = useState("");
 
   // ── Direct Close (intake tab) ────────────────────────────────────────
   const [canDirectClose, setCanDirectClose] = useState(false);
@@ -333,6 +335,19 @@ export default function IMPOIntake() {
   const [dcMilestone, setDcMilestone] = useState("full"); // "full" | "MS1" | "MS2"
   const [dcBusy, setDcBusy] = useState(false);
   const [dcError, setDcError] = useState(null);
+  const [dcHuaweiIm, setDcHuaweiIm] = useState("");
+  const [dcProjectDomain, setDcProjectDomain] = useState("");
+
+  // ── Huawei IM / Project Domain option lists — override pickers on
+  // Assign to Backend and Direct Close. Fetched once on mount.
+  const [huaweiIms, setHuaweiIms] = useState([]);
+  const [projectDomains, setProjectDomains] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.listHuaweiIMs().then((res) => { if (!cancelled) setHuaweiIms(res || []); }).catch(() => {});
+    pmApi.listProjectDomains().then((res) => { if (!cancelled) setProjectDomains(res || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // ── Transfer to another IM (intake tab) ──────────────────────────────
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -873,6 +888,11 @@ export default function IMPOIntake() {
     setBackendError(null);
     setBackendTeamId("");
     setBackendRemark("");
+    const selRows = rows.filter((r) => selected.has(r.name));
+    const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
+    setBackendHuaweiIm(huaweiVals.length === 1 ? huaweiVals[0] : "");
+    const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
+    setBackendProjectDomain(domainVals.length === 1 ? domainVals[0] : "");
     setShowBackendModal(true);
     setBackendTeamsLoading(true);
     try {
@@ -897,7 +917,10 @@ export default function IMPOIntake() {
     setBackendBusy(true);
     setBackendError(null);
     try {
-      const res = await pmApi.assignBackend(ids, backendTeamId, backendRemark);
+      const res = await pmApi.assignBackend(ids, backendTeamId, backendRemark, {
+        huawei_im: backendHuaweiIm || undefined,
+        project_domain: backendProjectDomain || undefined,
+      });
       const summary = res?.summary || {};
       const okN = summary.updated_count ?? 0;
       const errN = summary.error_count ?? 0;
@@ -961,6 +984,11 @@ export default function IMPOIntake() {
     setDcType("INET");
     setDcSubcontractor("");
     setDcMilestone("full");
+    const selRows = rows.filter((r) => selected.has(r.name));
+    const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
+    setDcHuaweiIm(huaweiVals.length === 1 ? huaweiVals[0] : "");
+    const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
+    setDcProjectDomain(domainVals.length === 1 ? domainVals[0] : "");
     setShowDcModal(true);
     await loadDcSubcontractors("INET");
   }
@@ -972,7 +1000,10 @@ export default function IMPOIntake() {
     try {
       const ids = Array.from(selected);
       const milestone = dcMilestone !== "full" ? dcMilestone : null;
-      const res = await pmApi.directCloseDispatches(ids, dcType, dcSubcontractor, dcNote, milestone);
+      const res = await pmApi.directCloseDispatches(ids, dcType, dcSubcontractor, dcNote, milestone, {
+        huawei_im: dcHuaweiIm || undefined,
+        project_domain: dcProjectDomain || undefined,
+      });
       const upd = res?.updated?.length || 0;
       const err = res?.errors?.length || 0;
       setShowDcModal(false);
@@ -2389,6 +2420,32 @@ export default function IMPOIntake() {
                 {backendTeams.map((t) => <option key={t.name} value={t.name}>{t.team_name || t.team_id}{t.team_id && t.team_name ? ` (${t.team_id})` : ""}</option>)}
               </select>
             </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Huawei IM</label>
+                <SearchableSelect
+                  value={backendHuaweiIm}
+                  onChange={setBackendHuaweiIm}
+                  options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+                  placeholder="Defaults from project — set to override"
+                  disabled={backendBusy}
+                  style={{ width: "100%" }}
+                  minWidth={0}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Project Domain</label>
+                <SearchableSelect
+                  value={backendProjectDomain}
+                  onChange={setBackendProjectDomain}
+                  options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
+                  placeholder="Defaults from project — set to override"
+                  disabled={backendBusy}
+                  style={{ width: "100%" }}
+                  minWidth={0}
+                />
+              </div>
+            </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>
               <textarea rows={3} value={backendRemark} onChange={(e) => setBackendRemark(e.target.value)} disabled={backendBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
@@ -2507,6 +2564,32 @@ export default function IMPOIntake() {
                 </div>
               );
             })()}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Huawei IM</label>
+                <SearchableSelect
+                  value={dcHuaweiIm}
+                  onChange={setDcHuaweiIm}
+                  options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+                  placeholder="Defaults from project — set to override"
+                  disabled={dcBusy}
+                  style={{ width: "100%" }}
+                  minWidth={0}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Project Domain</label>
+                <SearchableSelect
+                  value={dcProjectDomain}
+                  onChange={setDcProjectDomain}
+                  options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
+                  placeholder="Defaults from project — set to override"
+                  disabled={dcBusy}
+                  style={{ width: "100%" }}
+                  minWidth={0}
+                />
+              </div>
+            </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>
               <textarea rows={2} value={dcNote} onChange={(e) => setDcNote(e.target.value)} disabled={dcBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />

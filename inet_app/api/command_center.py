@@ -5448,6 +5448,7 @@ def create_rollout_plans(payload):
         "access_time": "",  # optional
         "access_period": "Day" | "Night" | "",  # optional
         "huawei_im": "",  # optional — overrides PO Dispatch.huawei_im when provided
+        "project_domain": "",  # optional — overrides PO Dispatch.project_domain when provided
         "visit_type": "Execution",
     }
 
@@ -5470,6 +5471,9 @@ def create_rollout_plans(payload):
     huawei_im_override = (payload.get("huawei_im") or "").strip()
     if huawei_im_override and not frappe.db.exists("Huawei IM", huawei_im_override):
         frappe.throw(frappe._("Invalid Huawei IM selected"))
+    project_domain_override = (payload.get("project_domain") or "").strip()
+    if project_domain_override and not frappe.db.exists("Project Domain", project_domain_override):
+        frappe.throw(frappe._("Invalid Project Domain selected"))
     visit_type = payload.get("visit_type") or "Execution"
 
     # Per-plan workflow toggles — IM/PM picks at planning time whether
@@ -5705,6 +5709,8 @@ def create_rollout_plans(payload):
         disp_updates.update(remark_updates)
         if huawei_im_override:
             disp_updates["huawei_im"] = huawei_im_override
+        if project_domain_override:
+            disp_updates["project_domain"] = project_domain_override
         frappe.db.set_value(
             "PO Dispatch",
             dispatch_name,
@@ -16261,11 +16267,15 @@ def get_subcontractors_by_type(close_type):
 
 
 @frappe.whitelist()
-def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None, milestone=None):
+def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None, milestone=None,
+                             huawei_im=None, project_domain=None):
     """Bulk direct-close PO Dispatch lines: create Work Done + move to Completed.
 
     Only available to IMs with `can_direct_close = 1` (or PM/admin).
     milestone: None/"MS1"/"MS2" — if set, partial milestone close (IM must have can_milestone_close).
+    huawei_im/project_domain: optional overrides, same idea as the ones on
+    create_rollout_plans — normally these come from the project, but the IM
+    may set them per line here too.
     """
     role = _user_role_class()
     if role not in ("pm", "im"):
@@ -16285,6 +16295,13 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
     if milestone and milestone not in ("MS1", "MS2"):
         frappe.throw("milestone must be MS1 or MS2")
 
+    huawei_im = (huawei_im or "").strip()
+    if huawei_im and not frappe.db.exists("Huawei IM", huawei_im):
+        frappe.throw(frappe._("Invalid Huawei IM selected"))
+    project_domain = (project_domain or "").strip()
+    if project_domain and not frappe.db.exists("Project Domain", project_domain):
+        frappe.throw(frappe._("Invalid Project Domain selected"))
+
     im_resolved, im_identifiers, _ = resolve_im_for_session(None)
     im_doc = im_resolved
 
@@ -16293,7 +16310,7 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
     for name in (po_dispatches or []):
         ok, info = _direct_close_one(role, im_identifiers or [], im_doc, name,
                                      close_type, subcontractor, (note or "").strip(),
-                                     milestone=milestone)
+                                     milestone=milestone, huawei_im=huawei_im, project_domain=project_domain)
         if ok:
             updated.append(info)
         else:
@@ -16302,7 +16319,8 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
     return {"updated": updated, "errors": errors}
 
 
-def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontractor, note, milestone=None):
+def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontractor, note, milestone=None,
+                       huawei_im=None, project_domain=None):
     """Create Work Done + complete one PO Dispatch directly. Returns (ok, info).
 
     milestone: None = full close; "MS1"/"MS2" = partial milestone close on single WD.
@@ -16467,6 +16485,10 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
         existing_contract = pd.get("contract") or ""
         if subcontractor and not existing_contract:
             pd_updates["contract"] = subcontractor
+        if huawei_im:
+            pd_updates["huawei_im"] = huawei_im
+        if project_domain:
+            pd_updates["project_domain"] = project_domain
 
         # Only set Completed when both milestones are now closed
         wd_check = frappe.db.get_value("Work Done", wd_name, ["ms1_closed", "ms2_closed"], as_dict=True) or {}
@@ -16550,6 +16572,10 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
     existing_contract = pd.get("contract") or ""
     if subcontractor and not existing_contract:
         pd_updates["contract"] = subcontractor
+    if huawei_im:
+        pd_updates["huawei_im"] = huawei_im
+    if project_domain:
+        pd_updates["project_domain"] = project_domain
     frappe.db.set_value("PO Dispatch", name, pd_updates, update_modified=False)
 
     # Mark PO Intake Line as Completed
@@ -16588,7 +16614,7 @@ def list_backend_teams_for_picker(search=None, limit=200):
     return frappe.db.sql(sql, tuple(params), as_dict=True)
 
 
-def _assign_backend_one(role, im_identifiers, name, team, remark):
+def _assign_backend_one(role, im_identifiers, name, team, remark, huawei_im=None, project_domain=None):
     """Stamp subcon fields on a single PO Dispatch. Returns (ok, info_or_error)."""
     pd = frappe.db.get_value(
         "PO Dispatch", name,
@@ -16622,6 +16648,10 @@ def _assign_backend_one(role, im_identifiers, name, team, remark):
     }
     if remark is not None and str(remark or "").strip():
         updates["subcon_remark"] = str(remark or "")[:8000]
+    if huawei_im:
+        updates["huawei_im"] = huawei_im
+    if project_domain:
+        updates["project_domain"] = project_domain
     frappe.db.set_value("PO Dispatch", name, updates, update_modified=True)
     return True, {
         "po_dispatch": name,
@@ -16634,7 +16664,8 @@ def _assign_backend_one(role, im_identifiers, name, team, remark):
 
 
 @frappe.whitelist()
-def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, remark=None):
+def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, remark=None,
+                    huawei_im=None, project_domain=None):
     """Sub-contract one or many PO Dispatches to a non-field team.
 
     Accepts either ``po_dispatch`` (single name) or ``po_dispatches`` (list / JSON
@@ -16646,6 +16677,8 @@ def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, rema
         subcon_completed_on   = NULL
         dispatch_status       = 'Backend Assigned'
         subcon_remark         = <remark> (optional)
+        huawei_im             = <huawei_im> (optional override, same as create_rollout_plans)
+        project_domain        = <project_domain> (optional override)
 
     NOTE: subcon dispatches are intentionally kept OUT of the rollout chain — no
     Rollout Plan, Daily Execution or Work Done rows are created. Reporting that
@@ -16656,6 +16689,13 @@ def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, rema
         frappe.throw("Not permitted", frappe.PermissionError)
     if not backend_team:
         frappe.throw("backend_team is required")
+
+    huawei_im = (huawei_im or "").strip()
+    if huawei_im and not frappe.db.exists("Huawei IM", huawei_im):
+        frappe.throw(frappe._("Invalid Huawei IM selected"))
+    project_domain = (project_domain or "").strip()
+    if project_domain and not frappe.db.exists("Project Domain", project_domain):
+        frappe.throw(frappe._("Invalid Project Domain selected"))
 
     raw = po_dispatches if po_dispatches not in (None, "", []) else po_dispatch
     if isinstance(raw, str):
@@ -16719,7 +16759,8 @@ def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, rema
         if not name:
             errors.append({"po_dispatch": candidates[i], "error": "PO Dispatch not found"})
             continue
-        ok, info = _assign_backend_one(role, im_identifiers, name, team, remark)
+        ok, info = _assign_backend_one(role, im_identifiers, name, team, remark,
+                                       huawei_im=huawei_im, project_domain=project_domain)
         (updated if ok else errors).append(info)
 
     frappe.db.commit()

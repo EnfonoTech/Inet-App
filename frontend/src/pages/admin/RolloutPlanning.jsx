@@ -156,6 +156,8 @@ export default function RolloutPlanning() {
   const [accessPeriod, setAccessPeriod] = useState("");
   const [huaweiImOverride, setHuaweiImOverride] = useState("");
   const [huaweiIms, setHuaweiIms] = useState([]);
+  const [projectDomainOverride, setProjectDomainOverride] = useState("");
+  const [projectDomains, setProjectDomains] = useState([]);
   const [qcRequired, setQcRequired] = useState(true);
   const [ciagRequired, setCiagRequired] = useState(true);
   const [teamsList, setTeamsList] = useState([]);
@@ -356,6 +358,7 @@ export default function RolloutPlanning() {
       }
     })();
     pmApi.listHuaweiIMs().then((res) => { if (!cancelled) setHuaweiIms(res || []); }).catch(() => {});
+    pmApi.listProjectDomains().then((res) => { if (!cancelled) setProjectDomains(res || []); }).catch(() => {});
     pmApi.getSourceWarehouse().then((wh) => { if (!cancelled) setMaterialSourceWh(wh || ""); }).catch(() => {});
     return () => { cancelled = true; };
   }, [showModal]);
@@ -414,6 +417,8 @@ export default function RolloutPlanning() {
     const selRows = rows.filter((r) => selected.has(r.name));
     const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
     setHuaweiImOverride(huaweiVals.length === 1 ? huaweiVals[0] : "");
+    const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
+    setProjectDomainOverride(domainVals.length === 1 ? domainVals[0] : "");
     setQcRequired(true);
     setCiagRequired(true);
     setManagerRemark("");
@@ -458,6 +463,7 @@ export default function RolloutPlanning() {
         access_time: accessTime,
         access_period: accessPeriod,
         huawei_im: huaweiImOverride || undefined,
+        project_domain: projectDomainOverride || undefined,
         qc_required: qcRequired ? 1 : 0,
         ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType,
@@ -1162,6 +1168,17 @@ export default function RolloutPlanning() {
                     value={huaweiImOverride}
                     onChange={setHuaweiImOverride}
                     options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+                    placeholder="Defaults from project — set to override"
+                    style={{ width: "100%" }}
+                    minWidth={0}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Project Domain</label>
+                  <SearchableSelect
+                    value={projectDomainOverride}
+                    onChange={setProjectDomainOverride}
+                    options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
                     placeholder="Defaults from project — set to override"
                     style={{ width: "100%" }}
                     minWidth={0}

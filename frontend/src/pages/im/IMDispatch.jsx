@@ -220,6 +220,8 @@ export default function IMDispatch() {
   const [accessPeriod, setAccessPeriod] = useState("");
   const [huaweiImOverride, setHuaweiImOverride] = useState("");
   const [huaweiIms, setHuaweiIms] = useState([]);
+  const [projectDomainOverride, setProjectDomainOverride] = useState("");
+  const [projectDomains, setProjectDomains] = useState([]);
   const [qcRequired, setQcRequired] = useState(true);
   const [ciagRequired, setCiagRequired] = useState(true);
   const [teamsList, setTeamsList] = useState([]);
@@ -284,6 +286,8 @@ export default function IMDispatch() {
   const [backendTeamsLoading, setBackendTeamsLoading] = useState(false);
   const [backendTeamId, setBackendTeamId] = useState("");
   const [backendRemark, setBackendRemark] = useState("");
+  const [backendHuaweiIm, setBackendHuaweiIm] = useState("");
+  const [backendProjectDomain, setBackendProjectDomain] = useState("");
   const [backendBusy, setBackendBusy] = useState(false);
   const [backendError, setBackendError] = useState(null);
 
@@ -470,6 +474,16 @@ export default function IMDispatch() {
     return () => { cancelled = true; };
   }, []);
 
+  // Huawei IM / Project Domain option lists — used as override pickers on
+  // Create Plan, Assign to Backend, and (IMPOIntake.jsx) Direct Close. Fetched
+  // once on mount rather than tied to any one modal's open state.
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.listHuaweiIMs().then((res) => { if (!cancelled) setHuaweiIms(res || []); }).catch(() => {});
+    pmApi.listProjectDomains().then((res) => { if (!cancelled) setProjectDomains(res || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     if (!showModal || !imName) return;
     let cancelled = false;
@@ -487,7 +501,6 @@ export default function IMDispatch() {
         if (!cancelled) setTeamsLoading(false);
       }
     })();
-    pmApi.listHuaweiIMs().then((res) => { if (!cancelled) setHuaweiIms(res || []); }).catch(() => {});
     pmApi.getSourceWarehouse().then((wh) => { if (!cancelled) setMaterialSourceWh(wh || ""); }).catch(() => {});
     return () => { cancelled = true; };
   }, [showModal, imName]);
@@ -821,6 +834,11 @@ export default function IMDispatch() {
     setBackendError(null);
     setBackendTeamId("");
     setBackendRemark("");
+    const selRows = rows.filter((r) => selected.has(r.name));
+    const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
+    setBackendHuaweiIm(huaweiVals.length === 1 ? huaweiVals[0] : "");
+    const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
+    setBackendProjectDomain(domainVals.length === 1 ? domainVals[0] : "");
     setShowBackendModal(true);
     setBackendTeamsLoading(true);
     try {
@@ -846,7 +864,10 @@ export default function IMDispatch() {
     setBackendBusy(true);
     setBackendError(null);
     try {
-      const res = await pmApi.assignBackend(ids, backendTeamId, backendRemark);
+      const res = await pmApi.assignBackend(ids, backendTeamId, backendRemark, {
+        huawei_im: backendHuaweiIm || undefined,
+        project_domain: backendProjectDomain || undefined,
+      });
       const summary = res?.summary || {};
       const okN = summary.updated_count ?? 0;
       const errN = summary.error_count ?? 0;
@@ -883,6 +904,8 @@ export default function IMDispatch() {
     const selRows = rows.filter((r) => selected.has(r.name));
     const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
     setHuaweiImOverride(huaweiVals.length === 1 ? huaweiVals[0] : "");
+    const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
+    setProjectDomainOverride(domainVals.length === 1 ? domainVals[0] : "");
     setQcRequired(true);
     setCiagRequired(true);
     setManagerRemark("");
@@ -932,6 +955,7 @@ export default function IMDispatch() {
         access_time: accessTime,
         access_period: accessPeriod,
         huawei_im: huaweiImOverride || undefined,
+        project_domain: projectDomainOverride || undefined,
         qc_required: qcRequired ? 1 : 0,
         ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType,
@@ -1434,6 +1458,17 @@ export default function IMDispatch() {
               value={huaweiImOverride}
               onChange={setHuaweiImOverride}
               options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+              placeholder="Defaults from project — set to override"
+              style={{ width: "100%" }}
+              minWidth={0}
+            />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Project Domain</label>
+            <SearchableSelect
+              value={projectDomainOverride}
+              onChange={setProjectDomainOverride}
+              options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
               placeholder="Defaults from project — set to override"
               style={{ width: "100%" }}
               minWidth={0}
@@ -2219,6 +2254,32 @@ export default function IMDispatch() {
               {!backendTeamsLoading && backendTeams.length === 0 && (
                 <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginTop: 4 }}>No active teams with category "Backend Team".</div>
               )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Huawei IM</label>
+                <SearchableSelect
+                  value={backendHuaweiIm}
+                  onChange={setBackendHuaweiIm}
+                  options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+                  placeholder="Defaults from project — set to override"
+                  disabled={backendBusy}
+                  style={{ width: "100%" }}
+                  minWidth={0}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Project Domain</label>
+                <SearchableSelect
+                  value={backendProjectDomain}
+                  onChange={setBackendProjectDomain}
+                  options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
+                  placeholder="Defaults from project — set to override"
+                  disabled={backendBusy}
+                  style={{ width: "100%" }}
+                  minWidth={0}
+                />
+              </div>
             </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>
