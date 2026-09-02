@@ -27,18 +27,22 @@ function fmtDayLabel(dateStr) {
 }
 
 // ── Status display order ───────────────────────────────────────────────
+// Acceptance flow order, matching the `pic_status` field on PO Dispatch — the
+// table should read the way the work moves, not terminal-state first. Only a
+// fallback now: pic_invoicing_summary returns `status_order` off that same
+// field, so this cannot be what drifts.
 const MS1_STATUS_ORDER = [
-  "Commercial Invoice Closed",
-  "Commercial Invoice Submitted",
-  "Ready for Invoice",
+  "Work Not Done",
+  "Under Process to Apply",
   "Under I-BUY",
   "Under ISDP",
   "I-BUY Rejected",
   "ISDP Rejected",
-  "Under Process to Apply",
+  "Ready for Invoice",
+  "Commercial Invoice Submitted",
+  "Commercial Invoice Closed",
   "PO Need to Cancel",
   "PO Line Canceled",
-  "Work Not Done",
 ];
 
 function statusColor(status) {
@@ -676,7 +680,7 @@ export default function PICInvoicingSummary() {
             <StatusTable
               title="MS1 — 1st Payment Milestone"
               rows={data.ms1_rows}
-              statusOrder={MS1_STATUS_ORDER}
+              statusOrder={data?.status_order || MS1_STATUS_ORDER}
               tone="blue"
               milestone="ms1"
               navigable={navigable}
@@ -684,7 +688,7 @@ export default function PICInvoicingSummary() {
             <StatusTable
               title="MS2 — 2nd Payment Milestone"
               rows={data.ms2_rows}
-              statusOrder={MS1_STATUS_ORDER}
+              statusOrder={data?.status_order || MS1_STATUS_ORDER}
               tone="violet"
               milestone="ms2"
               navigable={navigable}

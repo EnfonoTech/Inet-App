@@ -175,16 +175,6 @@ export default function PICOverview() {
       )}
 
       {/* Where the money is, before any of the detail below. */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "0 16px 6px" }}>
-        <span style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#475569" }}>
-          Position
-        </span>
-        <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
-          {scoped
-            ? "matching the filters above · dates on MS1 applied date"
-            : "all time — narrow it with the filters above"}
-        </span>
-      </div>
       <div style={{
         display: "flex", flexWrap: "wrap", gap: 10, padding: "0 16px 16px",
         opacity: loading && invoicing ? 0.55 : 1, transition: "opacity 120ms ease",

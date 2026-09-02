@@ -1225,8 +1225,13 @@ def pic_invoicing_summary(portal_filters=None):
                 inet_ms1 + subcon_ms1 + inet_ms2 + subcon_ms2 + total_ms1_vat + total_ms2_vat, 2
             ),
         },
-        "ms1_rows": [dict(r) for r in ms1_rows],
-        "ms2_rows": [dict(r) for r in ms2_rows],
+        # Workflow order, so the table reads as the acceptance flow rather than
+        # however the GROUP BY happened to come back. `status_order` lets the
+        # front-end pad in statuses with no rows without keeping its own copy
+        # of the list.
+        "ms1_rows": sort_by_pic_status([dict(r) for r in ms1_rows], "pic_status"),
+        "ms2_rows": sort_by_pic_status([dict(r) for r in ms2_rows], "pic_status"),
+        "status_order": pic_status_order(),
     }
 
 
@@ -2244,6 +2249,37 @@ def pic_dashboard_payload(from_date=None, to_date=None):
 # Row-bounded reports return the true match count alongside the page of rows,
 # so the UI can say "5,000 of 11,842" instead of quietly presenting a truncated
 # list — and its totals row — as if it were the whole answer.
+def pic_status_order():
+    """The PIC statuses in workflow order, newest stage last.
+
+    Read off the `pic_status` select field rather than hardcoded, so the one
+    place that defines the flow is the field definition itself — a status added
+    or reordered there cannot leave a report sorting by a stale list.
+    """
+    try:
+        field = frappe.get_meta("PO Dispatch").get_field("pic_status")
+        opts = [o.strip() for o in (field.options or "").split("\n") if o.strip()]
+        if opts:
+            return opts
+    except Exception:
+        pass
+    # Fallback mirrors the field as of writing; only reached if the meta lookup
+    # fails, in which case a sensible order still beats an arbitrary one.
+    return [
+        "Work Not Done", "Under Process to Apply", "Under I-BUY", "Under ISDP",
+        "I-BUY Rejected", "ISDP Rejected", "Ready for Invoice",
+        "Commercial Invoice Submitted", "Commercial Invoice Closed",
+        "PO Need to Cancel", "PO Line Canceled",
+    ]
+
+
+def sort_by_pic_status(rows, key):
+    """Order aggregate rows by the PIC workflow. Unknown statuses keep their
+    relative position at the end rather than being dropped."""
+    order = {st: i for i, st in enumerate(pic_status_order())}
+    return sorted(rows or [], key=lambda r: order.get((r.get(key) or "").strip(), len(order)))
+
+
 PIC_REPORT_DEFAULT_LIMIT = 500
 
 
@@ -2298,6 +2334,12 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
     lim = _pic_report_limit(limit)
 
     if kind == "pipeline":
+        # Read top-to-bottom this is the acceptance flow, so sort it that way —
+        # by line count the terminal state leads and the pipeline reads
+        # backwards. FIELD() puts anything unlisted last (0), hence the
+        # secondary sort.
+        pipeline_order = pic_status_order()
+        pipeline_order_ph = ", ".join(["%s"] * len(pipeline_order))
         return {
             "kind": kind,
             "columns": [
@@ -2324,9 +2366,9 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                   {project_clause}
                 ) t
                 GROUP BY bucket
-                ORDER BY line_count DESC
+                ORDER BY FIELD(bucket, {pipeline_order_ph}), bucket
                 """,
-                tuple(project_params),
+                tuple(project_params) + tuple(pipeline_order),
                 as_dict=True,
             ),
         }
