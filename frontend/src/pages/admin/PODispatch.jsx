@@ -1033,11 +1033,16 @@ export default function PODispatch() {
               onPaste={(e) => handleSearchPaste(e, setTableSearch)}
               style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 280 }}
             />
-            <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-            <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))} placeholder="All IMs" minWidth={170} />
-            <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={160} />
-            <SearchableSelect multi value={itemCodeFilter} onChange={setItemCodeFilter} options={itemCodeOptions} placeholder="All Item Codes" minWidth={160} />
-            <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} placeholder="All Status" minWidth={150} />
+            <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+            <SearchableSelect
+              allowBlank multi value={imFilter} onChange={setImFilter} options={imSelectOptions.map((im) => ({ id: im.name, label: im.full_name || im.im_id || im.name }))} placeholder="All IMs" minWidth={170} />
+            <SearchableSelect
+              allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={160} />
+            <SearchableSelect
+              allowBlank multi value={itemCodeFilter} onChange={setItemCodeFilter} options={itemCodeOptions} placeholder="All Item Codes" minWidth={160} />
+            <SearchableSelect
+              allowBlank multi value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} placeholder="All Status" minWidth={150} />
             <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
             {hasFilters && (
               <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setItemCodeFilter([]); setStatusFilter([]); setFromDate(""); setToDate(""); }}>

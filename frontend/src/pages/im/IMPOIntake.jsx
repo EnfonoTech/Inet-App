@@ -1245,8 +1245,10 @@ export default function IMPOIntake() {
             <option value="Auto">Auto</option>
             <option value="Manual">Manual</option>
           </select>
-          <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-          <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+          <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+          <SearchableSelect
+              allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
           {hasFilters && (
             <button className="btn-secondary" onClick={() => { setSearch(""); setModeFilter("all"); setProjectFilter([]); setDuidFilter([]); }}>Clear</button>
           )}
@@ -1303,9 +1305,11 @@ export default function IMPOIntake() {
             })}
           </div>
           <input type="search" placeholder="Search POID, PO No, Item, Project, DUID…" value={dummySearch} onChange={(e) => setDummySearch(e.target.value)} onPaste={(e) => handleSearchPaste(e, setDummySearch)} />
-          <SearchableSelect multi value={dummyProjectFilter} onChange={setDummyProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={160} />
+          <SearchableSelect
+              allowBlank multi value={dummyProjectFilter} onChange={setDummyProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={160} />
           <SearchableSelect multi value={dummyDomainFilter} onChange={setDummyDomainFilter} options={domainOptions} placeholder="All Domains" minWidth={150} />
-          <SearchableSelect multi value={dummyDuidFilter} onChange={setDummyDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={140} />
+          <SearchableSelect
+              allowBlank multi value={dummyDuidFilter} onChange={setDummyDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={140} />
           {teamOptions.length > 0 && (
             <SearchableSelect multi value={dummyTeamFilter} onChange={setDummyTeamFilter} options={teamOptions} placeholder="All Teams" minWidth={140} />
           )}

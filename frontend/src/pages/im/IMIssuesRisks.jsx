@@ -440,10 +440,14 @@ export default function IMIssuesRisks() {
           style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240 }}
         />
         <SearchableSelect multi value={issueCatFilter} onChange={setIssueCatFilter} options={ISSUE_CATEGORY_OPTIONS} placeholder="All Categories" minWidth={160} />
-        <SearchableSelect multi value={execStatusFilter} onChange={setExecStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Exec Status" minWidth={150} />
-        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-        <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
-        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={execStatusFilter} onChange={setExecStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Exec Status" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect
+              allowBlank multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button

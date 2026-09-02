@@ -1016,6 +1016,7 @@ export default function IMWorkDone() {
         />
         {tab === "active" && (
           <SearchableSelect
+              allowBlank
             multi
             value={submissionFilter}
             onChange={setSubmissionFilter}
@@ -1026,6 +1027,7 @@ export default function IMWorkDone() {
         )}
         {tab !== "legacy" && (
         <SearchableSelect
+              allowBlank
           multi
           value={issueFlagFilter}
           onChange={setIssueFlagFilter}
@@ -1036,6 +1038,7 @@ export default function IMWorkDone() {
         )}
         {tab !== "legacy" && (
         <SearchableSelect
+              allowBlank
           multi
           value={execStatusFilter}
           onChange={setExecStatusFilter}
@@ -1044,13 +1047,17 @@ export default function IMWorkDone() {
           minWidth={150}
         />
         )}
-        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect
+              allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         {tab !== "legacy" && (
-        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="All Subcontractors" minWidth={170} />
+        <SearchableSelect
+              allowBlank multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="All Subcontractors" minWidth={170} />
         )}
         {tab === "legacy" && (
           <SearchableSelect
+              allowBlank
             multi
             value={legacyPoStatusFilter}
             onChange={setLegacyPoStatusFilter}
@@ -1064,6 +1071,7 @@ export default function IMWorkDone() {
         )}
         {tab !== "legacy" && (
         <SearchableSelect
+              allowBlank
           multi
           value={sourceFilter}
           onChange={setSourceFilter}

@@ -281,9 +281,12 @@ export default function PICInvoiceDetail() {
         />
         <SearchableSelect multi value={monthFilter} onChange={setMonthFilter} options={monthOptions} placeholder="All Months" minWidth={160} />
         <SearchableSelect multi value={acceptanceFilter} onChange={setAcceptanceFilter} options={ACCEPTANCE_OPTIONS} placeholder="MS1 + MS2" minWidth={130} />
-        <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imOptions} placeholder="All IMs" minWidth={160} />
-        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={imFilter} onChange={setImFilter} options={imOptions} placeholder="All IMs" minWidth={160} />
+        <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect
+              allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         {hasFilters && (
           <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setImFilter([]); setMonthFilter([]); setAcceptanceFilter([]); }}>
             Clear

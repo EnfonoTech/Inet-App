@@ -329,6 +329,7 @@ export default function WorkDone() {
   const [detailRow, setDetailRow] = useState(null);
   const [selectedRows, setSelectedRows] = useState(new Set());
   const [issueFlagFilter, setIssueFlagFilter] = useState([]);
+  const [submissionFilter, setSubmissionFilter] = useState([]);
   const [workTypeFilter, setWorkTypeFilter] = useState([]);
   const [tab, setTab] = useState("list");
 
@@ -617,11 +618,13 @@ export default function WorkDone() {
           : workTypeFilter;
       }
       if (issueFlagFilter.length) filters.issue_flag = issueFlagFilter;
+      if (submissionFilter.length) filters.submission_status = submissionFilter;
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) filters.column_filters = colFilters;
       return filters;
   }, [poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, subconFilter,
-      fromDate, toDate, searchDebounced, workTypeFilter, issueFlagFilter, columnFiltersDebounced]);
+      fromDate, toDate, searchDebounced, workTypeFilter, issueFlagFilter, submissionFilter,
+      columnFiltersDebounced]);
 
   useEffect(() => {
     let cancelled = false;
@@ -679,6 +682,7 @@ export default function WorkDone() {
     setFromDate("");
     setToDate("");
     setWorkTypeFilter([]);
+    setSubmissionFilter([]);
     setIssueFlagFilter(issueFlagValues || []);
     setTab("list");
   }
@@ -713,7 +717,7 @@ export default function WorkDone() {
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
 
-  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || issueFlagFilter.length || workTypeFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || issueFlagFilter.length || submissionFilter.length || workTypeFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const [teams, setTeams] = useState([]);
   useEffect(() => {
@@ -814,6 +818,7 @@ export default function WorkDone() {
           }}
         />
         <SearchableSelect
+              allowBlank
           multi
           value={poStatusFilter}
           onChange={setPoStatusFilter}
@@ -822,6 +827,7 @@ export default function WorkDone() {
           minWidth={160}
         />
         <SearchableSelect
+              allowBlank
           multi
           value={imFilter}
           onChange={setImFilter}
@@ -830,6 +836,7 @@ export default function WorkDone() {
           minWidth={150}
         />
         <SearchableSelect
+              allowBlank
           multi
           value={teamFilter}
           onChange={setTeamFilter}
@@ -838,6 +845,7 @@ export default function WorkDone() {
           minWidth={150}
         />
         <SearchableSelect
+              allowBlank
           multi
           value={projectFilter}
           onChange={setProjectFilter}
@@ -846,6 +854,7 @@ export default function WorkDone() {
           minWidth={170}
         />
         <SearchableSelect
+              allowBlank
           multi
           value={duidFilter}
           onChange={setDuidFilter}
@@ -854,6 +863,7 @@ export default function WorkDone() {
           minWidth={150}
         />
         <SearchableSelect
+              allowBlank
           multi
           value={subconFilter}
           onChange={setSubconFilter}
@@ -862,6 +872,20 @@ export default function WorkDone() {
           minWidth={170}
         />
         <SearchableSelect
+          multi
+          value={submissionFilter}
+          onChange={setSubmissionFilter}
+          options={[
+            { id: "__NONE__", label: "Not set" },
+            { id: "Ready for Confirmation", label: "Ready for Confirmation" },
+            { id: "Confirmation Done", label: "Confirmation Done" },
+            { id: "PIC Rejected", label: "PIC Rejected" },
+          ]}
+          placeholder="All Submission"
+          minWidth={170}
+        />
+        <SearchableSelect
+              allowBlank
           multi
           value={issueFlagFilter}
           onChange={setIssueFlagFilter}
@@ -905,7 +929,7 @@ export default function WorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setIssueFlagFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setIssueFlagFilter([]); setSubmissionFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>

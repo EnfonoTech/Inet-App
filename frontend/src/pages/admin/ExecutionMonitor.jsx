@@ -522,13 +522,20 @@ export default function ExecutionMonitor() {
             border: "1px solid #e2e8f0", fontSize: "0.84rem", minWidth: 240,
           }}
         />
-        <SearchableSelect multi value={planStatusFilter} onChange={setPlanStatusFilter} options={PLAN_STATUS_OPTIONS.filter(Boolean)} placeholder="All Plan Status" minWidth={150} />
-        <SearchableSelect multi value={executionStatusFilter} onChange={setExecutionStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Exec Status" minWidth={150} />
-        <SearchableSelect multi value={visitFilter} onChange={setVisitFilter} options={visitTypes} placeholder="All Visit Types" minWidth={160} />
-        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-        <SearchableSelect multi value={imFilter} onChange={setImFilter} options={knownImOptions} placeholder="All IMs" minWidth={150} />
-        <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="All Teams" minWidth={150} />
-        <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={planStatusFilter} onChange={setPlanStatusFilter} options={PLAN_STATUS_OPTIONS.filter(Boolean)} placeholder="All Plan Status" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={executionStatusFilter} onChange={setExecutionStatusFilter} options={EXECUTION_STATUS_OPTIONS} placeholder="All Exec Status" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={visitFilter} onChange={setVisitFilter} options={visitTypes} placeholder="All Visit Types" minWidth={160} />
+        <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+        <SearchableSelect
+              allowBlank multi value={imFilter} onChange={setImFilter} options={knownImOptions} placeholder="All IMs" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="All Teams" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button

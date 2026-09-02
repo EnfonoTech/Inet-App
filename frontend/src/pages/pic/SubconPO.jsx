@@ -1056,7 +1056,8 @@ export default function SubconPO() {
         <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={170} />
         <SearchableSelect multi value={supplierFilter} onChange={setSupplierFilter} options={supplierOptions} placeholder="Supplier" minWidth={160} />
         <SearchableSelect multi value={modelFilter} onChange={setModelFilter} options={modelOptions} placeholder="Contract Model" minWidth={150} />
-        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={150} />
+        <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={150} />
         <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={SUB_PO_STATUSES} placeholder="Subcon PO Status" minWidth={165} />
         <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="DUID" minWidth={165} />
         {/* Filter to one supplier PO, select all, Receive Invoice — that's how

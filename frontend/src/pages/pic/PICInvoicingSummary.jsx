@@ -634,10 +634,12 @@ export default function PICInvoicingSummary() {
       {tab === "split" && (
         <div className="toolbar" style={{ flexWrap: "wrap", gap: 8 }}>
           <SearchableSelect
+              allowBlank
             multi value={contractFilter} onChange={setContractFilter}
             options={contractOptions} placeholder="All Contracts" minWidth={180}
           />
           <SearchableSelect
+              allowBlank
             multi value={subcontractFilter} onChange={setSubcontract}
             options={subcontractOptions} placeholder="All Subcontracts" minWidth={200}
           />

@@ -191,16 +191,42 @@ def _chunked(items, size=1000):
         yield items[i:i + size]
 
 
+# Sentinel a toolbar filter sends to mean "rows where this is empty". Blank is
+# a real answer to most of these questions — which lines have no IM, which work
+# has no issue flag — and until this existed there was no way to ask for it.
+# The value is deliberately one nothing in the data can collide with, and it is
+# the same one a few pages had already hand-rolled before it lived here.
+FILTER_BLANK = "__NONE__"
+
+
 def _sql_in_or_eq(expr, raw):
     """Build ``expr = %s`` or ``expr IN (%s, %s, …)`` with params for a single
-    or multi-value filter. Returns (clause_or_None, params)."""
+    or multi-value filter. Returns (clause_or_None, params).
+
+    FILTER_BLANK among the values ORs in a blank test, so "IM = Rafeeq OR no IM
+    at all" is one selection rather than two impossible ones. ``expr`` appears
+    twice in that case — fine because every caller passes a developer-authored
+    fragment with no bind placeholders of its own; keep it that way.
+    """
     vals = _ensure_list(raw)
     if not vals:
         return None, []
-    if len(vals) == 1:
-        return f"{expr} = %s", vals
-    ph = ", ".join(["%s"] * len(vals))
-    return f"{expr} IN ({ph})", vals
+    wants_blank = FILTER_BLANK in vals
+    real = [v for v in vals if v != FILTER_BLANK]
+
+    parts, params = [], []
+    if len(real) == 1:
+        parts.append(f"{expr} = %s")
+        params.extend(real)
+    elif real:
+        parts.append(f"{expr} IN ({', '.join(['%s'] * len(real))})")
+        params.extend(real)
+    if wants_blank:
+        parts.append(f"({expr} IS NULL OR {expr} = '')")
+
+    if not parts:
+        return None, []
+    return (parts[0] if len(parts) == 1 else "(" + " OR ".join(parts) + ")"), params
 
 
 # Manage Table column key -> physical PO Dispatch column. Shared by the
@@ -3710,6 +3736,18 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
         if k not in fields:
             continue
         op_l = str(op).lower()
+        # A toolbar filter can ask for blanks (FILTER_BLANK) on its own or
+        # alongside real values — "IM = Rafeeq OR no IM at all" is one
+        # selection. Route both through _sql_in_or_eq so the sentinel behaves
+        # identically here and on every other page's filters.
+        if op_l in ("=", "in"):
+            vlist = list(v) if isinstance(v, (list, tuple)) else [v]
+            if FILTER_BLANK in vlist:
+                c, p = _sql_in_or_eq(f"`{k}`", vlist)
+                if c:
+                    wheres.append(c)
+                    params.extend(p)
+                continue
         if op_l == "=":
             wheres.append(f"`{k}` = %s")
             params.append(v)

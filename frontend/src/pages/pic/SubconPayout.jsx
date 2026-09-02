@@ -116,7 +116,8 @@ export default function SubconPayout() {
           placeholder="Supplier" minWidth={170} />
         <SearchableSelect multi value={modelFilter} onChange={setModelFilter}
           options={options.contract_model || []} placeholder="Contract Model" minWidth={160} />
-        <SearchableSelect multi value={projectFilter} onChange={setProjectFilter}
+        <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter}
           options={options.project_code || []} placeholder="All Projects" minWidth={150} />
         <DateRangePicker value={dateRange} onChange={setDateRange} />
         {hasFilters && (

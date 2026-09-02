@@ -669,9 +669,12 @@ export default function RolloutPlanning() {
               minWidth: 300,
             }}
           />
-          <SearchableSelect multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
-          <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imOptionRows.map((r) => ({ id: r.im, label: r.im_full_name || r.im }))} placeholder="All IMs" minWidth={170} />
-          <SearchableSelect multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+          <SearchableSelect
+              allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
+          <SearchableSelect
+              allowBlank multi value={imFilter} onChange={setImFilter} options={imOptionRows.map((r) => ({ id: r.im, label: r.im_full_name || r.im }))} placeholder="All IMs" minWidth={170} />
+          <SearchableSelect
+              allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
           <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
           {hasFilters && (
             <button

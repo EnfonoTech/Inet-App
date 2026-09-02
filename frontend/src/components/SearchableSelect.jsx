@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+/** Matches FILTER_BLANK in the Python filter helpers — keep the two in step. */
+export const BLANK_ID = "__NONE__";
+
 /**
  * Drop-in replacement for `<select>` filters with a type-to-search panel.
  *
  * Single-select mode (default): `value` is a string id; `onChange(id)` gets
  * the new id or "" for clear.
+ *
+ * `allowBlank` adds a "(Blanks)" row that selects rows where the field is
+ * empty — pass `true`, or a string to relabel it ("No IM", "Not set"). It
+ * sends the id "__NONE__", which the backend filter helpers understand
+ * (see FILTER_BLANK / _sql_in_or_eq); only turn it on where the filter
+ * actually reaches one of those, or it will select nothing.
  *
  * Multi-select mode (`multi`): `value` is a string[] of ids; `onChange(ids)`
  * gets a new string[]. Pasting multiple newline/tab/comma/semicolon-separated
@@ -30,6 +39,7 @@ export default function SearchableSelect({
   onSearch,
   onCreateNew,
   wrap = false,
+  allowBlank = false,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -50,10 +60,21 @@ export default function SearchableSelect({
 
   const normalized = useMemo(() => {
     if (!Array.isArray(options)) return [];
-    return options
+    const list = options
       .map((o) => (typeof o === "string" ? { id: o, label: o } : { id: String(o.id ?? o.value ?? o.name ?? ""), label: String(o.label ?? o.name ?? o.id ?? "") }))
       .filter((o) => o.id);
-  }, [options]);
+    // Pinned to the top rather than sorted in with the values: it is a
+    // different KIND of answer, and it is the one you cannot type a search
+    // for. Skipped when the caller already supplies its own blank row.
+    if (allowBlank && !list.some((o) => o.id === BLANK_ID)) {
+      list.unshift({
+        id: BLANK_ID,
+        label: typeof allowBlank === "string" ? allowBlank : "(Blanks)",
+        isBlank: true,
+      });
+    }
+    return list;
+  }, [options, allowBlank]);
 
   const selectedIds = useMemo(() => {
     if (multi) return Array.isArray(value) ? value.filter(Boolean) : [];
@@ -451,6 +472,11 @@ export default function SearchableSelect({
                         whiteSpace: wrap ? "normal" : "nowrap",
                         overflow: wrap ? "visible" : "hidden",
                         textOverflow: wrap ? "unset" : "ellipsis",
+                        // "(Blanks)" is a different kind of answer from the
+                        // values beneath it — italic and a hairline rule say
+                        // so without needing a section header.
+                        fontStyle: o.isBlank ? "italic" : undefined,
+                        borderBottom: o.isBlank ? "1px solid var(--border, #e2e8f0)" : undefined,
                         display: "flex",
                         alignItems: wrap ? "flex-start" : "center",
                         gap: 8,
