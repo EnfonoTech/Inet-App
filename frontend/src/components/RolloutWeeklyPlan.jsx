@@ -87,8 +87,67 @@ function Gauge({ value, caption, sub, color }) {
   );
 }
 
+// The seven day columns stay equal — the plan bars span them by multiplying
+// one cell's width, so unequal days would misdraw a multi-day plan. Everything
+// either side of them is the user's to resize.
+const DETAIL_COLS = [
+  { key: "poid", label: "POID", w: 132 },
+  { key: "mode", label: "Mode", w: 70 },
+  { key: "project", label: "Project", w: 78 },
+  { key: "domain", label: "Domain", w: 84 },
+  { key: "activity", label: "Activity type", w: 104 },
+];
+const TAIL_COLS = [
+  { key: "status", label: "Status", w: 92 },
+  { key: "prog", label: "Prog.", w: 48 },
+];
+const WIDTH_STORE = "inet.rolloutWeek.colWidths";
+const MIN_COL_PX = 44;
+
 export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHref }) {
   const navigate = useNavigate();
+
+  // Per-viewer, remembered between visits. localStorage rather than the table
+  // prefs doctype: this is a layout preference for one grid, not a saved view.
+  const [colWidths, setColWidths] = useState(() => {
+    const base = {};
+    [...DETAIL_COLS, ...TAIL_COLS].forEach((c) => { base[c.key] = c.w; });
+    try {
+      const saved = JSON.parse(localStorage.getItem(WIDTH_STORE) || "{}");
+      Object.entries(saved).forEach(([k, v]) => {
+        if (base[k] != null && Number(v) >= MIN_COL_PX) base[k] = Number(v);
+      });
+    } catch { /* private mode / cleared storage — defaults are fine */ }
+    return base;
+  });
+
+  const startResize = (key) => (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const startX = ev.clientX;
+    const startW = colWidths[key];
+    const onMove = (e) => {
+      const next = Math.max(MIN_COL_PX, Math.round(startW + (e.clientX - startX)));
+      setColWidths((w) => (w[key] === next ? w : { ...w, [key]: next }));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", onUp, true);
+      setColWidths((w) => {
+        try { localStorage.setItem(WIDTH_STORE, JSON.stringify(w)); } catch { /* ignore */ }
+        return w;
+      });
+    };
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", onUp, true);
+  };
+
+  const resetWidths = () => {
+    const base = {};
+    [...DETAIL_COLS, ...TAIL_COLS].forEach((c) => { base[c.key] = c.w; });
+    setColWidths(base);
+    try { localStorage.removeItem(WIDTH_STORE); } catch { /* ignore */ }
+  };
   const [weekStart, setWeekStart] = useState(() => iso(mondayOf(new Date())));
   // The quarter containing the week ON SCREEN, and a FISCAL quarter, not a
   // calendar one: this bench's fiscal year runs Apr–Mar, so Jul–Sep is Q2, not
@@ -270,17 +329,37 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
         </div>
 
         {/* ── CENTRE: the week grid ── */}
-        <div style={{ flex: 1, minWidth: 420, display: "flex", flexDirection: "column", gap: 14 }}>
-          <Card title={`Weekly plan (${weekLabel})`}>
+        <div style={{ flex: "1 1 820px", minWidth: 820, display: "flex", flexDirection: "column", gap: 14 }}>
+          <Card
+            title={`Weekly plan (${weekLabel})`}
+            right={
+              <button type="button" onClick={resetWidths} style={resetBtn} title="Reset column widths">
+                Reset widths
+              </button>
+            }
+          >
             <div style={{ overflowX: "auto" }}>
               <div style={{
                 display: "grid",
-                gridTemplateColumns: "132px 84px 78px 88px 108px repeat(7, minmax(52px, 1fr)) 92px 48px",
-                minWidth: 980, fontSize: 11.5,
+                gridTemplateColumns: [
+                  ...DETAIL_COLS.map((c) => `${colWidths[c.key]}px`),
+                  "repeat(7, minmax(30px, 1fr))",
+                  ...TAIL_COLS.map((c) => `${colWidths[c.key]}px`),
+                ].join(" "),
+                minWidth: "100%", fontSize: 11.5,
               }}>
-                {["POID", "Mode", "Project", "Domain", "Activity type",
-                  ...days.map((d) => d.label), "Status", "Prog."].map((h, i) => (
-                  <div key={`h${i}`} style={gh}>{h}</div>
+                {DETAIL_COLS.map((c) => (
+                  <div key={c.key} style={{ ...gh, position: "relative" }} title={c.label}>
+                    {c.label}
+                    <span onMouseDown={startResize(c.key)} style={grip} />
+                  </div>
+                ))}
+                {days.map((d) => <div key={d.date} style={ghDay} title={d.label}>{d.label}</div>)}
+                {TAIL_COLS.map((c) => (
+                  <div key={c.key} style={{ ...gh, position: "relative" }} title={c.label}>
+                    {c.label}
+                    <span onMouseDown={startResize(c.key)} style={grip} />
+                  </div>
                 ))}
                 {rows.map((r) => {
                   const b = BUCKETS.find((x) => x.key === r.bucket) || BUCKETS[0];
@@ -542,8 +621,17 @@ const tile = { background: "#FAFAFD", border: `1px solid ${C.border}`, borderRad
 const tileN = { fontSize: 19, fontWeight: 700, fontVariantNumeric: "tabular-nums" };
 const tileL = { fontSize: 10.5, color: C.muted, marginTop: 1 };
 const moneyN = { ...tileN, fontSize: 15.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
-const gh = { padding: "8px 6px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".03em", borderBottom: `1px solid ${C.border}`, background: "#FAFAFD", whiteSpace: "nowrap" };
-const gc = { padding: "9px 6px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+const gh = { padding: "8px 4px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".03em", borderBottom: `1px solid ${C.border}`, background: "#FAFAFD", whiteSpace: "nowrap" };
+const grip = {
+  position: "absolute", top: 0, right: -3, width: 7, height: "100%",
+  cursor: "col-resize", userSelect: "none", zIndex: 2,
+};
+const resetBtn = {
+  border: `1px solid ${C.border}`, background: "#fff", borderRadius: 6,
+  padding: "3px 8px", fontSize: 10.5, color: C.muted, cursor: "pointer",
+};
+const ghDay = { padding: "8px 2px", fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0, borderBottom: `1px solid ${C.border}`, background: "#FAFAFD", whiteSpace: "nowrap", textAlign: "center", overflow: "hidden" };
+const gc = { padding: "9px 4px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 const pth = { padding: "6px 3px", textAlign: "left", fontSize: 10, textTransform: "uppercase", color: C.muted, borderBottom: `1px solid ${C.border}` };
 const pthR = { ...pth, textAlign: "right" };
 const ptd = { padding: "5px 3px", borderBottom: "1px solid #F1F5F9", whiteSpace: "nowrap" };
