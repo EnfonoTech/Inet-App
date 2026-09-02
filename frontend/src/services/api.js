@@ -793,6 +793,8 @@ export const pmApi = {
     to_date: params?.to_date || "",
     project_code: params?.project_code || "",
     owner: params?.owner || "",
+    // 0 = unlimited. Omitted -> the backend's own default cap.
+    limit: params?.limit ?? "",
   }),
 
   // PIC creates Sales Invoices from Ready for Invoice lines (PIC Tracker page)

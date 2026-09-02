@@ -56,6 +56,7 @@ const PICTracker          = lazy(() => import("./pages/pic/PICTracker"));
 const PICClosed           = lazy(() => import("./pages/pic/PICClosed"));
 const PICCancelled        = lazy(() => import("./pages/pic/PICCancelled"));
 const PICReports          = lazy(() => import("./pages/pic/PICReports"));
+const PICOverview         = lazy(() => import("./pages/admin/PICOverview"));
 const PICInvoicingSummary = lazy(() => import("./pages/pic/PICInvoicingSummary"));
 const PICInvoiceDetail    = lazy(() => import("./pages/pic/PICInvoiceDetail"));
 const SubconPO            = lazy(() => import("./pages/pic/SubconPO"));
@@ -215,6 +216,8 @@ function AppContent() {
               <Route path="/pic-subcon-po" element={<SubconPO />} />
               <Route path="/pic-subcon-payout" element={<SubconPayout />} />
               <Route path="/pic-reports" element={<PICReports />} />
+              {/* PM's read-only roll-up of the PIC side. */}
+              <Route path="/pic-overview" element={<PICOverview />} />
             </>
           )}
 

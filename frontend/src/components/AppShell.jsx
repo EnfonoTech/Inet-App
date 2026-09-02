@@ -114,6 +114,19 @@ const icons = {
       <line x1="12" y1="22.08" x2="12" y2="12" />
     </svg>
   ),
+  table: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="3" y1="9" x2="21" y2="9" /><line x1="3" y1="15" x2="21" y2="15" />
+      <line x1="9" y1="9" x2="9" y2="21" />
+    </svg>
+  ),
+  receipt: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 3v18l2.5-1.5L10 21l2-1.5L14 21l2.5-1.5L19 21V3z" />
+      <line x1="9" y1="8" x2="15" y2="8" /><line x1="9" y1="12" x2="15" y2="12" />
+    </svg>
+  ),
   layers: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polygon points="12 2 2 7 12 12 22 7 12 2" />
@@ -127,7 +140,7 @@ const icons = {
 const adminNav = [
   { to: "/dashboard",  label: "Dashboard",   icon: "dashboard" },
   { to: "/po-upload",  label: "PO Upload",   icon: "upload" },
-  { to: "/po-dump",    label: "PO Dump",     icon: "barChart" },
+  { to: "/po-dump",    label: "PO Dump",     icon: "table" },
   { to: "/projects",   label: "Projects",    icon: "folder" },
   { to: "/dispatch",   label: "Dispatch",    icon: "send" },
   { to: "/planning",   label: "Planning",    icon: "calendar" },
@@ -136,6 +149,7 @@ const adminNav = [
   { to: "/issues-risks", label: "Issues & Risks", icon: "clipboard" },
   { to: "/backend",    label: "Backend",       icon: "briefcase" },
   { to: "/reports",    label: "Reports",     icon: "barChart" },
+  { to: "/pic-overview", label: "PIC Overview", icon: "layers" },
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/approvals", label: "Approvals", icon: "shieldCheck" },
   { to: "/teams",     label: "Teams",     icon: "user" },
@@ -169,7 +183,7 @@ const picNav = [
   { to: "/pic-closed",             label: "Closed",             icon: "checkCircle" },
   { to: "/pic-cancelled",          label: "Cancelled",          icon: "folder" },
   { to: "/pic-invoice-detail",     label: "Invoice Detail",     icon: "eye" },
-  { to: "/pic-invoicing-summary",  label: "Invoicing Summary",  icon: "barChart" },
+  { to: "/pic-invoicing-summary",  label: "Invoicing Summary",  icon: "receipt" },
   // Supplier side — Purchase Orders to subcontractors (subcon_po.py)
   { to: "/pic-subcon-po",          label: "Subcon PO",          icon: "package" },
   { to: "/pic-subcon-payout",      label: "Subcon Payout",      icon: "dollar" },

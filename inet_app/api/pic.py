@@ -2241,8 +2241,34 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     }
 
 
+# Row-bounded reports return the true match count alongside the page of rows,
+# so the UI can say "5,000 of 11,842" instead of quietly presenting a truncated
+# list — and its totals row — as if it were the whole answer.
+PIC_REPORT_DEFAULT_LIMIT = 500
+
+
+def _pic_report_limit(limit):
+    """Rows to fetch. 0 (or "0"/"all") means unlimited; anything else clamps."""
+    if limit in (None, ""):
+        return PIC_REPORT_DEFAULT_LIMIT
+    if str(limit).strip().lower() == "all":
+        return 0
+    try:
+        n = int(limit)
+    except (TypeError, ValueError):
+        return PIC_REPORT_DEFAULT_LIMIT
+    if n <= 0:
+        return 0
+    return min(n, 50000)
+
+
+def _pic_report_count(from_join, where_sql, params):
+    row = frappe.db.sql(f"SELECT COUNT(*) {from_join} WHERE {where_sql}", tuple(params))
+    return cint(row[0][0]) if row else 0
+
+
 @frappe.whitelist()
-def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=None, owner=None):
+def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=None, owner=None, limit=None):
     """Canned PIC reports — exposed as a single endpoint to keep the FE simple.
 
     Each report has its own column shape (returned in ``columns``) so the
@@ -2268,6 +2294,8 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
         if c:
             project_clause = f" AND {c}"
             project_params = list(p)
+
+    lim = _pic_report_limit(limit)
 
     if kind == "pipeline":
         return {
@@ -2326,6 +2354,14 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
         if owner:
             owner_clause = " AND pd.isdp_owner = %s"
             owner_params = [owner]
+        aging_where = (
+            "IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0 "
+            "AND IFNULL(pd.dispatch_status,'') != 'Cancelled' "
+            "AND pd.pic_status IN ('Under I-BUY', 'Under ISDP') "
+            "AND pd.ms1_applied_date IS NOT NULL "
+            f"{project_clause} {owner_clause}"
+        )
+        aging_params = project_params + owner_params
         return {
             "kind": kind,
             "columns": [
@@ -2349,18 +2385,15 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        DATEDIFF(CURDATE(), pd.ms1_applied_date) AS days_since_applied,
                        pd.ms1_amount
                 {_PIC_FROM_JOIN}
-                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
-                  AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
-                  AND pd.pic_status IN ('Under I-BUY', 'Under ISDP')
-                  AND pd.ms1_applied_date IS NOT NULL
-                  {project_clause}
-                  {owner_clause}
+                WHERE {aging_where}
                 ORDER BY days_since_applied DESC
-                LIMIT 2000
+                {f"LIMIT {lim}" if lim else ""}
                 """,
-                tuple(project_params + owner_params),
+                tuple(aging_params),
                 as_dict=True,
             ),
+            "total": _pic_report_count(_PIC_FROM_JOIN, aging_where, aging_params),
+            "limit": lim,
         }
 
     if kind == "closed":
@@ -2377,6 +2410,14 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
         elif td:
             date_clause = "AND COALESCE(pd.ms1_payment_received_date, pd.ms1_invoice_month) <= %s"
             date_params = [td]
+        # Built once and used by both the row page and the count, so the
+        # "N of M" can never describe a different query than the rows.
+        closed_where = (
+            "IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0 "
+            "AND pd.pic_status = 'Commercial Invoice Closed' "
+            f"{project_clause} {date_clause}"
+        )
+        closed_params = project_params + date_params
         return {
             "kind": kind,
             "columns": [
@@ -2399,19 +2440,24 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        pd.ms2_amount,
                        (pd.ms1_amount + pd.ms2_amount) AS total
                 {_PIC_FROM_JOIN}
-                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
-                  AND pd.pic_status = 'Commercial Invoice Closed'
-                  {project_clause}
-                  {date_clause}
+                WHERE {closed_where}
                 ORDER BY pd.ms1_payment_received_date DESC, pd.ms1_invoice_month DESC
-                LIMIT 5000
+                {f"LIMIT {lim}" if lim else ""}
                 """,
-                tuple(project_params + date_params),
+                tuple(closed_params),
                 as_dict=True,
             ),
+            "total": _pic_report_count(_PIC_FROM_JOIN, closed_where, closed_params),
+            "limit": lim,
         }
 
     if kind == "rejected":
+        rejected_where = (
+            "IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0 "
+            "AND pd.pic_status IN ('I-BUY Rejected', 'ISDP Rejected') "
+            "AND IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed') "
+            f"{project_clause}"
+        )
         return {
             "kind": kind,
             "columns": [
@@ -2434,16 +2480,15 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                        pd.pic_detail_remark,
                        pd.ms1_amount
                 {_PIC_FROM_JOIN}
-                WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
-                  AND pd.pic_status IN ('I-BUY Rejected', 'ISDP Rejected')
-                  AND IFNULL(pd.dispatch_status,'') NOT IN ('Cancelled','Closed')
-                  {project_clause}
+                WHERE {rejected_where}
                 ORDER BY pd.modified DESC
-                LIMIT 2000
+                {f"LIMIT {lim}" if lim else ""}
                 """,
                 tuple(project_params),
                 as_dict=True,
             ),
+            "total": _pic_report_count(_PIC_FROM_JOIN, rejected_where, project_params),
+            "limit": lim,
         }
 
     frappe.throw(f"Unknown report kind: {kind}")
