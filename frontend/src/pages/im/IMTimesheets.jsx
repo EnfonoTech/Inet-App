@@ -58,7 +58,9 @@ function shortDt(v) {
 export default function IMTimesheets() {
   const { imName } = useAuth();
   const { rowLimit } = useTableRowLimit();
-  const [tab, setTab] = useState("logs"); // "logs" | "daily"
+  const tfC = { padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" };
+  const tfCR = { ...tfC, textAlign: "right", fontWeight: 700 };
+  const [tab, setTab] = useState("logs"); // "logs" | "daily" | "team"
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -199,6 +201,9 @@ export default function IMTimesheets() {
   // be loaded would silently under-count on any day outside that window.
   // Only fetched once the tab is actually opened.
   const [dailyRows, setDailyRows] = useState([]);
+  const [teamRows, setTeamRows] = useState([]);
+  const [teamTotals, setTeamTotals] = useState(null);
+  const [teamLoading, setTeamLoading] = useState(false);
   const [dailyLoading, setDailyLoading] = useState(false);
   useEffect(() => {
     if (tab !== "daily" || !imName) return;
@@ -217,6 +222,30 @@ export default function IMTimesheets() {
         if (!cancelled) setDailyRows([]);
       } finally {
         if (!cancelled) setDailyLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, imName, dateFrom, dateTo, teamFilter, searchDebounced]);
+
+  // Team-wise roll-up over the same range, from the same server-side daily
+  // rows — so it can never disagree with the Daily Totals tab.
+  useEffect(() => {
+    if (tab !== "team") return undefined;
+    let cancelled = false;
+    (async () => {
+      const filters = {};
+      if (dateFrom) filters.from_date = dateFrom;
+      if (dateTo) filters.to_date = dateTo;
+      if (teamFilter.length) filters.team_id = teamFilter;
+      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      setTeamLoading(true);
+      try {
+        const res = await pmApi.getTeamTimeTotals(filters);
+        if (!cancelled) { setTeamRows(res?.rows || []); setTeamTotals(res?.totals || null); }
+      } catch {
+        if (!cancelled) { setTeamRows([]); setTeamTotals(null); }
+      } finally {
+        if (!cancelled) setTeamLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -275,6 +304,10 @@ export default function IMTimesheets() {
           style={{ padding: "8px 20px", fontSize: "0.86rem", fontWeight: 700, border: "none", borderBottom: tab === "daily" ? "2px solid #1d4ed8" : "2px solid transparent", background: "none", cursor: "pointer", color: tab === "daily" ? "#1d4ed8" : "#64748b" }}>
           Daily Totals
         </button>
+        <button type="button" onClick={() => setTab("team")}
+          style={{ padding: "8px 20px", fontSize: "0.86rem", fontWeight: 700, border: "none", borderBottom: tab === "team" ? "2px solid #1d4ed8" : "2px solid transparent", background: "none", cursor: "pointer", color: tab === "team" ? "#1d4ed8" : "#64748b" }}>
+          Team Totals
+        </button>
       </div>
 
       <div className="toolbar">
@@ -318,8 +351,73 @@ export default function IMTimesheets() {
       </div>
 
       <div className="page-content">
-        <DataTableWrapper loading={tab === "logs" ? (loading && logs.length > 0) : (dailyLoading && dailyRows.length > 0)}>
-          {tab === "logs" ? (
+        <DataTableWrapper loading={
+          tab === "logs" ? (loading && logs.length > 0)
+            : tab === "team" ? (teamLoading && teamRows.length > 0)
+              : (dailyLoading && dailyRows.length > 0)
+        }>
+          {tab === "team" ? (
+            <table className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-team">
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th style={{ textAlign: "right" }}>Days</th>
+                  <th style={{ textAlign: "right" }}>Members</th>
+                  <th style={{ textAlign: "right" }}>Sessions</th>
+                  <th style={{ textAlign: "right" }}>Span (hrs)</th>
+                  <th style={{ textAlign: "right" }}>Logged (hrs)</th>
+                  <th style={{ textAlign: "right" }}>Idle (hrs)</th>
+                  <th style={{ textAlign: "right" }}>Avg/day (hrs)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {teamRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ padding: 0 }}>
+                      {teamLoading ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">⏱</div>
+                          <h3>No time logged in this range</h3>
+                          <p>Pick a wider date range, or clear the filters.</p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : teamRows.map((r) => (
+                  <tr key={r.team_id || "none"}>
+                    <td style={{ fontWeight: 600 }}>
+                      {r.team_name}
+                      {r.has_running && (
+                        <span style={{ marginLeft: 8, fontSize: "0.68rem", fontWeight: 700, color: "#15803d" }}>● live</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "right" }}>{r.days}</td>
+                    <td style={{ textAlign: "right" }}>{r.members}</td>
+                    <td style={{ textAlign: "right" }}>{r.sessions}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt.format(r.span_hours)}</td>
+                    <td style={{ textAlign: "right" }}>{fmt.format(r.logged_hours)}</td>
+                    <td style={{ textAlign: "right", color: r.idle_hours > 0 ? "#b45309" : undefined }}>{fmt.format(r.idle_hours)}</td>
+                    <td style={{ textAlign: "right" }}>{fmt.format(r.avg_span_per_day)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {teamRows.length > 0 && teamTotals && (
+                <tfoot>
+                  <tr>
+                    <td style={tfC}><strong>{teamTotals.teams} team{teamTotals.teams !== 1 ? "s" : ""}</strong></td>
+                    <td style={tfCR}>{teamTotals.days}</td>
+                    <td style={tfCR}>{teamTotals.members}</td>
+                    <td style={tfCR}>{teamTotals.sessions}</td>
+                    <td style={tfCR}>{fmt.format(teamTotals.span_hours)}</td>
+                    <td style={tfCR}>{fmt.format(teamTotals.logged_hours)}</td>
+                    <td style={tfC} /><td style={tfC} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          ) : tab === "logs" ? (
             <table className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-logs">
               <thead>
                 <tr>
@@ -478,11 +576,17 @@ export default function IMTimesheets() {
             }}
           >
             <span>
-              Loaded <strong style={{ color: "var(--text, #0f172a)" }}>{dailyRows.length}</strong> team-day{dailyRows.length !== 1 ? "s" : ""}
+              Loaded{" "}
+              <strong style={{ color: "var(--text, #0f172a)" }}>
+                {tab === "team" ? teamRows.length : dailyRows.length}
+              </strong>{" "}
+              {tab === "team"
+                ? `team${teamRows.length !== 1 ? "s" : ""}`
+                : `team-day${dailyRows.length !== 1 ? "s" : ""}`}
             </span>
             <span style={{ marginLeft: "auto", display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <span>Span total: <strong style={{ color: "var(--text, #0f172a)" }}>{fmt.format(dailySpanTotal)} h</strong></span>
-              <span>Logged total: <strong style={{ color: "var(--text, #0f172a)" }}>{fmt.format(dailyLoggedTotal)} h</strong></span>
+              <span>Span total: <strong style={{ color: "var(--text, #0f172a)" }}>{fmt.format(tab === "team" ? (teamTotals?.span_hours || 0) : dailySpanTotal)} h</strong></span>
+              <span>Logged total: <strong style={{ color: "var(--text, #0f172a)" }}>{fmt.format(tab === "team" ? (teamTotals?.logged_hours || 0) : dailyLoggedTotal)} h</strong></span>
             </span>
           </div>
         )}

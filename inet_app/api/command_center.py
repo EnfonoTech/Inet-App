@@ -16496,6 +16496,95 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
 
 
 @frappe.whitelist()
+def get_team_time_totals(filters=None):
+    """
+    Hours per TEAM over a date range — "how much did each team work this week
+    / this month".
+
+    Built on exactly the same first-in / last-out rule as
+    get_daily_time_totals: a person's day is their first clock-in to their
+    last clock-out, not a sum of sessions. Those per-person days are then
+    summed per team, which makes span_hours man-hours door to door.
+
+    Summing a span ACROSS days would be meaningless (day one's start to day
+    seven's end), so the span is always computed within a day first and only
+    then added up.
+
+    filters (JSON): team_id, im, user, from_date, to_date, search — identical
+    scoping to the other two tabs.
+
+    Returns rows with:
+      team_id, team_name, days (distinct dates worked), members (distinct
+      users), sessions, span_hours (sum of each member's daily span),
+      logged_hours (sum of session durations — "actually working" vs
+      span_hours' "present"), idle_hours (the gap between them),
+      avg_span_per_day, first_start, last_end, has_running.
+    """
+    daily = get_daily_time_totals(filters)
+    by_team = {}
+    for r in daily.get("rows") or []:
+        key = r.get("team_id") or ""
+        t = by_team.setdefault(key, {
+            "team_id": r.get("team_id"),
+            "team_name": r.get("team_name") or (r.get("team_id") or "— no team —"),
+            "days": set(), "members": set(), "sessions": 0,
+            "span_hours": 0.0, "logged_hours": 0.0,
+            "first_start": None, "last_end": None, "has_running": False,
+        })
+        if r.get("log_date"):
+            t["days"].add(r["log_date"])
+        if r.get("user"):
+            t["members"].add(r["user"])
+        t["sessions"] += cint(r.get("sessions"))
+        # A day still running has no span yet — count its logged time, but do
+        # not invent a closing time for it.
+        if r.get("span_hours") is not None:
+            t["span_hours"] += flt(r["span_hours"])
+        t["logged_hours"] += flt(r.get("logged_hours"))
+        if r.get("first_start") and (t["first_start"] is None or r["first_start"] < t["first_start"]):
+            t["first_start"] = r["first_start"]
+        if r.get("last_end") and (t["last_end"] is None or r["last_end"] > t["last_end"]):
+            t["last_end"] = r["last_end"]
+        t["has_running"] = t["has_running"] or bool(r.get("has_running"))
+
+    out = []
+    for t in by_team.values():
+        days = len(t["days"])
+        span = round(t["span_hours"], 2)
+        logged = round(t["logged_hours"], 2)
+        out.append({
+            "team_id": t["team_id"],
+            "team_name": t["team_name"],
+            "days": days,
+            "members": len(t["members"]),
+            "sessions": t["sessions"],
+            "span_hours": span,
+            "logged_hours": logged,
+            # Present but not on a task. Never negative: a session can outlast
+            # its own day's span only through bad data, and a negative "idle"
+            # would read as nonsense.
+            "idle_hours": round(max(span - logged, 0), 2),
+            "avg_span_per_day": round(span / days, 2) if days else 0,
+            "first_start": t["first_start"],
+            "last_end": t["last_end"],
+            "has_running": t["has_running"],
+        })
+    out.sort(key=lambda r: -r["span_hours"])
+
+    return {
+        "rows": out,
+        "totals": {
+            "teams": len(out),
+            "days": len({d for t in by_team.values() for d in t["days"]}),
+            "members": len({m for t in by_team.values() for m in t["members"]}),
+            "sessions": sum(r["sessions"] for r in out),
+            "span_hours": round(sum(r["span_hours"] for r in out), 2),
+            "logged_hours": round(sum(r["logged_hours"] for r in out), 2),
+        },
+    }
+
+
+@frappe.whitelist()
 def get_daily_time_totals(filters=None):
     """
     Daily hours per (date, user): first clock-in to last clock-out that day,
@@ -16533,6 +16622,17 @@ def get_daily_time_totals(filters=None):
     params = []
 
     if is_desk_admin:
+        # A PM sees every team by default, and can narrow to one IM's teams —
+        # the IM branch below already scopes that way, so an admin picking an
+        # IM should land on exactly the same set that IM sees.
+        im_pick = filters.get("im")
+        if im_pick:
+            im_team_ids = _im_team_ids_for_filter(im_pick)
+            if not im_team_ids:
+                return {"rows": []}
+            ph = ", ".join(["%s"] * len(im_team_ids))
+            wheres.append(f"etl.team_id IN ({ph})")
+            params.extend(im_team_ids)
         tid = filters.get("team_id")
         if tid:
             vals = tid if isinstance(tid, list) else [tid]

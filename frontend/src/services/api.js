@@ -466,6 +466,8 @@ export const pmApi = {
       limit: limit ?? 100,
       offset: offset ?? 0,
     }),
+  getTeamTimeTotals:          (filters) =>
+    call("inet_app.api.command_center.get_team_time_totals", { filters: JSON.stringify(filters || {}) }),
   getDailyTimeTotals:         (filters) =>
     call("inet_app.api.command_center.get_daily_time_totals", { filters: JSON.stringify(filters || {}) }),
   saveExecutionTimeLogManual: (rollout_plan, start_time, end_time, notes) =>
