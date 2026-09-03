@@ -142,13 +142,19 @@ export default function TeamDomainReport({ onExportReady }) {
               {/* An empty-looking grid is usually missing source data, not a
                   bug — say which field is unpopulated rather than let the
                   reader guess. */}
-              {(cov.teams_without_isdp > 0 || cov.projects_without_domain > 0) && (
+              {(cov.teams_without_isdp > 0 || cov.executions_without_domain > 0) && (
                 <div className="tdr-note">
                   {cov.teams_without_isdp > 0 && (
                     <span>{cov.teams_without_isdp} of {cov.teams} teams have no <strong>ISDP Account</strong> set — those rows fall back to the team name. </span>
                   )}
-                  {cov.projects_without_domain > 0 && (
-                    <span>{cov.projects_without_domain} of {cov.projects} projects have no <strong>Project Domain</strong> linked, so their work shows as “{NO_DOMAIN}”. </span>
+                  {/* Keyed off executions, not projects: a cell resolves its
+                      domain from the PO line first (the IM can override it per
+                      line) and only falls back to the project, so a project
+                      with no domain does not necessarily produce any
+                      “No Domain” cell. This counts the work that actually
+                      ended up unresolved. */}
+                  {cov.executions_without_domain > 0 && (
+                    <span>{cov.executions_without_domain} of {cov.executions_in_window} executions this month resolve to no <strong>Project Domain</strong> on either the PO line or its project, so they show as “{NO_DOMAIN}”. </span>
                   )}
                   Leave is not tracked anywhere yet, so no cell can show it.
                 </div>
