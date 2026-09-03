@@ -535,12 +535,48 @@ def report_budget_vs_actual_by_project(filters=None):
     return {"columns": columns, "data": data}
 
 
+def _report_totals(columns, data, ratios=None, skip=()):
+    """Totals for a Script Report wrapper, so the portal gets KPI cards.
+
+    Summable columns (Currency/Int/Float) are summed. Percent columns are
+    NOT: averaging per-row percentages weights a team with 2 plans the same
+    as one with 200, and summing them is meaningless. `ratios` maps a percent
+    fieldname to the (numerator, denominator) columns it was computed from,
+    so its total is recomputed from the real underlying totals — the same
+    rule the rest of the app's reports follow.
+
+    `skip` drops columns that are numeric but not aggregable — the weekly
+    W-1..W-5 percentage columns, which have no denominator carried in the row
+    to rebuild a total from.
+    """
+    totals = {}
+    rows = data or []
+    ratios = ratios or {}
+    for col in columns or []:
+        fn = col.get("fieldname")
+        if not fn or fn == "sn" or fn in skip or fn in ratios:
+            continue
+        if col.get("fieldtype") in ("Currency", "Int", "Float"):
+            totals[fn] = round(sum(flt(r.get(fn)) for r in rows), 2)
+    for pct_field, (num_f, den_f) in ratios.items():
+        num = sum(flt(r.get(num_f)) for r in rows)
+        den = sum(flt(r.get(den_f)) for r in rows)
+        totals[pct_field] = round(num / den * 100, 1) if den else 0.0
+    return totals
+
+
 @frappe.whitelist()
 def report_team_utilization_report(filters=None):
     from inet_app.inet_app.report.team_utilization_report.team_utilization_report import execute
 
     columns, data = execute(_as_dict(filters or {}))
-    return {"columns": columns, "data": data}
+    # achievement_pct is completed/planned in the report's own SQL, so its
+    # total is the ratio of those two totals.
+    totals = _report_totals(
+        columns, data,
+        ratios={"achievement_pct": ("completed_activities", "planned_activities")},
+    )
+    return {"columns": columns, "data": data, "totals": totals}
 
 
 @frappe.whitelist()
@@ -556,7 +592,15 @@ def report_monthly_team_details(filters=None):
     from inet_app.inet_app.report.monthly_team_details.monthly_team_details import execute
 
     columns, data = execute(_as_dict(filters or {}))
-    return {"columns": columns, "data": data}
+    # utilization_pct is total_completed/total_planned in the report's own
+    # SQL. W-1..W-5 are per-week percentages with no denominator in the row,
+    # so they are left out rather than summed into a meaningless figure.
+    totals = _report_totals(
+        columns, data,
+        ratios={"utilization_pct": ("total_completed", "total_planned")},
+        skip=("w1", "w2", "w3", "w4", "w5"),
+    )
+    return {"columns": columns, "data": data, "totals": totals}
 
 
 def _item_meta(item_code):
