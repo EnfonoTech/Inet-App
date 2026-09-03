@@ -1561,11 +1561,12 @@
   display: flex;
   gap: 0;
   border-bottom: 2px solid var(--border);
-  margin-bottom: 28px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
 }
 
 .project-tabs .project-tab {
-  padding: 12px 24px;
+  padding: 9px 16px;
   border: none;
   background: none;
   cursor: pointer;
@@ -1701,7 +1702,7 @@
   cursor: pointer;
   font-size: 13px;
   color: var(--text-muted);
-  margin-bottom: 20px;
+  margin-bottom: 10px;
   transition: all var(--transition);
 }
 
@@ -1712,21 +1713,21 @@
 }
 
 .project-detail .project-header {
-  margin-bottom: 32px;
+  margin-bottom: 16px;
 }
 
 .project-detail .project-code {
   margin: 0;
-  font-size: 28px;
+  font-size: 21px;
   font-weight: 800;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: -0.5px;
 }
 
 .project-detail .project-name {
-  font-size: 16px;
+  font-size: 14px;
   color: var(--text-secondary);
-  margin-top: 6px;
+  margin-top: 3px;
 }
 
 .project-detail .badges-row {
@@ -1747,20 +1748,22 @@
   border: 1px solid #e2e8f0;
 }
 
-/* Summary cards row */
+/* Summary cards row — deliberately compact: at 24px padding / 26px values
+   these four tiles ate the whole first screen and pushed the actual tables
+   below the fold. */
 .project-detail .summary-cards {
   display: flex;
-  gap: 16px;
-  margin-bottom: 32px;
+  gap: 10px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
 }
 
 .project-detail .summary-card {
-  flex: 1 1 220px;
+  flex: 1 1 170px;
   background: var(--bg-white);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 24px;
+  padding: 12px 14px;
   box-shadow: var(--shadow-sm);
   position: relative;
   overflow: hidden;
@@ -1782,26 +1785,26 @@
 .project-detail .summary-card.accent-red::before { background: var(--red); }
 
 .project-detail .summary-card .card-label {
-  font-size: 12px;
+  font-size: 10px;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .project-detail .summary-card .card-value {
-  font-size: 26px;
+  font-size: 17px;
   font-weight: 700;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text);
-  line-height: 1.2;
+  line-height: 1.25;
 }
 
 .project-detail .summary-card .card-sub {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
-  margin-top: 6px;
+  margin-top: 3px;
 }
 
 /* Detail grid */

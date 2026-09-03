@@ -58,7 +58,7 @@ function StatusBadge({ value }) {
   );
 }
 
-function KpiTile({ icon, label, value, tone = "blue", suffix }) {
+function KpiTile({ icon, label, value, tone = "blue", suffix, sub }) {
   const palettes = {
     blue: { fg: "#1d4ed8", bg: "#eff6ff" },
     green: { fg: "#047857", bg: "#ecfdf5" },
@@ -82,11 +82,12 @@ function KpiTile({ icon, label, value, tone = "blue", suffix }) {
         {fmt.format(value || 0)}
         {suffix && <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "#64748b", marginLeft: 6 }}>{suffix}</span>}
       </div>
+      {sub && <div style={{ fontSize: "0.66rem", color: "#94a3b8", fontWeight: 500 }}>{sub}</div>}
     </div>
   );
 }
 
-function Section({ title, icon, action, children, style }) {
+function Section({ title, icon, action, children, style, subtitle }) {
   return (
     <div style={{
       background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10,
@@ -101,6 +102,9 @@ function Section({ title, icon, action, children, style }) {
         <h3 style={{ margin: 0, fontSize: "0.82rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>
           {icon && <span aria-hidden style={{ fontSize: "1rem" }}>{icon}</span>}
           {title}
+          {subtitle && (
+            <span style={{ fontWeight: 500, fontSize: "0.7rem", color: "#94a3b8" }}>· {subtitle}</span>
+          )}
         </h3>
         {action}
       </div>
@@ -282,32 +286,50 @@ export default function IMDashboard({ overrideIm }) {
         <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading dashboard…</div>
       )}
 
-      {/* ── KPI tiles ───────────────────────────────────────── */}
+      {/* ── KPI tiles ───────────────────────────────────────────────────
+          These count ROLLOUT PLANS (one per planned visit), not distinct
+          sites — a site replanned 3 times is 3 plans, and about a third of
+          plans here are re-visits, so the old "…Sites" labels read roughly
+          3x the real site count.
+          The first four follow the date range above (matched on plan_date);
+          the two "Today" tiles are always today, whatever range is picked. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
-        <KpiTile icon="📋" label="Total Assigned Sites" value={k.total_assigned} tone="slate" />
-        <KpiTile icon="✓"  label="Completed Sites"     value={k.completed_total} tone="green" />
-        <KpiTile icon="⏱"  label="In Progress"          value={k.in_progress}    tone="blue" />
-        <KpiTile icon="⚠"  label="Delayed Sites"        value={k.delayed}        tone="red" />
-        <KpiTile icon="◎"  label="Today's Target"       value={k.today_target}   tone="indigo" suffix="Sites" />
-        <KpiTile icon="✓"  label="Today Completed"      value={k.today_completed} tone="green" suffix="Sites" />
+        <KpiTile icon="📋" label="Assigned Plans"   value={k.total_assigned}  tone="slate"
+                 sub={k.distinct_sites ? `${k.distinct_sites} sites in range` : "in range"} />
+        <KpiTile icon="✓"  label="Completed Plans"  value={k.completed_total} tone="green" sub="in range" />
+        <KpiTile icon="⏱"  label="In Execution"     value={k.in_progress}     tone="blue" sub="in range" />
+        <KpiTile icon="⚠"  label="Delayed Plans"    value={k.delayed}         tone="red"
+                 sub="overdue + planning issue" />
+        <KpiTile icon="◎"  label="Today's Target"   value={k.today_target}    tone="indigo" suffix="Plans" sub="today" />
+        <KpiTile icon="✓"  label="Today Completed"  value={k.today_completed} tone="green" suffix="Plans" sub="today" />
       </div>
 
       {/* ── Row 2: Project Progress (2/3) + Team Performance (1/3) ── */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-        <Section title="Project Progress" icon="📊">
+        {/* Rollout-plan basis: completed planned visits / planned visits
+            (cancelled excluded). Not the same as the PM dashboard's Top
+            Projects %, which counts PO lines. */}
+        <Section title="Project Progress" icon="📊" subtitle="planned rollout visits completed">
           {projects.length === 0 ? (
             <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No project data for this window.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {projects.map((p, i) => (
-                <div key={p.project_code || i} style={{ display: "grid", gridTemplateColumns: "120px 1fr", alignItems: "center", gap: 12 }}>
+                <div key={p.project_code || i} style={{ display: "grid", gridTemplateColumns: "120px 1fr 78px", alignItems: "center", gap: 12 }}>
                   <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#1e293b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={p.project_name || p.project_code}>
                     {p.project_name || p.project_code}
                   </div>
-                  <ProgressBar
-                    pct={p.pct}
-                    color={p.pct >= 70 ? "#10b981" : p.pct >= 40 ? "#f59e0b" : "#3b82f6"}
-                  />
+                  {p.has_plans === false ? (
+                    <div style={{ fontSize: "0.78rem", color: "#94a3b8", fontStyle: "italic" }}>No rollout plans yet</div>
+                  ) : (
+                    <ProgressBar
+                      pct={p.pct}
+                      color={p.pct >= 70 ? "#10b981" : p.pct >= 40 ? "#f59e0b" : "#3b82f6"}
+                    />
+                  )}
+                  <div style={{ fontSize: "0.72rem", color: "#64748b", textAlign: "right", whiteSpace: "nowrap" }}>
+                    {p.has_plans === false ? "—" : `${p.done ?? 0}/${p.total ?? 0} visits`}
+                  </div>
                 </div>
               ))}
             </div>

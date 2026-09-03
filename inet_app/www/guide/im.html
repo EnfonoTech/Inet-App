@@ -26,18 +26,27 @@
   <h2>3.1 My Dashboard <span class="section-url">/pms/im-dashboard</span></h2>
   <p>Personal operations overview. <strong>Auto-refreshes every 5 minutes.</strong></p>
   <h3>KPI tiles (6)</h3>
+  <p>These tiles count <strong>rollout plans</strong> (one per planned visit), not
+  distinct sites — a site replanned three times is three plans. The first tile also
+  shows the distinct site count underneath.</p>
+  <p>The first four tiles follow the <strong>date range filter</strong>, matched on the
+  plan's own plan date; a plan with no plan date is not counted. The two
+  <strong>Today</strong> tiles always mean today, whichever range is selected.</p>
   <table>
     <thead><tr><th>Tile</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td>Total Assigned Sites</td><td>All sites dispatched to your teams in the selected period</td></tr>
-      <tr><td>Completed Sites</td><td>Sites with Completed execution status (green)</td></tr>
-      <tr><td>In Progress</td><td>Sites currently in execution (blue)</td></tr>
-      <tr><td>Delayed Sites</td><td>Sites past planned date with no completion (red)</td></tr>
-      <tr><td>Today's Target</td><td>Sites planned for today (indigo)</td></tr>
-      <tr><td>Today Completed</td><td>Sites completed today (green)</td></tr>
+      <tr><td>Assigned Plans</td><td>Rollout plans on your POIDs planned in the selected range, excluding cancelled ones (sub-line = distinct sites in that range)</td></tr>
+      <tr><td>Completed Plans</td><td>Plans in range with status Completed (green)</td></tr>
+      <tr><td>In Execution</td><td>Plans in range with status In Execution (blue)</td></tr>
+      <tr><td>Delayed Plans</td><td>Plans in range that are Overdue or Planning with Issue (red)</td></tr>
+      <tr><td>Today's Target</td><td>Plans whose plan date is today, regardless of range (indigo)</td></tr>
+      <tr><td>Today Completed</td><td>Completed plans with a Daily Execution dated today, regardless of range (green)</td></tr>
     </tbody>
   </table>
-  <p><strong>Project Progress panel (left 2/3):</strong> Progress bar per project — green ≥70%, amber ≥40%, blue below 40%.</p>
+  <p><strong>Project Progress panel (left 2/3):</strong> Share of <em>planned rollout
+  visits</em> completed per project, cancelled plans excluded — a plan-based measure, so
+  it is not the same number as the PM dashboard's Top Projects %, which counts PO lines.
+  Progress bar per project — green ≥70%, amber ≥40%, blue below 40%.</p>
   <p><strong>Team Performance panel (right 1/3):</strong> Up to 8 teams with sites done count.</p>
   <p><strong>Site Status table (left 2/3):</strong> Site ID, Location, Project, Status badge, Last Update ("Xm ago"), Issue flag. "View all →" link goes to Rollout Execution.</p>
   <p><strong>Issues &amp; Escalations panel (right 1/3):</strong> Critical Issues (red dot), Pending Approvals (amber dot), Open Dummy POs (purple dot), QC Fail Needs Action (green dot).</p>

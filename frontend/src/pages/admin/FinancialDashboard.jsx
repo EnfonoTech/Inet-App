@@ -28,16 +28,21 @@ export default function FinancialDashboard() {
 
   const { company = {}, inet = {}, subcon = {}, backend = {}, im_performance = [] } = data;
   const totalRevenue = company.total_achieved ?? 0;
-  const totalCost = company.total_cost ?? 0;
+  // The backend returns `total_cost_today` (cost pro-rated over the elapsed
+  // part of the period), not `total_cost` — reading the latter meant this
+  // tile, and the "Other" cost slice derived from it, sat at SAR 0 forever.
+  const totalCost = company.total_cost_today ?? 0;
   const netProfit = company.profit_loss ?? 0;
   const margin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : "0.0";
   const outstanding = (picData?.kpi?.unbilled_ms1 || 0) + (picData?.kpi?.unbilled_ms2 || 0);
 
+  // Only the two cost streams the backend actually reports. A third
+  // "Backend" slice used to be invented as active_teams × SAR 10,000 — a
+  // hardcoded rate that exists nowhere in the data — and "Other" was the
+  // residual of subtracting it from a total that was always 0.
   const costBD = [
-    { n: "INET", v: inet.inet_monthly_cost || 0, c: C.blue },
-    { n: "Subcon", v: subcon.sub_expense || 0, c: C.amber },
-    { n: "Backend", v: (backend.active_teams || 0) * 10000, c: C.green },
-    { n: "Other", v: Math.max(totalCost - (inet.inet_monthly_cost || 0) - (subcon.sub_expense || 0) - ((backend.active_teams || 0) * 10000), 0), c: "#94a3b8" },
+    { n: "INET teams", v: inet.inet_monthly_cost || 0, c: C.blue },
+    { n: "Sub-Con", v: subcon.sub_expense || 0, c: C.amber },
   ];
 
   const agingData = [

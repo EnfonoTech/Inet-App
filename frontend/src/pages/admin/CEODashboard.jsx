@@ -10,17 +10,24 @@ export default function CEODashboard() {
   const [data, setData] = useState(null);
   const [projKpis, setProjKpis] = useState(null);
   const [picKpi, setPicKpi] = useState(null);
+  const [trend, setTrend] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [cmd, pk, pic] = await Promise.all([
+        const [cmd, pk, pic, tr] = await Promise.all([
           pmApi.getCommandDashboard({ from_date: "", to_date: "" }),
           pmApi.projectKpis().catch(() => null),
           pmApi.getPicDashboard(null, null, "").catch(() => null),
+          // Real monthly spine. The chart used to fake one by taking the
+          // first 4 IMs and labelling them Jan/Feb/Mar/Apr.
+          pmApi.getPoVsInvoiceTrend({ months: 6 }).catch(() => null),
         ]);
-        if (!cancelled) { setData(cmd); setProjKpis(pk); setPicKpi(pic?.kpi || null); }
+        if (!cancelled) {
+          setData(cmd); setProjKpis(pk); setPicKpi(pic?.kpi || null);
+          setTrend(Array.isArray(tr?.series) ? tr.series : []);
+        }
       } catch { if (!cancelled) setData(null); }
     })();
     return () => { cancelled = true; };
@@ -36,18 +43,27 @@ export default function CEODashboard() {
   const pendingInv = (picKpi?.unbilled_ms1 || 0) + (picKpi?.unbilled_ms2 || 0);
   const coveragePct = Number(company.coverage_pct ?? 0).toFixed(1);
 
-  const revTrend = (im_performance || []).slice(0, 4).map((im, i) => ({
-    m: ["Jan", "Feb", "Mar", "Apr"][i] || `M${i + 1}`,
-    t: (im.revenue || 0) / 1000000,
-    l: ((im.revenue || 0) * 0.8) / 1000000,
+  // Real trailing-6-month series: PO published value vs invoiced value, in
+  // millions. Replaces a chart that plotted the first 4 IMs' revenue under
+  // hardcoded Jan/Feb/Mar/Apr labels, against an invented "last year" line
+  // that was just the same number × 0.8.
+  const revTrend = (trend || []).map((r) => ({
+    m: r.label || r.m,
+    po: (r.po_value || 0) / 1000000,
+    inv: (r.invoiced || 0) / 1000000,
   }));
 
-  const topProjects = (top_teams || []).slice(0, 5).map((t, i) => ({
-    name: t.team_name || `Team ${i + 1}`,
-    client: t.team || "",
-    progress: t.target > 0 ? Math.min(Math.round((t.achieved / t.target) * 100), 100) : 0,
-    status: t.achieved >= t.target ? "On Track" : t.achieved >= t.target * 0.5 ? "At Risk" : "Delayed",
-    color: t.achieved >= t.target ? "green" : t.achieved >= t.target * 0.5 ? "amber" : "red",
+  // top_teams rows are {team, team_name, revenue, team_cost, profit} — there
+  // is no `achieved`/`target`, so the old mapping compared undefined against
+  // undefined: every team showed a 0% bar and the "Delayed" badge. Bar is now
+  // each team's revenue relative to the strongest team; status is whether the
+  // team covered its own cost.
+  const maxTeamRev = Math.max(...(top_teams || []).map((t) => t.revenue || 0), 1);
+  const topTeams = (top_teams || []).slice(0, 5).map((t, i) => ({
+    name: t.team_name || t.team || `Team ${i + 1}`,
+    progress: Math.min(Math.round(((t.revenue || 0) / maxTeamRev) * 100), 100),
+    status: (t.profit || 0) >= 0 ? "Profitable" : "At Loss",
+    color: (t.profit || 0) >= 0 ? "green" : "red",
   }));
 
   const alerts = (watchlist || []).slice(0, 3).map((w, i) => ({
@@ -104,13 +120,13 @@ export default function CEODashboard() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
-          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Revenue Trend</h3><span style={{ fontSize: 11, color: C.green }}>SAR {fmt.format(totalRevenue)} YTD</span></div>
+          <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>PO Published vs Invoiced</h3><span style={{ fontSize: 11, color: "#64748b" }}>last 6 months, SAR M</span></div>
             <div className="nd-panel-body nd-chart-h160">
-              <ResponsiveContainer><AreaChart data={revTrend.length ? revTrend : [{ m: "—", t: 0, l: 0 }]}><CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" /><XAxis dataKey="m" tick={{ fontSize: 11 }} /><Tooltip formatter={(v) => `SAR ${v}M`} /><Area type="monotone" dataKey="l" stroke="#94a3b8" fill="#e2e8f0" /><Area type="monotone" dataKey="t" stroke={C.green} fill="#c8e6c9" /></AreaChart></ResponsiveContainer>
+              <ResponsiveContainer><AreaChart data={revTrend.length ? revTrend : [{ m: "—", po: 0, inv: 0 }]}><CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" /><XAxis dataKey="m" tick={{ fontSize: 11 }} /><Tooltip formatter={(v, n) => [`SAR ${Number(v).toFixed(2)}M`, n === "po" ? "PO published" : "Invoiced"]} /><Area type="monotone" dataKey="po" stroke="#94a3b8" fill="#e2e8f0" /><Area type="monotone" dataKey="inv" stroke={C.green} fill="#c8e6c9" /></AreaChart></ResponsiveContainer>
             </div></div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div className="nd-panel"><div className="nd-panel-header"><h3>Top Teams</h3></div><div className="nd-panel-body">
-              <table className="nd-table"><tbody>{topProjects.map((p) => (
+              <table className="nd-table"><tbody>{topTeams.map((p) => (
                 <tr key={p.name}><td><strong>{p.name}</strong></td><td style={{ width: "25%" }}><div className="nd-progress"><div className={"nd-progress-bar " + p.color} style={{ width: p.progress + "%" }} /></div></td><td><span className={"nd-badge " + p.color}>{p.status}</span></td></tr>
               ))}</tbody></table>
             </div></div>

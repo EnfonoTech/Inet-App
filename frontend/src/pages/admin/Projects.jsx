@@ -41,7 +41,6 @@ const INITIAL_FORM = {
   huawei_im: "",
   center_area: "",
   project_domain: "",
-  budget_amount: "",
   project_status: "Active",
   isdp_owner: "",
   ibuy_owner: "",
@@ -93,7 +92,6 @@ function CreateProjectModal({ open, onClose, onCreated }) {
         huawei_im: form.huawei_im || undefined,
         center_area: form.center_area || undefined,
         project_domain: form.project_domain || undefined,
-        budget_amount: form.budget_amount ? parseFloat(form.budget_amount) : undefined,
         project_status: form.project_status,
         isdp_owner: form.isdp_owner || undefined,
         ibuy_owner: form.ibuy_owner || undefined,
@@ -179,10 +177,6 @@ function CreateProjectModal({ open, onClose, onCreated }) {
             <div>
               <label style={labelStyle}>Center / Area</label>
               <input style={inputStyle} value={form.center_area} onChange={e => setField("center_area", e.target.value)} placeholder="e.g. Central" />
-            </div>
-            <div>
-              <label style={labelStyle}>Budget Amount (SAR)</label>
-              <input style={inputStyle} type="number" min="0" step="0.01" value={form.budget_amount} onChange={e => setField("budget_amount", e.target.value)} placeholder="0" />
             </div>
             <div>
               <label style={labelStyle}>Implementation Manager</label>
@@ -461,9 +455,9 @@ export default function Projects() {
                 <th>IM</th>
                 <th>Area</th>
                 <th>Region</th>
-                <th style={{ textAlign: "right" }}>Budget</th>
-                <th style={{ textAlign: "right" }}>Actual Cost</th>
-                <th style={{ textAlign: "right" }}>Progress</th>
+                <th style={{ textAlign: "right" }}>Total Value (SAR)</th>
+                <th style={{ textAlign: "right" }}>Revenue (SAR)</th>
+                <th style={{ textAlign: "right" }}>Completion %</th>
               </tr>
             </thead>
             <tbody>
@@ -488,18 +482,18 @@ export default function Projects() {
                   <td style={{ fontSize: 13 }}>{p.center_area || "\u2014"}</td>
                   <td style={{ fontSize: 13 }}>{p.region_type || "\u2014"}</td>
                   <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-                    {p.budget_amount ? fmt.format(p.budget_amount) : "\u2014"}
+                    {p.total_value ? fmt.format(p.total_value) : "\u2014"}
                   </td>
                   <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-                    {p.actual_cost ? fmt.format(p.actual_cost) : "\u2014"}
+                    {p.revenue ? fmt.format(p.revenue) : "\u2014"}
                   </td>
                   <td style={{ textAlign: "right" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
                       <div style={{ width: 60, height: 6, borderRadius: 3, background: "#e2e8f0", overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${Math.min(p.completion_percentage || 0, 100)}%`, borderRadius: 3, background: (p.completion_percentage || 0) >= 80 ? "#10b981" : (p.completion_percentage || 0) >= 40 ? "#3b82f6" : "#f59e0b" }} />
+                        <div style={{ height: "100%", width: `${Math.min(p.completion_pct || 0, 100)}%`, borderRadius: 3, background: (p.completion_pct || 0) >= 80 ? "#10b981" : (p.completion_pct || 0) >= 40 ? "#3b82f6" : "#f59e0b" }} />
                       </div>
                       <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", minWidth: 36, textAlign: "right" }}>
-                        {p.completion_percentage || 0}%
+                        {p.completion_pct || 0}%
                       </span>
                     </div>
                   </td>

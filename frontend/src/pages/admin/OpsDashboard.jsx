@@ -8,13 +8,21 @@ const C = { blue: "#1565C0", green: "#2E7D32", amber: "#F57C00", red: "#C62828" 
 
 export default function OpsDashboard() {
   const [data, setData] = useState(null);
+  // get_command_dashboard never returned a `picKpi` key, so the unbilled
+  // figures below silently fell back to open-PO value and were labelled
+  // "Unbilled". PIC numbers come from the PIC dashboard, same as the
+  // Financial dashboard does it.
+  const [picKpi, setPicKpi] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const cmd = await pmApi.getCommandDashboard({ from_date: "", to_date: "" });
-        if (!cancelled) setData(cmd);
+        const [cmd, pic] = await Promise.all([
+          pmApi.getCommandDashboard({ from_date: "", to_date: "" }),
+          pmApi.getPicDashboard("", "", "").catch(() => null),
+        ]);
+        if (!cancelled) { setData(cmd); setPicKpi(pic?.kpi || null); }
       } catch { if (!cancelled) setData(null); }
     })();
     return () => { cancelled = true; };
@@ -25,10 +33,14 @@ export default function OpsDashboard() {
   const { operational = {}, inet = {}, subcon = {}, backend = {}, company = {}, top_teams = [], im_performance = [], team_status = {} } = data;
 
   const totalRevenue = company.total_achieved ?? 0;
-  const dailyAvg = totalRevenue > 0 ? Math.round(totalRevenue / 30) : 0;
   const jobsCompleted = operational.closed_activities ?? 0;
   const openOrders = operational.total_open_po_lines ?? 0;
   const coveragePct = Number(company.coverage_pct ?? 0).toFixed(1);
+  // Was revenue / 30 regardless of the period actually fetched (which is
+  // all-time here), so "avg daily" was all-time revenue over a fixed 30.
+  // day_progress_pct is the elapsed fraction of the period the backend used.
+  const elapsedDays = Math.max(Math.round(((company.day_progress_pct ?? 0) / 100) * 30), 1);
+  const dailyAvg = totalRevenue > 0 ? Math.round(totalRevenue / elapsedDays) : 0;
 
   const jobBreakdown = [
     { n: "INET", v: inet.active_inet_teams || 0, c: C.blue },
@@ -36,22 +48,28 @@ export default function OpsDashboard() {
     { n: "Backend", v: backend.active_teams || 0, c: C.red },
   ];
 
+  // "Backend" used to be invented here as active_teams × SAR 10,000 — a
+  // hardcoded rate that exists nowhere in the data. Dropped: only the two
+  // cost streams the backend actually reports are shown.
   const costs = [
     { l: "INET Cost", v: inet.inet_monthly_cost || 0, bc: C.blue },
     { l: "Subcon Cost", v: subcon.sub_expense || 0, bc: C.green },
-    { l: "Backend", v: (backend.active_teams || 0) * 10000, bc: C.amber },
   ];
   const maxCost = Math.max(...costs.map((c) => c.v), 1);
 
+  // top_teams rows are {team, team_name, revenue, team_cost, profit} — there
+  // is no `achieved` key, so the old `t.achieved` / `t.revenue || t.achieved`
+  // mapping printed the same value under two differently-named columns.
   const techs = (top_teams || []).slice(0, 5).map((t) => ({
     n: t.team_name || t.team || "—",
-    j: t.achieved || 0,
-    r: t.revenue || t.achieved || 0,
+    r: t.revenue || 0,
+    cost: t.team_cost || 0,
+    profit: t.profit || 0,
   }));
 
   const billingPct = company.company_target > 0 ? Math.round((totalRevenue / company.company_target) * 100) : 0;
-  const unbilledMs1 = data.picKpi?.unbilled_ms1 || operational.total_open_po_line_value || 0;
-  const unbilledMs2 = data.picKpi?.unbilled_ms2 || 0;
+  const unbilledMs1 = picKpi?.unbilled_ms1 || 0;
+  const unbilledMs2 = picKpi?.unbilled_ms2 || 0;
 
   return (
     <div className="nd-dashboard">
@@ -70,7 +88,10 @@ export default function OpsDashboard() {
 
       <div className="nd-grid col2">
         <div className="nd-panel"><div className="nd-panel-header"><h3>IM Revenue</h3></div><div className="nd-panel-body"><div className="nd-chart-h170"><ResponsiveContainer><BarChart data={(im_performance || []).slice(0, 7).map((im) => ({ n: im.im || "—", v: (im.revenue || 0) / 1000000 }))}><CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" /><XAxis dataKey="n" tick={{ fontSize: 9 }} /><Tooltip formatter={(v) => `SAR ${v}M`} /><Bar dataKey="v" fill={C.blue} radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></div></div></div>
-        <div className="nd-panel"><div className="nd-panel-header"><h3>Team Distribution</h3></div><div className="nd-panel-body" style={{ textAlign: "center" }}><div className="nd-chart-h170"><ResponsiveContainer><PieChart><Pie data={jobBreakdown} dataKey="v" innerRadius={55} outerRadius={80} paddingAngle={2}>{jobBreakdown.map((d) => <Cell key={d.n} fill={d.c} />)}</Pie></PieChart></ResponsiveContainer></div><div style={{ fontSize: 18, fontWeight: 800, marginTop: -32 }}>{(team_status.active || 0) + (team_status.idle || 0)}</div><div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11, fontWeight: 600, marginTop: 4 }}>{jobBreakdown.map((d) => <span key={d.n} style={{ color: d.c }}>{d.n}: {d.v}</span>)}</div></div></div>
+        <div className="nd-panel"><div className="nd-panel-header"><h3>Team Distribution</h3></div><div className="nd-panel-body" style={{ textAlign: "center" }}><div className="nd-chart-h170"><ResponsiveContainer><PieChart><Pie data={jobBreakdown} dataKey="v" innerRadius={55} outerRadius={80} paddingAngle={2}>{jobBreakdown.map((d) => <Cell key={d.n} fill={d.c} />)}</Pie></PieChart></ResponsiveContainer></div>{/* Sum of the slices actually drawn — this used to print
+    team_status.active + team_status.idle, a different total that
+    need not equal the three team-type counts in the pie. */}
+              <div style={{ fontSize: 18, fontWeight: 800, marginTop: -32 }}>{jobBreakdown.reduce((s, d) => s + (d.v || 0), 0)}</div><div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11, fontWeight: 600, marginTop: 4 }}>{jobBreakdown.map((d) => <span key={d.n} style={{ color: d.c }}>{d.n}: {d.v}</span>)}</div></div></div>
       </div>
 
       <div className="nd-grid col3 stretch">
@@ -83,12 +104,12 @@ export default function OpsDashboard() {
           <div className="nd-panel"><div className="nd-panel-header"><h3>Billing Overview</h3></div><div className="nd-panel-body">
             <div className="nd-donut-row">
               <div style={{ position: "relative", width: 90, height: 90, flexShrink: 0 }}><ResponsiveContainer><PieChart><Pie data={[{ v: billingPct }, { v: 100 - billingPct }]} dataKey="v" innerRadius={30} outerRadius={40} startAngle={90} endAngle={-270}><Cell fill={C.green} /><Cell fill="#e2e8f0" /></Pie></PieChart></ResponsiveContainer><div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.green }}>{billingPct}%</div></div>
-              <div><div style={{ fontSize: 18, fontWeight: 700 }}>SAR {fmt.format(totalRevenue)}</div><div style={{ fontSize: 11, color: "#64748b" }}>Revenue Achieved</div><div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>Unbilled: SAR {fmt.format(unbilledMs1)}</div></div>
+              <div><div style={{ fontSize: 18, fontWeight: 700 }}>SAR {fmt.format(totalRevenue)}</div><div style={{ fontSize: 11, color: "#64748b" }}>Revenue Achieved</div><div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>Unbilled MS1: SAR {fmt.format(unbilledMs1)}</div><div style={{ fontSize: 11, color: C.amber }}>Unbilled MS2: SAR {fmt.format(unbilledMs2)}</div></div>
             </div>
           </div></div>
           <div className="nd-panel"><div className="nd-panel-header"><h3>Team Performance</h3></div><div className="nd-panel-body">
-            <table className="nd-table"><thead><tr><th>Team</th><th style={{ textAlign: "right" }}>Achieved</th><th style={{ textAlign: "right" }}>Revenue</th></tr></thead><tbody>
-              {techs.map((t) => (<tr key={t.n}><td><strong>{t.n}</strong></td><td style={{ textAlign: "right" }}>{t.j}</td><td style={{ textAlign: "right" }}>SAR {fmt.format(t.r)}</td></tr>))}
+            <table className="nd-table"><thead><tr><th>Team</th><th style={{ textAlign: "right" }}>Revenue</th><th style={{ textAlign: "right" }}>Cost</th><th style={{ textAlign: "right" }}>Profit</th></tr></thead><tbody>
+              {techs.map((t) => (<tr key={t.n}><td><strong>{t.n}</strong></td><td style={{ textAlign: "right" }}>SAR {fmt.format(t.r)}</td><td style={{ textAlign: "right" }}>SAR {fmt.format(t.cost)}</td><td style={{ textAlign: "right", color: t.profit >= 0 ? C.green : C.red }}>SAR {fmt.format(t.profit)}</td></tr>))}
             </tbody></table>
           </div></div>
         </div>

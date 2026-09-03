@@ -30,9 +30,12 @@ export default function PMDashboard() {
   const atRisk = kpis?.projects_at_risk ?? 0;
   const overdue = kpis?.overdue_projects ?? 0;
   const onTrack = Math.max(active - atRisk - overdue, 0);
-  const totalBudget = kpis?.total_budget ?? 0;
-  const actualSpent = kpis?.actual_spent ?? 0;
-  const utilization = kpis?.budget_utilization ?? 0;
+  // total_budget/actual_spent/budget_utilization used to come from
+  // budget_amount/actual_cost — dead fields, nothing writes them. Replaced
+  // with real company-wide totals: contracted value and revenue realized.
+  const totalValue = kpis?.total_value ?? 0;
+  const totalRevenue = kpis?.total_revenue ?? 0;
+  const revenuePct = kpis?.revenue_pct ?? 0;
 
   const health = [
     { n: "On Track", v: active > 0 ? Math.round((onTrack / active) * 100) : 0, c: C.green },
@@ -41,17 +44,20 @@ export default function PMDashboard() {
   ];
 
   const statusData = charts?.projects_by_status || [];
-  const budgetData = (charts?.budget_vs_actual || []).slice(0, 5).map((p) => ({
+  const valueData = (charts?.value_vs_revenue || []).slice(0, 5).map((p) => ({
     n: p.project_code || "—",
-    p: p.budget_amount > 0 ? Math.round((p.actual_cost / p.budget_amount) * 100) : 0,
-    s: p.actual_cost > p.budget_amount ? "Over" : "On Track",
-    c: p.actual_cost > p.budget_amount ? "red" : "green",
+    p: p.total_value > 0 ? Math.round((p.revenue / p.total_value) * 100) : 0,
+    s: p.revenue >= p.total_value && p.total_value > 0 ? "Complete" : "In Progress",
+    c: p.revenue >= p.total_value && p.total_value > 0 ? "green" : "amber",
   }));
 
+  // Line-based completion, ranked by contracted value. Cancelled and
+  // internal lines are excluded server-side.
   const topProjects = (charts?.top_projects || []).slice(0, 5).map((p) => ({
     code: p.project_code || "—",
     total: p.total || 0,
     completed: p.completed || 0,
+    value: p.value || 0,
     pct: p.completion_pct || 0,
   }));
 
@@ -65,7 +71,7 @@ export default function PMDashboard() {
       <div className="nd-kpi-row col6">
         {[{ l: "Active Projects", v: active, cl: C.blue }, { l: "On Track", v: onTrack, cl: C.green },
           { l: "At Risk", v: atRisk, cl: C.amber }, { l: "Delayed", v: overdue, cl: C.red },
-          { l: "Total Budget", v: `SAR ${fmt.format(totalBudget)}`, cl: C.blue }, { l: "Utilization", v: `${Number(utilization).toFixed(1)}%`, cl: C.green }].map((k) => (
+          { l: "Total Value", v: `SAR ${fmt.format(totalValue)}`, cl: C.blue }, { l: "Revenue Realized", v: `${Number(revenuePct).toFixed(1)}%`, cl: C.green }].map((k) => (
           <div className="nd-kpi-card" key={k.l}><div className="nd-kpi-label">{k.l}</div><div className="nd-kpi-value" style={{ color: k.cl }}>{k.v}</div></div>
         ))}
       </div>
@@ -87,28 +93,28 @@ export default function PMDashboard() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>Budget vs Actual</h3></div><div className="nd-panel-body">
+          <div className="nd-panel"><div className="nd-panel-header"><h3>Value vs Revenue</h3></div><div className="nd-panel-body">
             <table className="nd-table"><thead><tr><th>Project</th><th>Progress</th><th>Status</th></tr></thead><tbody>
-              {budgetData.map((p) => (<tr key={p.n}><td><strong>{p.n}</strong></td><td style={{ width: "22%" }}><div className="nd-progress"><div className={"nd-progress-bar " + p.c} style={{ width: p.p + "%" }} /></div></td><td><span className={"nd-badge " + p.c}>{p.s}</span></td></tr>))}
+              {valueData.map((p) => (<tr key={p.n}><td><strong>{p.n}</strong></td><td style={{ width: "22%" }}><div className="nd-progress"><div className={"nd-progress-bar " + p.c} style={{ width: p.p + "%" }} /></div></td><td><span className={"nd-badge " + p.c}>{p.s}</span></td></tr>))}
             </tbody></table>
           </div></div>
           <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Financial Overview</h3></div><div className="nd-panel-body">
-            {[{ l: "Budget Spent", v: `SAR ${fmt.format(actualSpent)}`, p: utilization, c: C.blue },
-              { l: "Remaining", v: `SAR ${fmt.format(Math.max(totalBudget - actualSpent, 0))}`, p: 100 - utilization, c: C.green },
-              { l: "Total Budget", v: `SAR ${fmt.format(totalBudget)}`, p: 100, c: C.blue }].map((f) => (
+            {[{ l: "Revenue Realized", v: `SAR ${fmt.format(totalRevenue)}`, p: revenuePct, c: C.blue },
+              { l: "Outstanding", v: `SAR ${fmt.format(Math.max(totalValue - totalRevenue, 0))}`, p: 100 - revenuePct, c: C.green },
+              { l: "Total Value", v: `SAR ${fmt.format(totalValue)}`, p: 100, c: C.blue }].map((f) => (
               <div key={f.l} style={{ marginBottom: 8 }}><div className="nd-row-xs"><span style={{ fontSize: 12 }}>{f.l}</span><span style={{ fontWeight: 700, fontSize: 12 }}>{f.v}</span></div><div className="nd-progress thin"><div className="nd-progress-bar" style={{ width: f.p + "%", background: f.c }} /></div></div>
             ))}
           </div></div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
-          <div className="nd-panel"><div className="nd-panel-header"><h3>Top Projects</h3></div><div className="nd-panel-body">
-            <table className="nd-table compact"><thead><tr><th>Project</th><th style={{ textAlign: "right" }}>Done</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>%</th></tr></thead><tbody>
+          <div className="nd-panel"><div className="nd-panel-header"><h3>Top Projects</h3><span style={{ fontSize: 10, color: "#94a3b8" }}>by value · PO lines done</span></div><div className="nd-panel-body">
+            <table className="nd-table compact"><thead><tr><th>Project</th><th style={{ textAlign: "right" }}>Value</th><th style={{ textAlign: "right" }}>Lines</th><th style={{ textAlign: "right" }}>%</th></tr></thead><tbody>
               {topProjects.length ? topProjects.map((p) => (
                 <tr key={p.code}>
                   <td><strong>{p.code}</strong></td>
-                  <td style={{ textAlign: "right" }}>{p.completed}</td>
-                  <td style={{ textAlign: "right" }}>{p.total}</td>
+                  <td style={{ textAlign: "right" }}>{fmt.format(p.value)}</td>
+                  <td style={{ textAlign: "right" }}>{p.completed}/{p.total}</td>
                   <td style={{ textAlign: "right" }}><span className={"nd-badge " + (p.pct >= 50 ? "green" : "amber")}>{p.pct}%</span></td>
                 </tr>
               )) : <tr><td colSpan={4} style={{ textAlign: "center", color: "#94a3b8" }}>No data</td></tr>}

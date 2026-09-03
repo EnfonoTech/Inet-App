@@ -434,10 +434,6 @@ PROJECT_COL_FIELD_MAP = {
     "status": "project_status",
     "im": "implementation_manager",
     "area": "center_area",
-    "budget": "budget_amount",
-    "actual_cost": "actual_cost",
-    "completion": "completion_percentage",
-    "progress": "completion_percentage",
 }
 
 
@@ -4254,11 +4250,33 @@ def _summary_projects(pf, extra):
         metrics.append({"key": "no_im", "label": "No IM", "agg": "count_if",
                         "cond": "IFNULL(`implementation_manager`,'') = ''",
                         "tone": "warn", "hide_if_zero": True})
-    if "budget_amount" in have:
-        metrics.append({"key": "budget", "label": "Budget", "agg": "sum",
-                        "expr": "IFNULL(`budget_amount`, 0)", "format": "money",
-                        "tone": "good", "hide_if_zero": True})
-    return summary_from_query("`tabProject Control Center`", " AND ".join(wheres), params, metrics)
+    # Budget used to show here (a dead field — nothing in the app writes
+    # it, meaningless for a customer project). Replaced with real figures:
+    # total contracted value and revenue actually realized, joined in via
+    # per-project subqueries so the existing single-round-trip aggregate
+    # shape (summary_from_query) still works unchanged.
+    metrics.append({"key": "total_value", "label": "Total Value", "agg": "sum",
+                    "expr": "IFNULL(`pcc_val`.`total_value`, 0)", "format": "money",
+                    "tone": "good", "hide_if_zero": True})
+    metrics.append({"key": "revenue", "label": "Revenue", "agg": "sum",
+                    "expr": "IFNULL(`pcc_rev`.`revenue`, 0)", "format": "money",
+                    "tone": "good", "hide_if_zero": True})
+    # Subquery join columns are aliased away from "project_code" (pc_/pd_)
+    # since Project Control Center has its own same-named column and the
+    # existing WHERE fragments above reference it unqualified — a same-named
+    # join column would make those ambiguous.
+    from_sql = (
+        "`tabProject Control Center` "
+        "LEFT JOIN (SELECT project_code AS pc_val, SUM(line_amount) AS total_value "
+        "FROM `tabPO Dispatch` WHERE IFNULL(is_internal_work, 0) = 0 "
+        "GROUP BY project_code) pcc_val "
+        "ON pcc_val.pc_val = `tabProject Control Center`.name "
+        "LEFT JOIN (SELECT pd.project_code AS pc_rev, SUM(wd.revenue_sar) AS revenue "
+        "FROM `tabWork Done` wd JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id "
+        "GROUP BY pd.project_code) pcc_rev "
+        "ON pcc_rev.pc_rev = `tabProject Control Center`.name"
+    )
+    return summary_from_query(from_sql, " AND ".join(wheres), params, metrics)
 
 
 @frappe.whitelist()
@@ -4698,11 +4716,14 @@ def _batch_item_activity_types(rows, item_key="item_code"):
 def _enrich_with_project_fields(rows, code_key="project_code"):
     """Batch-fetch project_domain and huawei_im from Project Control Center.
 
-    huawei_im is now also a real field on PO Dispatch (defaults from the
-    project at dispatch time, overridable from the rollout planning popup).
-    If a row already carries a truthy huawei_im (i.e. the caller fetched
-    PO Dispatch's own column), that override wins; only rows with no
-    dispatch-level value fall back to the project's default here.
+    Both are now also real fields on PO Dispatch (default from the project
+    at dispatch time, overridable from the rollout planning popup / Direct
+    Close / Backend Assign). If a row already carries a truthy value (i.e.
+    the caller fetched PO Dispatch's own column), that override wins; only
+    rows with no dispatch-level value fall back to the project's default
+    here. project_domain used to always be overwritten by the project's
+    value regardless of any dispatch-level override already on the row —
+    fixed to match how huawei_im was already handled.
     """
     codes = list({r.get(code_key) for r in rows if r.get(code_key)} - {None, ""})
     if not codes:
@@ -4720,7 +4741,7 @@ def _enrich_with_project_fields(rows, code_key="project_code"):
     pcc_map = {r.project_code: r for r in pcc}
     for row in rows:
         info = pcc_map.get(row.get(code_key)) or {}
-        row["project_domain"] = info.get("project_domain") or ""
+        row["project_domain"] = row.get("project_domain") or info.get("project_domain") or ""
         row["huawei_im"] = row.get("huawei_im") or info.get("huawei_im") or ""
 
 
@@ -10780,15 +10801,19 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
         as_dict=True,
     )
 
-    # Executions overlapping the month, with the domain resolved through the
-    # POID's project. Span is clamped to the month, so one row can contribute
-    # at most ~31 days no matter how stale its last_progress_date is.
+    # Executions overlapping the month, with the domain resolved from the
+    # POID's own PO Dispatch.project_domain first (the IM can override this
+    # per line — Create Rollout Plan / Direct Close / Backend Assign — see
+    # _enrich_with_project_fields for the same override-wins rule elsewhere)
+    # and only falling back to the project's default domain when the line
+    # was never overridden. Span is clamped to the month, so one row can
+    # contribute at most ~31 days no matter how stale its last_progress_date is.
     execs = frappe.db.sql(
         """
         SELECT de.team AS team,
                de.execution_date AS d1,
                COALESCE(de.last_progress_date, de.execution_date) AS d2,
-               NULLIF(pcc.project_domain, '') AS domain
+               NULLIF(COALESCE(NULLIF(pd.project_domain, ''), pcc.project_domain), '') AS domain
         FROM `tabDaily Execution` de
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
         LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
@@ -14187,15 +14212,16 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     projects = frappe.get_all(
         "Project Control Center",
         filters={"implementation_manager": ["in", im_identifiers]},
-        fields=["name", "project_code", "project_name", "project_status",
-                "completion_percentage", "budget_amount", "customer"],
+        fields=["name", "project_code", "project_name", "project_status", "customer"],
         order_by="modified desc",
         limit=50,
     )
-    # Normalize field names for frontend
+    # Normalize field names for frontend. completion_pct/budget used to come
+    # from the dead completion_percentage/budget_amount fields (nothing
+    # writes them) — dropped rather than replaced since this "projects" list
+    # itself isn't rendered anywhere (IM Dashboard reads project_progress,
+    # computed separately below from real Rollout Plan completion counts).
     for p in projects:
-        p["completion_pct"] = p.pop("completion_percentage", 0) or 0
-        p["budget"] = p.pop("budget_amount", 0) or 0
         p["status"] = p.pop("project_status", "Active") or "Active"
 
     debug_info = {
@@ -14337,31 +14363,76 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     )
     planned_activities = cint(planned_rows[0].cnt if planned_rows else 0)
 
-    # ── Site-centric KPIs (rollout plans = sites in this context) ─────────
+    # ── Rollout-plan KPIs ────────────────────────────────────────────────
+    # These count ROLLOUT PLANS (one per planned visit), not distinct sites —
+    # a site replanned three times is three plans. They used to be labelled
+    # "…Sites" in the UI, which read ~3x the real site count because a third
+    # of plans are re-visits. The tiles are named after plans now; use
+    # `distinct_sites` if a true site count is ever wanted.
+    #
+    # The four period tiles honour the dashboard's date range, matched on the
+    # plan's own plan_date. The range condition sits inside each CASE rather
+    # than in the WHERE so that the two "Today" tiles stay anchored to the
+    # actual today — they are labelled "Today", so they must not read zero
+    # just because the selected range happens to exclude it. Plans with no
+    # plan_date fall outside every range and so are not counted.
     site_kpi_rows = frappe.db.sql(
         f"""
         SELECT
-            COUNT(*) AS total_assigned,
-            SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_total,
-            SUM(CASE WHEN rp.plan_status = 'In Execution' THEN 1 ELSE 0 END) AS in_progress_cnt,
-            SUM(CASE WHEN rp.plan_status = 'Planning with Issue' THEN 1 ELSE 0 END) AS delayed_cnt,
+            -- A cancelled plan is not assigned work; it used to be counted.
+            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
+                      AND IFNULL(rp.plan_status, '') <> 'Cancelled'
+                     THEN 1 ELSE 0 END) AS total_assigned,
+            COUNT(DISTINCT CASE WHEN rp.plan_date BETWEEN %s AND %s
+                                THEN NULLIF(pd.site_code, '') END) AS distinct_sites,
+            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
+                      AND rp.plan_status = 'Completed'
+                     THEN 1 ELSE 0 END) AS completed_total,
+            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
+                      AND rp.plan_status = 'In Execution'
+                     THEN 1 ELSE 0 END) AS in_progress_cnt,
+            -- 'Overdue' is the bigger delayed group and was ignored entirely,
+            -- so this tile only ever showed 'Planning with Issue'.
+            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
+                      AND rp.plan_status IN ('Overdue', 'Planning with Issue')
+                     THEN 1 ELSE 0 END) AS delayed_cnt,
+            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
+                      AND rp.plan_status = 'Cancelled'
+                     THEN 1 ELSE 0 END) AS cancelled_cnt,
             SUM(CASE WHEN rp.plan_date = %s THEN 1 ELSE 0 END) AS today_target_cnt,
-            SUM(CASE WHEN rp.plan_status = 'Completed' AND rp.modified >= %s THEN 1 ELSE 0 END) AS today_completed_cnt
+            -- Completed today, dated by the execution's own execution_date.
+            -- This was `rp.modified >= today`, the last-edited timestamp, so
+            -- re-saving any old completed plan inflated "Today Completed".
+            COUNT(DISTINCT CASE
+                WHEN rp.plan_status = 'Completed' AND de_today.rollout_plan IS NOT NULL
+                THEN rp.name END) AS today_completed_cnt
         FROM `tabRollout Plan` rp
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN (
+            SELECT DISTINCT rollout_plan
+            FROM `tabDaily Execution`
+            WHERE execution_date = %s AND IFNULL(rollout_plan, '') <> ''
+        ) de_today ON de_today.rollout_plan = rp.name
         WHERE (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
         """,
-        (today_str, f"{today_str} 00:00:00") + tuple(im_identifiers) + tuple(rp_im_params),
+        (first_day, last_day) * 6 + (today_str, today_str)
+        + tuple(im_identifiers) + tuple(rp_im_params),
         as_dict=True,
     )
     skr = (site_kpi_rows[0] if site_kpi_rows else {}) or {}
     site_kpi = {
         "total_assigned": cint(skr.get("total_assigned") or 0),
+        "distinct_sites": cint(skr.get("distinct_sites") or 0),
         "completed_total": cint(skr.get("completed_total") or 0),
         "in_progress": cint(skr.get("in_progress_cnt") or 0),
         "delayed": cint(skr.get("delayed_cnt") or 0),
+        "cancelled": cint(skr.get("cancelled_cnt") or 0),
         "today_target": cint(skr.get("today_target_cnt") or 0),
         "today_completed": cint(skr.get("today_completed_cnt") or 0),
+        # The window the four period tiles describe, so the UI can label it
+        # rather than leaving the reader to guess.
+        "range_from": str(first_day),
+        "range_to": str(last_day),
     }
 
     # ── Team performance: completed sites per team in the date window ────
@@ -14401,7 +14472,16 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
             for r in (team_perf_rows or [])
         ]
 
-    # ── Project progress: completion % per project for this IM ───────────
+    # ── Project progress: planned rollout visits completed, per project ──
+    # This is deliberately a PLANNING metric — "how much of the rollout work
+    # I planned is done" — measured in Rollout Plans, not PO lines. It is
+    # therefore NOT the same number as the PM dashboard's Top Projects
+    # completion %, which is line-based; see get_project_line_completion in
+    # project_management.dashboard_charts.
+    #
+    # Cancelled plans are excluded from the denominator (a cancelled visit is
+    # not outstanding work), and the exclusion sits in the CASE rather than
+    # the WHERE so projects with no plans at all still come back with a row.
     project_progress = []
     if projects:
         project_codes = [p["project_code"] for p in projects if p.get("project_code")]
@@ -14410,8 +14490,11 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
             prog_rows = frappe.db.sql(
                 f"""
                 SELECT pd.project_code AS project_code,
-                       COUNT(rp.name) AS total,
-                       SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS done
+                       SUM(CASE WHEN rp.name IS NOT NULL
+                                 AND IFNULL(rp.plan_status, '') <> 'Cancelled'
+                                THEN 1 ELSE 0 END) AS total,
+                       SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS done,
+                       SUM(CASE WHEN rp.plan_status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelled
                 FROM `tabPO Dispatch` pd
                 LEFT JOIN `tabRollout Plan` rp ON rp.po_dispatch = pd.name
                 WHERE pd.project_code IN ({ph_pr})
@@ -14422,7 +14505,15 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
                 as_dict=True,
             )
             prog_map = {r.project_code: r for r in (prog_rows or [])}
-            for p in projects[:6]:
+            # Show the projects that actually have rollout activity, not
+            # whichever six were touched most recently — a project modified
+            # today with no plans used to occupy a slot at a flat 0%.
+            ranked = sorted(
+                projects,
+                key=lambda p: cint((prog_map.get(p.get("project_code")) or {}).get("total")),
+                reverse=True,
+            )
+            for p in ranked[:6]:
                 pc = p.get("project_code")
                 row = prog_map.get(pc)
                 total = cint(row.total) if row else 0
@@ -14433,7 +14524,12 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
                     "project_name": p.get("project_name") or pc,
                     "total": total,
                     "done": done,
+                    "cancelled": cint(row.cancelled) if row else 0,
                     "pct": pct,
+                    # Lets the UI say "no plans yet" instead of showing a
+                    # project with zero plans as though it were 0% complete.
+                    "has_plans": total > 0,
+                    "basis": "rollout_plans",
                 })
 
     # ── Site status table: latest rollout plans for this IM ──────────────
@@ -14781,24 +14877,17 @@ def get_im_reports():
         wd_mtd["count"] += c
         wd_mtd["revenue_sar"] += rev
 
+    # completion_pct/budget used to come from the dead completion_percentage/
+    # budget_amount/actual_cost fields (nothing writes them) — dropped rather
+    # than replaced since this "projects" list isn't rendered by IMReports.jsx.
     projects = frappe.get_all(
         "Project Control Center",
         filters={"implementation_manager": ["in", im_identifiers]},
-        fields=[
-            "name",
-            "project_code",
-            "project_name",
-            "project_status",
-            "completion_percentage",
-            "budget_amount",
-            "actual_cost",
-        ],
+        fields=["name", "project_code", "project_name", "project_status"],
         order_by="modified desc",
         limit_page_length=50,
     )
     for p in projects:
-        p["completion_pct"] = p.get("completion_percentage") or 0
-        p["budget"] = flt(p.get("budget_amount"))
         p["status"] = p.get("project_status") or "Active"
 
     return {
@@ -15294,13 +15383,21 @@ def _build_rollout_by_duid_groups(dispatches, plans, executions, work_done):
             g["planned_activities"].append(p)
 
     for wd in work_done:
-        ex = wd.get("execution")
-        if not ex:
-            continue
-        rplan = exec_to_plan.get(ex)
-        if not rplan:
-            continue
-        key = duid_for_plan_name(rplan)
+        # Prefer the POID the Work Done row points at directly — it is the
+        # universal link and it is the ONLY thing a Direct Close / Backend
+        # close has (no execution, no plan). Falling straight through the
+        # execution -> plan chain used to `continue` past every one of those
+        # rows, so direct-closed sites showed an empty Expenses tab.
+        key = None
+        sysid = wd.get("system_id")
+        if sysid and sysid in dispatch_by_name:
+            key = duid_for_dispatch_name(sysid)
+        if key is None:
+            ex = wd.get("execution")
+            rplan = exec_to_plan.get(ex) if ex else None
+            if not rplan:
+                continue
+            key = duid_for_plan_name(rplan)
         ensure_group(key)["expenses"].append(wd)
 
     plan_names = [p.name for p in plans]
@@ -15329,7 +15426,13 @@ def _build_rollout_by_duid_groups(dispatches, plans, executions, work_done):
 
     ordered = [groups[k] for k in sorted(groups.keys(), key=sort_key)]
     for g in ordered:
-        poids = sorted({r.get("name") for r in g["po_lines"] if r.get("name")})
+        # The real POID, not the PO Dispatch docname — this list is what the
+        # Rollout tab prints in its "POIDs (same DUID)" column, and it used
+        # to read as a row of SYS-2026-xxxxx internal ids.
+        poids = sorted({
+            (r.get("poid") or r.get("name")) for r in g["po_lines"]
+            if r.get("poid") or r.get("name")
+        })
         g["poid_list"] = poids
     return ordered
 
@@ -15342,57 +15445,106 @@ def get_project_summary(project_code):
 
     project = frappe.get_doc("Project Control Center", project_code).as_dict()
 
-    # PO Dispatches for this project (full rows for detail / rollout grouping)
+    # PO Dispatches for this project. An explicit field list rather than
+    # `fields=["*"]` (~150 columns) is what makes it affordable to load a
+    # whole project: the old 500-row cap cut the biggest project here (826
+    # lines) roughly in half, and because everything below was keyed off
+    # these 500 names the Rollout tab and its popups lost half the plans
+    # and work done too. Largest project in this bench is 2,171 lines.
     dispatches = frappe.get_all(
         "PO Dispatch",
         filters={"project_code": project_code, "is_internal_work": ["!=", 1]},
-        fields=["*"],
+        fields=[
+            "name", "poid", "po_no", "po_line_no", "project_code",
+            "site_code", "site_name", "center_area", "region_type",
+            "item_code", "item_description", "qty", "rate", "line_amount",
+            "team", "im", "dispatch_status", "target_month",
+            "is_dummy_po", "was_dummy_po", "contract", "customer",
+            # PIC / invoicing
+            "payment_terms", "pic_status", "pic_status_ms2",
+            "pic_detail_remark", "pic_rejection_remark",
+            "ms1_pct", "ms1_amount", "ms1_invoiced", "ms1_unbilled",
+            "ms1_applied_date", "ms1_invoice_month", "ms1_ibuy_inv_date",
+            "ms1_payment_received_date",
+            "ms2_pct", "ms2_amount", "ms2_invoiced", "ms2_unbilled",
+            "ms2_applied_date", "ms2_invoice_month", "ms2_ibuy_inv_date",
+            "ms2_payment_received_date",
+            # Sub-contract / subcon PO
+            "backend_team", "subcon_status", "subcon_submission_status",
+            "subcon_completed_on", "subcon_remark",
+            "sub_po_supplier", "sub_po_status",
+            "sub_po_status_ms1", "sub_po_amount_ms1", "sub_po_date_ms1",
+            "sub_paid_date_ms1",
+            "sub_po_status_ms2", "sub_po_amount_ms2", "sub_po_date_ms2",
+            "sub_paid_date_ms2",
+            "creation", "modified",
+        ],
         order_by="site_code asc, modified desc",
-        limit_page_length=500,
+        limit_page_length=3000,
     )
 
-    # Get dispatch names for downstream queries
-    dispatch_names = [d.name for d in dispatches]
+    # Rollout Plans / Executions / Work Done are scoped by project_code
+    # through their own joins, NOT by the dispatch list above — otherwise a
+    # capped dispatch fetch silently truncates the whole rollout chain.
+    plans = frappe.db.sql(
+        """
+        SELECT rp.*
+        FROM `tabRollout Plan` rp
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE pd.project_code = %s AND IFNULL(pd.is_internal_work, 0) != 1
+        ORDER BY rp.plan_date DESC
+        LIMIT 3000
+        """,
+        (project_code,), as_dict=True,
+    ) or []
 
-    # Rollout Plans
-    plans = []
-    if dispatch_names:
-        plans = frappe.get_all(
-            "Rollout Plan",
-            filters={"po_dispatch": ["in", dispatch_names]},
-            fields=["*"],
-            order_by="plan_date desc",
-            limit_page_length=500,
-        )
-
-    # Daily Executions
     plan_names = [p.name for p in plans]
     executions = []
     if plan_names:
-        executions = frappe.get_all(
-            "Daily Execution",
-            filters={"rollout_plan": ["in", plan_names]},
-            fields=["*"],
-            order_by="execution_date desc",
-            limit_page_length=500,
-        )
-        plan_poid_map = {p.name: p.po_dispatch for p in plans}
+        executions = frappe.db.sql(
+            """
+            SELECT de.*
+            FROM `tabDaily Execution` de
+            JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+            JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+            WHERE pd.project_code = %s AND IFNULL(pd.is_internal_work, 0) != 1
+            ORDER BY de.execution_date DESC
+            LIMIT 3000
+            """,
+            (project_code,), as_dict=True,
+        ) or []
+        plan_poid_map = {p.name: p.get("po_dispatch") for p in plans}
         for e in executions:
-            e["system_id"] = plan_poid_map.get(e.rollout_plan)
+            e["system_id"] = plan_poid_map.get(e.get("rollout_plan"))
 
-    # Work Done
-    execution_names = [e.name for e in executions]
-    work_done = []
-    if execution_names:
-        work_done = frappe.get_all(
-            "Work Done",
-            filters={"execution": ["in", execution_names]},
-            fields=["*"],
-            limit_page_length=500,
-        )
-        exec_poid_map = {e.name: e.get("system_id") for e in executions}
-        for wd in work_done:
-            wd["system_id"] = exec_poid_map.get(wd.execution)
+    # Every Work Done row for the project, reached via the universal
+    # wd.system_id -> PO Dispatch link. The old execution-keyed fetch could
+    # not see Direct Close / Backend closes at all (they have no execution),
+    # so those rows never appeared in any rollout popup.
+    work_done = frappe.db.sql(
+        """
+        SELECT wd.*
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE pd.project_code = %s AND IFNULL(pd.is_internal_work, 0) != 1
+        ORDER BY wd.creation DESC
+        LIMIT 3000
+        """,
+        (project_code,), as_dict=True,
+    ) or []
+
+    # Rollout Plan.po_dispatch, Daily Execution.system_id and Work Done
+    # .system_id all hold the PO Dispatch *docname* ("SYS-2026-51328"), not
+    # the POID the business actually uses ("1011HG2894715-169-2-1"). Stamp
+    # the real POID on every row so the UI's "POID" columns can show it
+    # instead of the internal id.
+    poid_by_name = {d.get("name"): (d.get("poid") or d.get("name")) for d in dispatches}
+    for p in plans:
+        p["poid"] = poid_by_name.get(p.get("po_dispatch")) or p.get("po_dispatch")
+    for e in executions:
+        e["poid"] = poid_by_name.get(e.get("system_id")) or e.get("system_id")
+    for wd in work_done:
+        wd["poid"] = poid_by_name.get(wd.get("system_id")) or wd.get("system_id")
 
     # Teams involved — from rollout plans
     dispatch_teams = list(set(p.team for p in plans if p.get("team")))
@@ -15402,11 +15554,85 @@ def get_project_summary(project_code):
             filters={"team_id": ["in", dispatch_teams]},
             fields=["team_id", "team_name", "im", "team_type", "status", "daily_cost"])
 
-    # Financial summary
-    total_po_value = sum(flt(d.line_amount) for d in dispatches)
-    total_revenue = sum(flt(w.revenue_sar) for w in work_done)
-    total_cost = sum(flt(w.total_cost_sar) for w in work_done)
-    total_margin = sum(flt(w.margin_sar) for w in work_done)
+    # ── Financial summary ────────────────────────────────────────────────
+    # Aggregated over EVERY row for the project, NOT over the row lists
+    # above — those are capped at 500 each for page weight. Summing the
+    # capped lists silently described only part of the project: a project
+    # with 826 lines showed "500 dispatch lines" and a PO value ~40% short
+    # of what the Projects list page reports for the same project.
+    #
+    # Revenue/cost/margin reach Work Done via wd.system_id -> PO Dispatch
+    # (the universal link), so Direct Close / Backend closes — which have no
+    # `execution` and are therefore invisible to any execution-keyed query —
+    # are included, same as everywhere else in the app.
+    fin = frappe.db.sql(
+        """
+        SELECT COUNT(*) AS dispatch_count,
+               COALESCE(SUM(line_amount), 0) AS total_po_value
+        FROM `tabPO Dispatch`
+        WHERE project_code = %s AND IFNULL(is_internal_work, 0) != 1
+        """,
+        (project_code,), as_dict=True,
+    )[0]
+    wd_fin = frappe.db.sql(
+        """
+        SELECT COUNT(*) AS work_done_count,
+               COALESCE(SUM(wd.revenue_sar), 0) AS total_revenue,
+               COALESCE(SUM(wd.total_cost_sar), 0) AS total_cost,
+               COALESCE(SUM(wd.margin_sar), 0) AS total_margin
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE pd.project_code = %s AND IFNULL(pd.is_internal_work, 0) != 1
+        """,
+        (project_code,), as_dict=True,
+    )[0]
+    chain = frappe.db.sql(
+        """
+        SELECT COUNT(DISTINCT rp.name) AS plan_count,
+               COUNT(DISTINCT de.name) AS execution_count
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN `tabRollout Plan` rp ON rp.po_dispatch = pd.name
+        LEFT JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
+        WHERE pd.project_code = %s AND IFNULL(pd.is_internal_work, 0) != 1
+        """,
+        (project_code,), as_dict=True,
+    )[0]
+
+    # ── PIC (invoicing) and Sub-Contract rollup ──────────────────────────
+    # Both milestones' billing state plus the subcontract side, aggregated
+    # over every line. This data was always on PO Dispatch but the project
+    # page never surfaced any of it.
+    pic = frappe.db.sql(
+        """
+        SELECT
+            COALESCE(SUM(ms1_amount), 0) AS ms1_amount,
+            COALESCE(SUM(ms2_amount), 0) AS ms2_amount,
+            COALESCE(SUM(ms1_invoiced), 0) AS ms1_invoiced,
+            COALESCE(SUM(ms2_invoiced), 0) AS ms2_invoiced,
+            COALESCE(SUM(ms1_unbilled), 0) AS ms1_unbilled,
+            COALESCE(SUM(ms2_unbilled), 0) AS ms2_unbilled,
+            SUM(IFNULL(ms1_payment_received_date, '') != '') AS ms1_paid_lines,
+            SUM(IFNULL(ms2_payment_received_date, '') != '') AS ms2_paid_lines,
+            SUM(IFNULL(backend_team, '') != '') AS subcon_lines,
+            SUM(IFNULL(subcon_completed_on, '') != '') AS subcon_done_lines,
+            COALESCE(SUM(IFNULL(sub_po_amount_ms1, 0) + IFNULL(sub_po_amount_ms2, 0)), 0) AS sub_po_amount
+        FROM `tabPO Dispatch`
+        WHERE project_code = %s AND IFNULL(is_internal_work, 0) != 1
+        """,
+        (project_code,), as_dict=True,
+    )[0]
+    pic_status_rows = frappe.db.sql(
+        """
+        SELECT IF(IFNULL(pic_status, '') = '', 'Work Not Done', pic_status) AS status,
+               COUNT(*) AS lines_count,
+               COALESCE(SUM(ms1_amount), 0) AS amount
+        FROM `tabPO Dispatch`
+        WHERE project_code = %s AND IFNULL(is_internal_work, 0) != 1
+        GROUP BY status
+        ORDER BY lines_count DESC
+        """,
+        (project_code,), as_dict=True,
+    )
 
     rollout_by_duid = _build_rollout_by_duid_groups(dispatches, plans, executions, work_done)
 
@@ -15419,14 +15645,37 @@ def get_project_summary(project_code):
         "teams": team_details,
         "rollout_by_duid": rollout_by_duid,
         "financial_summary": {
-            "total_po_value": total_po_value,
-            "total_revenue": total_revenue,
-            "total_cost": total_cost,
-            "total_margin": total_margin,
-            "dispatch_count": len(dispatches),
-            "plan_count": len(plans),
-            "execution_count": len(executions),
-            "work_done_count": len(work_done),
+            "total_po_value": flt(fin.total_po_value),
+            "total_revenue": flt(wd_fin.total_revenue),
+            "total_cost": flt(wd_fin.total_cost),
+            "total_margin": flt(wd_fin.total_margin),
+            "dispatch_count": cint(fin.dispatch_count),
+            "plan_count": cint(chain.plan_count),
+            "execution_count": cint(chain.execution_count),
+            "work_done_count": cint(wd_fin.work_done_count),
+            # How many of each the row lists below actually carry, so the UI
+            # can say "showing first 500 of 826" instead of quietly lying.
+            "dispatch_shown": len(dispatches),
+            "plan_shown": len(plans),
+            "execution_shown": len(executions),
+            "work_done_shown": len(work_done),
+            # Lines with any sub-contract involvement — the Sub-Contract tab
+            # lists only these, so its badge must count them, not all lines.
+            "subcon_lines": cint(pic.subcon_lines),
+        },
+        "pic_summary": {
+            "ms1_amount": flt(pic.ms1_amount),
+            "ms2_amount": flt(pic.ms2_amount),
+            "ms1_invoiced": flt(pic.ms1_invoiced),
+            "ms2_invoiced": flt(pic.ms2_invoiced),
+            "ms1_unbilled": flt(pic.ms1_unbilled),
+            "ms2_unbilled": flt(pic.ms2_unbilled),
+            "ms1_paid_lines": cint(pic.ms1_paid_lines),
+            "ms2_paid_lines": cint(pic.ms2_paid_lines),
+            "subcon_lines": cint(pic.subcon_lines),
+            "subcon_done_lines": cint(pic.subcon_done_lines),
+            "sub_po_amount": flt(pic.sub_po_amount),
+            "by_pic_status": pic_status_rows or [],
         },
     }
 

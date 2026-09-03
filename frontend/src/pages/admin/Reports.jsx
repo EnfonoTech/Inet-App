@@ -157,7 +157,7 @@ const REPORTS = [
   },
   {
     key: "rollout_commercial",
-    category: "Client / Domain Reports",
+    category: "Commercial",
     title: "Rollout Commercial",
     // Renders its own filters + grid; same component the IM's Reports page
     // uses, with no IM passed so it spans every IM.

@@ -21,6 +21,53 @@ def _make_poid(po_no, po_line_no, shipment_number):
     return "-".join(parts)
 
 
+def _project_value_revenue(project_codes):
+    """Total contracted value (PO Dispatch) and realized revenue (Work Done)
+    per project code — the real, always-available replacement for the dead
+    budget_amount/actual_cost/completion_percentage fields (manual Desk entry
+    only, never written by the app; meaningless for a customer project).
+    Revenue includes Direct Close/Backend closes via the universal
+    wd.system_id -> pd join, same as everywhere else in the app.
+    """
+    codes = [c for c in (project_codes or []) if c]
+    if not codes:
+        return {}
+    ph = ", ".join(["%s"] * len(codes))
+    value_rows = frappe.db.sql(
+        f"""
+        SELECT project_code, COALESCE(SUM(line_amount), 0) AS total_value
+        FROM `tabPO Dispatch`
+        WHERE project_code IN ({ph}) AND IFNULL(is_internal_work, 0) = 0
+        GROUP BY project_code
+        """,
+        tuple(codes), as_dict=True,
+    )
+    value_by = {r.project_code: flt(r.total_value) for r in value_rows}
+
+    revenue_rows = frappe.db.sql(
+        f"""
+        SELECT pd.project_code, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE pd.project_code IN ({ph})
+        GROUP BY pd.project_code
+        """,
+        tuple(codes), as_dict=True,
+    )
+    revenue_by = {r.project_code: flt(r.revenue) for r in revenue_rows}
+
+    out = {}
+    for c in codes:
+        tv = value_by.get(c, 0.0)
+        rv = revenue_by.get(c, 0.0)
+        out[c] = {
+            "total_value": tv,
+            "revenue": rv,
+            "completion_pct": round(rv / tv * 100, 1) if tv else 0.0,
+        }
+    return out
+
+
 @frappe.whitelist()
 def list_projects(
     limit=20,
@@ -73,10 +120,6 @@ def list_projects(
         "status": "project_status",
         "im": "implementation_manager",
         "area": "center_area",
-        "budget": "budget_amount",
-        "actual_cost": "actual_cost",
-        "completion": "completion_percentage",
-        "progress": "completion_percentage",
     }
     if frappe.db.has_column("Project Control Center", "region_type"):
         col_filter_map["region"] = "region_type"
@@ -111,9 +154,6 @@ def list_projects(
         "project_status",
         "implementation_manager",
         "center_area",
-        "budget_amount",
-        "actual_cost",
-        "completion_percentage",
         "huawei_im",
         "modified",
     ]
@@ -137,13 +177,27 @@ def list_projects(
     if page_len:
         gl_kwargs["page_length"] = page_len
     rows = frappe.get_list("Project Control Center", **gl_kwargs)
+
+    # budget_amount / actual_cost / completion_percentage used to be shown
+    # here, but nothing in the app ever writes them (manual Desk entry only,
+    # usually never touched) — meaningless for a customer project, which has
+    # no internal "budget" concept. Replaced with real figures: total
+    # contracted value, revenue actually realized, completion % as their
+    # ratio — see _project_value_revenue().
+    vr = _project_value_revenue([r.name for r in rows])
+    for r in rows:
+        r.update(vr.get(r.name, {"total_value": 0.0, "revenue": 0.0, "completion_pct": 0.0}))
+
     return rows
 
 
 @frappe.whitelist()
 def get_project_detail(name):
     doc = frappe.get_doc("Project Control Center", name)
-    return doc.as_dict()
+    out = doc.as_dict()
+    out.update(_project_value_revenue([name]).get(
+        name, {"total_value": 0.0, "revenue": 0.0, "completion_pct": 0.0}))
+    return out
 
 
 @frappe.whitelist()
@@ -164,24 +218,36 @@ def upsert_project(payload):
 def get_project_kpis():
     rows = frappe.get_all(
         "Project Control Center",
-        fields=["name", "project_status", "budget_amount", "actual_cost"],
+        fields=["name", "project_status"],
         limit_page_length=0,
     )
     total = len(rows)
     active = len([r for r in rows if r.project_status == "Active"])
     at_risk = len([r for r in rows if r.project_status == "At Risk"])
     overdue = len([r for r in rows if r.project_status == "On Hold"])
-    budget = sum(flt(r.budget_amount) for r in rows)
-    actual = sum(flt(r.actual_cost) for r in rows)
-    utilization = (actual / budget * 100) if budget else 0
+
+    # total_budget/actual_spent/budget_utilization used to come from
+    # budget_amount/actual_cost — dead fields, nothing writes them. Replaced
+    # with the real company-wide totals: contracted value across all
+    # projects and revenue actually realized against it.
+    total_value = flt(frappe.db.sql(
+        "SELECT COALESCE(SUM(line_amount), 0) FROM `tabPO Dispatch` "
+        "WHERE IFNULL(is_internal_work, 0) = 0"
+    )[0][0])
+    total_revenue = flt(frappe.db.sql(
+        "SELECT COALESCE(SUM(wd.revenue_sar), 0) FROM `tabWork Done` wd "
+        "JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id"
+    )[0][0])
+    revenue_pct = round(total_revenue / total_value * 100, 2) if total_value else 0
+
     return {
         "total_projects": total,
         "active_projects": active,
         "projects_at_risk": at_risk,
         "overdue_projects": overdue,
-        "total_budget": budget,
-        "actual_spent": actual,
-        "budget_utilization": round(utilization, 2),
+        "total_value": total_value,
+        "total_revenue": total_revenue,
+        "revenue_pct": revenue_pct,
     }
 
 
@@ -221,12 +287,24 @@ def dashboard_charts():
     """,
         as_dict=True,
     )
-    budget_vs_actual = frappe.get_all(
+    # budget_vs_actual used to come from budget_amount/actual_cost — dead
+    # fields, nothing writes them. Replaced with real total value vs revenue
+    # realized per project, same figures as the Projects list pages.
+    recent_projects = frappe.get_all(
         "Project Control Center",
-        fields=["project_code", "budget_amount", "actual_cost"],
+        fields=["name", "project_code"],
         order_by="modified desc",
         limit_page_length=20,
     )
+    vr = _project_value_revenue([p.name for p in recent_projects])
+    value_vs_revenue = [
+        {
+            "project_code": p.project_code,
+            "total_value": vr.get(p.name, {}).get("total_value", 0.0),
+            "revenue": vr.get(p.name, {}).get("revenue", 0.0),
+        }
+        for p in recent_projects if p.project_code
+    ]
     domain_distribution = frappe.db.sql(
         """
         SELECT project_domain AS label, COUNT(*) AS value
@@ -236,17 +314,23 @@ def dashboard_charts():
     """,
         as_dict=True,
     )
-    completion_timeline = frappe.get_all(
-        "Project Control Center",
-        fields=["project_code", "completion_percentage", "modified"],
-        order_by="modified desc",
-        limit_page_length=50,
-    )
+    # Deliberately a LINE-based completion metric — "how many of this
+    # project's PO lines are operationally done" — unlike the IM dashboard's
+    # Project Progress, which counts Rollout Plans. The two answer different
+    # questions and are not expected to match.
+    #
+    # Cancelled lines and internal work are excluded from both numerator and
+    # denominator: a cancelled line is not outstanding work, and internal
+    # work is not customer scope (every value query elsewhere in the app
+    # filters is_internal_work the same way). Ranked by contracted value, so
+    # "top" means the projects that matter most, not merely the ones with the
+    # most line items.
     top_projects = frappe.db.sql(
         """
         SELECT
             pd.project_code,
             COUNT(*) AS total,
+            COALESCE(SUM(pd.line_amount), 0) AS value,
             -- "Completed" and later (Partially Submitted/Submitted/Partially
             -- Closed/Closed) are all operationally done — PIC progressing a
             -- line through its own invoicing pipeline shouldn't make this
@@ -254,19 +338,21 @@ def dashboard_charts():
             SUM(CASE WHEN pd.dispatch_status IN ('Completed', 'Partially Submitted', 'Submitted', 'Partially Closed', 'Closed') THEN 1 ELSE 0 END) AS completed
         FROM `tabPO Dispatch` pd
         WHERE pd.project_code IS NOT NULL AND pd.project_code != ''
+          AND IFNULL(pd.is_internal_work, 0) != 1
+          AND IFNULL(pd.dispatch_status, '') NOT LIKE '%%Cancel%%'
         GROUP BY pd.project_code
-        ORDER BY total DESC
+        ORDER BY value DESC
         LIMIT 10
         """,
         as_dict=True,
     )
     for p in top_projects:
         p["completion_pct"] = round((p["completed"] / p["total"]) * 100) if p["total"] else 0
+        p["basis"] = "po_lines"
     return {
         "projects_by_status": project_status,
-        "budget_vs_actual": budget_vs_actual,
+        "value_vs_revenue": value_vs_revenue,
         "project_distribution_by_domain": domain_distribution,
-        "completion_timeline": completion_timeline,
         "top_projects": top_projects,
     }
 

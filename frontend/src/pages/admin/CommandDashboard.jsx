@@ -60,12 +60,14 @@ function dotColor(status) {
 }
 
 /* ── Compact stat card (inside section cards) ───────────────────── */
-function Stat({ label, value, sub, color = "", onClick }) {
+function Stat({ label, value, sub, color = "", onClick, hint }) {
   return (
     <div
       className={`dash-stat${onClick ? " clickable" : ""}`}
       onClick={onClick}
-      title={onClick ? `Go to ${label}` : undefined}
+      // `hint` explains a figure that isn't self-evident (the pro-rated
+      // "as of today" ones); it wins over the navigation tooltip.
+      title={hint || (onClick ? `Go to ${label}` : undefined)}
     >
       <div className="dash-stat-label">{label}</div>
       <div className={["dash-stat-value", color].filter(Boolean).join(" ")}>{value}</div>
@@ -263,12 +265,15 @@ export default function CommandDashboard() {
       {/* ── Company Financial Summary ────────────────────────────── */}
       <Section title="Company Financial Summary" accent="company" style={{ marginBottom: 14 }}>
         <div className="dash-kpi-grid dash-kpi-grid--7">
-          <Stat label="Total INET Target"  value={sar(company.company_target)} />
-          <Stat label="Target (Elapsed)"   value={sar(company.total_target_today)} />
+          <Stat label="Total INET Target"  value={sar(company.company_target)}
+            hint="Target for the whole selected period: team cost + 25% margin, plus SUB-team rollout targets." />
+          <Stat label="Target (as of today)"   value={sar(company.total_target_today)}
+            hint={`The full-period target scaled to how much of the range has passed (${Number(company.day_progress_pct ?? 0).toFixed(1)}% so far), so revenue-to-date is compared against a fair, time-adjusted number.`} />
           <Stat label="Total Revenue"      value={sar(company.total_achieved)}   color="text-green" />
           <Stat label="Gap"                value={sar(company.company_gap)}
             color={(company.company_gap ?? 0) > 0 ? "text-red" : "text-green"} />
-          <Stat label="Cost (Elapsed)"     value={sar(company.total_cost_today)} />
+          <Stat label="Cost (as of today)"     value={sar(company.total_cost_today)}
+            hint={`Team salary cost for the part of the range already elapsed (${Number(company.day_progress_pct ?? 0).toFixed(1)}%), plus Sub-Con expense.`} />
           <Stat label="Profit / Loss"      value={sar(company.profit_loss)}
             color={profitColor(company.profit_loss)} />
           <Stat label="Coverage %"
@@ -335,14 +340,19 @@ export default function CommandDashboard() {
             </span>
           </div>
           <div className="dash-kpi-grid dash-kpi-grid--2">
-            <Stat label="Monthly Cost"         value={sar(inetMonthlyCost)} />
-            <Stat label="Monthly Target"       value={sar(inetMonthlyTarget)} />
-            <Stat label="Target (Elapsed)"     value={sar(inetTargetToday)} />
+            <Stat label="Monthly Cost"         value={sar(inetMonthlyCost)}
+              hint="Sum of each active INET team's daily cost x the days it was live in the range (capped at 30 - flat monthly salary)." />
+            <Stat label="Monthly Target"       value={sar(inetMonthlyTarget)}
+              hint="Monthly Cost x 1.25, i.e. cost plus a 25% margin." />
+            <Stat label="Target (as of today)"     value={sar(inetTargetToday)}
+              hint={`Monthly Target scaled to the elapsed part of the range (${Number(company.day_progress_pct ?? 0).toFixed(1)}%).`} />
             <Stat label="Achieved"             value={sar(inetAchieved)} color="text-green" />
-            <Stat label="Gap (Elapsed)"        value={sar(inetGapToday)}
+            <Stat label="Gap (as of today)"        value={sar(inetGapToday)}
               color={inetGapToday >= 0 ? "text-green" : "text-red"}
+              hint="Achieved minus Target (as of today). Positive = ahead of the time-adjusted target."
               sub={inetGapToday >= 0 ? "Ahead of target" : "Behind target"} />
-            <Stat label="Profit / Loss (Elapsed)"  value={sar(inetProfitLossToday)}
+            <Stat label="Profit / Loss (as of today)"  value={sar(inetProfitLossToday)}
+              hint="Achieved minus the elapsed share of team cost."
               color={inetProfitLossToday >= 0 ? "text-green" : "text-red"} />
           </div>
           {/* Monthly achievement progress */}

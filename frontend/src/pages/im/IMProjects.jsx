@@ -292,15 +292,16 @@ export default function IMProjects() {
                 <th>Domain</th>
                 <th>Huawei IM</th>
                 <th>Status</th>
-                <th style={{ textAlign: "right" }}>Completion</th>
-                <th style={{ textAlign: "right" }}>Budget</th>
+                <th style={{ textAlign: "right" }}>Total Value (SAR)</th>
+                <th style={{ textAlign: "right" }}>Revenue (SAR)</th>
+                <th style={{ textAlign: "right" }}>Completion %</th>
                 <th data-excel-filter="0">View</th>
               </tr>
             </thead>
             <tbody>
               {projects.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ padding: 0 }}>
+                  <td colSpan={10} style={{ padding: 0 }}>
                     {loading ? (
                       <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
                     ) : !imName ? (
@@ -358,8 +359,9 @@ export default function IMProjects() {
                         {p.project_status || "Active"}
                       </span>
                     </td>
-                    <td style={{ textAlign: "right" }}>{p.completion_percentage ?? 0}%</td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(p.budget_amount || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{fmt.format(p.total_value || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{fmt.format(p.revenue || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{p.completion_pct ?? 0}%</td>
                     <td>
                       <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} onClick={() => setDetailRow(p)}>
                         View
