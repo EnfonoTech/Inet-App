@@ -84,6 +84,28 @@ export default function PODump() {
   // export_po_dump), not blended into the top search box's wide
   // multi-column search.
   const [columnFilters, setColumnFilters] = useState({});
+
+  // "Open only" is the page's default view, not an absence of filtering — so
+  // Clear restores that rather than switching everything on.
+  const hasFilters = !!(
+    search || fromDate || toDate
+    || !showOpen || showClosed || showCancelled
+    || Object.keys(columnFilters).length
+  );
+  const clearFilters = () => {
+    setSearch("");
+    setFromDate("");
+    setToDate("");
+    setShowOpen(true);
+    setShowClosed(false);
+    setShowCancelled(false);
+    setColumnFilters({});
+    // The column filters live in DataTablePro, not here — clearing our copy
+    // alone would leave its dropdowns still showing "2 selected".
+    document.dispatchEvent(new CustomEvent("tablepro:clear-filters", {
+      detail: { tableKey: "admin-po-dump-v1" },
+    }));
+  };
   useEffect(() => {
     const onFiltersChanged = (e) => {
       if (e.detail?.tableKey !== "admin-po-dump-v1") return;
@@ -138,7 +160,17 @@ export default function PODump() {
   // Auto-fetch on any param change. A short debounce keeps rapid checkbox /
   // date-picker toggles from firing multiple requests in flight.
   useEffect(() => {
-    if (!activeStatuses.length) { setRows([]); setMeta(null); return; }
+    if (!activeStatuses.length) {
+      // Clear lastFetchRef too, not just the rows. Turning every status off
+      // and back on again lands on the SAME signature as before, so the
+      // skip-refetch guard below would match it and return — leaving the
+      // table empty with no request in flight. Same trap as PO Dispatch's
+      // integrity tabs (see the note in PODispatch.jsx).
+      lastFetchRef.current = { signature: null, limit: null, rows: [] };
+      setRows([]);
+      setMeta(null);
+      return;
+    }
 
     const signature = JSON.stringify([fromDate, toDate, activeStatuses, searchDebounced, columnFiltersDebounced]);
     const prev = lastFetchRef.current;
@@ -269,11 +301,7 @@ export default function PODump() {
           onPaste={(e) => handleSearchPaste(e, setSearch)}
           disabled={!rows.length}
         />
-        {search && (
-          <button type="button" className="btn-secondary" onClick={() => setSearch("")}>
-            Clear
-          </button>
-        )}
+
         <DateRangePicker
           value={{ from: fromDate, to: toDate }}
           onChange={({ from, to }) => { setFromDate(from); setToDate(to); }}
@@ -319,6 +347,11 @@ export default function PODump() {
             </button>
           ))}
         </div>
+        {hasFilters && (
+          <button type="button" className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={clearFilters}>
+            Clear
+          </button>
+        )}
         <div className="toolbar-actions">
           {loading && (
             <span style={{ fontSize: "0.78rem", color: "#64748b" }}>Loading…</span>
