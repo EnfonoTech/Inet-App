@@ -6,7 +6,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import useFilterOptions from "../../hooks/useFilterOptions";
-import ReportChart from "../../components/ReportChart";
+import ReportVisual from "../../components/ReportVisual";
 
 // ≥90 green, ≥75 light-green, ≥60 yellow, <60 red, 0 neutral
 function pctCellStyle(value) {
@@ -262,9 +262,16 @@ export default function Reports() {
   const [totals, setTotals] = useState({});
   // Optional {data:{labels,datasets:[{name,values}]}, type, colors} —
   // same frappe-charts shape Desk Script Reports already return. Only a
-  // handful of reports provide one today; ReportChart renders nothing when
-  // absent, so every other report is unaffected.
+  // handful of reports provide one today. ReportVisual derives a chart from
+  // the columns' own fieldtypes when it is absent, so every report gets a
+  // Chart view; an explicit one here simply overrides that guess.
   const [chart, setChart] = useState(null);
+  // Table and Chart are separate VIEWS, not a chart stacked above a table.
+  // Stacking them meant the page had to scroll as one long column and the
+  // table lost the app's normal internal-scroll layout; a report with 5,000
+  // rows pushed its own chart out of sight. Resets to "table" on every
+  // report switch so a new report always opens on its data.
+  const [view, setView] = useState("table");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -316,6 +323,8 @@ export default function Reports() {
   function openReport(key) {
     if (!key) return;
     setActiveKey(key);
+    // Always land on the data, not on the previous report's chart view.
+    setView("table");
     const r = REPORTS.find((x) => x.key === key);
     if (r) setActiveCat(r.category);
     setSearchParams({ tab: key }, { replace: true });
@@ -524,6 +533,14 @@ export default function Reports() {
           )}
           {active && !isCustom && (
             <>
+              <div className="rpt-viewtoggle" role="group" aria-label="Report view">
+                <button type="button"
+                  className={`rpt-viewtoggle-btn${view === "table" ? " active" : ""}`}
+                  onClick={() => setView("table")}>Table</button>
+                <button type="button"
+                  className={`rpt-viewtoggle-btn${view === "chart" ? " active" : ""}`}
+                  onClick={() => setView("chart")}>Chart</button>
+              </div>
               <ExportExcelButton
                 rows={displayData}
                 columns={columns.map((c) => ({ key: c.fieldname || c.name, label: c.label }))}
@@ -730,19 +747,20 @@ export default function Reports() {
           </div>
         )}
 
-        {chart && <ReportChart chart={chart} />}
+        {view === "chart" && (
+          <ReportVisual columns={columns} data={displayData} totals={totals} chart={chart} />
+        )}
 
-        {/* This page renders a chart above the table (most other pages using
-            DataTableWrapper don't), so unlike them it needs the PAGE itself
-            to scroll rather than locking the table into the app's usual
-            "fixed viewport height, only the table scrolls internally" layout
-            (pages.css's `:has(.page-content > .data-table-wrapper)` chain —
-            keyed off .data-table-wrapper being a DIRECT child of
-            .page-content). Wrapping it in this shell div breaks that exact
-            selector match, so .page-content falls back to normal block flow
-            and the whole page scrolls — both the chart and the table show in
-            full instead of fighting over one fixed-height budget. */}
-        <div className="rpt-table-shell">
+        {/* The table view keeps its own wrapper shell. This page used to
+            render a chart ABOVE the table, which forced the PAGE to scroll
+            rather than letting the table use the app's usual "fixed viewport
+            height, only the table scrolls internally" layout (pages.css's
+            `:has(.page-content > .data-table-wrapper)` chain — keyed off
+            .data-table-wrapper being a DIRECT child of .page-content). This
+            shell div breaks that exact selector match, so .page-content
+            falls back to normal block flow. Kept as-is: the shell is also
+            what lets the chart view sit in a normally-scrolling page. */}
+        <div className="rpt-table-shell" hidden={view !== "table"}>
         {/* .data-table-wrapper's own base CSS caps it at min(92vh, 100dvh-5rem)
             as a fallback for pages outside the app's usual fixed-viewport
             table layout (which this page just opted out of, above) — without

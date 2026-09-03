@@ -2844,3 +2844,105 @@
 .rpt-card-desc  { font-size: 0.72rem; color: var(--text-muted); line-height: 1.5; }
 
 .rpt-empty { padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.82rem; }
+
+/* ── Reports: Table / Chart view toggle ─────────────────────────────
+   The two views are exclusive. The table stays MOUNTED but hidden when
+   the chart view is showing (rather than being unmounted), so
+   DataTablePro keeps its enhancement — column widths, filters and the
+   Manage Table state survive a toggle instead of being rebuilt. */
+.rpt-viewtoggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-white);
+}
+.rpt-viewtoggle-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 5px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: background 0.12s, color 0.12s;
+}
+.rpt-viewtoggle-btn + .rpt-viewtoggle-btn { border-left: 1px solid var(--border); }
+.rpt-viewtoggle-btn:hover { background: var(--bg); color: var(--text); }
+.rpt-viewtoggle-btn.active { background: var(--blue); color: #fff; }
+
+/* ── Reports: chart view ────────────────────────────────────────── */
+.rpt-visual { padding-bottom: 24px; }
+
+.rpt-visual-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.rpt-visual-card {
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow-sm);
+}
+.rpt-visual-card-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+.rpt-visual-card-value {
+  font-size: 1.1rem;
+  font-weight: 800;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.rpt-visual-card-sub {
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Two panels side by side on wide screens, stacked when narrow. */
+.rpt-visual-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 14px;
+}
+.rpt-visual-panel {
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.rpt-visual-panel-hd {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border-light);
+  background: linear-gradient(180deg, #fafbfd, #fff);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.rpt-visual-panel-sub { font-weight: 500; color: var(--text-muted); }
+.rpt-visual-chart { height: 340px; padding: 10px 12px 4px; }
+
+.rpt-visual-note {
+  margin-top: 12px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.rpt-visual-empty {
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
