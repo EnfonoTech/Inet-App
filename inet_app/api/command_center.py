@@ -323,7 +323,8 @@ def _po_dispatch_excel_expr(col_key, fields):
         )
     if col_key == "domain" and "project_code" in fields:
         return (
-            "IFNULL((SELECT project_domain FROM `tabProject Control Center` "
+            "COALESCE(NULLIF(`tabPO Dispatch`.`project_domain`, ''), "
+            "(SELECT project_domain FROM `tabProject Control Center` "
             "WHERE name = `tabPO Dispatch`.`project_code`), '')"
         )
     if col_key == "huawei_im" and "project_code" in fields:
@@ -2804,7 +2805,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             "amount": "CAST(pil.line_amount AS CHAR)",
             "project": "IFNULL(pil.project_code,'')",
             "duid": "IFNULL(pil.site_code,'')",
-            "domain": "IFNULL(pcc_pil.project_domain,'')",
+            "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_pil.project_domain, '')",
             "huawei_im": "IFNULL(pcc_pil.huawei_im,'')",
             "mode": "COALESCE(NULLIF(pil.dispatch_mode,''), pd.dispatch_mode, '')",
             "target_month": "CAST(pd.target_month AS CHAR)",
@@ -2909,7 +2910,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             "IFNULL(pil.item_description,''), "
             "IFNULL(pil.project_code,''), IFNULL(pil.site_code,''), IFNULL(pi.po_no,''), "
             "IFNULL(pi.customer,''), IFNULL(pil.center_area,''), IFNULL(pil.region_type,''), "
-            "IFNULL(pcc_pil.project_domain,''), IFNULL(pcc_pil.huawei_im,''))"
+            "COALESCE(NULLIF(pd.project_domain,''), pcc_pil.project_domain, ''), IFNULL(pcc_pil.huawei_im,''))"
         )
         clause, cparams = _sql_search_clause(
             concat_expr_intake, pf.get("search") or pf.get("q") or "",
@@ -3833,7 +3834,9 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
     if domain_vals and "project_code" in fields:
         ph_dom = ", ".join(["%s"] * len(domain_vals))
         wheres.append(
-            f"project_code IN (SELECT name FROM `tabProject Control Center` WHERE project_domain IN ({ph_dom}))"
+            f"COALESCE(NULLIF(`tabPO Dispatch`.`project_domain`, ''), "
+            f"(SELECT project_domain FROM `tabProject Control Center` "
+            f"WHERE name = `tabPO Dispatch`.`project_code`)) IN ({ph_dom})"
         )
         params.extend(domain_vals)
     status_vals_pd = _ensure_list(pf.get("dispatch_status"))
@@ -3969,7 +3972,8 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
                 # column, so this needs the same outer-qualification as the
                 # activity_type case above to correlate correctly.
                 wheres.append(
-                    "IFNULL((SELECT project_domain FROM `tabProject Control Center` "
+                    "COALESCE(NULLIF(`tabPO Dispatch`.`project_domain`, ''), "
+                    "(SELECT project_domain FROM `tabProject Control Center` "
                     "WHERE name = `tabPO Dispatch`.`project_code`), '') LIKE %s"
                 )
                 params.append(pat)
@@ -4713,36 +4717,92 @@ def _batch_item_activity_types(rows, item_key="item_code"):
     return {r.name: r.activity_type for r in item_rows}
 
 
-def _enrich_with_project_fields(rows, code_key="project_code"):
-    """Batch-fetch project_domain and huawei_im from Project Control Center.
+def _enrich_with_project_fields(rows, code_key="project_code", dispatch_key=None):
+    """Resolve project_domain and huawei_im for PO Dispatch-derived rows.
 
-    Both are now also real fields on PO Dispatch (default from the project
-    at dispatch time, overridable from the rollout planning popup / Direct
-    Close / Backend Assign). If a row already carries a truthy value (i.e.
-    the caller fetched PO Dispatch's own column), that override wins; only
-    rows with no dispatch-level value fall back to the project's default
-    here. project_domain used to always be overwritten by the project's
-    value regardless of any dispatch-level override already on the row —
-    fixed to match how huawei_im was already handled.
+    Both are real fields on PO Dispatch (they default from the project at
+    dispatch time and are overridable from the rollout planning popup /
+    Direct Close / Backend Assign) AND on Project Control Center. The
+    dispatch-level value always wins; the project is only a fallback.
+
+    Precedence: value already on the row -> the row's PO Dispatch ->
+    the project's default -> "".
+
+    The middle step matters: every caller here resolves the override in its
+    `col_filter_map` (so filtering works) but none of them SELECT the
+    dispatch's own project_domain into the row, so the *displayed* value
+    used to come straight from the project — a line whose domain had been
+    overridden showed the project's domain instead, or blank when the
+    project had none. Looking the dispatch up here fixes all callers at
+    once and keeps a future caller from reintroducing it.
+
+    `dispatch_key` names the column holding the PO Dispatch docname; when
+    omitted it is probed from the row. A key that isn't a dispatch name
+    simply matches nothing and falls through to the project, so probing is
+    safe.
     """
+    if not rows:
+        return
+
+    # ── dispatch-level values (the override) ─────────────────────────────
+    if dispatch_key is None:
+        first = rows[0]
+        for cand in ("system_id", "po_dispatch", "dispatch", "name"):
+            if cand in first:
+                dispatch_key = cand
+                break
+    pd_map = {}
+    if dispatch_key:
+        names = list({r.get(dispatch_key) for r in rows if r.get(dispatch_key)} - {None, ""})
+        # Chunked: an unbounded IN (...) trips SQLParseError past ~10k binds.
+        for i in range(0, len(names), 1000):
+            chunk = names[i:i + 1000]
+            ph_pd = ", ".join(["%s"] * len(chunk))
+            try:
+                for r in frappe.db.sql(
+                    f"SELECT name, project_domain, huawei_im "
+                    f"FROM `tabPO Dispatch` WHERE name IN ({ph_pd})",
+                    tuple(chunk), as_dict=True,
+                ):
+                    pd_map[r.name] = r
+            except Exception:
+                pd_map = {}
+                break
+
+    # ── project-level values (the fallback) ──────────────────────────────
     codes = list({r.get(code_key) for r in rows if r.get(code_key)} - {None, ""})
-    if not codes:
+    pcc_map = {}
+    for i in range(0, len(codes), 1000):
+        chunk = codes[i:i + 1000]
+        ph = ", ".join(["%s"] * len(chunk))
+        try:
+            for r in frappe.db.sql(
+                f"SELECT name AS project_code, project_domain, huawei_im "
+                f"FROM `tabProject Control Center` WHERE name IN ({ph})",
+                tuple(chunk), as_dict=True,
+            ):
+                pcc_map[r.project_code] = r
+        except Exception:
+            pcc_map = {}
+            break
+
+    if not pd_map and not pcc_map:
         return
-    ph = ", ".join(["%s"] * len(codes))
-    try:
-        pcc = frappe.db.sql(
-            f"SELECT name AS project_code, project_domain, huawei_im "
-            f"FROM `tabProject Control Center` WHERE name IN ({ph})",
-            tuple(codes),
-            as_dict=True,
-        )
-    except Exception:
-        return
-    pcc_map = {r.project_code: r for r in pcc}
     for row in rows:
+        over = pd_map.get(row.get(dispatch_key)) if dispatch_key else None
         info = pcc_map.get(row.get(code_key)) or {}
-        row["project_domain"] = row.get("project_domain") or info.get("project_domain") or ""
-        row["huawei_im"] = row.get("huawei_im") or info.get("huawei_im") or ""
+        row["project_domain"] = (
+            row.get("project_domain")
+            or (over or {}).get("project_domain")
+            or info.get("project_domain")
+            or ""
+        )
+        row["huawei_im"] = (
+            row.get("huawei_im")
+            or (over or {}).get("huawei_im")
+            or info.get("huawei_im")
+            or ""
+        )
 
 
 @frappe.whitelist()
@@ -7738,7 +7798,7 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
     domain_parts = []
     if frappe.db.has_column("PO Dispatch", "internal_domain"):
         domain_parts.append("IFNULL(pd.internal_domain,'')")
-    domain_parts.append("IFNULL(pcc.project_domain,'')")
+    domain_parts.append("COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '')")
     col_filter_map["domain"] = "CONCAT_WS(' ', " + ", ".join(domain_parts) + ")"
     col_filter_map["huawei_im"] = "COALESCE(NULLIF(pd.huawei_im,''), pcc.huawei_im, '')"
     if frappe.db.has_column("PO Dispatch", "general_remark"):
@@ -7817,7 +7877,7 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
             "IFNULL(pd.original_dummy_poid,'')",
             "IFNULL(it.team_name,'')",
             "IFNULL(pd.im,'')",
-            "IFNULL(pcc.project_domain,'')",
+            "COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '')",
             "IFNULL(pcc.huawei_im,'')",
         ]
         if frappe.db.has_column("Rollout Plan", "region_type"):
@@ -8579,7 +8639,8 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         "qty": "CAST(wd.executed_qty AS CHAR)",
         "po_status": "COALESCE(NULLIF(pd.pic_status,''), pd_sys.pic_status, '')",
         "domain": (
-            "IFNULL((SELECT project_domain FROM `tabProject Control Center` "
+            "COALESCE(NULLIF(pd.project_domain,''), NULLIF(pd_sys.project_domain,''), "
+            "(SELECT project_domain FROM `tabProject Control Center` "
             "WHERE name = COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code)), '')"
         ),
         "huawei_im": (
@@ -10178,7 +10239,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, 
         "issue_remarks": "IFNULL(rp.issue_remarks,'')",
         "execution_remarks": _latest_de_ir("remarks"),
         "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_ir.huawei_im, '')",
-        "domain": "IFNULL(pcc_ir.project_domain,'')",
+        "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_ir.project_domain, '')",
     }
     if frappe.db.has_column("Daily Execution", "ciag_status"):
         col_filter_map_ir["ciag"] = _latest_de_ir("ciag_status")
@@ -10245,7 +10306,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, 
             "IFNULL(pd.im,'')",
             "IFNULL(im_pd.full_name,'')",
             _desc_expr_ir,
-            "IFNULL(pcc_ir.project_domain,'')",
+            "COALESCE(NULLIF(pd.project_domain,''), pcc_ir.project_domain, '')",
             "IFNULL(pcc_ir.huawei_im,'')",
         ]
         if frappe.db.has_column("Rollout Plan", "im"):
@@ -12977,7 +13038,7 @@ def get_rollout_week_dashboard(im=None, week_start=None, portal_filters=None):
                pd.name AS po_dispatch, IFNULL(pd.poid, pd.name) AS poid,
                IFNULL(pd.dispatch_mode, '') AS mode,
                IFNULL(pd.project_code, '') AS project_code,
-               IFNULL(pcc.project_domain, '') AS domain,
+               COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') AS domain,
                IFNULL(pd.site_code, '') AS duid,
                IFNULL(pd.item_description, '') AS item_description,
                IFNULL(itm.activity_type, '') AS activity_type,
@@ -13305,7 +13366,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         "status": "IFNULL(rp.plan_status,'')",
         "target_sar": "CAST(rp.target_amount AS CHAR)",
         "cancel": "IFNULL(rp.cancel_request_status,'')",
-        "domain": "IFNULL(pcc_rp.project_domain,'')",
+        "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_rp.project_domain, '')",
         "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_rp.huawei_im, '')",
     }
     if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
@@ -13663,7 +13724,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         "qc": "IFNULL(de.qc_status,'')",
         "qty": "CAST(de.achieved_qty AS CHAR)",
         "visit": "CAST(rp.visit_number AS CHAR)",
-        "domain": "IFNULL(pcc_ex.project_domain,'')",
+        "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_ex.project_domain, '')",
         "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_ex.huawei_im, '')",
     }
     if frappe.db.has_column("Daily Execution", "ciag_status"):
@@ -16898,7 +16959,7 @@ def get_im_team_detail(name):
             rp.plan_date,
             rp.plan_status,
             pd.project_code,
-            IFNULL(pcc.project_domain,'') AS project_domain,
+            COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') AS project_domain,
             IFNULL(pcc.project_name,'') AS project_name,
             COALESCE(NULLIF(pd.poid,''), pd.name) AS poid,
             pd.site_code
@@ -18009,7 +18070,7 @@ def list_backend_dispatches(
         "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
         "po_no": "IFNULL(pd.po_no,'')",
         "project": "IFNULL(pd.project_code,'')",
-        "domain": "IFNULL(pcc_bk.project_domain,'')",
+        "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_bk.project_domain, '')",
         "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_bk.huawei_im, '')",
         "item": "IFNULL(pd.item_code,'')",
         "description": "IFNULL(pd.item_description,'')",
@@ -18049,7 +18110,7 @@ def list_backend_dispatches(
     if search:
         clause, like_params = _sql_search_clause(
             "CONCAT_WS(' ', pd.poid, pd.po_no, pd.item_code, pd.item_description, pd.site_name, pd.site_code, "
-            "pd.project_code, IFNULL(t.team_name,''), IFNULL(t.team_id,''), IFNULL(pcc_bk.project_domain,''), "
+            "pd.project_code, IFNULL(t.team_name,''), IFNULL(t.team_id,''), COALESCE(NULLIF(pd.project_domain,''), pcc_bk.project_domain, ''), "
             "IFNULL(pcc_bk.huawei_im,''), IFNULL(pd.subcon_remark,''))",
             search,
             exact_cols=["IFNULL(pd.poid,'')", "IFNULL(pd.site_code,'')"],
@@ -20680,8 +20741,8 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
         # query, so a placeholder here would break param ordering.
         "im": "IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` WHERE name = it.im), ''), IFNULL(it.im,''))",
         "current_domain": (
-            "IFNULL((SELECT GROUP_CONCAT(DISTINCT IFNULL(pcc_t.project_domain,'') "
-            "ORDER BY pcc_t.project_domain SEPARATOR ', ') "
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT COALESCE(NULLIF(pd_t.project_domain,''), pcc_t.project_domain, '') "
+            "ORDER BY COALESCE(NULLIF(pd_t.project_domain,''), pcc_t.project_domain, '') SEPARATOR ', ') "
             "FROM `tabRollout Plan` rp_t "
             "INNER JOIN `tabPO Dispatch` pd_t ON pd_t.name = rp_t.po_dispatch "
             "LEFT JOIN `tabProject Control Center` pcc_t ON pcc_t.name = pd_t.project_code "
@@ -20689,7 +20750,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             "WHERE rpt_t.parent = rp_t.name AND rpt_t.team = it.name)) "
             "AND rp_t.plan_status IN ('Planned','In Execution','Extended','Completed') "
             f"AND {_date_lit} BETWEEN rp_t.plan_date AND IFNULL(rp_t.plan_end_date, rp_t.plan_date) "
-            "AND IFNULL(pcc_t.project_domain,'') != ''), '')"
+            "AND COALESCE(NULLIF(pd_t.project_domain,''), pcc_t.project_domain, '') != ''), '')"
         ),
         "current_project": (
             "IFNULL((SELECT GROUP_CONCAT(DISTINCT IFNULL(pd_p.project_code,'') "
@@ -20818,7 +20879,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             it.note,
             (SELECT COUNT(*) FROM `tabINET Team Member` itm WHERE itm.parent = it.name) AS member_count,
             (
-                SELECT GROUP_CONCAT(DISTINCT IFNULL(pcc.project_domain,'') ORDER BY pcc.project_domain SEPARATOR ', ')
+                SELECT GROUP_CONCAT(DISTINCT COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') ORDER BY COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') SEPARATOR ', ')
                 FROM `tabRollout Plan` rp
                 INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
                 LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
@@ -20828,7 +20889,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                       ))
                   AND rp.plan_status IN ('Planned','In Execution','Extended','Completed')
                   AND {date_expr} BETWEEN rp.plan_date AND IFNULL(rp.plan_end_date, rp.plan_date)
-                  AND IFNULL(pcc.project_domain,'') != ''
+                  AND COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') != ''
             ) AS current_domains,
             (
                 SELECT GROUP_CONCAT(DISTINCT IFNULL(pd2.project_code,'') ORDER BY pd2.project_code SEPARATOR ', ')
@@ -20933,8 +20994,8 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
         # query, so a placeholder here would break param ordering.
         "im": "IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` WHERE name = it.im), ''), IFNULL(it.im,''))",
         "current_domain": (
-            "IFNULL((SELECT GROUP_CONCAT(DISTINCT IFNULL(pcc_t.project_domain,'') "
-            "ORDER BY pcc_t.project_domain SEPARATOR ', ') "
+            "IFNULL((SELECT GROUP_CONCAT(DISTINCT COALESCE(NULLIF(pd_t.project_domain,''), pcc_t.project_domain, '') "
+            "ORDER BY COALESCE(NULLIF(pd_t.project_domain,''), pcc_t.project_domain, '') SEPARATOR ', ') "
             "FROM `tabRollout Plan` rp_t "
             "INNER JOIN `tabPO Dispatch` pd_t ON pd_t.name = rp_t.po_dispatch "
             "LEFT JOIN `tabProject Control Center` pcc_t ON pcc_t.name = pd_t.project_code "
@@ -20942,7 +21003,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
             "WHERE rpt_t.parent = rp_t.name AND rpt_t.team = it.name)) "
             "AND rp_t.plan_status IN ('Planned','In Execution','Extended','Completed') "
             f"AND {_date_lit} BETWEEN rp_t.plan_date AND IFNULL(rp_t.plan_end_date, rp_t.plan_date) "
-            "AND IFNULL(pcc_t.project_domain,'') != ''), '')"
+            "AND COALESCE(NULLIF(pd_t.project_domain,''), pcc_t.project_domain, '') != ''), '')"
         ),
         "current_project": (
             "IFNULL((SELECT GROUP_CONCAT(DISTINCT IFNULL(pd_p.project_code,'') "
@@ -21052,7 +21113,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
             it.note,
             (SELECT COUNT(*) FROM `tabINET Team Member` itm WHERE itm.parent = it.name) AS member_count,
             (
-                SELECT GROUP_CONCAT(DISTINCT IFNULL(pcc.project_domain,'') ORDER BY pcc.project_domain SEPARATOR ', ')
+                SELECT GROUP_CONCAT(DISTINCT COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') ORDER BY COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') SEPARATOR ', ')
                 FROM `tabRollout Plan` rp
                 INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
                 LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
@@ -21062,7 +21123,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                       ))
                   AND rp.plan_status IN ('Planned','In Execution','Extended','Completed')
                   AND {date_expr} BETWEEN rp.plan_date AND IFNULL(rp.plan_end_date, rp.plan_date)
-                  AND IFNULL(pcc.project_domain,'') != ''
+                  AND COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') != ''
             ) AS current_domains,
             (
                 SELECT GROUP_CONCAT(DISTINCT IFNULL(pd2.project_code,'') ORDER BY pd2.project_code SEPARATOR ', ')
@@ -21152,7 +21213,7 @@ def admin_get_team_detail(name):
             rp.plan_date,
             rp.plan_status,
             pd.project_code,
-            IFNULL(pcc.project_domain,'') AS project_domain,
+            COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '') AS project_domain,
             IFNULL(pcc.project_name,'') AS project_name,
             COALESCE(NULLIF(pd.poid,''), pd.name) AS poid,
             pd.site_code
