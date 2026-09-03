@@ -98,6 +98,13 @@
 }
 .nd-table td { padding: 6px 8px; font-size: 12px; border-bottom: 1px solid #f1f5f9; color: #334155; height: 36px; }
 .nd-table.compact td { height: 32px; padding: 4px 8px; }
+/* Totals row in a panel table — needs a visible break from the body rows or
+   it reads as just another project. */
+.nd-table tfoot td {
+  border-top: 2px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 11px;
+}
 
 /* ── Progress bar ─────────────────────────────────────────────── */
 .nd-progress { height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }

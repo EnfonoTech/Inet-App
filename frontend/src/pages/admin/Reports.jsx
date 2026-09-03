@@ -121,6 +121,26 @@ const REPORTS = [
     filterType: "dateonly",
   },
   {
+    key: "project_performance",
+    category: "Project Reports",
+    title: "Project Performance",
+    api: "reportProjectPerformance",
+    // No date filter: target is line value and achieved is line status, and
+    // neither has a usable date basis. Current-state, like the workbook.
+    description: "Achieved vs target per project — achievement %, line completion and KPI rating",
+    hasFilters: false,
+  },
+  {
+    key: "project_profitability",
+    category: "Project Reports",
+    title: "Project Profitability",
+    api: "reportProjectProfitability",
+    // No date filter: PO value has no usable date basis, so both sides are
+    // current-state. A filter here would only ever skew Delivery %.
+    description: "Revenue delivered against contracted PO value per project — remaining value and delivery % (to date)",
+    hasFilters: false,
+  },
+  {
     key: "top_teams",
     category: "Performance",
     title: "Top Teams",

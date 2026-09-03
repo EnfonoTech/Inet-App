@@ -153,7 +153,9 @@ export default function ExecutionMonitor() {
   const searchDebounced = useDebounced(search, 300);
   const [planStatusFilter, setPlanStatusFilter] = useState(_navExec?.planStatusFilter ?? ["Planned", "In Execution", "Completed", "Planning with Issue"]);
   const [executionStatusFilter, setExecutionStatusFilter] = useState([]);
-  const [visitFilter, setVisitFilter] = useState([]);
+  // Accepts a visit type from dashboard drill-through (Command dashboard's
+  // Re-Visits tile), same as planStatusFilter/fromDate/toDate above.
+  const [visitFilter, setVisitFilter] = useState(_navExec?.visitFilter ?? []);
   const [imFilter, setImFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);

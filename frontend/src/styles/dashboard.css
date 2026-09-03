@@ -718,6 +718,9 @@
 .dashboard .dash-section-hd--im      { background: linear-gradient(90deg, #0e7490, #0891b2); }
 .dashboard .dash-section-hd--status  { background: linear-gradient(90deg, #047857, #10b981); }
 .dashboard .dash-section-hd--watch   { background: linear-gradient(90deg, #b45309, #f59e0b); }
+/* Direct Close: teamless closes. Deliberately its own hue so it never reads
+   as one of the team sections (INET blue / Sub-Con green / Backend purple). */
+.dashboard .dash-section-hd--direct  { background: linear-gradient(90deg, #9d174d, #db2777); }
 .dashboard .dash-section-hd--link    { cursor: pointer; user-select: none; }
 .dashboard .dash-section-hd--link:hover { filter: brightness(1.12); }
 
@@ -791,6 +794,15 @@
   font-variant-numeric: tabular-nums;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* For stats whose value is a name rather than a number: the mono tabular
+   face and no-wrap sizing above are tuned for figures and would push a
+   name out of the card. */
+.dashboard .dash-stat-value--text {
+  font-size: 0.82rem;
+  font-family: inherit;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
 .dashboard .dash-stat-sub {
   font-size: 0.62rem;
   color: var(--text-muted);
@@ -806,13 +818,16 @@
 }
 
 /* Inline section metric (Active Teams header row) */
+/* Header metric row. Sized to sit alongside the stat cards below it rather
+   than tower over them — it was 1.5rem against their 1.0rem, which made the
+   one figure dominate its whole section. */
 .dashboard .dash-section-metric {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 2px 10px;
+  padding: 4px 2px 7px;
   border-bottom: 1px solid var(--border-light);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .dashboard .dash-section-metric-label {
   font-size: 0.62rem;
@@ -822,7 +837,7 @@
   color: var(--text-muted);
 }
 .dashboard .dash-section-metric-value {
-  font-size: 1.5rem;
+  font-size: 1.05rem;
   font-weight: 800;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -833,9 +848,12 @@
   grid-template-columns: 1fr 1fr 1fr;
   gap: 14px;
   margin-bottom: 14px;
+  /* Sections are spread across two rows of three now, so stretching within
+     a row makes the row read as one band instead of a ragged edge — the
+     earlier problem was one column carrying three stacked sections while
+     its neighbours carried one. */
   align-items: stretch;
 }
-/* Sections inside the grid stretch full height */
 .dashboard .dash-mid-grid > .dash-section {
   height: 100%;
 }

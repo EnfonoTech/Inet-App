@@ -96,8 +96,13 @@ const MASTER_DOCTYPES = [
     description: "External subcontract partners",
     icon: "🔧",
     color: "#f59e0b",
-    fields: ["name", "subcontractor_name", "type", "contract_model", "status"],
-    displayCols: ["subcontractor_name", "type", "contract_model", "status"],
+    // monthly_target / the two percentages are shown because the Command
+    // dashboard's Sub-Con Target and Margin Target link here to have them
+    // set — landing on a list that omits them would be a dead end.
+    fields: ["name", "subcontractor_name", "type", "contract_model",
+             "inet_margin_pct", "sub_payout_pct", "monthly_target", "status"],
+    displayCols: ["subcontractor_name", "contract_model", "inet_margin_pct",
+                  "sub_payout_pct", "monthly_target", "status"],
   },
   {
     label: "Customer Item",

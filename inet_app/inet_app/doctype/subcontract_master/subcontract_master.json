@@ -11,6 +11,7 @@
   "supplier",
   "inet_margin_pct",
   "sub_payout_pct",
+  "monthly_target",
   "contract_model",
   "column_break_uiyj",
   "approved_flag",
@@ -81,6 +82,11 @@
   {
    "fieldname": "column_break_uiyj",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "monthly_target",
+   "fieldtype": "Currency",
+   "label": "Monthly Target (SAR)"
   }
  ],
  "links": [],

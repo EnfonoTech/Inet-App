@@ -320,17 +320,24 @@ export default function WorkDone() {
   const searchDebounced = useDebounced(search, 300);
   const [poStatusFilter, setPoStatusFilter] = useState([]);
   const [imFilter, setImFilter] = useState([]);
-  const [teamFilter, setTeamFilter] = useState([]);
+  // Accepts a team list from dashboard drill-through (Command dashboard's
+  // INET Achieved / Sub-Con Revenue tiles). Without this the passed filter
+  // was dropped, so a tile reading 0 opened a list with rows in it.
+  const [teamFilter, setTeamFilter] = useState(_navWD?.teamFilter ?? []);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
-  const [subconFilter, setSubconFilter] = useState([]);
+  // Accepts a subcontract list from dashboard drill-through (Sub-Contractor
+  // block), matched against the POID's own `contract` link server-side.
+  const [subconFilter, setSubconFilter] = useState(_navWD?.subconFilter ?? []);
   const [fromDate, setFromDate] = useState(_navWD?.fromDate ?? "");
   const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
   const [detailRow, setDetailRow] = useState(null);
   const [selectedRows, setSelectedRows] = useState(new Set());
   const [issueFlagFilter, setIssueFlagFilter] = useState([]);
   const [submissionFilter, setSubmissionFilter] = useState([]);
-  const [workTypeFilter, setWorkTypeFilter] = useState([]);
+  // Accepts a work type from dashboard drill-through (Command dashboard's
+  // Direct Close section), same as fromDate/toDate above.
+  const [workTypeFilter, setWorkTypeFilter] = useState(_navWD?.workTypeFilter ?? []);
   const [tab, setTab] = useState("list");
 
   // The single <DataTableWrapper> below is always mounted — List and

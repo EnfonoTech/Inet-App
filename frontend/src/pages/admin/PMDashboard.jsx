@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
-import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { pmApi } from "../../services/api";
 
 const fmt = new Intl.NumberFormat("en-US");
@@ -9,22 +9,28 @@ const C = { blue: "#1565C0", green: "#2E7D32", amber: "#F57C00", red: "#C62828" 
 export default function PMDashboard() {
   const [kpis, setKpis] = useState(null);
   const [charts, setCharts] = useState(null);
+  // Project Profitability report (the workbook sheet of that name). Reused
+  // here rather than recomputed, so this panel and the Reports page can
+  // never disagree. Project Performance is the separate rollout-target
+  // report — it lives on the Reports page with its own chart.
+  const [projPerf, setProjPerf] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [pk, ch] = await Promise.all([
+        const [pk, ch, pp] = await Promise.all([
           pmApi.projectKpis().catch(() => null),
           pmApi.charts().catch(() => null),
+          pmApi.reportProjectProfitability({}).catch(() => null),
         ]);
-        if (!cancelled) { setKpis(pk); setCharts(ch); }
+        if (!cancelled) { setKpis(pk); setCharts(ch); setProjPerf(pp); }
       } catch { if (!cancelled) { setKpis(null); setCharts(null); } }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  if (!kpis && !charts) return <div className="nd-dashboard"><DashboardSwitcher /><div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div></div>;
+  if (!kpis && !charts && !projPerf) return <div className="nd-dashboard"><DashboardSwitcher /><div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div></div>;
 
   const active = kpis?.active_projects ?? 0;
   const atRisk = kpis?.projects_at_risk ?? 0;
@@ -53,6 +59,22 @@ export default function PMDashboard() {
 
   // Line-based completion, ranked by contracted value. Cancelled and
   // internal lines are excluded server-side.
+  /* Project Profitability — contracted PO value vs revenue delivered,
+     straight from the report so the numbers match it exactly. */
+  const ppRows = (projPerf?.data || []).slice(0, 8);
+  const ppTotals = projPerf?.totals || {};
+  // Revenue Achieved = line value of the done lines (submitted / invoiced /
+  // closed are all already work done). Not Work Done revenue: only 53 of
+  // 11,439 done lines carry a Work Done record here, so that would plot flat.
+  const ppChart = ppRows.slice(0, 6).map((r) => ({
+    n: r.project_code,
+    po: (r.po_value || 0) / 1000,
+    rev: (r.achieved || 0) / 1000,
+  }));
+  const ratingColor = (r) =>
+    r === "Excellent" ? C.green : r === "Good" ? C.blue
+      : r === "Need Improvement" ? C.amber : "#94a3b8";
+
   const topProjects = (charts?.top_projects || []).slice(0, 5).map((p) => ({
     code: p.project_code || "—",
     total: p.total || 0,
@@ -127,6 +149,84 @@ export default function PMDashboard() {
           </div></div>
         </div>
       </div>
+
+      {/* ── Project Performance (from the report of the same name) ──────
+             Chart + table both read the report endpoint directly, so this
+             panel and the Reports page cannot drift apart. */}
+      <div className="nd-grid col2" style={{ marginTop: 10 }}>
+        <div className="nd-panel">
+          <div className="nd-panel-header">
+            <h3>PO Value vs Revenue Achieved</h3>
+            <span style={{ fontSize: 10, color: "#94a3b8" }}>top 6 projects · SAR thousands</span>
+          </div>
+          <div className="nd-panel-body">
+            <div className="nd-chart-h170">
+              <ResponsiveContainer>
+                <BarChart data={ppChart.length ? ppChart : [{ n: "—", po: 0, rev: 0 }]}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="n" tick={{ fontSize: 9 }} />
+                  <YAxis tick={{ fontSize: 9 }} />
+                  <Tooltip formatter={(v, k) => [`SAR ${fmt.format(Math.round(v))}k`, k === "po" ? "PO value" : "Achieved"]} />
+                  <Bar dataKey="po" fill="#cbd5e1" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="rev" fill={C.green} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 14, fontSize: 10, fontWeight: 600, marginTop: 2 }}>
+              <span style={{ color: "#94a3b8" }}>PO value</span>
+              <span style={{ color: C.green }}>Revenue achieved</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="nd-panel">
+          <div className="nd-panel-header">
+            <h3>Project Profitability</h3>
+            <span style={{ fontSize: 10, color: "#94a3b8" }}>
+              {ppTotals.project_code || ""} · delivery {ppTotals.delivery_pct ?? 0}%
+            </span>
+          </div>
+          <div className="nd-panel-body">
+            <table className="nd-table compact">
+              <thead>
+                <tr>
+                  <th>Project</th>
+                  <th style={{ textAlign: "right" }}>PO Value</th>
+                  <th style={{ textAlign: "right" }}>Achieved</th>
+                  <th style={{ textAlign: "right" }}>Lines</th>
+                  <th style={{ textAlign: "right" }}>Delivery</th>
+                  <th>Rating</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ppRows.length ? ppRows.map((r) => (
+                  <tr key={r.project_code}>
+                    <td><strong title={r.project_name}>{r.project_code}</strong></td>
+                    <td style={{ textAlign: "right" }}>{fmt.format(Math.round(r.po_value || 0))}</td>
+                    <td style={{ textAlign: "right" }}>{fmt.format(Math.round(r.achieved || 0))}</td>
+                    <td style={{ textAlign: "right" }}>{r.completed_lines}/{r.assigned_lines}</td>
+                    <td style={{ textAlign: "right" }}>{r.delivery_pct}%</td>
+                    <td><span style={{ fontSize: 10, fontWeight: 700, color: ratingColor(r.kpi_rating) }}>{r.kpi_rating}</span></td>
+                  </tr>
+                )) : <tr><td colSpan={6} style={{ textAlign: "center", color: "#94a3b8" }}>No data</td></tr>}
+              </tbody>
+              {ppRows.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td><strong>Total</strong></td>
+                    <td style={{ textAlign: "right" }}><strong>{fmt.format(Math.round(ppTotals.po_value || 0))}</strong></td>
+                    <td style={{ textAlign: "right" }}><strong>{fmt.format(Math.round(ppTotals.achieved || 0))}</strong></td>
+                    <td style={{ textAlign: "right" }}><strong>{ppTotals.completed_lines}/{ppTotals.assigned_lines}</strong></td>
+                    <td style={{ textAlign: "right" }}><strong>{ppTotals.delivery_pct}%</strong></td>
+                    <td />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div>
   );
 }

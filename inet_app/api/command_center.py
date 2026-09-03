@@ -8396,7 +8396,12 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         billing_expr = "IFNULL(wd.billing_status, 'Pending')"
     for col, key in ((billing_expr, "billing_status"),
                      ("COALESCE(pd.dispatch_status, pd_sys.dispatch_status, '')", "dispatch_status"),
-                     ("IFNULL(rp.team, de.team)", "team"),
+                     # de.team is the team that actually executed; rp.team is
+                     # only the plan's LEAD team, so on a split plan this
+                     # displayed (and filtered) a SUB team's work under the
+                     # INET team that led the plan. Same fix as
+                     # _daily_execution_report_rows.
+                     ("IFNULL(de.team, rp.team)", "team"),
                      ("COALESCE(pd.project_code, pd_sys.project_code, '')", "project_code"),
                      ("COALESCE(pd.site_code, pd_sys.site_code, '')", "site_code")):
         c, p = _sql_in_or_eq(col, filters.get(key))
@@ -8761,7 +8766,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
         "LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id "
         "LEFT JOIN `tabItem` item_wd ON item_wd.name = wd.item_code "
-        "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
+        "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(de.team, rp.team) "
         f"{rp_im_join_wd} {pd_im_join_wd} {subcon_join_wd}"
     )
     if _options:
@@ -8840,7 +8845,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
         "LEFT JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id "
         "LEFT JOIN `tabItem` item_wd ON item_wd.name = wd.item_code "
-        "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(rp.team, de.team) "
+        "LEFT JOIN `tabINET Team` it ON it.name = IFNULL(de.team, rp.team) "
         f"{rp_im_join_wd} {pd_im_join_wd} {subcon_join_wd} "
         f"WHERE {' AND '.join(wheres)} "
         "ORDER BY wd.creation DESC "
@@ -10603,23 +10608,38 @@ def _undated_invoiced_value():
     return flt((rows[0] if rows else {}).get("undated") or 0, 2)
 
 
-def _open_po_line_totals():
+def _open_po_line_totals(from_date=None, to_date=None):
     """Open order book: PO Intake Lines whose per-line status is not terminal.
 
     The line-wise status is the source of truth — the parent PO Intake's
     ``status`` is a roll-up and isn't authoritative for KPIs.
 
-    Shared by ``get_command_dashboard`` (operational.total_open_po_*) and
-    ``get_commercial_dashboard`` so the two can never report different order
-    books for the same moment.
+    With ``from_date``/``to_date`` the result is narrowed to lines whose PO
+    was published in that window, so the Command dashboard's Open PO tiles
+    follow its date range like every other tile in that section. The date
+    basis is ``COALESCE(publish_date, start_date, creation)`` — the same
+    basis get_po_vs_invoice_trend() buckets by, because publish_date only
+    lands on a minority of lines and start_date carries the rest.
+
+    Called with no range it is the live, unfiltered order book, which is how
+    ``get_commercial_dashboard`` uses it — that screen deliberately has no
+    date filter, so the two still agree whenever both are unscoped.
     """
+    wheres = ["IFNULL(po_line_status, 'New') NOT IN ('Closed', 'Cancelled')"]
+    params = []
+    if from_date:
+        wheres.append("DATE(COALESCE(publish_date, start_date, creation)) >= %s")
+        params.append(from_date)
+    if to_date:
+        wheres.append("DATE(COALESCE(publish_date, start_date, creation)) <= %s")
+        params.append(to_date)
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT COALESCE(SUM(line_amount), 0) AS total_value, COUNT(*) AS line_count
         FROM `tabPO Intake Line`
-        WHERE IFNULL(po_line_status, 'New') NOT IN ('Closed', 'Cancelled')
+        WHERE {' AND '.join(wheres)}
         """,
-        as_dict=True,
+        tuple(params), as_dict=True,
     )
     return (rows[0] if rows else {}) or {}
 
@@ -11149,6 +11169,59 @@ def get_commercial_dashboard(etag=None):
     }
 
 
+def _inhouse_contract_names():
+    """Subcontract Masters that represent INET's own work.
+
+    payout 0 / margin 100 — the "INet Telecom *" contracts. Lets the Direct
+    Close section's "Via INET" tile filter Work Done by contract, the same
+    way its "Via Sub-Con" twin does, since the page can filter BY contract
+    but cannot express "has none".
+    """
+    rows = frappe.db.sql(
+        """
+        SELECT name FROM `tabSubcontract Master`
+        WHERE IFNULL(sub_payout_pct, 0) = 0
+        """,
+        as_dict=True,
+    ) or []
+    return [r.name for r in rows if r.name]
+
+
+def _subcontracted_contract_names():
+    """Subcontract Masters that represent genuinely subcontracted work.
+
+    `sub_payout_pct > 0` is the test: every PO Dispatch links a contract, but
+    the in-house ones ("INet Telecom F&C/M&D/M&W") carry payout 0 / margin
+    100, so a linked contract alone does not mean the line was subcontracted.
+    """
+    rows = frappe.db.sql(
+        """
+        SELECT name FROM `tabSubcontract Master`
+        WHERE IFNULL(sub_payout_pct, 0) > 0
+        """,
+        as_dict=True,
+    ) or []
+    return [r.name for r in rows if r.name]
+
+
+def _all_team_names_by_type(team_type):
+    """Every INET Team of one team_type, active or not.
+
+    The dashboard's INET/Sub-Con revenue figures are keyed on team_type
+    alone, so they include work by teams that have since been deactivated.
+    Drill-throughs must filter on the same population or the list comes back
+    short of the tile it was opened from.
+    """
+    rows = frappe.db.sql(
+        """
+        SELECT name FROM `tabINET Team`
+        WHERE team_type = %s AND IFNULL(team_category, '') != 'Backend Team'
+        """,
+        (team_type,), as_dict=True,
+    ) or []
+    return [r.name for r in rows if r.name]
+
+
 @frappe.whitelist()
 def get_command_dashboard(from_date=None, to_date=None, etag=None):
     """
@@ -11198,7 +11271,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Open lines = PO Intake Lines whose per-line status is NOT terminal.
     # The line-wise status is the source of truth — the parent PO Intake's
     # status field is just a roll-up and isn't authoritative for KPIs.
-    _open_po_row = _open_po_line_totals()
+    # Scoped to the dashboard's range (by PO publish date) so these two tiles
+    # respond to the filter like the rest of the section.
+    _open_po_row = _open_po_line_totals(first_day, last_day)
     total_open_po_line_value = flt(_open_po_row.get("total_value") or 0)
     total_open_po_lines = cint(_open_po_row.get("line_count") or 0)
     # Legacy key: same as total open line amount (SAR)
@@ -11434,66 +11509,88 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_gap_today = inet_target_today - inet_achieved
 
     # ---- Subcontractor KPIs ------------------------------------------------
-    sub_teams = frappe.db.sql(
+    # Subcontracted work is identified by the POID's own `contract` link to
+    # Subcontract Master — every PO Dispatch carries it, so this is a normal
+    # field check — NOT by the executing team's type. A team can be anything;
+    # the commercial arrangement lives on the line.
+    #
+    # The master holds the split: `inet_margin_pct` is what INET retains and
+    # `sub_payout_pct` is what the subcontractor is paid (they sum to 100).
+    # In-house contracts ("INet Telecom F&C/M&D/M&W") carry margin 100 /
+    # payout 0, so `sub_payout_pct > 0` is what makes a line genuinely
+    # subcontracted rather than merely having a contract linked.
+    #
+    # Nothing here reads Work Done's own cost/margin columns. SUB teams have
+    # no daily cost, and the stored per-row cost/margin figures are not
+    # reportable (they charge a whole team-day to each POID). Revenue comes
+    # from wd.revenue_sar; expense and margin are derived from the master's
+    # percentages, the way the reference Target_Control sheet does it.
+    _sub_contracts = frappe.db.sql(
         """
-        SELECT name, team_id
-        FROM `tabINET Team`
-        WHERE status = 'Active'
-        AND team_type = 'SUB'
-        AND IFNULL(team_category, '') != 'Backend Team'
-        """, as_dict=True
-    )
-    active_sub_teams = len(sub_teams)
-    # Real MTD target: sum of rollout plan target_amount for active SUB teams this month
-    sub_target = 0.0
-    if sub_teams:
-        sub_names = [t.name for t in sub_teams]
-        sub_ph = ", ".join(["%s"] * len(sub_names))
-        sub_tgt_rows = frappe.db.sql(
-            f"""
-            SELECT COALESCE(SUM(rp.target_amount), 0) AS total
-            FROM `tabRollout Plan` rp
-            WHERE rp.team IN ({sub_ph})
-            AND rp.plan_date BETWEEN %s AND %s
-            """,
-            tuple(sub_names) + (first_day, last_day),
-            as_dict=True,
-        )
-        sub_target = flt(sub_tgt_rows[0].total if sub_tgt_rows else 0)
-
-    # Avg INET margin % from Subcontract Master for active SUB teams → used for target margin
-    _sm_margin_rows = frappe.db.sql(
-        """
-        SELECT AVG(sm.inet_margin_pct) AS avg_pct
-        FROM `tabSubcontract Master` sm
-        JOIN `tabINET Team` it ON it.subcontractor = sm.name
-        WHERE it.status = 'Active'
-        AND it.team_type = 'SUB'
-        AND IFNULL(it.team_category, '') != 'Backend Team'
+        SELECT COUNT(*) AS cnt FROM `tabSubcontract Master`
+        WHERE IFNULL(status, '') = 'Active' AND IFNULL(sub_payout_pct, 0) > 0
         """,
         as_dict=True,
     )
-    avg_subcon_margin_pct = flt(_sm_margin_rows[0].avg_pct if _sm_margin_rows else 0)
-    inet_margin_target_sub = round(sub_target * (avg_subcon_margin_pct / 100.0), 2)
+    active_sub_teams = cint(_sub_contracts[0].cnt if _sub_contracts else 0)
 
-    sub_revenue_rows = frappe.db.sql(
+    # Realized: revenue on subcontracted POIDs, split by the master's pcts.
+    # Dated by the execution where there is one and by wd.creation otherwise,
+    # so a direct-closed subcontracted line is not silently dropped.
+    _sub_rev_rows = frappe.db.sql(
         """
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS rev,
-               COALESCE(AVG(wd.inet_margin_pct), 0) AS avg_margin
+        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
+               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS expense,
+               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.inet_margin_pct, 0) / 100.0), 0) AS margin,
+               COUNT(DISTINCT pd.contract) AS contracts
         FROM `tabWork Done` wd
-        JOIN `tabDaily Execution` exe ON exe.name = wd.execution
-        JOIN `tabINET Team` it ON it.name = exe.team
-        WHERE it.team_type = 'SUB'
-        AND exe.execution_date BETWEEN %s AND %s
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
+        LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
+        WHERE IFNULL(sm.sub_payout_pct, 0) > 0
+          AND COALESCE(de.execution_date, DATE(wd.creation)) BETWEEN %s AND %s
         """,
-        (first_day, last_day),
+        (first_day, last_day), as_dict=True,
+    )
+    _sr = (_sub_rev_rows[0] if _sub_rev_rows else {}) or {}
+    sub_revenue = flt(_sr.get("revenue"))
+    sub_expense = flt(_sr.get("expense"))
+    inet_margin_sub = flt(_sr.get("margin"))
+    sub_contracts_active = cint(_sr.get("contracts"))
+
+    # Target = the monthly commitment agreed per subcontract, the way the
+    # reference Target_Control sheet does it. In that workbook the figure is
+    # typed in per contract (27,000 / 27,000 / 150,000 / 60,000 / 90,000 =
+    # 354,000); here it lives on Subcontract Master.monthly_target so it is
+    # editable in one place instead of hand-keyed into a spreadsheet.
+    #
+    # Nothing in the app's own data can reproduce it: it is a commercial
+    # commitment, not a derivable figure. Deriving it from rollout plans (the
+    # previous attempt) put Target BELOW Revenue, because a direct-closed
+    # line has revenue but no plan at all.
+    #
+    # The commitment is monthly, so it is scaled by how many 30-day months
+    # the selected range spans — a one-month range gives one month's target.
+    # `total_target_today` then pro-rates that by elapsed time, matching the
+    # sheet's "Sub-Con Target x Day Progress %".
+    #
+    # Margin target uses each contract's agreed `inet_margin_pct`. The sheet
+    # instead multiplies by the contract's *realized* margin %, which makes
+    # the target move with actual performance — deliberately not copied.
+    _sub_months = (range_days / 30.0) if range_days else 1.0
+    _sub_tgt_rows = frappe.db.sql(
+        """
+        SELECT COALESCE(SUM(monthly_target), 0) AS target,
+               COALESCE(SUM(monthly_target * IFNULL(inet_margin_pct, 0) / 100.0), 0) AS margin_target
+        FROM `tabSubcontract Master`
+        WHERE IFNULL(status, '') = 'Active' AND IFNULL(sub_payout_pct, 0) > 0
+        """,
         as_dict=True,
     )
-    sub_revenue = flt(sub_revenue_rows[0].rev if sub_revenue_rows else 0)
-    avg_margin_pct = flt(sub_revenue_rows[0].avg_margin if sub_revenue_rows else 0)
-    inet_margin_sub = sub_revenue * (avg_margin_pct / 100.0)
-    # Expense = what INET pays the subcontractor = Revenue − INET Margin (matches Excel)
-    sub_expense = sub_revenue - inet_margin_sub
+    _st = (_sub_tgt_rows[0] if _sub_tgt_rows else {}) or {}
+    sub_monthly_target = flt(_st.get("target"))
+    sub_target = round(sub_monthly_target * _sub_months, 2)
+    inet_margin_target_sub = round(flt(_st.get("margin_target")) * _sub_months, 2)
     sub_gap = sub_target - sub_revenue
 
     # ---- Backend Teams KPIs ------------------------------------------------
@@ -11538,20 +11635,108 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # (backend_completed_value, via PO Dispatch fields, not Work Done) kept
     # deliberately separate; Direct Close has no equivalent anywhere in this
     # dashboard at all, so Total Revenue silently omitted it entirely.
-    _direct_close_achieved_rows = frappe.db.sql(
+    # ---- Direct Close / Backend KPIs ---------------------------------------
+    # These closes have no Rollout Plan, no Daily Execution and no team, so
+    # every team-keyed aggregate above is blind to them by construction.
+    # They get their own section rather than being folded into the INET or
+    # Sub-Con numbers: those must stay strictly team metrics, and mixing a
+    # teamless close into them would make a team figure that no team did.
+    #
+    # Dated by wd.creation (when the close was recorded) — there is no
+    # execution date to use. Split by wd.source so Direct Close and Backend
+    # stay distinguishable. The subcontractor side comes from the POID's
+    # contract link further down, not from Work Done's own subcontractor /
+    # subcontract_cost columns, which are not reportable.
+    _dc_rows = frappe.db.sql(
         """
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS total
+        SELECT IFNULL(wd.source, '') AS source,
+               COUNT(*) AS lines_count,
+               COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
+               COUNT(DISTINCT NULLIF(pd.project_code, '')) AS projects
         FROM `tabWork Done` wd
-        WHERE wd.source = 'Direct Close'
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE IFNULL(wd.execution, '') = ''
           AND DATE(wd.creation) BETWEEN %s AND %s
+        GROUP BY IFNULL(wd.source, '')
         """,
         (first_day, last_day), as_dict=True,
-    )
-    direct_close_achieved = flt(_direct_close_achieved_rows[0].total if _direct_close_achieved_rows else 0)
+    ) or []
+    _dc_by_source = {(r.source or "").strip(): r for r in _dc_rows}
+    _dc = _dc_by_source.get("Direct Close")
+    _bk = _dc_by_source.get("Backend")
 
-    # Total Revenue = INET achieved + INET's margin from sub-con (not full sub-con revenue) + Direct Close
+    def _dc_val(row, key):
+        return flt(row.get(key)) if row else 0.0
+
+    def _dc_cnt(row, key):
+        return cint(row.get(key)) if row else 0
+
+    direct_close_achieved = _dc_val(_dc, "revenue")
+    backend_close_achieved = _dc_val(_bk, "revenue")
+
+    # Who executed the closed work: a subcontractor, or INET itself. This is
+    # the split that matters on a teamless close — there is no team to read
+    # it from, so it comes off the Work Done row's own subcontractor /
+    # subcontract cost. Revenue as well as line counts, since a count alone
+    # says nothing about how much money each side represents.
+    # Scoped to source='Direct Close' only. Backend closes are reported in
+    # the Backend Teams section, which already exists for them — repeating
+    # them here made one figure appear in two sections.
+    # Split on the POID's own contract link, the same test the Sub-Contractor
+    # block uses (payout > 0 = genuinely subcontracted; the in-house INet
+    # Telecom contracts carry payout 0). Deliberately NOT on Work Done's
+    # subcontractor / subcontract_cost columns — those per-row cost figures
+    # are not reportable.
+    _dc_who_rows = frappe.db.sql(
+        """
+        SELECT CASE WHEN IFNULL(sm.sub_payout_pct, 0) > 0
+                    THEN 'SUB' ELSE 'INET' END AS side,
+               COUNT(*) AS lines_count,
+               COALESCE(SUM(wd.revenue_sar), 0) AS revenue
+        FROM `tabWork Done` wd
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
+        WHERE IFNULL(wd.execution, '') = ''
+          AND IFNULL(wd.source, '') = 'Direct Close'
+          AND DATE(wd.creation) BETWEEN %s AND %s
+        GROUP BY side
+        """,
+        (first_day, last_day), as_dict=True,
+    ) or []
+    _dc_who = {(r.side or ""): r for r in _dc_who_rows}
+    _dc_sub, _dc_inet = _dc_who.get("SUB"), _dc_who.get("INET")
+
+    direct_close = {
+        "revenue": direct_close_achieved,
+        "lines": _dc_cnt(_dc, "lines_count"),
+        "projects": _dc_cnt(_dc, "projects"),
+        # Who did the work — a teamless close has no team to read it from,
+        # so it comes off the Work Done row's own subcontractor /
+        # subcontract cost. These two partition the section exactly:
+        # sub_revenue + inet_revenue == revenue.
+        "sub_revenue": _dc_val(_dc_sub, "revenue"),
+        "sub_lines": _dc_cnt(_dc_sub, "lines_count"),
+        "inet_revenue": _dc_val(_dc_inet, "revenue"),
+        "inet_lines": _dc_cnt(_dc_inet, "lines_count"),
+        # Contract lists so both Via tiles can drill through by contract.
+        "sub_contract_names": _subcontracted_contract_names(),
+        "inet_contract_names": _inhouse_contract_names(),
+    }
+
+    # Total Revenue = INET achieved (team execution) + INET's margin from
+    # sub-con (not full sub-con revenue) + the teamless closes, which are
+    # realized Work Done revenue exactly like the first term but reachable
+    # only via wd.system_id. Backend close revenue is included here for the
+    # first time: it was in no total at all, so Total Revenue understated by
+    # it. This does not double count against the Backend Teams tile —
+    # backend_completed_value sums PO Dispatch.line_amount dated by
+    # subcon_completed_on (contracted value, order-book style), a different
+    # measure on a different date basis from Work Done revenue.
     company_target = inet_monthly_target + sub_target
-    total_achieved = inet_achieved + inet_margin_sub + direct_close_achieved
+    total_achieved = (
+        inet_achieved + inet_margin_sub
+        + direct_close_achieved + backend_close_achieved
+    )
     # Total Cost Today = pro-rated INET cost + sub-con expense (actual, not pro-rated)
     total_cost_today = round(inet_cost_today + sub_expense, 2)
     company_gap = company_target - total_achieved
@@ -11562,10 +11747,16 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     _tt_rev_rows = frappe.db.sql(
         """
         SELECT de.team,
-               COALESCE(SUM(wd.revenue_sar), 0)                    AS revenue,
-               COALESCE(AVG(NULLIF(wd.inet_margin_pct, 0)), 100)   AS avg_inet_margin
+               COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
+               -- Payout per line at that line's own contract percentage,
+               -- from Subcontract Master via the POID's `contract` link.
+               -- Was AVG(wd.inet_margin_pct) — a per-row margin column that
+               -- is not reportable, averaged across rows of unequal size.
+               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS subcon_payout
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` de ON de.name = wd.execution
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
           AND de.team IS NOT NULL AND de.team != ''
         GROUP BY de.team
@@ -11588,12 +11779,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )
     _tt_data = []
     for _ti in _tt_team_rows:
-        _r         = _tt_rev_by_team.get(_ti.name, frappe._dict(revenue=0, avg_inet_margin=100))
+        _r         = _tt_rev_by_team.get(_ti.name, frappe._dict(revenue=0, subcon_payout=0))
         _revenue   = flt(_r.revenue)
         _team_type = ((_ti.team_type or "INET")).upper()
         if _team_type == "SUB":
-            _inet_margin = flt(_r.avg_inet_margin) or 100.0
-            _team_cost   = round(_revenue * (100.0 - _inet_margin) / 100.0, 0)
+            # A SUB team has no daily cost — what it costs INET is the
+            # payout owed on the work, taken line by line from each POID's
+            # contract percentage.
+            _team_cost   = round(flt(_r.subcon_payout), 0)
         else:
             _tt_days   = _team_cost_days(_ti.start_date, _ti.end_date, first_day, last_day)
             _team_cost = round(flt(_ti.daily_cost) * _tt_days, 0)
@@ -11628,12 +11821,17 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     _ip_team_cost_rows = frappe.db.sql(
         """
         SELECT pd.im, de.team,
-               COALESCE(SUM(wd.revenue_sar), 0)                    AS team_revenue,
-               COALESCE(AVG(NULLIF(wd.inet_margin_pct, 0)), 100)   AS avg_inet_margin
+               COALESCE(SUM(wd.revenue_sar), 0) AS team_revenue,
+               -- Payout at each line's own contract percentage, from
+               -- Subcontract Master via the POID's `contract` link. Was
+               -- AVG(wd.inet_margin_pct): a per-row margin column that is
+               -- not reportable, averaged across rows of unequal size.
+               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS subcon_payout
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` de ON de.name = wd.execution
         JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
         JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
           AND pd.im IS NOT NULL AND pd.im != ''
           AND de.team IS NOT NULL AND de.team != ''
@@ -11656,8 +11854,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         _ti        = _ip_team_info.get(_tc.team)
         _tt        = ((_ti.team_type if _ti else None) or "INET").upper()
         if _tt == "SUB":
-            _im_margin = flt(_tc.avg_inet_margin) or 100.0
-            _tc_cost   = flt(_tc.team_revenue) * (100.0 - _im_margin) / 100.0
+            # No daily cost on a SUB team; its cost is the payout owed.
+            _tc_cost   = flt(_tc.subcon_payout)
         else:
             _ip_days = _team_cost_days(_ti.start_date if _ti else None, _ti.end_date if _ti else None, first_day, last_day)
             _tc_cost = flt(_ti.daily_cost if _ti else 0) * _ip_days
@@ -11827,6 +12025,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "inet_achieved": inet_achieved,
             "inet_gap_today": inet_gap_today,
             "inet_profit_loss_today": inet_profit_loss_today,
+            # Team names behind these figures, so the dashboard's drill-through
+            # filters Work Done to these teams instead of landing on every row
+            # and contradicting the tile. Every team of the type, not just the
+            # currently-active ones: inet_achieved is keyed on team_type alone,
+            # so revenue from a since-deactivated team is in the figure and its
+            # rows must not be filtered out of the drill-through.
+            "team_names": _all_team_names_by_type("INET"),
         },
         "subcon": {
             "active_sub_teams": active_sub_teams,
@@ -11836,6 +12041,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "sub_expense": sub_expense,
             "inet_margin_sub": inet_margin_sub,
             "sub_gap": sub_gap,
+            "contracts_with_activity": sub_contracts_active,
+            # The un-scaled monthly commitment, so the UI can say whether the
+            # target is unset (0) rather than just showing a scaled zero.
+            "monthly_target": sub_monthly_target,
+            # Subcontract Master names behind these figures, so the drill-through
+            # filters Work Done by the POID's `contract` link (the same thing
+            # this block is keyed on) rather than by team.
+            "contract_names": _subcontracted_contract_names(),
         },
         "backend": {
             "active_teams": backend_active_teams,
@@ -11843,7 +12056,15 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "pending_value": backend_pending_value,
             "completed_mtd": backend_completed_mtd,
             "completed_value": backend_completed_value,
+            # Backend closes recorded as Work Done (no execution, no team).
+            # Reported here rather than in the Direct Close section so one
+            # figure lives in one place. Distinct from completed_value above,
+            # which is contracted PO line value dated by subcon_completed_on.
+            "close_revenue": backend_close_achieved,
+            "close_lines": _dc_cnt(_bk, "lines_count"),
         },
+        # Teamless closes, kept out of the INET/Sub-Con team blocks on purpose.
+        "direct_close": direct_close,
         "company": {
             "day_progress_pct": day_progress_pct,
             "company_target": company_target,
@@ -12154,12 +12375,17 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     team_cost_rows = frappe.db.sql(
         """
         SELECT pd.im, de.team,
-               COALESCE(SUM(wd.revenue_sar), 0)                    AS team_revenue,
-               COALESCE(AVG(NULLIF(wd.inet_margin_pct, 0)), 100)   AS avg_inet_margin
+               COALESCE(SUM(wd.revenue_sar), 0) AS team_revenue,
+               -- Payout at each line's own contract percentage, from
+               -- Subcontract Master via the POID's `contract` link. Was
+               -- AVG(wd.inet_margin_pct): a per-row margin column that is
+               -- not reportable, averaged across rows of unequal size.
+               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS subcon_payout
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` de ON de.name = wd.execution
         JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
         JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
           AND pd.im IS NOT NULL AND pd.im != ''
           AND de.team IS NOT NULL AND de.team != ''
@@ -12186,8 +12412,8 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         ti         = team_info.get(tc.team)
         team_type  = ((ti.team_type if ti else None) or "INET").upper()
         if team_type == "SUB":
-            inet_margin = flt(tc.avg_inet_margin) or 100.0
-            tc_cost     = flt(tc.team_revenue) * (100.0 - inet_margin) / 100.0
+            # No daily cost on a SUB team; its cost is the payout owed.
+            tc_cost     = flt(tc.subcon_payout)
         else:
             daily_cost = flt(ti.daily_cost if ti else 0)
             days       = _team_cost_days(ti.start_date if ti else None, ti.end_date if ti else None, fd, td)
@@ -12284,6 +12510,309 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     return {"columns": columns, "data": data, "totals": totals}
 
 
+
+def _project_meta_map():
+    """project_code -> name / IM / domain, with the PO line's domain override
+    winning over the project's default (same rule as everywhere else)."""
+    rows = frappe.db.sql(
+        """
+        SELECT pcc.name AS project_code,
+               IFNULL(pcc.project_name, pcc.name) AS project_name,
+               IFNULL(pcc.implementation_manager, '') AS im,
+               IFNULL((
+                   SELECT COALESCE(NULLIF(pd2.project_domain, ''), pcc.project_domain)
+                   FROM `tabPO Dispatch` pd2
+                   WHERE pd2.project_code = pcc.name
+                     AND IFNULL(pd2.project_domain, '') != ''
+                   LIMIT 1
+               ), IFNULL(pcc.project_domain, '')) AS project_domain
+        FROM `tabProject Control Center` pcc
+        """,
+        as_dict=True,
+    ) or []
+    return {r.project_code: r for r in rows}
+
+
+def _report_chart(rows, label_key, value_key, value_name, top=10):
+    """The {labels, datasets} shape ReportChart renders — top N rows by value."""
+    picked = [r for r in rows if flt(r.get(value_key))][:top]
+    if not picked:
+        return None
+    return {
+        "data": {
+            "labels": [str(r.get(label_key) or "") for r in picked],
+            "datasets": [{"name": value_name,
+                          "values": [round(flt(r.get(value_key)), 2) for r in picked]}],
+        },
+        "type": "bar",
+    }
+
+
+@frappe.whitelist()
+def get_project_profitability_report(from_date=None, to_date=None, **kwargs):
+    """Project Profitability — the workbook's Project_Profitability sheet.
+
+    Revenue delivery by project code, measured against the PO value:
+
+      PO Value         = SUMIFS('PO Dump'!V, Y=code)  -> SUM(pd.line_amount)
+      Revenue Achieved = line value of the lines that are DONE
+      Remaining Value  = PO Value - Revenue Achieved
+      Assigned Lines   = COUNTIFS('PO Dump'!Y=code, C<>"")
+      Completed Lines  = count of those same done lines
+      Delivery %       = Revenue Achieved / PO Value
+
+    "Done" is the line's dispatch_status reaching Completed, Partially
+    Submitted, Submitted, Partially Closed or Closed — a submitted, invoiced
+    or closed line is work that has already been carried out, so its line
+    value counts as achieved. Same status set the PM dashboard's Top Projects
+    uses, so the two agree.
+
+    Achieved is deliberately NOT taken from Work Done: only 53 of this
+    database's 11,439 done lines carry a Work Done record (the rest were
+    imported historically with their invoice data), so keying it there
+    reported 0 achieved for projects with 1,557 lines closed. Nor is it taken
+    from the PIC invoiced amounts, which measure the billed position rather
+    than the work — Revenue Achieved and Completed Lines are now the value
+    and the count of one single set of lines, which is why they move together.
+
+    The sheet's "Profitability Index" column is literally `=I4` (a copy of
+    Delivery %), so it is not repeated here.
+
+    Separate from get_project_performance_report on purpose: this one measures
+    against CONTRACTED value, that one against the ROLLOUT PLAN target. The
+    two answer different questions and will not agree.
+
+    Deliberately NOT date-filtered. PO value has no usable date basis
+    (target_month is set on 95 of 17,449 lines), so filtering one side only
+    made Delivery % compare an all-time denominator against a windowed
+    numerator. The workbook has no date concept here either: this is a
+    current-state report.
+    """
+
+    line_rows = frappe.db.sql(
+        """
+        SELECT pd.project_code AS project_code,
+               COALESCE(SUM(pd.line_amount), 0) AS po_value,
+               COUNT(*) AS assigned_lines,
+               SUM(CASE WHEN pd.dispatch_status IN
+                        ('Completed', 'Partially Submitted', 'Submitted',
+                         'Partially Closed', 'Closed')
+                        THEN 1 ELSE 0 END) AS completed_lines,
+               COALESCE(SUM(CASE WHEN pd.dispatch_status IN
+                        ('Completed', 'Partially Submitted', 'Submitted',
+                         'Partially Closed', 'Closed')
+                        THEN pd.line_amount ELSE 0 END), 0) AS achieved
+        FROM `tabPO Dispatch` pd
+        WHERE IFNULL(pd.project_code, '') != ''
+          AND IFNULL(pd.is_internal_work, 0) != 1
+          AND IFNULL(pd.dispatch_status, '') NOT LIKE '%%Cancel%%'
+        GROUP BY pd.project_code
+        """,
+        as_dict=True,
+    ) or []
+
+    meta = _project_meta_map()
+
+    data = []
+    for lr in line_rows:
+        code = lr.project_code
+        m = meta.get(code) or {}
+        po_value = flt(lr.po_value)
+        achieved = flt(lr.achieved)
+        data.append({
+            "project_domain": m.get("project_domain") or "",
+            "project_name": m.get("project_name") or code,
+            "project_code": code,
+            "po_value": round(po_value, 2),
+            "achieved": round(achieved, 2),
+            "remaining_value": round(po_value - achieved, 2),
+            "assigned_lines": cint(lr.assigned_lines),
+            "completed_lines": cint(lr.completed_lines),
+            "delivery_pct": round(achieved / po_value * 100, 1) if po_value else 0.0,
+        })
+    data.sort(key=lambda r: r["po_value"], reverse=True)
+    for i, r in enumerate(data, 1):
+        r["sn"] = i
+
+    columns = [
+        {"fieldname": "sn",              "label": "#",                "fieldtype": "Int"},
+        {"fieldname": "project_domain",  "label": "Project Domain",   "fieldtype": "Data"},
+        {"fieldname": "project_name",    "label": "Project Name",     "fieldtype": "Data"},
+        {"fieldname": "project_code",    "label": "Project Code",     "fieldtype": "Data"},
+        {"fieldname": "po_value",        "label": "PO Value (SAR)",   "fieldtype": "Currency"},
+        {"fieldname": "achieved",        "label": "Revenue Achieved", "fieldtype": "Currency"},
+        {"fieldname": "remaining_value", "label": "Remaining Value",  "fieldtype": "Currency"},
+        {"fieldname": "assigned_lines",  "label": "Assigned Lines",   "fieldtype": "Int"},
+        {"fieldname": "completed_lines", "label": "Completed Lines",  "fieldtype": "Int"},
+        {"fieldname": "delivery_pct",    "label": "Delivery %",       "fieldtype": "Percent"},
+    ]
+
+    tot_po = sum(r["po_value"] for r in data)
+    tot_ach = sum(r["achieved"] for r in data)
+    totals = {
+        "project_code": f"{len(data)} projects",
+        "po_value": round(tot_po, 2),
+        "achieved": round(tot_ach, 2),
+        "remaining_value": round(tot_po - tot_ach, 2),
+        "assigned_lines": sum(r["assigned_lines"] for r in data),
+        "completed_lines": sum(r["completed_lines"] for r in data),
+        # Ratio of the totals, never an average of the row percentages.
+        "delivery_pct": round(tot_ach / tot_po * 100, 1) if tot_po else 0.0,
+    }
+    return {
+        "columns": columns,
+        "data": data,
+        "totals": totals,
+        "chart": _report_chart(data, "project_code", "achieved", "Revenue Achieved (SAR)"),
+    }
+
+
+@frappe.whitelist()
+def get_project_performance_report(from_date=None, to_date=None, **kwargs):
+    """Project Performance — the workbook's Project_Performance sheet.
+
+    Project-wise performance against target:
+
+      Known Target    = SUM(pd.line_amount) — what the lines are worth
+      Achieved        = line value of the lines that are DONE
+      Gap             = Known Target - Achieved
+      Total Lines     = lines in scope (no plan needed)
+      Completed Lines = count of the done lines
+      Achievement %   = Achieved / Known Target
+      Completion %    = Completed Lines / Total Lines
+      Avg Rev / Line  = Achieved / Completed
+      KPI Rating      = >=95% Excellent, >=80% Good, >0 Need Improvement,
+                        else No Progress
+      Rank            = by Achievement %
+
+    Known Target is the line value, with no reference to rollout plans. The
+    workbook read it from Rollout_Planning_V2, which held a row for every
+    line; here plans exist for 94 of 15,995 lines, because 11,400 of the
+    11,439 done lines are legacy — completed and often already invoiced with
+    no plan ever created. Reading the target from plans gave 66 of 75
+    projects a target of zero.
+
+    A plan is not needed to know what a line was worth, and for a line that
+    is already complete the plan is irrelevant. Consulting plans also
+    over-counted: a re-visited line carries several plans, so summing their
+    target_amount pushed the target above the line's own value (13,722,891
+    against a book of 13,710,253).
+
+    Achieved is the line value of done lines (dispatch_status reaching
+    Completed / Partially Submitted / Submitted / Partially Closed / Closed)
+    — a submitted, invoiced or closed line is work already carried out. Not
+    Work Done revenue, which exists for only 53 of the 11,439 done lines.
+
+    Current-state, not date-filtered: neither a line's value nor its status
+    has a usable date basis here (target_month is set on 95 of 17,449 lines),
+    and filtering one side only made every percentage collapse.
+    """
+    DONE_STATUSES = ('Completed', 'Partially Submitted', 'Submitted',
+                     'Partially Closed', 'Closed')
+    _ph_done = ", ".join(["%s"] * len(DONE_STATUSES))
+
+    # One row per project, straight off PO Dispatch. No Rollout Plan join at
+    # all: the target is what the lines are worth and the achieved side is
+    # their status, so a legacy line that was never planned is measured the
+    # same as a planned one. `total_lines` is every line in scope — NOT a
+    # count of planned lines, which is why it is not called that.
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.project_code AS project_code,
+               COALESCE(SUM(pd.line_amount), 0) AS known_target,
+               COALESCE(SUM(CASE WHEN pd.dispatch_status IN ({_ph_done})
+                                 THEN pd.line_amount ELSE 0 END), 0) AS achieved,
+               COUNT(*) AS total_lines,
+               SUM(CASE WHEN pd.dispatch_status IN ({_ph_done})
+                        THEN 1 ELSE 0 END) AS completed_lines
+        FROM `tabPO Dispatch` pd
+        WHERE IFNULL(pd.project_code, '') != ''
+          AND IFNULL(pd.is_internal_work, 0) != 1
+          AND IFNULL(pd.dispatch_status, '') NOT LIKE '%%Cancel%%'
+        GROUP BY pd.project_code
+        """,
+        tuple(DONE_STATUSES) * 2, as_dict=True,
+    ) or []
+    meta = _project_meta_map()
+
+    data = []
+    for r in rows:
+        code = r.project_code
+        m = meta.get(code) or {}
+        target = flt(r.known_target)
+        achieved = flt(r.achieved)
+        total_lines = cint(r.total_lines)
+        completed = cint(r.completed_lines)
+        ach_pct = round(achieved / target * 100, 1) if target else 0.0
+        if ach_pct >= 95:
+            rating = "Excellent"
+        elif ach_pct >= 80:
+            rating = "Good"
+        elif ach_pct > 0:
+            rating = "Need Improvement"
+        else:
+            rating = "No Progress"
+        data.append({
+            "project_code": code,
+            "project_name": m.get("project_name") or code,
+            "im": m.get("im") or "",
+            "known_target": round(target, 2),
+            "achieved": round(achieved, 2),
+            "gap": round(target - achieved, 2),
+            "total_lines": total_lines,
+            "completed_lines": completed,
+            "achievement_pct": ach_pct,
+            "completion_pct": round(completed / total_lines * 100, 1) if total_lines else 0.0,
+            "avg_revenue_per_line": round(achieved / completed, 2) if completed else 0.0,
+            "kpi_rating": rating,
+        })
+
+    # Ranked by Achievement %, as the sheet's RANK() does.
+    data.sort(key=lambda r: r["achievement_pct"], reverse=True)
+    for i, r in enumerate(data, 1):
+        r["rank"] = i
+        r["sn"] = i
+
+    columns = [
+        {"fieldname": "sn",                   "label": "#",                    "fieldtype": "Int"},
+        {"fieldname": "project_code",         "label": "Project Code",         "fieldtype": "Data"},
+        {"fieldname": "project_name",         "label": "Project Name",         "fieldtype": "Data"},
+        {"fieldname": "im",                   "label": "IM",                   "fieldtype": "Data"},
+        {"fieldname": "known_target",         "label": "Known Target (SAR)",   "fieldtype": "Currency"},
+        {"fieldname": "achieved",             "label": "Achieved (SAR)",       "fieldtype": "Currency"},
+        {"fieldname": "gap",                  "label": "Gap (SAR)",            "fieldtype": "Currency"},
+        {"fieldname": "total_lines",        "label": "Total Lines",          "fieldtype": "Int"},
+        {"fieldname": "completed_lines",      "label": "Completed Lines",      "fieldtype": "Int"},
+        {"fieldname": "achievement_pct",      "label": "Achievement %",        "fieldtype": "Percent"},
+        {"fieldname": "completion_pct",       "label": "Completion %",         "fieldtype": "Percent"},
+        {"fieldname": "avg_revenue_per_line", "label": "Avg Rev / Line (SAR)", "fieldtype": "Currency"},
+        {"fieldname": "kpi_rating",           "label": "KPI Rating",           "fieldtype": "Data"},
+    ]
+
+    tot_t = sum(r["known_target"] for r in data)
+    tot_a = sum(r["achieved"] for r in data)
+    tot_p = sum(r["total_lines"] for r in data)
+    tot_c = sum(r["completed_lines"] for r in data)
+    totals = {
+        "project_code": f"{len(data)} projects",
+        "known_target": round(tot_t, 2),
+        "achieved": round(tot_a, 2),
+        "gap": round(tot_t - tot_a, 2),
+        "total_lines": tot_p,
+        "completed_lines": tot_c,
+        "achievement_pct": round(tot_a / tot_t * 100, 1) if tot_t else 0.0,
+        "completion_pct": round(tot_c / tot_p * 100, 1) if tot_p else 0.0,
+        "avg_revenue_per_line": round(tot_a / tot_c, 2) if tot_c else 0.0,
+    }
+
+    return {
+        "columns": columns,
+        "data": data,
+        "totals": totals,
+        "chart": _report_chart(data, "project_code", "achieved", "Achieved (SAR)"),
+    }
+
+
 @frappe.whitelist()
 def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     """Top Teams — ranked by revenue.
@@ -12302,11 +12831,17 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     rev_rows = frappe.db.sql(
         """
         SELECT de.team,
-               COALESCE(SUM(wd.revenue_sar), 0)               AS revenue,
-               COALESCE(AVG(NULLIF(wd.inet_margin_pct, 0)), 100) AS avg_inet_margin,
-               COUNT(DISTINCT DATE(de.execution_date))          AS days_worked
+               COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
+               -- Payout at each line's own contract percentage, from
+               -- Subcontract Master via the POID's `contract` link. Was
+               -- AVG(wd.inet_margin_pct): a per-row margin column that is
+               -- not reportable, averaged across rows of unequal size.
+               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS subcon_payout,
+               COUNT(DISTINCT DATE(de.execution_date)) AS days_worked
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` de ON de.name = wd.execution
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
           AND de.team IS NOT NULL AND de.team != ''
         GROUP BY de.team
@@ -12418,7 +12953,7 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     total_days_worked = 0
     for team in report_teams:
         ti = team_info[team]
-        r           = rev_by_team.get(team, frappe._dict(revenue=0, avg_inet_margin=100, days_worked=0))
+        r           = rev_by_team.get(team, frappe._dict(revenue=0, subcon_payout=0, days_worked=0))
         p           = plan_by_team.get(team, frappe._dict(assigned_lines=0, completed_lines=0))
         assigned    = cint(p.assigned_lines)
         completed   = cint(p.completed_lines)
@@ -12431,9 +12966,8 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         team_type = ((ti.team_type if ti else None) or "INET").upper()
 
         if team_type == "SUB":
-            inet_margin = flt(r.avg_inet_margin) or 100.0
-            subcon_rate = (100.0 - inet_margin) / 100.0
-            team_cost   = round(revenue * subcon_rate, 0)
+            # No daily cost on a SUB team; its cost is the payout owed.
+            team_cost   = round(flt(r.subcon_payout), 0)
         else:
             daily_cost = flt(ti.daily_cost if ti else 0)
             cost_days  = _team_cost_days(ti.start_date if ti else None, ti.end_date if ti else None, fd, td)
