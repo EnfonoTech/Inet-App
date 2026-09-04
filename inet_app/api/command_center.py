@@ -12814,6 +12814,199 @@ def get_project_performance_report(from_date=None, to_date=None, **kwargs):
 
 
 @frappe.whitelist()
+def get_rollout_burn_down_report(from_date=None, to_date=None, **kwargs):
+    """Rollout Delivery Burn-Down — the workbook's Rollout_Progress sheet.
+
+    Company-wide PO-line backlog, burning down week by week against a
+    straight-line pace target (the same even-pace assumption behind Command
+    Dashboard's Target card).
+
+    Total Lines is every in-scope PO Dispatch line — the same "in scope"
+    definition get_project_performance_report uses (has a project, not
+    internal work, not cancelled). A line's closed date, needed to place it
+    in a week, barely exists in this data (only 53 of 11,439 done lines have
+    a Work Done record — see that function's docstring for the full legacy
+    picture). The best available signal, in order: the latest Daily
+    Execution against the line, then the earliest Work Done record, then the
+    PO Dispatch row's own last-modified date as a last resort — which for a
+    line bulk-imported already closed means "the system learned this was
+    closed", not the day the work actually happened. Checked live: 10,625 of
+    11,439 done lines fall back to that last resort, almost all landing on
+    the same handful of migration dates. A chart of that would show one
+    enormous spike on the import date and nothing else, which is true but
+    useless.
+
+    So the target and the "actual" progress line are both measured against
+    the OPEN BACKLOG AT THE START OF THE SELECTED WINDOW, not the whole
+    15,995-line universe — closing the backlog that already existed before
+    the window opened isn't this window's job. Target Progress % is how much
+    of that backlog *should* be gone by now at an even daily pace to period
+    end; Actual Progress % is how much of it actually is. Comparing either
+    one against the full universe instead (as the workbook does, because its
+    own tracker had no pre-existing backlog to net out) made the line sit
+    flat near 71% every week regardless of real closing activity that week —
+    checked, and dropped for exactly that reason.
+
+    Closed Cumulative / Remaining / Target Remaining are snapshots as of a
+    week's end — summing them across weeks in a table footer would be
+    meaningless (double- and triple-counting the same still-open lines), so
+    those columns carry no per-column total; the KPI cards show the period's
+    start and end snapshots instead. New Closures and Re-Scheduled are
+    deltas (an event dated inside that week specifically) and sum correctly,
+    so they do carry one.
+
+    Default window: the last 8 weeks to today, not "this calendar month" —
+    the workbook's own choice, but with 10,625 of 11,439 closures dated by
+    a handful of migration days rather than real activity, a single month
+    is as likely to be empty as to be the one migration hit; 8 weeks gives
+    enough width to show real recent movement either way. Any request
+    narrower than 4 weeks — including the Reports page's own date picker,
+    which defaults to month-to-date for every report that uses it — is
+    widened backward to that same 8-week floor, ending at whatever to_date
+    was asked for; a deliberately wide custom range is honoured as given.
+    """
+    DONE_STATUSES = ('Completed', 'Partially Submitted', 'Submitted',
+                     'Partially Closed', 'Closed')
+    _ph_done = ", ".join(["%s"] * len(DONE_STATUSES))
+    scope_where = """
+        IFNULL(pd.project_code, '') != ''
+        AND IFNULL(pd.is_internal_work, 0) != 1
+        AND IFNULL(pd.dispatch_status, '') NOT LIKE '%%Cancel%%'
+    """
+
+    # The Reports page's own "dateonly" picker defaults to month-to-date for
+    # every report that uses it, which for this one would mean a 1-4 day
+    # window on the 1st of a month — nothing for a burn-down to show. A
+    # request narrower than 4 weeks is widened backward to the standard
+    # 8-week floor, ending at whatever to_date was actually asked for; a
+    # deliberately wide custom range (e.g. a full quarter) is honoured as-is.
+    t = getdate(nowdate())
+    if from_date or to_date:
+        td = getdate(to_date) if to_date else t
+        fd = getdate(from_date) if from_date else add_days(td, -55)
+        if td < fd:
+            fd, td = td, fd
+        if (td - fd).days + 1 < 28:
+            fd = add_days(td, -55)
+    else:
+        fd, td = add_days(t, -55), t
+    period_len = (td - fd).days + 1
+
+    per_line = frappe.db.sql(
+        f"""
+        SELECT pd.name AS pdname,
+               (pd.dispatch_status IN ({_ph_done})) AS is_done,
+               DATE(COALESCE(ex.last_exec_date, wdd.wd_date, pd.modified)) AS closed_date
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN (
+            SELECT rp.po_dispatch AS pdname, MAX(de.execution_date) AS last_exec_date
+            FROM `tabDaily Execution` de
+            JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+            GROUP BY rp.po_dispatch
+        ) ex ON ex.pdname = pd.name
+        LEFT JOIN (
+            SELECT wd.system_id AS pdname, MIN(wd.creation) AS wd_date
+            FROM `tabWork Done` wd
+            GROUP BY wd.system_id
+        ) wdd ON wdd.pdname = pd.name
+        WHERE {scope_where}
+        """,
+        tuple(DONE_STATUSES), as_dict=True,
+    ) or []
+
+    total_lines = len(per_line)
+    closed_dates = [getdate(r.closed_date) for r in per_line if r.is_done and r.closed_date]
+
+    revisit_rows = frappe.db.sql(
+        f"""
+        SELECT DATE(de.execution_date) AS d, COUNT(*) AS c
+        FROM `tabDaily Execution` de
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE de.revisit_flag = 1
+          AND de.execution_date IS NOT NULL
+          AND {scope_where}
+        GROUP BY DATE(de.execution_date)
+        """,
+        as_dict=True,
+    ) or []
+    revisit_by_date = {getdate(r.d): cint(r.c) for r in revisit_rows}
+
+    baseline_closed = sum(1 for d in closed_dates if d < fd)
+    open_backlog_at_start = max(total_lines - baseline_closed, 0)
+
+    buckets = []
+    cursor = fd
+    idx = 1
+    while cursor <= td:
+        wk_end = min(add_days(cursor, 6), td)
+        buckets.append((idx, cursor, wk_end))
+        cursor = add_days(wk_end, 1)
+        idx += 1
+
+    data = []
+    for idx, wstart, wend in buckets:
+        cum = sum(1 for d in closed_dates if d <= wend)
+        newc = sum(1 for d in closed_dates if wstart <= d <= wend)
+        reschedules = sum(c for d, c in revisit_by_date.items() if wstart <= d <= wend)
+        days_elapsed = (wend - fd).days + 1
+        target_pct = round(min(days_elapsed / period_len, 1.0) * 100, 1) if period_len else 0.0
+        actual_pct = (round((cum - baseline_closed) / open_backlog_at_start * 100, 1)
+                      if open_backlog_at_start else 0.0)
+        data.append({
+            "sn":               idx,
+            "week":             f"W-{idx}",
+            "week_start":       str(wstart),
+            "week_end":         str(wend),
+            "total_lines":      total_lines,
+            "closed_cumulative": cum,
+            "new_closures":     newc,
+            "remaining_lines":  total_lines - cum,
+            "target_remaining": round(max(open_backlog_at_start * (1 - target_pct / 100), 0)),
+            "actual_pct":       actual_pct,
+            "target_pct":       target_pct,
+            "reschedules":      reschedules,
+        })
+
+    columns = [
+        {"fieldname": "sn",                "label": "#",                     "fieldtype": "Int"},
+        {"fieldname": "week",              "label": "Week",                  "fieldtype": "Data"},
+        {"fieldname": "week_start",        "label": "Week Start",            "fieldtype": "Date"},
+        {"fieldname": "week_end",          "label": "Week End",              "fieldtype": "Date"},
+        {"fieldname": "total_lines",       "label": "Total PO Lines",        "fieldtype": "Int",     "no_total": True},
+        {"fieldname": "closed_cumulative", "label": "Closed (Cumulative)",   "fieldtype": "Int",     "no_total": True},
+        {"fieldname": "new_closures",      "label": "New Closures",          "fieldtype": "Int"},
+        {"fieldname": "remaining_lines",   "label": "Remaining Lines",       "fieldtype": "Int",     "no_total": True},
+        {"fieldname": "target_remaining",  "label": "Target Remaining",      "fieldtype": "Int",     "no_total": True},
+        {"fieldname": "actual_pct",        "label": "Actual Progress %",     "fieldtype": "Percent"},
+        {"fieldname": "target_pct",        "label": "Target Progress %",     "fieldtype": "Percent"},
+        {"fieldname": "reschedules",       "label": "Re-Scheduled",          "fieldtype": "Int"},
+    ]
+
+    last = data[-1] if data else {}
+    totals = {
+        "total_lines":       total_lines,
+        "closed_cumulative": last.get("closed_cumulative", baseline_closed),
+        "new_closures":      sum(r["new_closures"] for r in data),
+        "remaining_lines":   last.get("remaining_lines", total_lines - baseline_closed),
+        "target_remaining":  last.get("target_remaining", open_backlog_at_start),
+        "actual_pct":        last.get("actual_pct", 0.0),
+        "target_pct":        last.get("target_pct", 0.0),
+        "reschedules":       sum(r["reschedules"] for r in data),
+    }
+
+    return {
+        "columns": columns,
+        "data": data,
+        "totals": totals,
+        "chart": _report_chart(data, "week", "actual_pct", "Actual Progress %", top=len(data)),
+        "open_backlog_at_start": open_backlog_at_start,
+        "from_date": str(fd),
+        "to_date": str(td),
+    }
+
+
+@frappe.whitelist()
 def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     """Top Teams — ranked by revenue.
     Team Cost:

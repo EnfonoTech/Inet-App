@@ -141,6 +141,17 @@ const REPORTS = [
     hasFilters: false,
   },
   {
+    key: "rollout_burn_down",
+    category: "Rollout & Delivery",
+    title: "Rollout Delivery Burn-Down",
+    api: "reportRolloutBurnDown",
+    // Default window is the last 8 weeks, not "this calendar month" — see
+    // the backend docstring. An explicit range overrides it.
+    description: "Weekly backlog burn-down vs an even-pace target — actual vs target progress on the open backlog, new closures and re-scheduled lines per week",
+    hasFilters: true,
+    filterType: "dateonly",
+  },
+  {
     key: "top_teams",
     category: "Performance",
     title: "Top Teams",
@@ -492,6 +503,12 @@ export default function Reports() {
   //   wrong (e.g. averaging 5 teams' Completion % ignores that they have
   //   very different line counts; summing is meaningless either way).
   // - Currency/Int columns are summed directly — always correct for a total.
+  // - A column can opt out with `no_total: true` (e.g. Rollout Burn-Down's
+  //   Closed Cumulative / Remaining Lines — a snapshot repeated per week, not
+  //   a per-week amount; summing it across weeks would double- and triple-
+  //   count the same still-open lines). Those read the server's `totals`
+  //   value instead, same as a Percent column, so the footer still shows the
+  //   real headline number rather than a blank or a wrong sum.
   // - `sn`/`#`-style row-number columns are explicitly excluded (see below).
   const footerValues = useMemo(() => {
     if (!columns.length) return {};
@@ -499,7 +516,7 @@ export default function Reports() {
     for (const col of columns) {
       const key = col.fieldname || col.name;
       if (!key || key === "sn") continue;
-      if (isPctCol(col)) {
+      if (isPctCol(col) || col.no_total) {
         const v = totals?.[key];
         if (v != null) out[key] = v;
         continue;

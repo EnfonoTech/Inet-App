@@ -196,6 +196,7 @@ export const pmApi = {
   reportIMPerformance:            (f) => call("inet_app.api.command_center.get_im_performance_report",    { from_date: f?.from_date, to_date: f?.to_date }),
   reportProjectProfitability:     (f) => call("inet_app.api.command_center.get_project_profitability_report", { from_date: f?.from_date, to_date: f?.to_date }),
   reportProjectPerformance:       (f) => call("inet_app.api.command_center.get_project_performance_report", { from_date: f?.from_date, to_date: f?.to_date }),
+  reportRolloutBurnDown:          (f) => call("inet_app.api.command_center.get_rollout_burn_down_report", { from_date: f?.from_date, to_date: f?.to_date }),
   reportTopTeams:                 (f) => call("inet_app.api.command_center.get_top_teams_report",         { from_date: f?.from_date, to_date: f?.to_date }),
   reportTeamPVA:                  (f) => call("inet_app.api.command_center.get_team_utilization_pva",    { from_date: f?.from_date, to_date: f?.to_date, team: JSON.stringify(f?.team || []) }),
   reportWeeklyPerformance:        (f) => call("inet_app.api.command_center.get_weekly_performance_report",   { from_date: f?.from_date, to_date: f?.to_date }),
