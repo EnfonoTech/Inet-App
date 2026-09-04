@@ -14,11 +14,15 @@ export default function FinancialDashboard() {
     let cancelled = false;
     (async () => {
       try {
-        const [cmd, pic] = await Promise.all([
-          pmApi.getCommandDashboard({ from_date: "", to_date: "" }),
-          pmApi.getPicDashboard("", "", "").catch(() => null),
-        ]);
-        if (!cancelled) { setData(cmd); setPicData(pic); }
+        // Awaited alone so the page paints at command-dashboard speed; the
+        // PIC figures fill in a few tiles afterwards and already have a null
+        // path. Awaiting both together held the whole screen on "Loading…"
+        // until the slower of the two finished.
+        const cmd = await pmApi.getCommandDashboard({ from_date: "", to_date: "" });
+        if (cancelled) return;
+        setData(cmd);
+        pmApi.getPicDashboard("", "", "")
+          .then((pic) => { if (!cancelled) setPicData(pic); }).catch(() => {});
       } catch { if (!cancelled) setData(null); }
     })();
     return () => { cancelled = true; };

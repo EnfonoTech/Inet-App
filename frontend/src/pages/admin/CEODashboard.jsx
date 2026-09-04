@@ -16,18 +16,25 @@ export default function CEODashboard() {
     let cancelled = false;
     (async () => {
       try {
-        const [cmd, pk, pic, tr] = await Promise.all([
-          pmApi.getCommandDashboard({ from_date: "", to_date: "" }),
-          pmApi.projectKpis().catch(() => null),
-          pmApi.getPicDashboard(null, null, "").catch(() => null),
-          // Real monthly spine. The chart used to fake one by taking the
-          // first 4 IMs and labelling them Jan/Feb/Mar/Apr.
-          pmApi.getPoVsInvoiceTrend({ months: 6 }).catch(() => null),
-        ]);
-        if (!cancelled) {
-          setData(cmd); setProjKpis(pk); setPicKpi(pic?.kpi || null);
-          setTrend(Array.isArray(tr?.series) ? tr.series : []);
-        }
+        // The command payload is what the page is gated on, so it is awaited
+        // alone and paints as soon as it lands. The other three only fill in
+        // individual tiles and a chart, and every one of them already has a
+        // null path — awaiting all four together meant the whole screen sat
+        // on "Loading…" until the SLOWEST of them finished, which is what
+        // made these dashboards feel heavy next to the Command one.
+        const cmd = await pmApi.getCommandDashboard({ from_date: "", to_date: "" });
+        if (cancelled) return;
+        setData(cmd);
+
+        pmApi.projectKpis()
+          .then((pk) => { if (!cancelled) setProjKpis(pk); }).catch(() => {});
+        pmApi.getPicDashboard(null, null, "")
+          .then((pic) => { if (!cancelled) setPicKpi(pic?.kpi || null); }).catch(() => {});
+        // Real monthly spine. The chart used to fake one by taking the
+        // first 4 IMs and labelling them Jan/Feb/Mar/Apr.
+        pmApi.getPoVsInvoiceTrend({ months: 6 })
+          .then((tr) => { if (!cancelled) setTrend(Array.isArray(tr?.series) ? tr.series : []); })
+          .catch(() => {});
       } catch { if (!cancelled) setData(null); }
     })();
     return () => { cancelled = true; };

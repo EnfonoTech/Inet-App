@@ -306,15 +306,17 @@ export default function CommandDashboard() {
         {/* Col 1 — Operational Today */}
         <Section title="Operational Today" accent="ops">
           <div className="dash-kpi-grid dash-kpi-grid--2">
-            {/* Follows the date range, matched on the PO's publish date
-                (COALESCE(publish_date, start_date, creation) — the same basis
-                the PO-vs-Invoice trend buckets by, since publish_date lands
-                on only a minority of lines). */}
+            {/* A backlog, not a flow: the whole open order book as it stands
+                at the END of the range, with no start bound. Only the range's
+                end date applies, and only to whether a line had been
+                published yet (COALESCE(publish_date, start_date, creation) —
+                the same basis the PO-vs-Invoice trend buckets by, since
+                publish_date lands on only a minority of lines). */}
             <Stat label="Open PO Lines"  value={fv(operational.total_open_po_lines ?? 0)}
-              hint="PO Intake Lines still open (status not Closed or Cancelled) whose PO was published in the selected range."
+              hint="The whole open order book as it stood at the end of the selected range — not just lines published inside it. An earlier end date drops lines not yet published by then, and adds back lines that have closed since (dated by payment received, or by i-BUY invoice date where no payment is recorded)."
               onClick={() => navigate("/po-dump", { state: { poDumpFilters: { showOpen: true, showClosed: false, showCancelled: false } } })} />
             <Stat label="Open PO Value"  value={sar(operational.total_open_po_line_value ?? 0)}
-              hint="Line amount of the open lines above, for POs published in the selected range."
+              hint="Line amount of the open lines above — the full open order book as at the end of the selected range."
               onClick={() => navigate("/po-dump", { state: { poDumpFilters: { showOpen: true, showClosed: false, showCancelled: false } } })} />
             <Stat label="Planned Activities" value={sar(operational.planned_amount ?? 0)}
               sub={`${operational.planned_activities ?? 0} plans`}
