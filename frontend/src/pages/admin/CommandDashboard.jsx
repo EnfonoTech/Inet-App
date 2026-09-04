@@ -271,25 +271,31 @@ export default function CommandDashboard() {
               Its pro-rated twin and the gap/coverage figures beside it are
               arithmetic on top and have no list of their own. */}
           <Stat label="Total INET Target"  value={sar(company.company_target)}
-            hint="Target for the whole selected period: team cost + 25% margin, plus SUB-team rollout targets. Click to see the teams."
+            hint="INET's own commitment for the whole period: team cost + 25% margin, plus INET's margin-share of the Sub-Con target (not the Sub-Con's full gross target — kept on the same basis as Total Revenue below the Cost line, so Coverage % compares like with like). Click to see the teams."
             onClick={() => goTeams({})} />
           <Stat label="Target (as of today)"   value={sar(company.total_target_today)}
             hint={`The full-period target scaled to how much of the range has passed (${Number(company.day_progress_pct ?? 0).toFixed(1)}% so far), so revenue-to-date is compared against a fair, time-adjusted number.`} />
-          {/* Work Done is where revenue rows live. total_achieved also folds
-              in the INET margin earned on Sub-Con work, which is computed
-              rather than a Work Done row, so the list can read slightly
-              lower than the tile. */}
-          <Stat label="Total Revenue"      value={sar(company.total_achieved)}   color="text-green"
+          {/* True gross top-line: every SAR of work recognized this period,
+              INET's own and subcontracted alike, at full value — including
+              the share that's owed out to the subcontractor. Not the same
+              number Target/Gap/Coverage % are measured against (see their
+              hints) — those track INET's own retained margin, a deliberately
+              smaller, different figure. */}
+          <Stat label="Total Revenue"      value={sar(company.total_revenue)}   color="text-green"
+            hint="Gross value of all work completed this period — INET's own work plus subcontracted work at full value (including the subcontractor's payout share). Click to see the underlying Work Done rows."
             onClick={() => navigate("/work-done", { state: { workDoneFilters: { fromDate: range.from, toDate: range.to } } })} />
           <Stat label="Gap"                value={sar(company.company_gap)}
+            hint="Total INET Target minus INET's own retained revenue (in-house work plus subcontracting margin) — not Total Revenue above, which is gross."
             color={(company.company_gap ?? 0) > 0 ? "text-red" : "text-green"} />
           <Stat label="Cost (as of today)"     value={sar(company.total_cost_today)}
-            hint={`Team salary cost for the part of the range already elapsed (${Number(company.day_progress_pct ?? 0).toFixed(1)}%), plus Sub-Con expense. Click to see the teams.`}
+            hint={`Team salary cost for the part of the range already elapsed (${Number(company.day_progress_pct ?? 0).toFixed(1)}%), plus Sub-Con expense (the payout owed to subcontractors). Click to see the teams.`}
             onClick={() => goTeams({})} />
           <Stat label="Profit / Loss"      value={sar(company.profit_loss)}
+            hint="Total Revenue minus Total Expense (Cost, including subcontractor payout) — the company's real margin."
             color={profitColor(company.profit_loss)} />
           <Stat label="Coverage %"
             value={`${Number(company.coverage_pct ?? 0).toFixed(1)}%`}
+            hint="INET's own retained revenue (in-house + subcontracting margin) against Total INET Target — both on the same margin basis, not against gross Total Revenue."
             color={(company.coverage_pct ?? 0) >= 50 ? "text-green" : (company.coverage_pct ?? 0) >= 20 ? "text-amber" : "text-red"} />
         </div>
       </Section>

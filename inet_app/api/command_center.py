@@ -11491,6 +11491,14 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # within the selected range — this used to be hardcoded to "current
     # month 1st -> today" regardless of from_date/to_date, which is why
     # Total Revenue never changed when a different range was picked.
+    #
+    # Excludes a line whose POID is genuinely subcontracted (payout > 0),
+    # even if an INET-type team happened to execute it — the commercial
+    # arrangement lives on the line, not the team (see the Subcontractor
+    # KPIs comment below), so that line's revenue is INET's margin cut only,
+    # already counted once via inet_margin_sub. Checked live: 3 such lines,
+    # SAR 1,744 gross, were being counted here at full value AND again as
+    # margin — this is what "how is Total Revenue calculated" turned up.
     inet_achieved_rows = frappe.db.sql(
         """
         SELECT COALESCE(SUM(pd.line_amount), 0) AS total
@@ -11498,8 +11506,10 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
         JOIN `tabINET Team` it ON it.name = exe.team
         JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
         WHERE it.team_type = 'INET'
         AND IFNULL(it.team_category, '') != 'Backend Team'
+        AND IFNULL(sm.sub_payout_pct, 0) = 0
         AND exe.execution_date BETWEEN %s AND %s
         """,
         (first_day, last_day),
@@ -11618,6 +11628,32 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     backend_completed_value = flt(_backend_done_rows[0].val if _backend_done_rows else 0)
 
     # ---- Company-level KPIs ------------------------------------------------
+    # True gross Total Revenue: every Work Done row's revenue, counted once,
+    # regardless of team/channel — the client's own top-line "how much
+    # business did we do" figure, including the portion that's owed out to
+    # subcontractors. This is deliberately a single direct SUM rather than
+    # re-adding inet_achieved + sub_revenue + direct_close + backend_close:
+    # those four overlap (a subcontracted line closed with no team appears
+    # in both its channel bucket AND the sub-con bucket — see total_achieved
+    # below), so recombining them risks the exact double-count already fixed
+    # there. A flat SUM over Work Done can't have that problem.
+    #
+    # Total Expense is total_cost_today just below (INET team cost + the
+    # subcontractor payout) — Total Revenue − Total Expense is the company's
+    # real margin, which comes out numerically equal to total_achieved below
+    # (checked live) since Expense already nets out exactly the payout
+    # portion embedded in this gross figure.
+    _gross_rev_rows = frappe.db.sql(
+        """
+        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS total
+        FROM `tabWork Done` wd
+        LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
+        WHERE COALESCE(de.execution_date, DATE(wd.creation)) BETWEEN %s AND %s
+        """,
+        (first_day, last_day), as_dict=True,
+    )
+    total_revenue_gross = flt(_gross_rev_rows[0].total if _gross_rev_rows else 0)
+
     day_progress_pct = round(range_elapsed_frac * 100, 1)
 
     # INET cost pro-rated to however much of the selected range has elapsed
@@ -11625,9 +11661,12 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     inet_cost_today = round(inet_monthly_cost * range_elapsed_frac, 2)
     inet_profit_loss_today = round(inet_achieved - inet_cost_today, 2)
 
-    # Sub-Con target pro-rated the same way
-    sub_target_today = round(sub_target * range_elapsed_frac, 2)
-    total_target_today = round(inet_target_today + sub_target_today, 2)
+    # Sub-Con target pro-rated the same way, on the margin-adjusted figure —
+    # the Company-level Target (as of today) needs the same basis as
+    # total_achieved (margin-only on the sub side), not the sub-con's own
+    # gross target. See company_target's comment below for why.
+    inet_margin_target_sub_today = round(inet_margin_target_sub * range_elapsed_frac, 2)
+    total_target_today = round(inet_target_today + inet_margin_target_sub_today, 2)
 
     # Direct Close revenue — has no team at all, so it's invisible to
     # inet_achieved/sub_revenue above (both require a Daily Execution ->
@@ -11679,9 +11718,12 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # it from, so it comes off the Work Done row's own subcontractor /
     # subcontract cost. Revenue as well as line counts, since a count alone
     # says nothing about how much money each side represents.
-    # Scoped to source='Direct Close' only. Backend closes are reported in
-    # the Backend Teams section, which already exists for them — repeating
-    # them here made one figure appear in two sections.
+    # Grouped by source AND side: Direct Close is shown split in its own
+    # section below; Backend's split isn't shown anywhere yet, but is needed
+    # here regardless — a Backend close on a subcontracted POID (2 lines,
+    # SAR 4,415 gross, checked live) is just as invisible to
+    # backend_close_achieved's blind gross sum as a Direct Close one is, and
+    # would double-count against inet_margin_sub the same way.
     # Split on the POID's own contract link, the same test the Sub-Contractor
     # block uses (payout > 0 = genuinely subcontracted; the in-house INet
     # Telecom contracts carry payout 0). Deliberately NOT on Work Done's
@@ -11689,7 +11731,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # are not reportable.
     _dc_who_rows = frappe.db.sql(
         """
-        SELECT CASE WHEN IFNULL(sm.sub_payout_pct, 0) > 0
+        SELECT IFNULL(wd.source, '') AS source,
+               CASE WHEN IFNULL(sm.sub_payout_pct, 0) > 0
                     THEN 'SUB' ELSE 'INET' END AS side,
                COUNT(*) AS lines_count,
                COALESCE(SUM(wd.revenue_sar), 0) AS revenue
@@ -11697,14 +11740,16 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
         LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
         WHERE IFNULL(wd.execution, '') = ''
-          AND IFNULL(wd.source, '') = 'Direct Close'
+          AND IFNULL(wd.source, '') IN ('Direct Close', 'Backend')
           AND DATE(wd.creation) BETWEEN %s AND %s
-        GROUP BY side
+        GROUP BY source, side
         """,
         (first_day, last_day), as_dict=True,
     ) or []
-    _dc_who = {(r.side or ""): r for r in _dc_who_rows}
+    _dc_who = {(r.side or ""): r for r in _dc_who_rows if (r.source or "") == "Direct Close"}
+    _bk_who = {(r.side or ""): r for r in _dc_who_rows if (r.source or "") == "Backend"}
     _dc_sub, _dc_inet = _dc_who.get("SUB"), _dc_who.get("INET")
+    backend_close_inet_only = _dc_val(_bk_who.get("INET"), "revenue")
 
     direct_close = {
         "revenue": direct_close_achieved,
@@ -11732,15 +11777,52 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # backend_completed_value sums PO Dispatch.line_amount dated by
     # subcon_completed_on (contracted value, order-book style), a different
     # measure on a different date basis from Work Done revenue.
-    company_target = inet_monthly_target + sub_target
+    #
+    # direct_close_achieved / backend_close_achieved are the RAW, unsplit
+    # gross for each bucket (kept as-is for the "Revenue (No Team)" / Backend
+    # tiles, which show total money processed through that channel). But a
+    # subcontracted line inside either bucket already has its revenue counted
+    # in full there — using that raw gross here as well as inet_margin_sub
+    # would count the same line twice: once at its full value, once again at
+    # just its margin. Only the INET-side slice of each bucket belongs in
+    # Total Revenue; the SUB-side slice is represented by inet_margin_sub
+    # instead. Checked live against the dashboard: a single subcontracted
+    # Direct Close line (SAR 726 gross, 15% margin) was inflating Total
+    # Revenue by its own margin a second time (SAR 109) on top of counting
+    # its full SAR 726 — this is what turned up under "how is Total Revenue
+    # calculated".
+    # company_target uses inet_margin_target_sub (INET's margin-share of the
+    # sub-con target), not sub_target (the sub-con's own full gross target).
+    # total_achieved below only ever counts INET's margin from subcontracted
+    # work, never the gross — so the target it's measured against has to be
+    # on that same basis, or Coverage % compares a margin-only actual to a
+    # gross-inclusive target and reads permanently low the moment
+    # Subcontract Master.monthly_target gets filled in (it's 0 on all seven
+    # contracts today, so company_target ≈ inet_monthly_target alone and the
+    # mismatch is dormant — but real subcontract targets will make it bite).
+    # This is the workbook's own stated design rule (Target_Control's note:
+    # "so the dashboard does not mix gross subcontract revenue with INET
+    # retained revenue") — its own Total INET Target/Total Revenue actually
+    # violate it exactly this way, which is why it never turns that pair
+    # into a %, only ever a $ gap. We do want a Coverage % tile, so both
+    # sides go on INET's own basis instead of dropping the ratio.
+    company_target = inet_monthly_target + inet_margin_target_sub
     total_achieved = (
         inet_achieved + inet_margin_sub
-        + direct_close_achieved + backend_close_achieved
+        + direct_close["inet_revenue"] + backend_close_inet_only
     )
     # Total Cost Today = pro-rated INET cost + sub-con expense (actual, not pro-rated)
     total_cost_today = round(inet_cost_today + sub_expense, 2)
     company_gap = company_target - total_achieved
-    profit_loss = round(total_achieved - total_cost_today, 2)
+    # Profit/Loss = Total Revenue (gross) − Total Expense (INET cost + the
+    # subcontractor payout) — both comprehensive figures on the same gross
+    # basis, so this is a clean P&L subtraction. NOT total_achieved (margin)
+    # − total_cost_today: total_achieved already excludes the subcontractor
+    # payout (it's margin-only on the sub side, see its comment above), so
+    # subtracting sub_expense from it a second time double-counted the same
+    # SAR twice. Confirmed live: the two formulas gave −1,258.2 vs the
+    # correct −641.1 (== total_achieved − inet_cost_today, verified equal).
+    profit_loss = round(total_revenue_gross - total_cost_today, 2)
     coverage_pct = (total_achieved / company_target * 100.0) if company_target else 0.0
 
     # ---- Top 5 teams by revenue this month (same logic as get_top_teams_report) ----
@@ -12069,6 +12151,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "day_progress_pct": day_progress_pct,
             "company_target": company_target,
             "total_target_today": total_target_today,
+            # Gross top-line — every SAR of work recognized, INET's own and
+            # subcontracted alike, at full value. This is the "Total Revenue"
+            # tile. total_achieved (below) is a different, narrower figure —
+            # INET's own retained share only — used for Target/Gap/Coverage %,
+            # which are commitments against INET's own margin, not gross
+            # throughput.
+            "total_revenue": total_revenue_gross,
             "total_achieved": total_achieved,
             "company_gap": company_gap,
             "total_cost_today": total_cost_today,
