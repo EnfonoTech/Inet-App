@@ -14563,9 +14563,121 @@ def get_duid_overview(duid=None, po_no=None, poid=None):
         "executions": executions,
         "additional_activities": [],
         "expenses": [],
-        "acceptance": [],
-        "notes": "Additional activities, expenses, and acceptance lines can be linked in a later phase.",
+        "acceptance": _duid_overview_acceptance(dispatch_names),
+        "subcon": _duid_overview_subcon(dispatch_names),
+        "notes": "Additional activities and expenses can be linked in a later phase.",
     }
+
+
+def _duid_overview_acceptance(dispatch_names):
+    """PIC side of a searched DUID: where each milestone sits and what it is worth.
+
+    Lazy import — pic.py imports from this module, so a module-level import
+    would be circular.
+    """
+    if not dispatch_names:
+        return []
+    pic = __import__("inet_app.api.pic", fromlist=["x"])
+    fields = set(frappe.db.get_table_columns("PO Dispatch"))
+
+    def col(name, default="NULL"):
+        return f"pd.{name}" if name in fields else default
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.name AS po_dispatch, IFNULL(pd.poid, pd.name) AS poid,
+               {col("pic_status")} AS pic_status,
+               {col("pic_status_ms2")} AS pic_status_ms2,
+               {col("ms1_pct", "0")} AS ms1_pct, {col("ms2_pct", "0")} AS ms2_pct,
+               {col("ms1_amount", "0")} AS ms1_amount, {col("ms2_amount", "0")} AS ms2_amount,
+               {col("ms1_invoiced", "0")} AS ms1_invoiced, {col("ms2_invoiced", "0")} AS ms2_invoiced,
+               {col("ms1_unbilled", "0")} AS ms1_unbilled, {col("ms2_unbilled", "0")} AS ms2_unbilled,
+               {col("ms1_applied_date")} AS ms1_applied_date,
+               {col("ms2_applied_date")} AS ms2_applied_date,
+               {col("ms1_invoice_month")} AS ms1_invoice_month,
+               {col("ms2_invoice_month")} AS ms2_invoice_month,
+               {col("ms1_payment_received_date")} AS ms1_payment_received_date,
+               {col("ms2_payment_received_date")} AS ms2_payment_received_date,
+               {col("isdp_owner")} AS isdp_owner, {col("ibuy_owner")} AS ibuy_owner,
+               {col("pic_rejection_remark")} AS pic_rejection_remark
+        FROM `tabPO Dispatch` pd
+        WHERE pd.name IN ({", ".join(["%s"] * len(dispatch_names))})
+        ORDER BY pd.poid
+        """,
+        tuple(dispatch_names),
+        as_dict=True,
+    ) or []
+
+    invoices = {}
+    try:
+        invoices = pic._batch_linked_invoices(dispatch_names) or {}
+    except Exception:
+        # A missing Sales Invoice link must not cost the caller the whole
+        # acceptance section — the milestone figures above still stand.
+        invoices = {}
+    for r in rows:
+        r["invoices"] = invoices.get(r["po_dispatch"]) or ""
+    return rows
+
+
+def _duid_overview_subcon(dispatch_names):
+    """Supplier side of the same lines: who owes what, and against which PO.
+
+    The subcontract is RESOLVED, not stored — pd.contract wins, else the plan
+    team's subcontractor, else the backend team's. Same COALESCE precedence
+    as subcon_po._SUBCON_FROM_JOIN, so this page and the Subcon PO page can
+    never name different suppliers for one line.
+    """
+    if not dispatch_names:
+        return []
+    if not frappe.db.exists("DocType", "Subcontract Master"):
+        return []
+    fields = set(frappe.db.get_table_columns("PO Dispatch"))
+    if "contract" not in fields:
+        return []
+
+    def col(name, default="NULL"):
+        return f"pd.{name}" if name in fields else default
+
+    ph = ", ".join(["%s"] * len(dispatch_names))
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.name AS po_dispatch, IFNULL(pd.poid, pd.name) AS poid,
+               sm.name AS subcontract, sm.subcontractor_name, sm.supplier,
+               sm.contract_model, IFNULL(sm.sub_payout_pct, 0) AS payout_pct,
+               {col("ms1_amount", "0")} AS ms1_amount, {col("ms2_amount", "0")} AS ms2_amount,
+               ROUND(IFNULL({col("ms1_amount", "0")}, 0) * IFNULL(sm.sub_payout_pct, 0) / 100, 2) AS ms1_payout,
+               ROUND(IFNULL({col("ms2_amount", "0")}, 0) * IFNULL(sm.sub_payout_pct, 0) / 100, 2) AS ms2_payout,
+               {col("sub_po_status_ms1")} AS sub_po_status_ms1,
+               {col("sub_po_status_ms2")} AS sub_po_status_ms2
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN (
+            SELECT rp.po_dispatch AS po_dispatch, MAX(it.subcontractor) AS subcontractor
+            FROM `tabRollout Plan` rp
+            LEFT JOIN `tabINET Team` it ON it.name = rp.team
+            GROUP BY rp.po_dispatch
+        ) plan_sub ON plan_sub.po_dispatch = pd.name
+        LEFT JOIN `tabINET Team` bt ON bt.name = {col("backend_team", "NULL")}
+        LEFT JOIN `tabSubcontract Master` sm
+               ON sm.name = COALESCE(NULLIF(pd.contract, ''), plan_sub.subcontractor, bt.subcontractor)
+        WHERE pd.name IN ({ph})
+        ORDER BY pd.poid
+        """,
+        tuple(dispatch_names),
+        as_dict=True,
+    ) or []
+
+    linked = {}
+    try:
+        subcon = __import__("inet_app.api.subcon_po", fromlist=["x"])
+        linked = subcon._batch_linked_purchase_docs(dispatch_names) or {}
+    except Exception:
+        linked = {}
+    for r in rows:
+        docs = linked.get(r["po_dispatch"]) or {}
+        r["purchase_orders"] = docs.get("po") or ""
+        r["purchase_invoices"] = docs.get("pi") or ""
+    return rows
 
 
 @frappe.whitelist()

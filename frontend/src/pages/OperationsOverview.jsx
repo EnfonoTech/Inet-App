@@ -6,6 +6,11 @@ import { pmApi } from "../services/api";
  * DUID / PO / Acceptance search — PM (admin portal) only (spec §11).
  * Acceptance tab shows placeholder until linked doctype exists.
  */
+const fmtMoney = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
+};
+
 export default function OperationsOverview() {
   const [duid, setDuid] = useState("");
   const [poNo, setPoNo] = useState("");
@@ -31,10 +36,6 @@ export default function OperationsOverview() {
     }
     if (tab === "poid" && !pid) {
       setErr("Enter a POID.");
-      return;
-    }
-    if (tab === "acceptance") {
-      setData({ acceptance: [], note: "Link acceptance / handover records here when available." });
       return;
     }
     setLoading(true);
@@ -66,7 +67,6 @@ export default function OperationsOverview() {
           { id: "duid", label: "DUID / Site" },
           { id: "poid", label: "POID" },
           { id: "po", label: "PO" },
-          { id: "acceptance", label: "Acceptance" },
         ].map((t) => (
           <button
             key={t.id}
@@ -112,17 +112,9 @@ export default function OperationsOverview() {
             <input value={poid} onChange={(e) => setPoid(e.target.value)} placeholder="POID" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e2e8f0", minWidth: 220 }} />
           </div>
         )}
-        {tab === "acceptance" && (
-          <p style={{ fontSize: "0.88rem", color: "#64748b", margin: 0 }}>Placeholder for acceptance / handover search.</p>
-        )}
-        {tab !== "acceptance" && (
-          <button type="button" className="btn-primary" onClick={runSearch} disabled={loading}>
-            {loading ? "Searching…" : "Search"}
-          </button>
-        )}
-        {tab === "acceptance" && (
-          <button type="button" className="btn-secondary" onClick={runSearch}>Open tab</button>
-        )}
+        <button type="button" className="btn-primary" onClick={runSearch} disabled={loading}>
+          {loading ? "Searching…" : "Search"}
+        </button>
       </div>
 
       {err && <div className="notice error" style={{ margin: "0 28px 16px" }}>{err}</div>}
@@ -226,6 +218,88 @@ export default function OperationsOverview() {
                             <td>{e.execution_status}</td>
                             <td>{e.qc_status}</td>
                             <td>{e.ciag_status || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </DataTableWrapper>
+              </section>
+            )}
+            {data.acceptance && (
+              <section style={{ margin: "0 28px" }}>
+                <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>PIC / Acceptance</h3>
+                <DataTableWrapper>
+                  {data.acceptance.length === 0 ? (
+                    <p style={{ padding: 24, color: "#94a3b8" }}>No PIC / acceptance rows.</p>
+                  ) : (
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>POID</th>
+                          <th>MS1 Status</th>
+                          <th style={{ textAlign: "right" }}>MS1 %</th>
+                          <th style={{ textAlign: "right" }}>MS1 Amount</th>
+                          <th style={{ textAlign: "right" }}>MS1 Invoiced</th>
+                          <th style={{ textAlign: "right" }}>MS1 Unbilled</th>
+                          <th>MS2 Status</th>
+                          <th style={{ textAlign: "right" }}>MS2 Amount</th>
+                          <th style={{ textAlign: "right" }}>MS2 Invoiced</th>
+                          <th>Invoices</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.acceptance.map((a) => (
+                          <tr key={a.po_dispatch}>
+                            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{a.poid}</td>
+                            <td>{a.pic_status || "—"}</td>
+                            <td style={{ textAlign: "right" }}>{a.ms1_pct ? `${a.ms1_pct}%` : "—"}</td>
+                            <td style={{ textAlign: "right" }}>{fmtMoney(a.ms1_amount)}</td>
+                            <td style={{ textAlign: "right" }}>{fmtMoney(a.ms1_invoiced)}</td>
+                            <td style={{ textAlign: "right", color: a.ms1_unbilled > 0 ? "#b45309" : undefined }}>{fmtMoney(a.ms1_unbilled)}</td>
+                            <td>{a.pic_status_ms2 || "—"}</td>
+                            <td style={{ textAlign: "right" }}>{fmtMoney(a.ms2_amount)}</td>
+                            <td style={{ textAlign: "right" }}>{fmtMoney(a.ms2_invoiced)}</td>
+                            <td style={{ fontSize: "0.76rem", color: "#64748b" }}>{a.invoices || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </DataTableWrapper>
+              </section>
+            )}
+            {data.subcon && (
+              <section style={{ margin: "0 28px" }}>
+                <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Subcon</h3>
+                <DataTableWrapper>
+                  {data.subcon.length === 0 ? (
+                    <p style={{ padding: 24, color: "#94a3b8" }}>No subcontracted lines — INET-executed work has no subcontract to show here.</p>
+                  ) : (
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>POID</th>
+                          <th>Subcontractor</th>
+                          <th>Contract Model</th>
+                          <th style={{ textAlign: "right" }}>Payout %</th>
+                          <th style={{ textAlign: "right" }}>MS1 Payout</th>
+                          <th style={{ textAlign: "right" }}>MS2 Payout</th>
+                          <th>Supplier PO</th>
+                          <th>Purchase Invoice</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.subcon.map((r) => (
+                          <tr key={r.po_dispatch}>
+                            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid}</td>
+                            <td>{r.subcontractor_name || r.subcontract || "—"}</td>
+                            <td>{r.contract_model || "—"}</td>
+                            <td style={{ textAlign: "right" }}>{r.payout_pct ? `${r.payout_pct}%` : "—"}</td>
+                            <td style={{ textAlign: "right" }}>{fmtMoney(r.ms1_payout)}</td>
+                            <td style={{ textAlign: "right" }}>{fmtMoney(r.ms2_payout)}</td>
+                            <td style={{ fontSize: "0.76rem", color: "#64748b" }}>{r.purchase_orders || "—"}</td>
+                            <td style={{ fontSize: "0.76rem", color: "#64748b" }}>{r.purchase_invoices || "—"}</td>
                           </tr>
                         ))}
                       </tbody>
