@@ -13,6 +13,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { useDebounced } from "../../hooks/useDebounced";
 import SearchableSelect from "../../components/SearchableSelect";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import useFilterOptions from "../../hooks/useFilterOptions";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -60,7 +61,7 @@ export default function IMTimesheets() {
   const { rowLimit } = useTableRowLimit();
   const tfC = { padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" };
   const tfCR = { ...tfC, textAlign: "right", fontWeight: 700 };
-  const [tab, setTab] = useState("logs"); // "logs" | "daily" | "team"
+  const [tab, setTab] = useState("logs"); // "logs" | "team" | "daily" | "duid"
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -78,6 +79,9 @@ export default function IMTimesheets() {
   const searchDebounced = useDebounced(search, 300);
   const [teamFilter, setTeamFilter] = useState([]);
   const [teamOptions, setTeamOptions] = useState([]);
+  const [duidFilter, setDuidFilter] = useState([]);
+  const { options: duidOpts } = useFilterOptions("PO Dispatch", ["site_code"]);
+  const duidOptions = duidOpts.site_code || [];
   const [detailRow, setDetailRow] = useState(null);
 
   useEffect(() => {
@@ -158,6 +162,7 @@ export default function IMTimesheets() {
       if (dateFrom) filters.from_date = dateFrom;
       if (dateTo) filters.to_date = dateTo;
       if (teamFilter.length) filters.team_id = teamFilter;
+      if (duidFilter.length) filters.duid = duidFilter;
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) filters.column_filters = colFilters;
@@ -193,7 +198,7 @@ export default function IMTimesheets() {
       }
     })();
     return () => { cancelled = true; };
-  }, [dateFrom, dateTo, imName, rowLimit, searchDebounced, teamFilter, columnFiltersDebounced]);
+  }, [dateFrom, dateTo, imName, rowLimit, searchDebounced, teamFilter, duidFilter, columnFiltersDebounced]);
 
   // Daily Totals — a separate aggregate fetch (first-start to last-end per
   // user per day), not derivable from `logs` above: `logs` is capped by the
@@ -205,6 +210,9 @@ export default function IMTimesheets() {
   const [teamTotals, setTeamTotals] = useState(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [dailyLoading, setDailyLoading] = useState(false);
+  const [duidRows, setDuidRows] = useState([]);
+  const [duidTotals, setDuidTotals] = useState(null);
+  const [duidLoading, setDuidLoading] = useState(false);
   useEffect(() => {
     if (tab !== "daily" || !imName) return;
     let cancelled = false;
@@ -213,6 +221,7 @@ export default function IMTimesheets() {
       if (dateFrom) filters.from_date = dateFrom;
       if (dateTo) filters.to_date = dateTo;
       if (teamFilter.length) filters.team_id = teamFilter;
+      if (duidFilter.length) filters.duid = duidFilter;
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
       setDailyLoading(true);
       try {
@@ -225,7 +234,7 @@ export default function IMTimesheets() {
       }
     })();
     return () => { cancelled = true; };
-  }, [tab, imName, dateFrom, dateTo, teamFilter, searchDebounced]);
+  }, [tab, imName, dateFrom, dateTo, teamFilter, duidFilter, searchDebounced]);
 
   // Team-wise roll-up over the same range, from the same server-side daily
   // rows — so it can never disagree with the Daily Totals tab.
@@ -237,6 +246,7 @@ export default function IMTimesheets() {
       if (dateFrom) filters.from_date = dateFrom;
       if (dateTo) filters.to_date = dateTo;
       if (teamFilter.length) filters.team_id = teamFilter;
+      if (duidFilter.length) filters.duid = duidFilter;
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
       setTeamLoading(true);
       try {
@@ -249,15 +259,43 @@ export default function IMTimesheets() {
       }
     })();
     return () => { cancelled = true; };
-  }, [tab, imName, dateFrom, dateTo, teamFilter, searchDebounced]);
+  }, [tab, imName, dateFrom, dateTo, teamFilter, duidFilter, searchDebounced]);
+
+  // DUID-wise roll-up — its own aggregate (not built on the daily rows,
+  // which carry no DUID at all — see get_duid_time_totals).
+  useEffect(() => {
+    if (tab !== "duid") return undefined;
+    let cancelled = false;
+    (async () => {
+      const filters = {};
+      if (dateFrom) filters.from_date = dateFrom;
+      if (dateTo) filters.to_date = dateTo;
+      if (teamFilter.length) filters.team_id = teamFilter;
+      if (duidFilter.length) filters.duid = duidFilter;
+      if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      setDuidLoading(true);
+      try {
+        const res = await pmApi.getDuidTimeTotals(filters);
+        if (!cancelled) { setDuidRows(res?.rows || []); setDuidTotals(res?.totals || null); }
+      } catch {
+        if (!cancelled) { setDuidRows([]); setDuidTotals(null); }
+      } finally {
+        if (!cancelled) setDuidLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, imName, dateFrom, dateTo, teamFilter, duidFilter, searchDebounced]);
   const dailySpanTotal = dailyRows.reduce((sum, row) => sum + (parseFloat(row.span_hours) || 0), 0);
   const dailyLoggedTotal = dailyRows.reduce((sum, row) => sum + (parseFloat(row.logged_hours) || 0), 0);
+  const dailySessionsTotal = dailyRows.reduce((sum, row) => sum + (parseInt(row.sessions, 10) || 0), 0);
   const dailyTeamsCount = new Set(dailyRows.map((r) => r.team_id).filter(Boolean)).size;
   const dailyAvgSpan = dailyRows.length ? dailySpanTotal / dailyRows.length : 0;
   const dailyLiveCount = dailyRows.filter((r) => r.has_running).length;
+  const teamLiveCount = teamRows.filter((r) => r.has_running).length;
+  const duidLiveCount = duidRows.filter((r) => r.has_running).length;
 
   const totalHours = logs.reduce((sum, row) => sum + (parseFloat(row.duration_hours) || 0), 0);
-  const hasFilters = dateFrom || dateTo || search || teamFilter.length;
+  const hasFilters = dateFrom || dateTo || search || teamFilter.length || duidFilter.length;
 
   return (
     <div>
@@ -270,6 +308,44 @@ export default function IMTimesheets() {
         </div>
         {tab === "logs" ? (
           <PageSummary source="execution_time_logs" filters={summaryQuery} />
+        ) : tab === "team" ? (
+          <div className="page-summary" role="group" aria-label="Team totals summary">
+            <div className="page-summary-chip tone-info">
+              <span className="page-summary-value">{teamTotals?.teams ?? teamRows.length}</span>
+              <span className="page-summary-label">Teams</span>
+            </div>
+            <div className="page-summary-chip tone-info">
+              <span className="page-summary-value">{teamTotals?.members ?? 0}</span>
+              <span className="page-summary-label">Members</span>
+            </div>
+            <div className="page-summary-chip tone-good">
+              <span className="page-summary-value">{teamTotals?.sessions ?? 0}</span>
+              <span className="page-summary-label">Sessions</span>
+            </div>
+            <div className={`page-summary-chip ${teamLiveCount > 0 ? "tone-warn" : "tone-good"}`}>
+              <span className="page-summary-value">{teamLiveCount}</span>
+              <span className="page-summary-label">Live Now</span>
+            </div>
+          </div>
+        ) : tab === "duid" ? (
+          <div className="page-summary" role="group" aria-label="DUID totals summary">
+            <div className="page-summary-chip tone-info">
+              <span className="page-summary-value">{duidTotals?.duids ?? duidRows.length}</span>
+              <span className="page-summary-label">DUIDs</span>
+            </div>
+            <div className="page-summary-chip tone-info">
+              <span className="page-summary-value">{duidTotals?.poids ?? 0}</span>
+              <span className="page-summary-label">POIDs</span>
+            </div>
+            <div className="page-summary-chip tone-good">
+              <span className="page-summary-value">{duidTotals?.sessions ?? 0}</span>
+              <span className="page-summary-label">Sessions</span>
+            </div>
+            <div className={`page-summary-chip ${duidLiveCount > 0 ? "tone-warn" : "tone-good"}`}>
+              <span className="page-summary-value">{duidLiveCount}</span>
+              <span className="page-summary-label">Live Now</span>
+            </div>
+          </div>
         ) : (
           <div className="page-summary" role="group" aria-label="Daily totals summary">
             <div className="page-summary-chip tone-info">
@@ -308,6 +384,10 @@ export default function IMTimesheets() {
           style={{ padding: "8px 20px", fontSize: "0.86rem", fontWeight: 700, border: "none", borderBottom: tab === "team" ? "2px solid #1d4ed8" : "2px solid transparent", background: "none", cursor: "pointer", color: tab === "team" ? "#1d4ed8" : "#64748b" }}>
           Team Totals
         </button>
+        <button type="button" onClick={() => setTab("duid")}
+          style={{ padding: "8px 20px", fontSize: "0.86rem", fontWeight: 700, border: "none", borderBottom: tab === "duid" ? "2px solid #1d4ed8" : "2px solid transparent", background: "none", cursor: "pointer", color: tab === "duid" ? "#1d4ed8" : "#64748b" }}>
+          DUID Totals
+        </button>
       </div>
 
       <div className="toolbar">
@@ -333,6 +413,15 @@ export default function IMTimesheets() {
           placeholder="All Teams"
           minWidth={150}
         />
+        <SearchableSelect
+          allowBlank
+          multi
+          value={duidFilter}
+          onChange={setDuidFilter}
+          options={duidOptions}
+          placeholder="All DUIDs"
+          minWidth={160}
+        />
         <DateRangePicker value={{ from: dateFrom, to: dateTo }} onChange={({ from, to }) => { setDateFrom(from); setDateTo(to); }} />
         {hasFilters && (
           <button
@@ -343,6 +432,7 @@ export default function IMTimesheets() {
               setDateTo("");
               setSearch("");
               setTeamFilter([]);
+              setDuidFilter([]);
             }}
           >
             Clear
@@ -354,10 +444,11 @@ export default function IMTimesheets() {
         <DataTableWrapper loading={
           tab === "logs" ? (loading && logs.length > 0)
             : tab === "team" ? (teamLoading && teamRows.length > 0)
-              : (dailyLoading && dailyRows.length > 0)
+              : tab === "duid" ? (duidLoading && duidRows.length > 0)
+                : (dailyLoading && dailyRows.length > 0)
         }>
           {tab === "team" ? (
-            <table className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-team">
+            <table key="im-timesheets-v1-team" className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-team">
               <thead>
                 <tr>
                   <th>Team</th>
@@ -406,7 +497,7 @@ export default function IMTimesheets() {
               {teamRows.length > 0 && teamTotals && (
                 <tfoot>
                   <tr>
-                    <td style={tfC}><strong>{teamTotals.teams} team{teamTotals.teams !== 1 ? "s" : ""}</strong></td>
+                    <td style={tfC}><strong>Total</strong></td>
                     <td style={tfCR}>{teamTotals.days}</td>
                     <td style={tfCR}>{teamTotals.members}</td>
                     <td style={tfCR}>{teamTotals.sessions}</td>
@@ -418,12 +509,14 @@ export default function IMTimesheets() {
               )}
             </table>
           ) : tab === "logs" ? (
-            <table className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-logs">
+            <table key="im-timesheets-v1-logs" className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-logs">
               <thead>
                 <tr>
                   <th>ID</th>
                   <th>User</th>
                   <th>Team</th>
+                  <th>DUID</th>
+                  <th>POID</th>
                   <th>Rollout</th>
                   <th>Work</th>
                   <th>Start</th>
@@ -436,7 +529,7 @@ export default function IMTimesheets() {
               <tbody>
                 {logs.length === 0 ? (
                   <tr>
-                    <td colSpan={10} style={{ padding: 0 }}>
+                    <td colSpan={12} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
                       ) : (
@@ -452,6 +545,8 @@ export default function IMTimesheets() {
                       <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{row.name}</td>
                       <td>{row.user_full_name || row.user}</td>
                       <td>{row.team_name || row.team_id || "—"}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.76rem" }}>{row.duid || "—"}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.76rem" }}>{row.poid || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: 11 }}>{row.rollout_plan}</td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 200 }}>{row.item_description || "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{shortDt(row.start_time)}</td>
@@ -483,9 +578,95 @@ export default function IMTimesheets() {
                     </tr>
                 ))}
               </tbody>
+              {logs.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
+                      Total{displayedCount < total ? ` (${displayedCount} loaded of ${total})` : ` (${total})`}
+                    </td>
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                      {fmt.format(totalHours)}
+                    </td>
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          ) : tab === "duid" ? (
+            <table key="im-timesheets-v1-duid" className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-duid">
+              <thead>
+                <tr>
+                  <th>DUID</th>
+                  <th>Project</th>
+                  <th style={{ textAlign: "right" }}>POIDs</th>
+                  <th style={{ textAlign: "right" }}>Teams</th>
+                  <th style={{ textAlign: "right" }}>Days</th>
+                  <th style={{ textAlign: "right" }}>Sessions</th>
+                  <th style={{ textAlign: "right" }}>Logged (hrs)</th>
+                  <th>First</th>
+                  <th>Last</th>
+                </tr>
+              </thead>
+              <tbody>
+                {duidRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ padding: 0 }}>
+                      {duidLoading ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-icon">📍</div>
+                          <h3>No time logged in this range</h3>
+                          <p>Pick a wider date range, or clear the filters.</p>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : duidRows.map((r) => (
+                  <tr key={r.duid}>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }} title={r.site_name || ""}>
+                      {r.duid}
+                      {r.has_running && (
+                        <span style={{ marginLeft: 8, fontSize: "0.68rem", fontWeight: 700, color: "#15803d" }}>● live</span>
+                      )}
+                    </td>
+                    <td style={{ fontSize: "0.82rem" }}>{r.project_code || "—"}</td>
+                    <td style={{ textAlign: "right" }}>{r.poids}</td>
+                    <td style={{ textAlign: "right" }}>{r.teams}</td>
+                    <td style={{ textAlign: "right" }}>{r.days}</td>
+                    <td style={{ textAlign: "right" }}>{r.sessions}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt.format(r.logged_hours)}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.first_date || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.last_date || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {duidRows.length > 0 && duidTotals && (
+                <tfoot>
+                  <tr>
+                    <td style={tfC}><strong>Total</strong></td>
+                    <td style={tfC} />
+                    <td style={tfCR}>{duidTotals.poids}</td>
+                    <td style={tfC} />
+                    <td style={tfC} />
+                    <td style={tfCR}>{duidTotals.sessions}</td>
+                    <td style={tfCR}>{fmt.format(duidTotals.logged_hours)}</td>
+                    <td style={tfC} /><td style={tfC} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           ) : (
-            <table className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-daily">
+            <table key="im-timesheets-v1-daily" className="data-table" data-excel-filter-all="1" data-table-key="im-timesheets-v1-daily">
               <thead>
                 <tr>
                   <th>Date</th>
@@ -539,7 +720,7 @@ export default function IMTimesheets() {
                 <tfoot>
                   <tr>
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
-                      TOTALS ({dailyRows.length} team-days)
+                      Total
                     </td>
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
@@ -551,7 +732,9 @@ export default function IMTimesheets() {
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                       {fmt.format(dailyLoggedTotal)}
                     </td>
-                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                      {dailySessionsTotal}
+                    </td>
                   </tr>
                 </tfoot>
               )}
@@ -566,27 +749,32 @@ export default function IMTimesheets() {
             filterActive={!!hasFilters}
           />
         ) : (
-          // No row-limit selector here — get_daily_time_totals always returns every
-          // matching team-day for the current filters, it isn't paged by rowLimit.
+          // One shared bar for team/daily/duid — none of them are paged by
+          // rowLimit, so there is no "rows to load" control to show; said
+          // explicitly rather than omitted, which otherwise reads as broken
+          // next to the Logs tab's real footer. Business totals (span/
+          // logged/sessions/etc.) live in each table's own <tfoot>.
           <div
             className="table-rowlimit-footer"
             style={{
-              display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10,
+              display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10,
               padding: "10px 14px", fontSize: "0.78rem", color: "var(--text-muted, #64748b)",
+              borderTop: "1px solid var(--border, #e2e8f0)",
+              background: "var(--bg-white, #fff)",
+              borderRadius: "0 0 var(--radius, 10px) var(--radius, 10px)",
             }}
           >
             <span>
               Loaded{" "}
               <strong style={{ color: "var(--text, #0f172a)" }}>
-                {tab === "team" ? teamRows.length : dailyRows.length}
+                {tab === "team" ? teamRows.length : tab === "duid" ? duidRows.length : dailyRows.length}
               </strong>{" "}
-              {tab === "team"
-                ? `team${teamRows.length !== 1 ? "s" : ""}`
-                : `team-day${dailyRows.length !== 1 ? "s" : ""}`}
+              {tab === "team" ? `team${teamRows.length !== 1 ? "s" : ""}`
+                : tab === "duid" ? `DUID${duidRows.length !== 1 ? "s" : ""}`
+                  : `row${dailyRows.length !== 1 ? "s" : ""}`}
             </span>
-            <span style={{ marginLeft: "auto", display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <span>Span total: <strong style={{ color: "var(--text, #0f172a)" }}>{fmt.format(tab === "team" ? (teamTotals?.span_hours || 0) : dailySpanTotal)} h</strong></span>
-              <span>Logged total: <strong style={{ color: "var(--text, #0f172a)" }}>{fmt.format(tab === "team" ? (teamTotals?.logged_hours || 0) : dailyLoggedTotal)} h</strong></span>
+            <span style={{ color: "var(--text-muted, #94a3b8)" }}>
+              Loads every matching row — no row limit on this tab
             </span>
           </div>
         )}

@@ -252,8 +252,11 @@ export const pmApi = {
     }
     return call("inet_app.api.command_center.list_im_daily_executions", args);
   },
-  getDuidOverview:      (duid, poNo, poid) =>
-    call("inet_app.api.command_center.get_duid_overview", { duid: duid || "", po_no: poNo || "", poid: poid || "" }),
+  // `query` is the raw search box text — one or more DUID/POID/PO No values,
+  // one per line (or comma/semicolon/tab-separated); the backend tokenizes
+  // and matches every token against all three identifier fields.
+  getDuidOverview:      (query) =>
+    call("inet_app.api.command_center.get_duid_overview", { query: query || "" }),
   reopenRolloutForRevisit: (rolloutPlan, issueCategory, issueRemarks) =>
     call("inet_app.api.command_center.reopen_rollout_for_revisit", {
       rollout_plan: rolloutPlan,
@@ -473,6 +476,8 @@ export const pmApi = {
     call("inet_app.api.command_center.get_team_time_totals", { filters: JSON.stringify(filters || {}) }),
   getDailyTimeTotals:         (filters) =>
     call("inet_app.api.command_center.get_daily_time_totals", { filters: JSON.stringify(filters || {}) }),
+  getDuidTimeTotals:          (filters) =>
+    call("inet_app.api.command_center.get_duid_time_totals", { filters: JSON.stringify(filters || {}) }),
   saveExecutionTimeLogManual: (rollout_plan, start_time, end_time, notes) =>
     call("inet_app.api.command_center.save_execution_time_log_manual", {
       rollout_plan,
@@ -751,6 +756,11 @@ export const pmApi = {
 
   // PIC (Project Invoice Controller) endpoints
   picInvoicingSummary: (portalFilters) => call("inet_app.api.pic.pic_invoicing_summary", {
+    portal_filters: JSON.stringify(portalFilters || {}),
+  }),
+  // Pipeline stage counts (Pending / Tracker / Closed / Cancelled) under an
+  // arbitrary project/date scope — same portal_filters shape as above.
+  getPicStageCounts: (portalFilters) => call("inet_app.api.pic.get_pic_stage_counts", {
     portal_filters: JSON.stringify(portalFilters || {}),
   }),
   getPicSummaryFilterOptions: () => call("inet_app.api.pic.get_pic_summary_filter_options"),

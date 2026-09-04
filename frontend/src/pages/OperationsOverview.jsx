@@ -3,8 +3,15 @@ import DataTableWrapper from "../components/DataTableWrapper";
 import { pmApi } from "../services/api";
 
 /**
- * DUID / PO / Acceptance search — PM (admin portal) only (spec §11).
- * Acceptance tab shows placeholder until linked doctype exists.
+ * DUID / POID / PO-No search — PM (admin portal) only (spec §11).
+ *
+ * One free-text box rather than three tabs: a search box has no reliable way
+ * to know which of the three identifier kinds was typed, and the old
+ * per-kind tabs made the user decide that up front — every token here is
+ * matched against all three fields at once (see get_duid_overview). Multiple
+ * values are supported the same way SearchableSelect already does elsewhere
+ * in this app: one per line, or comma/semicolon/tab-separated, mixed kinds
+ * allowed on different lines.
  */
 const fmtMoney = (v) => {
   const n = Number(v);
@@ -12,44 +19,37 @@ const fmtMoney = (v) => {
 };
 
 export default function OperationsOverview() {
-  const [duid, setDuid] = useState("");
-  const [poNo, setPoNo] = useState("");
-  const [poid, setPoid] = useState("");
-  const [tab, setTab] = useState("duid");
+  const [query, setQuery] = useState("");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
   async function runSearch() {
     setErr(null);
-    setData(null);
-    const d = tab === "duid" ? duid.trim() : "";
-    const p = tab === "po" ? poNo.trim() : "";
-    const pid = tab === "poid" ? poid.trim() : "";
-    if (tab === "duid" && !d && !poNo.trim()) {
-      setErr("Enter a DUID (site code), or use the PO tab.");
-      return;
-    }
-    if (tab === "po" && !p) {
-      setErr("Enter a PO number.");
-      return;
-    }
-    if (tab === "poid" && !pid) {
-      setErr("Enter a POID.");
+    const q = query.trim();
+    if (!q) {
+      setErr("Enter one or more DUID / POID / PO number values (one per line).");
       return;
     }
     setLoading(true);
     try {
-      const res = tab === "po"
-        ? await pmApi.getDuidOverview("", p)
-        : tab === "poid"
-        ? await pmApi.getDuidOverview("", "", pid)
-        : await pmApi.getDuidOverview(d, poNo.trim() || "");
+      const res = await pmApi.getDuidOverview(q);
       setData(res);
     } catch (e) {
+      setData(null);
       setErr(e.message || "Search failed");
     } finally {
       setLoading(false);
+    }
+  }
+
+  function onKeyDown(e) {
+    // Enter searches; Shift+Enter (or plain paste) still adds a new line —
+    // the whole point is supporting multiple lines, so Enter alone must not
+    // be swallowed as "submit" the way a single-line input would.
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      runSearch();
     }
   }
 
@@ -62,69 +62,32 @@ export default function OperationsOverview() {
         </div>
       </div>
 
-      <div className="toolbar" style={{ flexWrap: "wrap", gap: 12 }}>
-        {[
-          { id: "duid", label: "DUID / Site" },
-          { id: "poid", label: "POID" },
-          { id: "po", label: "PO" },
-        ].map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => { setTab(t.id); setData(null); setErr(null); }}
-            style={{
-              padding: "8px 18px",
-              borderRadius: 20,
-              border: tab === t.id ? "2px solid #6366f1" : "1px solid #e2e8f0",
-              background: tab === t.id ? "#eef2ff" : "#fff",
-              fontWeight: 600,
-              fontSize: "0.82rem",
-              cursor: "pointer",
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ margin: "16px 28px", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-        {tab === "duid" && (
-          <>
-            <div>
-              <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: 4 }}>DUID (Site Code)</label>
-              <input value={duid} onChange={(e) => setDuid(e.target.value)} placeholder="e.g. site identifier" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e2e8f0", minWidth: 200 }} />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: 4 }}>Optional PO No</label>
-              <input value={poNo} onChange={(e) => setPoNo(e.target.value)} placeholder="Narrow by PO" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e2e8f0", minWidth: 160 }} />
-            </div>
-          </>
-        )}
-        {tab === "po" && (
-          <div>
-            <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: 4 }}>PO No</label>
-            <input value={poNo} onChange={(e) => setPoNo(e.target.value)} placeholder="PO number" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e2e8f0", minWidth: 220 }} />
-          </div>
-        )}
-        {tab === "poid" && (
-          <div>
-            <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: 4 }}>POID</label>
-            <input value={poid} onChange={(e) => setPoid(e.target.value)} placeholder="POID" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e2e8f0", minWidth: 220 }} />
-          </div>
-        )}
-        <button type="button" className="btn-primary" onClick={runSearch} disabled={loading}>
+      <div style={{ margin: "12px 28px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <textarea
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="DUID / POID / PO No — one or more, one per line"
+          rows={1}
+          style={{
+            flex: "1 1 320px", minWidth: 220, padding: "6px 10px", borderRadius: 8, border: "1px solid #e2e8f0",
+            fontFamily: "inherit", fontSize: "0.82rem", lineHeight: 1.4, resize: "vertical", minHeight: 32, maxHeight: 120,
+          }}
+        />
+        <button type="button" className="btn-primary" onClick={runSearch} disabled={loading} style={{ padding: "6px 16px", fontSize: "0.82rem" }}>
           {loading ? "Searching…" : "Search"}
         </button>
       </div>
 
-      {err && <div className="notice error" style={{ margin: "0 28px 16px" }}>{err}</div>}
+      {err && <div className="notice error" style={{ margin: "0 28px 12px" }}>{err}</div>}
 
       <div className="page-content">
         {data && (
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {data.note && (
-              <div className="notice" style={{ margin: "0 28px" }}>{data.note}</div>
-            )}
+            <div style={{ margin: "0 28px", fontSize: "0.82rem", color: "#64748b" }}>
+              Matched <strong style={{ color: "#0f172a" }}>{data.matched_count}</strong> PO line{data.matched_count === 1 ? "" : "s"}
+              {" "}across <strong style={{ color: "#0f172a" }}>{(data.query_tokens || []).length}</strong> search value{(data.query_tokens || []).length === 1 ? "" : "s"}.
+            </div>
             {data.dispatches && (
               <section style={{ margin: "0 28px" }}>
                 <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>PO line / Dispatch</h3>

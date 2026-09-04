@@ -14774,12 +14774,53 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     return rows or []
 
 
-@frappe.whitelist()
-def get_duid_overview(duid=None, po_no=None, poid=None):
+def _split_search_tokens(text):
+    """Split a pasted/typed search box's content into distinct values.
+
+    One value per LINE is the primary case ("support multiple lines"), but
+    comma/semicolon/tab-separated values on one line also work — the same
+    multi-value paste convention SearchableSelect already uses elsewhere in
+    this app, so a user pasting an Excel column behaves the same way here.
+    Blank lines and stray whitespace are dropped; duplicates are removed
+    while keeping the first-seen order (stable, for a predictable result
+    order downstream).
     """
-    DUID-wise (site_code) rollout view: PO line, plans, executions.
-    Optional po_no / poid narrows dispatch rows. Expenses / acceptance:
-    placeholders for Phase 2.
+    if not text:
+        return []
+    raw = re.split(r"[\n\r,;\t]+", str(text))
+    seen = set()
+    out = []
+    for t in raw:
+        t = t.strip()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+# A single free-text box can't know whether a pasted value is a DUID, a POID,
+# or a PO number, and the point of unifying the three old tabs is that it
+# shouldn't have to — every token is matched against all three fields at
+# once via OR'd IN-clauses (cheap: 3 IN-lists, not 3xN OR'd equalities).
+MAX_DUID_OVERVIEW_TOKENS = 200
+
+
+@frappe.whitelist()
+def get_duid_overview(query=None, duid=None, po_no=None, poid=None):
+    """
+    DUID / POID / PO-No search — one free-text box, one or more values (one
+    per line, or comma/semicolon/tab-separated), of any mix of the three
+    identifier kinds. Each token is matched against site_code, poid AND
+    po_no, since the box has no way to know — and doesn't need to — which
+    kind was typed.
+
+    `duid`/`po_no`/`poid` remain as a legacy single-value fallback for any
+    caller still using the old three-tab shape; folded into the same token
+    set as `query` rather than handled separately.
+
+    Expenses / acceptance-detail linking: placeholders for Phase 2 (the
+    acceptance MILESTONE data itself is already returned — see
+    _duid_overview_acceptance below).
 
     PM / desk admin only — not for INET IM / field roles.
     """
@@ -14794,26 +14835,30 @@ def get_duid_overview(duid=None, po_no=None, poid=None):
     ):
         frappe.throw("Not permitted", frappe.PermissionError)
 
-    duid = (duid or "").strip()
-    po_no = (po_no or "").strip()
-    poid = (poid or "").strip()
-    if not duid and not po_no and not poid:
-        frappe.throw("Provide duid (site / DUID), po_no, and/or poid")
-
-    dfilters = {}
-    if duid:
-        dfilters["site_code"] = duid
-    if po_no:
-        dfilters["po_no"] = po_no
-    if poid:
-        dfilters["poid"] = poid
+    tokens = _split_search_tokens(query)
+    for legacy in (duid, po_no, poid):
+        v = (legacy or "").strip()
+        if v and v not in tokens:
+            tokens.append(v)
+    if not tokens:
+        frappe.throw("Enter one or more DUID / POID / PO number values (one per line).")
+    if len(tokens) > MAX_DUID_OVERVIEW_TOKENS:
+        frappe.throw(f"Too many values — search up to {MAX_DUID_OVERVIEW_TOKENS} at a time.")
 
     dispatches = frappe.get_all(
         "PO Dispatch",
-        filters=dfilters,
+        or_filters=[
+            ["site_code", "in", tokens],
+            ["poid", "in", tokens],
+            ["po_no", "in", tokens],
+        ],
         fields=["*"],
         order_by="modified desc",
-        limit_page_length=50,
+        # A multi-line search can legitimately match far more than the old
+        # single-value box's 50 — a handful of DUIDs can each carry dozens
+        # of PO lines. Not unlimited: still a real cap, just sized for the
+        # actual use case instead of the old one-value assumption.
+        limit_page_length=500,
     )
     dispatch_names = [d.name for d in dispatches]
     plans = []
@@ -14837,9 +14882,8 @@ def get_duid_overview(duid=None, po_no=None, poid=None):
             )
 
     return {
-        "duid": duid or None,
-        "po_no": po_no or None,
-        "poid": poid or None,
+        "query_tokens": tokens,
+        "matched_count": len(dispatches),
         "dispatches": dispatches,
         "rollout_plans": plans,
         "executions": executions,
@@ -17180,7 +17224,9 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
     # `or _options` / `or _summary`: both are built from the wheres/params
     # assembled in this branch, so it must be taken even when nothing is
     # filtered (otherwise the plain path returns rows instead of options).
-    if like_tokens_etl or active_col_filters_etl or _options or _summary:
+    duid_filter_etl = _ensure_list(filters.get("duid"))
+    poid_filter_etl = _ensure_list(filters.get("poid"))
+    if like_tokens_etl or active_col_filters_etl or duid_filter_etl or poid_filter_etl or _options or _summary:
         wheres = ["1=1"]
         params = []
         joins = (
@@ -17236,6 +17282,17 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
             wheres.append("etl.start_time <= %s")
             params.append(f"{to_date} 23:59:59")
 
+        # DUID / POID toolbar filters — need the pd join above, so (like
+        # team_id) they only work on this raw-SQL path.
+        if duid_filter_etl:
+            ph_duid = ", ".join(["%s"] * len(duid_filter_etl))
+            wheres.append(f"pd.site_code IN ({ph_duid})")
+            params.extend(duid_filter_etl)
+        if poid_filter_etl:
+            ph_poid = ", ".join(["%s"] * len(poid_filter_etl))
+            wheres.append(f"IFNULL(pd.poid, pd.name) IN ({ph_poid})")
+            params.extend(poid_filter_etl)
+
         col_filter_map_etl = {
             "id": "IFNULL(etl.name,'')",
             # Column renders team_name with a team_id fallback (see
@@ -17247,6 +17304,9 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
             "rollout": "IFNULL(etl.rollout_plan,'')",
             "work": "CONCAT_WS(' ', IFNULL(pd.item_description,''), IFNULL(pd.project_code,''))",
             "work_project": "CONCAT_WS(' ', IFNULL(pd.item_description,''), IFNULL(pd.project_code,''))",
+            "duid": "IFNULL(pd.site_code,'')",
+            "poid": "IFNULL(pd.poid, pd.name)",
+            "project": "IFNULL(pd.project_code,'')",
             "start": "CAST(etl.start_time AS CHAR)",
             "end": "CAST(etl.end_time AS CHAR)",
             "hours": "CAST(etl.duration_hours AS CHAR)",
@@ -17282,7 +17342,8 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
             concat_etl = (
                 "CONCAT_WS(' ', IFNULL(etl.name,''), IFNULL(etl.rollout_plan,''), IFNULL(etl.team_id,''), "
                 "IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.notes,''), IFNULL(pd.project_code,''), "
-                "IFNULL(pd.item_description,''), IFNULL(pd.site_name,''), IFNULL(pd.po_no,''))"
+                "IFNULL(pd.item_description,''), IFNULL(pd.site_name,''), IFNULL(pd.po_no,''), "
+                "IFNULL(pd.site_code,''), IFNULL(pd.poid,''))"
             )
             ors_etl = " OR ".join([f"{concat_etl} LIKE %s"] * len(like_tokens_etl))
             wheres.append(f"({ors_etl})")
@@ -17381,6 +17442,8 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
         d_fields = ["name", "item_description", "project_code", "site_name"]
         if frappe.db.has_column("PO Dispatch", "poid"):
             d_fields.append("poid")
+        if frappe.db.has_column("PO Dispatch", "site_code"):
+            d_fields.append("site_code")
         for d in frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", dispatch_ids]},
@@ -17418,6 +17481,7 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
                     row["project_code"] = disp.project_code
                     row["site_name"] = disp.site_name
                     row["poid"] = (disp.get("poid") or disp.name) if disp else None
+                    row["duid"] = disp.get("site_code") if disp else None
                     row["system_id"] = pd.po_dispatch
 
     return {"logs": logs, "total": total}
@@ -17507,6 +17571,191 @@ def get_team_time_totals(filters=None):
             "members": len({m for t in by_team.values() for m in t["members"]}),
             "sessions": sum(r["sessions"] for r in out),
             "span_hours": round(sum(r["span_hours"] for r in out), 2),
+            "logged_hours": round(sum(r["logged_hours"] for r in out), 2),
+        },
+    }
+
+
+@frappe.whitelist()
+def get_duid_time_totals(filters=None):
+    """
+    Hours logged per DUID (site) — how much field time actually went into
+    each site, under the same role scoping / date range as the other two
+    Execution Time Log tabs.
+
+    Deliberately NOT built on get_daily_time_totals' per-(date,user) rows
+    the way get_team_time_totals is: those rows carry no DUID at all (a
+    person's day-span can cover more than one site — see duid_count on that
+    endpoint), so there is nothing to key a DUID roll-up off there. This is
+    its own aggregate straight off Execution Time Log, joined through
+    Rollout Plan -> PO Dispatch to resolve site_code.
+
+    Also deliberately NOT a "first-in / last-out" presence span the way Team
+    Totals is: a span only means something for ONE PERSON on ONE DAY. A DUID
+    is visited by different teams on different days, so there is no single
+    door-to-door window to compute for it — only a straight SUM of logged
+    session time, which every log row can contribute to unambiguously
+    (each one belongs to exactly one DUID via its rollout plan).
+
+    filters: team_id, im, user, duid, poid, from_date, to_date, search — same
+    shape as list_execution_time_logs / get_daily_time_totals.
+
+    Returns rows with: duid, project_code, site_name, teams (distinct teams
+    that logged time here), poids (distinct PO lines), days (distinct dates
+    worked), sessions, logged_hours, first_date, last_date, has_running.
+    """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters or "{}")
+    if not isinstance(filters, dict):
+        filters = {}
+
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user))
+    is_desk_admin = "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles
+    is_im = "INET IM" in roles
+    is_field = "INET Field Team" in roles
+
+    empty = {"rows": [], "totals": {"duids": 0, "sessions": 0, "logged_hours": 0.0}}
+
+    # A log whose chain doesn't resolve to a DUID has nothing to bucket by —
+    # excluded here rather than surfaced as a confusing blank-label row.
+    wheres = ["1=1", "IFNULL(pd.site_code,'') != ''"]
+    params = []
+
+    if is_desk_admin:
+        im_pick = filters.get("im")
+        if im_pick:
+            im_team_ids = _im_team_ids_for_filter(im_pick)
+            if not im_team_ids:
+                return empty
+            ph = ", ".join(["%s"] * len(im_team_ids))
+            wheres.append(f"etl.team_id IN ({ph})")
+            params.extend(im_team_ids)
+        tid = filters.get("team_id")
+        if tid:
+            vals = tid if isinstance(tid, list) else [tid]
+            ph = ", ".join(["%s"] * len(vals))
+            wheres.append(f"etl.team_id IN ({ph})")
+            params.extend(vals)
+        if filters.get("user"):
+            wheres.append("etl.user = %s")
+            params.append(filters["user"])
+    elif is_im:
+        team_ids = _im_team_ids_for_filter(filters.get("im"))
+        tid = filters.get("team_id")
+        if tid:
+            allowed = [t for t in (tid if isinstance(tid, list) else [tid]) if t in set(team_ids)]
+            if not allowed:
+                return empty
+            ph = ", ".join(["%s"] * len(allowed))
+            wheres.append(f"etl.team_id IN ({ph})")
+            params.extend(allowed)
+        else:
+            if not team_ids:
+                return empty
+            ph = ", ".join(["%s"] * len(team_ids))
+            wheres.append(f"etl.team_id IN ({ph})")
+            params.extend(team_ids)
+        if filters.get("user"):
+            wheres.append("etl.user = %s")
+            params.append(filters["user"])
+    elif is_field:
+        wheres.append("etl.user = %s")
+        params.append(user)
+        ft_team = _session_inet_field_team_id()
+        if ft_team:
+            wheres.append("etl.team_id = %s")
+            params.append(ft_team)
+    else:
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    duid_vals = _ensure_list(filters.get("duid"))
+    if duid_vals:
+        ph = ", ".join(["%s"] * len(duid_vals))
+        wheres.append(f"pd.site_code IN ({ph})")
+        params.extend(duid_vals)
+    poid_vals = _ensure_list(filters.get("poid"))
+    if poid_vals:
+        ph = ", ".join(["%s"] * len(poid_vals))
+        wheres.append(f"IFNULL(pd.poid, pd.name) IN ({ph})")
+        params.extend(poid_vals)
+
+    from_date = filters.get("from_date")
+    to_date = filters.get("to_date")
+    if from_date:
+        wheres.append("DATE(etl.start_time) >= %s")
+        params.append(from_date)
+    if to_date:
+        wheres.append("DATE(etl.start_time) <= %s")
+        params.append(to_date)
+
+    search = (filters.get("search") or filters.get("q") or "").strip()
+    if search:
+        like_tokens = _sql_like_tokens(search)
+        if like_tokens:
+            concat_expr = (
+                "CONCAT_WS(' ', IFNULL(pd.site_code,''), IFNULL(pd.poid,''), IFNULL(pd.project_code,''), "
+                "IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.team_id,''))"
+            )
+            ors = " OR ".join([f"{concat_expr} LIKE %s"] * len(like_tokens))
+            wheres.append(f"({ors})")
+            params.extend(like_tokens)
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.site_code AS duid,
+               MAX(pd.project_code) AS project_code,
+               MAX(pd.site_name) AS site_name,
+               COUNT(DISTINCT etl.team_id) AS teams,
+               COUNT(DISTINCT IFNULL(pd.poid, pd.name)) AS poids,
+               COUNT(DISTINCT DATE(etl.start_time)) AS days,
+               COUNT(*) AS sessions,
+               SUM(IFNULL(etl.duration_minutes, 0)) / 60 AS logged_hours,
+               MIN(DATE(etl.start_time)) AS first_date,
+               MAX(DATE(etl.start_time)) AS last_date,
+               MAX(IFNULL(etl.is_running, 0)) AS has_running
+        FROM `tabExecution Time Log` etl
+        LEFT JOIN `tabRollout Plan` rp ON rp.name = etl.rollout_plan
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabUser` u ON u.name = etl.user
+        WHERE {' AND '.join(wheres)}
+        GROUP BY pd.site_code
+        ORDER BY logged_hours DESC
+        """,
+        tuple(params),
+        as_dict=True,
+    ) or []
+
+    out = []
+    for r in rows:
+        out.append({
+            "duid": r.get("duid"),
+            "project_code": r.get("project_code"),
+            "site_name": r.get("site_name"),
+            "teams": cint(r.get("teams")),
+            "poids": cint(r.get("poids")),
+            "days": cint(r.get("days")),
+            "sessions": cint(r.get("sessions")),
+            "logged_hours": round(flt(r.get("logged_hours")), 2),
+            "first_date": str(r.get("first_date")) if r.get("first_date") else None,
+            "last_date": str(r.get("last_date")) if r.get("last_date") else None,
+            "has_running": bool(r.get("has_running")),
+        })
+
+    return {
+        "rows": out,
+        # Only the two aggregates that are unambiguous to sum ACROSS DUIDs —
+        # "teams" and "days" are per-row DISTINCT counts, and summing those
+        # across rows would double-count a team/day that touched more than
+        # one site, so they are deliberately left off this totals block.
+        "totals": {
+            "duids": len(out),
+            # Safe to sum: every PO Dispatch (and so every poid) has exactly
+            # one site_code, so a poid can never appear under more than one
+            # DUID group here — unlike "teams" or "days", which a single
+            # team/date CAN legitimately span more than one site.
+            "poids": sum(r["poids"] for r in out),
+            "sessions": sum(r["sessions"] for r in out),
             "logged_hours": round(sum(r["logged_hours"] for r in out), 2),
         },
     }
@@ -17608,11 +17857,30 @@ def get_daily_time_totals(filters=None):
         wheres.append("DATE(etl.start_time) <= %s")
         params.append(to_date)
 
+    # DUID / POID filters — need the Rollout Plan -> PO Dispatch chain, which
+    # this query didn't previously join at all. A LEFT JOIN on a Link field
+    # (rollout_plan, then po_dispatch) is always 1:1, so adding it can never
+    # fan out a row — safe to include unconditionally rather than branching
+    # like list_execution_time_logs does.
+    duid_vals = _ensure_list(filters.get("duid"))
+    if duid_vals:
+        ph = ", ".join(["%s"] * len(duid_vals))
+        wheres.append(f"pd.site_code IN ({ph})")
+        params.extend(duid_vals)
+    poid_vals = _ensure_list(filters.get("poid"))
+    if poid_vals:
+        ph = ", ".join(["%s"] * len(poid_vals))
+        wheres.append(f"IFNULL(pd.poid, pd.name) IN ({ph})")
+        params.extend(poid_vals)
+
     search = (filters.get("search") or filters.get("q") or "").strip()
     if search:
         like_tokens = _sql_like_tokens(search)
         if like_tokens:
-            concat_expr = "CONCAT_WS(' ', IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.team_id,''))"
+            concat_expr = (
+                "CONCAT_WS(' ', IFNULL(etl.user,''), IFNULL(u.full_name,''), IFNULL(etl.team_id,''), "
+                "IFNULL(pd.site_code,''), IFNULL(pd.poid,''))"
+            )
             ors = " OR ".join([f"{concat_expr} LIKE %s"] * len(like_tokens))
             wheres.append(f"({ors})")
             params.extend(like_tokens)
@@ -17626,9 +17894,12 @@ def get_daily_time_totals(filters=None):
                MAX(CASE WHEN etl.is_running = 0 THEN etl.end_time END) AS last_end,
                SUM(IFNULL(etl.duration_minutes, 0)) / 60 AS logged_hours,
                COUNT(*) AS sessions,
-               MAX(IFNULL(etl.is_running, 0)) AS has_running
+               MAX(IFNULL(etl.is_running, 0)) AS has_running,
+               COUNT(DISTINCT pd.site_code) AS duid_count
         FROM `tabExecution Time Log` etl
         LEFT JOIN `tabUser` u ON u.name = etl.user
+        LEFT JOIN `tabRollout Plan` rp ON rp.name = etl.rollout_plan
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         WHERE {' AND '.join(wheres)}
         GROUP BY DATE(etl.start_time), etl.user, etl.team_id
         ORDER BY log_date DESC, first_start DESC
@@ -17656,6 +17927,10 @@ def get_daily_time_totals(filters=None):
             "logged_hours": round(flt(r.get("logged_hours")), 2),
             "sessions": cint(r.get("sessions")),
             "has_running": bool(r.get("has_running")),
+            # >1 means this presence window covered more than one DUID that
+            # day (e.g. two visits) — the span above is still a valid
+            # door-to-door number, it just isn't attributable to one site.
+            "duid_count": cint(r.get("duid_count")),
         })
 
     return {"rows": out}
