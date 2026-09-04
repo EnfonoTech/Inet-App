@@ -5,7 +5,12 @@ import DateRangePicker from "../../components/DateRangePicker";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-const fmtMoney = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+// Was defined identically to `fmt` (0 decimals) — every SAR figure on this
+// page (KPIs, Acceptance Pipeline, Monthly Invoicing Roll-up, INET/Subcon
+// split, pending-owner breakdown) was silently rounding to whole numbers.
+// 2 decimals matches every other PIC page's money formatter (PICInvoicingSummary,
+// PicReportsPanel, RolloutCommercialReport).
+const fmtMoney = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
 // Buckets that are pure-pending (Page 1) — only when a row's OTHER milestone
 // is also untouched does it actually live there; a row with the other
@@ -61,7 +66,13 @@ const BUCKET_TONE = {
 
 export default function PICDashboard({ showSwitcher = false }) {
   const navigate = useNavigate();
-  const bucketNavigable = !showSwitcher;
+  // Click-through to /pic-pending, /pic-tracker, /pic-closed, /pic-cancelled
+  // used to be tied to `!showSwitcher` — i.e. disabled on the PM/admin route
+  // for no reason connected to `showSwitcher`'s actual job (showing the
+  // DashboardSwitcher below). Admin already has its own routes to all four
+  // pages (see App.jsx), so there was nothing keeping the PM out of them
+  // except this flag — always navigable now, same as the PIC's own page.
+  const bucketNavigable = true;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -298,13 +309,18 @@ export default function PICDashboard({ showSwitcher = false }) {
         </div>
       </div>
 
-      {/* Two-column row: Monthly invoicing + INET vs Subcon */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, padding: "0 16px 12px" }}>
+      {/* Two-column row: Monthly invoicing + INET vs Subcon. INET/Subcons
+          Split has the same 6 money columns as Monthly Roll-up but was only
+          given 1/3 of the row (2fr:1fr) — not enough room, so its rightmost
+          figures (Total incl. VAT) were clipped. 3fr:2fr gives it real room
+          without starving Monthly Roll-up. */}
+      <div style={{ display: "grid", gridTemplateColumns: "3fr 2fr", gap: 12, padding: "0 16px 12px" }}>
         <Section title="Monthly Invoicing Roll-up" subtitle="MS1 + MS2 invoiced amounts grouped by Invoicing Month">
           {monthly.length === 0 ? (
             <Empty>No invoicing dates set yet.</Empty>
           ) : (
             <>
+              <div style={{ overflowX: "auto" }}>
               <table className="data-table" style={{ width: "100%" }}>
                 <thead>
                   <tr>
@@ -329,6 +345,7 @@ export default function PICDashboard({ showSwitcher = false }) {
                   ))}
                 </tbody>
               </table>
+              </div>
               {monthly.length > 6 && (
                 <div style={{ padding: "8px 14px", borderTop: "1px solid #f1f5f9", textAlign: "center" }}>
                   <button
@@ -472,6 +489,7 @@ function InetSubconSplitCard({ data: d }) {
 
   return (
     <div style={{ padding: "10px 14px" }}>
+      <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
         <thead>
           <tr style={{ color: "#94a3b8", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -534,6 +552,7 @@ function InetSubconSplitCard({ data: d }) {
           </tr>
         </tfoot>
       </table>
+      </div>
     </div>
   );
 }

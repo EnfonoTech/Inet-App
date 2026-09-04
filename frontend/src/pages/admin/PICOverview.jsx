@@ -68,6 +68,7 @@ const tfL = { ...td, fontWeight: 800, borderTop: "2px solid #e2e8f0", borderBott
 export default function PICOverview() {
   const [invoicing, setInvoicing] = useState(null);
   const [payout, setPayout] = useState(null);
+  const [stageCounts, setStageCounts] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -101,12 +102,18 @@ export default function PICOverview() {
     Promise.all([
       pmApi.picInvoicingSummary(portal).catch((e) => ({ __err: e?.message || "failed" })),
       pmApi.subconPayoutSummary(portal).catch((e) => ({ __err: e?.message || "failed" })),
-    ]).then(([inv, pay]) => {
+      pmApi.getPicStageCounts(portal).catch((e) => ({ __err: e?.message || "failed" })),
+    ]).then(([inv, pay, stages]) => {
       if (cancelled) return;
-      const failed = [inv?.__err && "invoicing summary", pay?.__err && "subcon payout"].filter(Boolean);
+      const failed = [
+        inv?.__err && "invoicing summary",
+        pay?.__err && "subcon payout",
+        stages?.__err && "pipeline counts",
+      ].filter(Boolean);
       setInvoicing(inv?.__err ? null : inv);
       setPayout(pay?.__err ? null : pay);
-      setError(failed.length ? `Could not load ${failed.join(" and ")}.` : null);
+      setStageCounts(stages?.__err ? null : stages);
+      setError(failed.length ? `Could not load ${failed.join(", ")}.` : null);
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
@@ -197,6 +204,50 @@ export default function PICOverview() {
           );
         })}
       </div>
+
+      <Section title="Pipeline" subtitle="lines by stage — Pending / Tracker / Closed / Cancelled">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          {[
+            { key: "pending_count", label: "Pending", to: "/pic-pending", tone: "warn", hint: "Not yet reached PIC" },
+            { key: "active_count", label: "Tracker", to: "/pic-tracker", tone: "info", hint: "In the acceptance / invoicing pipeline" },
+            { key: "closed_count", label: "Closed", to: "/pic-closed", tone: "good", hint: "Both milestones resolved" },
+            { key: "cancelled_count", label: "Cancelled", to: "/pic-cancelled", tone: "default", hint: "PO line cancelled" },
+          ].map((stage) => {
+            const t = tones[stage.tone] || tones.default;
+            const v = stageCounts?.[stage.key];
+            return (
+              <Link
+                key={stage.key}
+                to={stage.to}
+                title={stage.hint}
+                style={{
+                  flex: "1 1 150px", minWidth: 150, padding: "10px 14px",
+                  border: `1px solid ${t.bd}`, background: t.bg, borderRadius: 10,
+                  textDecoration: "none", display: "block",
+                }}
+              >
+                <div style={{ fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", color: "#64748b" }}>
+                  {stage.label}
+                </div>
+                <div style={{ fontSize: "1.12rem", fontWeight: 800, letterSpacing: "-0.3px", color: t.fg, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+                  {loading && !stageCounts ? "…" : count(v)}
+                </div>
+              </Link>
+            );
+          })}
+          <div style={{
+            flex: "1 1 150px", minWidth: 150, padding: "10px 14px",
+            border: `1px solid ${tones.default.bd}`, background: tones.default.bg, borderRadius: 10,
+          }}>
+            <div style={{ fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", color: "#64748b" }}>
+              Total lines
+            </div>
+            <div style={{ fontSize: "1.12rem", fontWeight: 800, letterSpacing: "-0.3px", color: tones.default.fg, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+              {loading && !stageCounts ? "…" : count(stageCounts?.total_lines)}
+            </div>
+          </div>
+        </div>
+      </Section>
 
       <Section title="PIC Reports" subtitle="the same five reports the PIC works from" to="/pic-reports" linkLabel="Open PIC Reports">
         <div style={{ margin: "0 -16px" }}>

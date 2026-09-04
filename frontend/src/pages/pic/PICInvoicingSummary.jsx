@@ -31,18 +31,22 @@ function fmtDayLabel(dateStr) {
 // table should read the way the work moves, not terminal-state first. Only a
 // fallback now: pic_invoicing_summary returns `status_order` off that same
 // field, so this cannot be what drifts.
+// PIC's preferred reading order — terminal/closed state first. Matches
+// pic.py's PIC_STATUS_ORDER and PICDashboard.jsx's BUCKET_ORDER; this copy is
+// only the fallback for when the backend call fails (pic_invoicing_summary
+// normally sends status_order itself — see the two call sites below).
 const MS1_STATUS_ORDER = [
-  "Work Not Done",
-  "Under Process to Apply",
+  "Commercial Invoice Closed",
+  "Commercial Invoice Submitted",
+  "Ready for Invoice",
   "Under I-BUY",
   "Under ISDP",
+  "Under Process to Apply",
   "I-BUY Rejected",
   "ISDP Rejected",
-  "Ready for Invoice",
-  "Commercial Invoice Submitted",
-  "Commercial Invoice Closed",
-  "PO Need to Cancel",
   "PO Line Canceled",
+  "PO Need to Cancel",
+  "Work Not Done",
 ];
 
 function statusColor(status) {

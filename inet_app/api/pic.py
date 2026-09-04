@@ -1989,6 +1989,146 @@ def get_pic_dashboard(from_date=None, to_date=None, etag=None):
     return payload
 
 
+@frappe.whitelist()
+def get_pic_stage_counts(portal_filters=None):
+    """How many lines sit in each of the PIC's 4 pipeline stages — the same
+    Pending / Tracker (active) / Closed / Cancelled split the PIC's own nav
+    tabs use — under an arbitrary project/date scope.
+
+    Separate from pic_dashboard_payload's own pending/active/closed/cancelled
+    counts (used by the PIC's dashboard) because that function's date filter
+    is baked into a much larger shared query serving several other panels
+    (monthly roll-up, pending-owner breakdown, INET/Subcon split); adding
+    project scoping there would have to thread through all of them. This
+    mirrors pic_invoicing_summary's own WHERE-clause construction instead —
+    same portal_filters shape (project_code, site_code, im, from_date,
+    to_date) — so a PM's project/date filter on PIC Overview scopes this
+    exactly the same way it already scopes the invoicing and payout
+    sections beside it.
+
+    The 4 stages are mutually exclusive and exhaustive by construction (see
+    _PIC_STAGE_SQL) — they always sum to total_lines.
+    """
+    _pic_role_or_throw()
+    pf = _portal_filters_dict(portal_filters)
+
+    wheres = ["1=1", "IFNULL(pd.is_internal_work, 0) = 0", "IFNULL(pd.is_dummy_po, 0) = 0"]
+    params = []
+    for col, key in (("pd.project_code", "project_code"),
+                      ("pd.site_code", "site_code"),
+                      ("pd.im", "im")):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            wheres.append(c)
+            params.extend(p)
+    if pf.get("from_date"):
+        wheres.append("pd.ms1_applied_date >= %s")
+        params.append(pf["from_date"])
+    if pf.get("to_date"):
+        wheres.append("pd.ms1_applied_date <= %s")
+        params.append(pf["to_date"])
+
+    row = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS total_lines,
+               COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["pending"]} THEN 1 ELSE 0 END), 0) AS pending_count,
+               COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["active"]} THEN 1 ELSE 0 END), 0) AS active_count,
+               COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["closed"]} THEN 1 ELSE 0 END), 0) AS closed_count,
+               COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["cancelled"]} THEN 1 ELSE 0 END), 0) AS cancelled_count
+        {_PIC_FROM_JOIN}
+        WHERE {" AND ".join(wheres)}
+        """,
+        tuple(params),
+        as_dict=True,
+    )
+    row = (row[0] if row else {}) or {}
+    return {
+        "total_lines": cint(row.get("total_lines") or 0),
+        "pending_count": cint(row.get("pending_count") or 0),
+        "active_count": cint(row.get("active_count") or 0),
+        "closed_count": cint(row.get("closed_count") or 0),
+        "cancelled_count": cint(row.get("cancelled_count") or 0),
+    }
+
+
+def _pic_acceptance_buckets(extra_where="", extra_params=None):
+    """The one correct way to bucket PO Dispatch lines by PIC acceptance status.
+
+    A line contributes to whichever bucket(s) its milestones are ACTUALLY in,
+    not just wherever MS1 happens to be:
+    - Always one row for MS1's bucket, carrying ms1_amount.
+    - If MS2 sits in a DIFFERENT bucket than MS1, ALSO a separate row for
+      MS2's bucket, carrying ms2_amount — so a line split across two stages
+      (MS1 already Closed, MS2 still Under I-BUY) shows up, and its money,
+      in BOTH buckets.
+    - If MS2 is in the SAME bucket as MS1, its amount is folded into that one
+      MS1 row instead of double-counting the line.
+
+    This must be the ONLY place this logic is written. get_pic_report's
+    "pipeline" report used to classify each line ONCE by MS1's status alone
+    (a plain GROUP BY on _PIC_INITIAL_RULE_SQL) — cheaper to write, and wrong:
+    against real production data it silently dropped every line whose MS2 sat
+    in a different bucket (Under I-BUY read 0 instead of 29, Under ISDP 0
+    instead of 15, ISDP Rejected 0 instead of 11) and misattributed that MS2
+    money into MS1's bucket instead. It disagreed with PICDashboard's own
+    Acceptance Pipeline table — which already used this exact query — by 800+
+    lines. Both callers now share this one implementation so that can't
+    happen again.
+
+    ``extra_where``: an additional ``AND ...`` condition (e.g. a project
+    filter or the ms1_applied_date range), applied to BOTH halves of the
+    UNION. ``extra_params`` is the matching bind list — passed once here, and
+    doubled internally since the condition appears in both SELECTs.
+    """
+    extra_params = list(extra_params or [])
+    rows = frappe.db.sql(
+        f"""
+        SELECT bucket,
+               COUNT(*) AS line_count,
+               COALESCE(SUM(ms1_amount), 0) AS ms1_total,
+               COALESCE(SUM(ms2_amount), 0) AS ms2_total,
+               COALESCE(SUM(ms1_amount + ms2_amount), 0) AS total
+        FROM (
+          -- MS1 row: always emitted.
+          -- If MS2 falls in the same bucket, absorb ms2_amount here so the
+          -- line is not double-counted in the UNION below.
+          SELECT
+            ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
+            pd.ms1_amount AS ms1_amount,
+            CASE
+              WHEN IFNULL(pd.ms2_amount, 0) > 0
+                   AND COALESCE(NULLIF(pd.pic_status_ms2,''),'Work Not Done')
+                       = ({_PIC_INITIAL_RULE_SQL.strip()})
+              THEN pd.ms2_amount
+              ELSE 0
+            END AS ms2_amount
+          {_PIC_FROM_JOIN}
+          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+            AND (IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})
+          {extra_where}
+          UNION ALL
+          -- MS2 row: only emitted when ms2_amount > 0 AND its bucket differs
+          -- from the MS1 bucket (avoids the same-bucket double-count above).
+          SELECT
+            COALESCE(NULLIF(pd.pic_status_ms2,''), 'Work Not Done') AS bucket,
+            0 AS ms1_amount,
+            pd.ms2_amount AS ms2_amount
+          {_PIC_FROM_JOIN}
+          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
+            AND (IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})
+            AND IFNULL(pd.ms2_amount, 0) > 0
+            AND COALESCE(NULLIF(pd.pic_status_ms2,''),'Work Not Done')
+                != ({_PIC_INITIAL_RULE_SQL.strip()})
+          {extra_where}
+        ) t
+        GROUP BY bucket
+        """,
+        tuple(extra_params) * 2,
+        as_dict=True,
+    )
+    return rows or []
+
+
 def pic_dashboard_payload(from_date=None, to_date=None):
     """The PIC dashboard figures, with no role guard and no etag handling.
 
@@ -2018,75 +2158,41 @@ def pic_dashboard_payload(from_date=None, to_date=None):
         applied_params = [td]
 
     # Invoice-month conditions for the INET/Subcon split CASE expressions.
-    # Each of the 4 SUM(CASE ...) uses split_ms1_cond (2 params each × 2 = 4)
-    # then split_ms2_cond (2 params each × 2 = 4), total 8 params when both dates set.
+    # split_ms1_cond and split_ms2_cond each appear 4 TIMES in the query below
+    # (inet_ms1, subcon_ms1, inet_ms1_vat, subcon_ms1_vat use ms1_cond;
+    # inet_ms2, subcon_ms2, inet_ms2_vat, subcon_ms2_vat use ms2_cond) — 8
+    # insertions total, not the "4 params total" an earlier version of this
+    # comment assumed. That miscount meant split_params was always too short
+    # the moment a date filter was set — pymysql's mogrify() raises "not
+    # enough arguments for format string" the instant a %s placeholder in the
+    # rendered SQL has no matching value, which is exactly what "the
+    # dashboard breaks when I use a date" looks like.
+    #
+    # Every one of the 8 insertions wants the SAME date value(s) regardless of
+    # whether it's the ms1 or ms2 flavour, so the fix is just "repeat the
+    # date args once per insertion" — 2 args/insertion x 8 when both dates
+    # are set, 1 x 8 when only one is.
+    SPLIT_COND_INSERTIONS = 8
     split_ms1_cond = ""
     split_ms2_cond = ""
     split_params = []
     if fd and td:
         split_ms1_cond = "AND DATE_FORMAT(pd.ms1_invoice_month,'%%Y-%%m') BETWEEN DATE_FORMAT(%s,'%%Y-%%m') AND DATE_FORMAT(%s,'%%Y-%%m')"
         split_ms2_cond = "AND DATE_FORMAT(pd.ms2_invoice_month,'%%Y-%%m') BETWEEN DATE_FORMAT(%s,'%%Y-%%m') AND DATE_FORMAT(%s,'%%Y-%%m')"
-        split_params = [fd, td, fd, td, fd, td, fd, td]
+        split_params = [fd, td] * SPLIT_COND_INSERTIONS
     elif fd:
         split_ms1_cond = "AND pd.ms1_invoice_month >= %s"
         split_ms2_cond = "AND pd.ms2_invoice_month >= %s"
-        split_params = [fd, fd, fd, fd]
+        split_params = [fd] * SPLIT_COND_INSERTIONS
     elif td:
         split_ms1_cond = "AND pd.ms1_invoice_month <= %s"
         split_ms2_cond = "AND pd.ms2_invoice_month <= %s"
-        split_params = [td, td, td, td]
+        split_params = [td] * SPLIT_COND_INSERTIONS
 
     # ── Acceptance buckets — count + 1st/2nd/total amounts per pic_status.
-    # Each dispatch line is counted once per DISTINCT bucket it contributes to.
-    # When MS1 and MS2 fall in the same bucket the line is counted once (not twice)
-    # and both amounts are merged into that single bucket row.
-    # When MS1 and MS2 are in different buckets the line appears in both.
-    bucket_rows = frappe.db.sql(
-        f"""
-        SELECT bucket,
-               COUNT(*) AS line_count,
-               COALESCE(SUM(ms1_amount), 0) AS ms1_total,
-               COALESCE(SUM(ms2_amount), 0) AS ms2_total,
-               COALESCE(SUM(ms1_amount + ms2_amount), 0) AS total
-        FROM (
-          -- MS1 row: always emitted.
-          -- If MS2 falls in the same bucket, absorb ms2_amount here so the
-          -- line is not double-counted in the UNION below.
-          SELECT
-            ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
-            pd.ms1_amount AS ms1_amount,
-            CASE
-              WHEN IFNULL(pd.ms2_amount, 0) > 0
-                   AND COALESCE(NULLIF(pd.pic_status_ms2,''),'Work Not Done')
-                       = ({_PIC_INITIAL_RULE_SQL.strip()})
-              THEN pd.ms2_amount
-              ELSE 0
-            END AS ms2_amount
-          {_PIC_FROM_JOIN}
-          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
-            AND (IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})
-          {applied_clause}
-          UNION ALL
-          -- MS2 row: only emitted when ms2_amount > 0 AND its bucket differs
-          -- from the MS1 bucket (avoids the same-bucket double-count).
-          SELECT
-            COALESCE(NULLIF(pd.pic_status_ms2,''), 'Work Not Done') AS bucket,
-            0 AS ms1_amount,
-            pd.ms2_amount AS ms2_amount
-          {_PIC_FROM_JOIN}
-          WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
-            AND (IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})
-            AND IFNULL(pd.ms2_amount, 0) > 0
-            AND COALESCE(NULLIF(pd.pic_status_ms2,''),'Work Not Done')
-                != ({_PIC_INITIAL_RULE_SQL.strip()})
-          {applied_clause}
-        ) t
-        GROUP BY bucket
-        ORDER BY line_count DESC
-        """,
-        tuple(applied_params) * 2,
-        as_dict=True,
-    )
+    # See _pic_acceptance_buckets for why this is a dual-milestone UNION, not
+    # a plain GROUP BY pd.pic_status.
+    bucket_rows = _pic_acceptance_buckets(applied_clause, applied_params)
 
     # ── Pending approvals by I-Buy / ISDP owner — date scopes the rows.
     pending_ibuy = frappe.db.sql(
@@ -2133,8 +2239,7 @@ def pic_dashboard_payload(from_date=None, to_date=None):
 
     # ── INET vs Subcon split — filtered by invoice month when date range set.
     vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
-    _split = frappe.db.sql(
-        f"""
+    _split_sql = f"""
         SELECT
           SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
               {split_ms1_cond}
@@ -2163,10 +2268,20 @@ def pic_dashboard_payload(from_date=None, to_date=None):
         {_PIC_FROM_JOIN_LEAN}
         WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
           AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
-        """,
-        tuple(split_params),
-        as_dict=True,
+        """
+    # This exact query has no OTHER %s placeholders outside split_ms1_cond /
+    # split_ms2_cond, so the query's own placeholder count is a direct,
+    # cheap check that split_params still has exactly one value per
+    # placeholder — the miscount that broke every date-filtered load of this
+    # dashboard was silent until pymysql's mogrify() hit it at request time.
+    # Recount here instead of trusting SPLIT_COND_INSERTIONS to stay accurate
+    # if this query is edited again.
+    assert _split_sql.count("%s") == len(split_params), (
+        f"INET/Subcon split query has {_split_sql.count('%s')} placeholders "
+        f"but split_params has {len(split_params)} values — a SUM(CASE...) "
+        f"was added/removed without updating SPLIT_COND_INSERTIONS above."
     )
+    _split = frappe.db.sql(_split_sql, tuple(split_params), as_dict=True)
     _r = (_split[0] if _split else {}) or {}
     _im1  = flt(_r.get("inet_ms1"));  _sm1 = flt(_r.get("subcon_ms1"))
     _im2  = flt(_r.get("inet_ms2"));  _sm2 = flt(_r.get("subcon_ms2"))
@@ -2249,28 +2364,33 @@ def pic_dashboard_payload(from_date=None, to_date=None):
 # Row-bounded reports return the true match count alongside the page of rows,
 # so the UI can say "5,000 of 11,842" instead of quietly presenting a truncated
 # list — and its totals row — as if it were the whole answer.
-def pic_status_order():
-    """The PIC statuses in workflow order, newest stage last.
+# The PIC's preferred reading order for these 11 statuses — terminal/closed
+# state first, working backward through the pipeline to untouched last. This
+# is a business preference, not the pic_status field's own option order (that
+# reads Work-Not-Done-first, which is the workflow order but not how PIC
+# wants to SEE it) — PICDashboard.jsx's BUCKET_ORDER already uses exactly
+# this sequence; keep the two in sync if either changes.
+PIC_STATUS_ORDER = [
+    "Commercial Invoice Closed",
+    "Commercial Invoice Submitted",
+    "Ready for Invoice",
+    "Under I-BUY",
+    "Under ISDP",
+    "Under Process to Apply",
+    "I-BUY Rejected",
+    "ISDP Rejected",
+    "PO Line Canceled",
+    "PO Need to Cancel",
+    "Work Not Done",
+]
 
-    Read off the `pic_status` select field rather than hardcoded, so the one
-    place that defines the flow is the field definition itself — a status added
-    or reordered there cannot leave a report sorting by a stale list.
-    """
-    try:
-        field = frappe.get_meta("PO Dispatch").get_field("pic_status")
-        opts = [o.strip() for o in (field.options or "").split("\n") if o.strip()]
-        if opts:
-            return opts
-    except Exception:
-        pass
-    # Fallback mirrors the field as of writing; only reached if the meta lookup
-    # fails, in which case a sensible order still beats an arbitrary one.
-    return [
-        "Work Not Done", "Under Process to Apply", "Under I-BUY", "Under ISDP",
-        "I-BUY Rejected", "ISDP Rejected", "Ready for Invoice",
-        "Commercial Invoice Submitted", "Commercial Invoice Closed",
-        "PO Need to Cancel", "PO Line Canceled",
-    ]
+
+def pic_status_order():
+    """The PIC statuses in the PIC's preferred display order — see
+    PIC_STATUS_ORDER. A plain accessor (rather than inlining the constant at
+    each call site) so every caller — the pipeline report, the invoicing
+    summary, and the status_order sent to the frontend — reads one place."""
+    return list(PIC_STATUS_ORDER)
 
 
 def sort_by_pic_status(rows, key):
@@ -2334,12 +2454,31 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
     lim = _pic_report_limit(limit)
 
     if kind == "pipeline":
-        # Read top-to-bottom this is the acceptance flow, so sort it that way —
-        # by line count the terminal state leads and the pipeline reads
-        # backwards. FIELD() puts anything unlisted last (0), hence the
-        # secondary sort.
+        # PIC's preferred reading order — see PIC_STATUS_ORDER.
         pipeline_order = pic_status_order()
-        pipeline_order_ph = ", ".join(["%s"] * len(pipeline_order))
+
+        # Same dual-milestone bucketing pic_dashboard_payload uses for
+        # PICDashboard's own Acceptance Pipeline table — this used to be a
+        # simpler (and wrong) MS1-only GROUP BY; see _pic_acceptance_buckets'
+        # docstring for exactly how and by how much that disagreed with the
+        # dashboard.
+        pipeline_rows = _pic_acceptance_buckets(project_clause, project_params)
+
+        # A status with zero lines is still useful information — nothing is
+        # stuck there — so it gets a zero-value row rather than disappearing.
+        # Same convention PICDashboard's own Acceptance Pipeline table and the
+        # Invoicing Summary's per-status tables already use.
+        by_bucket = {r["bucket"]: r for r in pipeline_rows}
+        padded_rows = [
+            by_bucket.get(status) or {
+                "bucket": status, "line_count": 0, "ms1_total": 0, "ms2_total": 0, "total": 0,
+            }
+            for status in pipeline_order
+        ]
+        # Any bucket value outside the known list (should not happen — see
+        # _PIC_INITIAL_RULE_SQL) still appends rather than being dropped.
+        padded_rows += [r for r in pipeline_rows if r["bucket"] not in pipeline_order]
+
         return {
             "kind": kind,
             "columns": [
@@ -2349,28 +2488,7 @@ def get_pic_report(kind="pipeline", from_date=None, to_date=None, project_code=N
                 {"key": "ms2_total", "label": "MS2 Amount", "numeric": True, "money": True},
                 {"key": "total", "label": "Total", "numeric": True, "money": True},
             ],
-            "rows": frappe.db.sql(
-                f"""
-                SELECT bucket,
-                       COUNT(*) AS line_count,
-                       COALESCE(SUM(ms1_amount), 0) AS ms1_total,
-                       COALESCE(SUM(ms2_amount), 0) AS ms2_total,
-                       COALESCE(SUM(ms1_amount + ms2_amount), 0) AS total
-                FROM (
-                  SELECT
-                    ({_PIC_INITIAL_RULE_SQL.strip()}) AS bucket,
-                    pd.ms1_amount, pd.ms2_amount
-                  {_PIC_FROM_JOIN}
-                  WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
-                    AND (IFNULL(pd.dispatch_status,'') != 'Cancelled' OR {_PIC_LINE_CANCELED_SQL})
-                  {project_clause}
-                ) t
-                GROUP BY bucket
-                ORDER BY FIELD(bucket, {pipeline_order_ph}), bucket
-                """,
-                tuple(project_params) + tuple(pipeline_order),
-                as_dict=True,
-            ),
+            "rows": padded_rows,
         }
 
     if kind == "monthly":
