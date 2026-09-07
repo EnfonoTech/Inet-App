@@ -554,6 +554,7 @@ function MonthlyRollupCard({ rows, loading, error }) {
 
 // ── Main component ─────────────────────────────────────────────────────
 export default function PICInvoicingSummary() {
+  const navigate = useNavigate();
   const { role } = useAuth();
   const navigable = role === "pic";
   const [tab, setTab] = useState("split");
@@ -610,7 +611,13 @@ export default function PICInvoicingSummary() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Invoicing Summary</h1>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {role !== "pic" && (
+              <button type="button" className="btn-secondary" onClick={() => navigate(-1)}
+                style={{ padding: "4px 10px", fontSize: "0.78rem" }}>← Back</button>
+            )}
+            <h1 className="page-title">Invoicing Summary</h1>
+          </div>
           <div className="page-subtitle">
             {tab === "ledger"
               ? "Payment-dated invoicing ledger — year and month totals, drill into individual invoice lines"

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
@@ -74,6 +76,8 @@ function DetailModal({ row, onClose }) {
 // same Bulk Set Status pattern as PIC Tracker (select rows → pick milestone
 // → confirm), just fixed to the one status that makes sense here.
 export default function PICCancelled() {
+  const { role } = useAuth();
+  const navigate = useNavigate();
   const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -271,6 +275,10 @@ export default function PICCancelled() {
       <div className="page-header">
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {role !== "pic" && (
+              <button type="button" className="btn-secondary" onClick={() => navigate(-1)}
+                style={{ padding: "4px 10px", fontSize: "0.78rem" }}>← Back</button>
+            )}
             <h1 className="page-title">Cancelled</h1>
           </div>
           <div className="page-subtitle">Cancelled POIDs</div>

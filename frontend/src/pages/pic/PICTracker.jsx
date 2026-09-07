@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
@@ -151,6 +152,8 @@ function downloadPicTrackerCsv(rows) {
 }
 
 export default function PICTracker() {
+  const { role } = useAuth();
+  const navigate = useNavigate();
   const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -646,6 +649,10 @@ export default function PICTracker() {
       <div className="page-header">
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {role !== "pic" && (
+              <button type="button" className="btn-secondary" onClick={() => navigate(-1)}
+                style={{ padding: "4px 10px", fontSize: "0.78rem" }}>← Back</button>
+            )}
             <h1 className="page-title">PIC Tracker</h1>
           </div>
           <div className="page-subtitle">Acceptance &amp; invoicing pipeline</div>

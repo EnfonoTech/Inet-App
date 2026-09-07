@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
@@ -90,6 +92,8 @@ function DetailModal({ row, onClose }) {
 }
 
 export default function PICPending() {
+  const { role } = useAuth();
+  const navigate = useNavigate();
   const { rowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -293,6 +297,10 @@ export default function PICPending() {
       <div className="page-header">
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {role !== "pic" && (
+              <button type="button" className="btn-secondary" onClick={() => navigate(-1)}
+                style={{ padding: "4px 10px", fontSize: "0.78rem" }}>← Back</button>
+            )}
             <h1 className="page-title">Pending</h1>
           </div>
           <div className="page-subtitle">POIDs not yet with PIC</div>

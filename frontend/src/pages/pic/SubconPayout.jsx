@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -11,6 +13,8 @@ const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const NUM = { textAlign: "right", fontVariantNumeric: "tabular-nums" };
 
 export default function SubconPayout() {
+  const { role } = useAuth();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -82,8 +86,13 @@ export default function SubconPayout() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Subcon Payout Summary</h1>
-
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {role !== "pic" && (
+              <button type="button" className="btn-secondary" onClick={() => navigate(-1)}
+                style={{ padding: "4px 10px", fontSize: "0.78rem" }}>← Back</button>
+            )}
+            <h1 className="page-title">Subcon Payout Summary</h1>
+          </div>
         </div>
         <div className="page-actions">
           <ExportExcelButton filename="subcon-payout-by-supplier" rows={bySupplier} />
