@@ -13,9 +13,8 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PicStatusBadge } from "../pic/picShared";
+import { money, qty } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-const fmtAmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const HIDDEN_DETAIL_FIELDS = new Set(["owner", "creation", "modified", "modified_by", "docstatus", "idx"]);
 
 function todayMonth() {
@@ -181,7 +180,7 @@ const INTEGRITY_TABS = {
   },
 };
 
-function IntegrityTable({ rows, loading, selected, toggleRow, toggleAll, tabKey, showMs, fmt }) {
+function IntegrityTable({ rows, loading, selected, toggleRow, toggleAll, tabKey, showMs }) {
   const colCount = showMs ? 10 : 9;
   return (
     <table className="data-table" data-excel-filter-all="1" data-table-key={`admin-po-dispatch-${tabKey}`}>
@@ -240,11 +239,11 @@ function IntegrityTable({ rows, loading, selected, toggleRow, toggleAll, tabKey,
             <td style={{ color: showMs && r.ms2_stuck ? "#b91c1c" : undefined, fontWeight: showMs && r.ms2_stuck ? 700 : undefined }}>{r.pic_status_ms2 || "—"}</td>
             {showMs ? (
               <>
-                <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ms1_stuck ? "#b45309" : "#94a3b8" }}>{fmt.format(r.ms1_unbilled || 0)}</td>
-                <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ms2_stuck ? "#b45309" : "#94a3b8" }}>{fmt.format(r.ms2_unbilled || 0)}</td>
+                <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ms1_stuck ? "#b45309" : "#94a3b8" }}>{money.format(r.ms1_unbilled || 0)}</td>
+                <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ms2_stuck ? "#b45309" : "#94a3b8" }}>{money.format(r.ms2_unbilled || 0)}</td>
               </>
             ) : (
-              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.line_amount || 0)}</td>
+              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.line_amount || 0)}</td>
             )}
           </tr>
         ))}
@@ -930,11 +929,11 @@ export default function PODispatch() {
             hero={
               <DetailHero>
                 <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} tone="slate" />
-                <DetailStatTile label="Qty" value={detailRow.qty != null ? fmt.format(detailRow.qty) : "—"} tone="blue" />
-                <DetailStatTile label="Rate (SAR)" value={detailRow.rate != null ? fmtAmt.format(detailRow.rate) : "—"} tone="slate" />
+                <DetailStatTile label="Qty" value={detailRow.qty != null ? qty.format(detailRow.qty) : "—"} tone="blue" />
+                <DetailStatTile label="Rate (SAR)" value={detailRow.rate != null ? money.format(detailRow.rate) : "—"} tone="slate" />
                 <DetailStatTile
                   label="Line Amount (SAR)"
-                  value={detailRow.line_amount != null ? fmtAmt.format(detailRow.line_amount) : "—"}
+                  value={detailRow.line_amount != null ? money.format(detailRow.line_amount) : "—"}
                   tone="green"
                 />
                 {detailRow.po_line_status && (
@@ -1150,7 +1149,6 @@ export default function PODispatch() {
               toggleAll={toggleAll}
               tabKey={activeTab}
               showMs={activeTab === "integrity_closed_unresolved"}
-              fmt={fmtAmt}
             />
           ) : (() => {
             // Plan Status / PIC Status (MS1/MS2) / Work Done Status / Work Done
@@ -1310,10 +1308,10 @@ export default function PODispatch() {
                           </td>
                           <td style={{ whiteSpace: "nowrap", fontSize: "0.82rem" }}>{row.backend_team || "—"}</td>
                           <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                            {row.ms1_amount ? fmtAmt.format(row.ms1_amount) : "—"}
+                            {row.ms1_amount ? money.format(row.ms1_amount) : "—"}
                           </td>
                           <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                            {row.ms2_amount ? fmtAmt.format(row.ms2_amount) : "—"}
+                            {row.ms2_amount ? money.format(row.ms2_amount) : "—"}
                           </td>
                         </>
                       )}
@@ -1324,8 +1322,8 @@ export default function PODispatch() {
                       <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.item_description}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.activity_type || "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.qty}</td>
-                      <td style={{ textAlign: "right" }}>{fmt.format(row.rate || 0)}</td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmtAmt.format(row.line_amount || 0)}</td>
+                      <td style={{ textAlign: "right" }}>{money.format(row.rate || 0)}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{money.format(row.line_amount || 0)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.project_code}</td>
                       <td>{row.project_domain || "—"}</td>
                       <td>{row.huawei_im || "—"}</td>
@@ -1392,8 +1390,8 @@ export default function PODispatch() {
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                         <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
-                        <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmtAmt.format(totals.ms1Amount || 0)}</td>
-                        <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmtAmt.format(totals.ms2Amount || 0)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{money.format(totals.ms1Amount || 0)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{money.format(totals.ms2Amount || 0)}</td>
                       </>
                     )}
                     <td
@@ -1408,9 +1406,9 @@ export default function PODispatch() {
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }} />
-                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(totals.qty)}</td>{/* Qty */}
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{qty.format(totals.qty)}</td>{/* Qty */}
                     <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />{/* Rate */}
-                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmtAmt.format(totals.amount)}</td>{/* Amount */}
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{money.format(totals.amount)}</td>{/* Amount */}
                     {/* Project..Action — one <td> per remaining column (DataTablePro's footer
                         colspan logic treats every non-first cell as exactly one real column;
                         a colSpan here would desync it from the header and misplace the row) */}

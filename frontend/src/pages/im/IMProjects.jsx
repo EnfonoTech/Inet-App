@@ -11,8 +11,8 @@ import { pmApi } from "../../services/api";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import SearchableSelect from "../../components/SearchableSelect";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { money } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 function statusTone(value) {
   const s = String(value || "").toLowerCase();
@@ -359,8 +359,8 @@ export default function IMProjects() {
                         {p.project_status || "Active"}
                       </span>
                     </td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(p.total_value || 0)}</td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(p.revenue || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{money.format(p.total_value || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{money.format(p.revenue || 0)}</td>
                     <td style={{ textAlign: "right" }}>{p.completion_pct ?? 0}%</td>
                     <td>
                       <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 10px" }} onClick={() => setDetailRow(p)}>

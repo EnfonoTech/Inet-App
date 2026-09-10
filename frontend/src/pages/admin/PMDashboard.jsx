@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { pmApi } from "../../services/api";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en-US");
 const C = { blue: "#1565C0", green: "#2E7D32", amber: "#F57C00", red: "#C62828" };
@@ -93,7 +94,7 @@ export default function PMDashboard() {
       <div className="nd-kpi-row col6">
         {[{ l: "Active Projects", v: active, cl: C.blue }, { l: "On Track", v: onTrack, cl: C.green },
           { l: "At Risk", v: atRisk, cl: C.amber }, { l: "Delayed", v: overdue, cl: C.red },
-          { l: "Total Value", v: `SAR ${fmt.format(totalValue)}`, cl: C.blue }, { l: "Revenue Realized", v: `${Number(revenuePct).toFixed(1)}%`, cl: C.green }].map((k) => (
+          { l: "Total Value", v: `SAR ${money.format(totalValue)}`, cl: C.blue }, { l: "Revenue Realized", v: `${Number(revenuePct).toFixed(1)}%`, cl: C.green }].map((k) => (
           <div className="nd-kpi-card" key={k.l}><div className="nd-kpi-label">{k.l}</div><div className="nd-kpi-value" style={{ color: k.cl }}>{k.v}</div></div>
         ))}
       </div>
@@ -121,9 +122,9 @@ export default function PMDashboard() {
             </tbody></table>
           </div></div>
           <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Financial Overview</h3></div><div className="nd-panel-body">
-            {[{ l: "Revenue Realized", v: `SAR ${fmt.format(totalRevenue)}`, p: revenuePct, c: C.blue },
-              { l: "Outstanding", v: `SAR ${fmt.format(Math.max(totalValue - totalRevenue, 0))}`, p: 100 - revenuePct, c: C.green },
-              { l: "Total Value", v: `SAR ${fmt.format(totalValue)}`, p: 100, c: C.blue }].map((f) => (
+            {[{ l: "Revenue Realized", v: `SAR ${money.format(totalRevenue)}`, p: revenuePct, c: C.blue },
+              { l: "Outstanding", v: `SAR ${money.format(Math.max(totalValue - totalRevenue, 0))}`, p: 100 - revenuePct, c: C.green },
+              { l: "Total Value", v: `SAR ${money.format(totalValue)}`, p: 100, c: C.blue }].map((f) => (
               <div key={f.l} style={{ marginBottom: 8 }}><div className="nd-row-xs"><span style={{ fontSize: 12 }}>{f.l}</span><span style={{ fontWeight: 700, fontSize: 12 }}>{f.v}</span></div><div className="nd-progress thin"><div className="nd-progress-bar" style={{ width: f.p + "%", background: f.c }} /></div></div>
             ))}
           </div></div>
@@ -135,7 +136,7 @@ export default function PMDashboard() {
               {topProjects.length ? topProjects.map((p) => (
                 <tr key={p.code}>
                   <td><strong>{p.code}</strong></td>
-                  <td style={{ textAlign: "right" }}>{fmt.format(p.value)}</td>
+                  <td style={{ textAlign: "right" }}>{money.format(p.value)}</td>
                   <td style={{ textAlign: "right" }}>{p.completed}/{p.total}</td>
                   <td style={{ textAlign: "right" }}><span className={"nd-badge " + (p.pct >= 50 ? "green" : "amber")}>{p.pct}%</span></td>
                 </tr>
@@ -166,7 +167,7 @@ export default function PMDashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="n" tick={{ fontSize: 9 }} />
                   <YAxis tick={{ fontSize: 9 }} />
-                  <Tooltip formatter={(v, k) => [`SAR ${fmt.format(Math.round(v))}k`, k === "po" ? "PO value" : "Achieved"]} />
+                  <Tooltip formatter={(v, k) => [`SAR ${money.format(Math.round(v))}k`, k === "po" ? "PO value" : "Achieved"]} />
                   <Bar dataKey="po" fill="#cbd5e1" radius={[3, 3, 0, 0]} />
                   <Bar dataKey="rev" fill={C.green} radius={[3, 3, 0, 0]} />
                 </BarChart>
@@ -202,8 +203,8 @@ export default function PMDashboard() {
                 {ppRows.length ? ppRows.map((r) => (
                   <tr key={r.project_code}>
                     <td><strong title={r.project_name}>{r.project_code}</strong></td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(Math.round(r.po_value || 0))}</td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(Math.round(r.achieved || 0))}</td>
+                    <td style={{ textAlign: "right" }}>{money.format(r.po_value || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{money.format(r.achieved || 0)}</td>
                     <td style={{ textAlign: "right" }}>{r.completed_lines}/{r.assigned_lines}</td>
                     <td style={{ textAlign: "right" }}>{r.delivery_pct}%</td>
                     <td><span style={{ fontSize: 10, fontWeight: 700, color: ratingColor(r.kpi_rating) }}>{r.kpi_rating}</span></td>
@@ -214,8 +215,8 @@ export default function PMDashboard() {
                 <tfoot>
                   <tr>
                     <td><strong>Total</strong></td>
-                    <td style={{ textAlign: "right" }}><strong>{fmt.format(Math.round(ppTotals.po_value || 0))}</strong></td>
-                    <td style={{ textAlign: "right" }}><strong>{fmt.format(Math.round(ppTotals.achieved || 0))}</strong></td>
+                    <td style={{ textAlign: "right" }}><strong>{money.format(ppTotals.po_value || 0)}</strong></td>
+                    <td style={{ textAlign: "right" }}><strong>{money.format(ppTotals.achieved || 0)}</strong></td>
                     <td style={{ textAlign: "right" }}><strong>{ppTotals.completed_lines}/{ppTotals.assigned_lines}</strong></td>
                     <td style={{ textAlign: "right" }}><strong>{ppTotals.delivery_pct}%</strong></td>
                     <td />

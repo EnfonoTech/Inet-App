@@ -8408,8 +8408,8 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         if c:
             wheres.append(c)
             params.extend(p)
-    # Hide rows that are fully commercially wrapped up — the Work Done pages
-    # are for tracking work that still needs PIC submission/invoicing, not an
+    # Hide rows that are fully commercially wrapped up — the working tabs are
+    # for tracking work that still needs PIC submission/invoicing, not an
     # invoicing archive. "Fully wrapped up" is judged per milestone, not per
     # dispatch_status: a row is hidden only once every milestone IT
     # represents has reached a terminal PIC status
@@ -8425,10 +8425,12 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
     #     ms2_amount > 0) are both terminal. A two-milestone line with only
     #     one milestone submitted still needs to show — there's real work
     #     left to track on the other one.
-    # Absolute: unlike the old dispatch_status='Closed' default this
-    # replaces, there is no explicit-filter escape hatch — a fully resolved
-    # row simply never loads on this page.
-    if (
+    # The "All" tab opts OUT of this: it is meant to be every work row for the
+    # IM's scope, closed and invoiced ones included, so it must not be scoped
+    # by commercial state at all. The other tabs keep the hide rule — they are
+    # working views, and a resolved row there is noise.
+    tab_scope_wd = (filters.get("tab") or "active").strip().lower()
+    if tab_scope_wd != "all" and (
         frappe.db.has_column("PO Dispatch", "pic_status")
         and frappe.db.has_column("PO Dispatch", "pic_status_ms2")
         and frappe.db.has_column("Work Done", "ms1_closed")
@@ -8531,7 +8533,6 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
             if frappe.db.has_column("PO Dispatch", "pic_rejection_remark")
             else "NULL"
         )
-        tab_scope_wd = (filters.get("tab") or "active").strip().lower()
         if tab_scope_wd == "confirmed":
             wheres.append("IFNULL(wd.submission_status,'') = 'Confirmation Done'")
         elif tab_scope_wd == "pic_rejected":
@@ -12150,6 +12151,10 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             {
                 "indicator": f"QC open issues — {row.issue_category}",
                 "current": cnt,
+                # `current` is a count on some rows and SAR on others, so each
+                # row states its unit; the dashboard cannot format a team
+                # count and a revenue gap with the same formatter.
+                "unit": "count",
                 "target": None,
                 "status": "Recover",
             }
@@ -12160,6 +12165,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             {
                 "indicator": "Idle teams today",
                 "current": idle_teams_count,
+                "unit": "count",
                 "target": None,
                 "status": "Behind",
             }
@@ -12169,6 +12175,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             {
                 "indicator": "INET revenue gap (month-to-date vs prorated target)",
                 "current": inet_gap_today,
+                "unit": "sar",
                 "target": None,
                 "status": "Recover",
             }
@@ -12178,6 +12185,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             {
                 "indicator": "Subcontractor revenue gap",
                 "current": sub_gap,
+                "unit": "sar",
                 "target": None,
                 "status": "Recover",
             }
@@ -12187,6 +12195,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             {
                 "indicator": "Operational health",
                 "current": 0,
+                "unit": "count",
                 "target": None,
                 "status": "Optimized",
             }

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import FileUpload from "../../components/FileUpload";
+import { money, qty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -786,8 +787,8 @@ export default function POUpload() {
                           <td style={{ fontFamily: "monospace", fontSize: "0.82rem" }}>{row.project_code}</td>
                           <td><ProjectBadge exists={row.project_exists} /></td>
                           <td style={{ textAlign: "right" }}>{row.qty}</td>
-                          <td style={{ textAlign: "right" }}>{fmt.format(row.rate || 0)}</td>
-                          <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
+                          <td style={{ textAlign: "right" }}>{money.format(row.rate || 0)}</td>
+                          <td style={{ textAlign: "right" }}>{money.format(row.line_amount || 0)}</td>
                           <td><StatusBadge valid={true} /></td>
                         </tr>
                       ))}
@@ -805,11 +806,11 @@ export default function POUpload() {
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                           <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                            {fmt.format(validRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                            {qty.format(validRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                           </td>{/* Qty */}
                           <td />{/* Rate */}
                           <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                            {fmt.format(validRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                            {money.format(validRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
                           </td>{/* Line Amount */}
                           <td />{/* Row Status */}
                         </tr>
@@ -856,8 +857,8 @@ export default function POUpload() {
                           <td>{row.po_no}</td>
                           <td>{row.project_code}</td>
                           <td style={{ textAlign: "right" }}>{row.qty}</td>
-                          <td style={{ textAlign: "right" }}>{fmt.format(row.rate || 0)}</td>
-                          <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
+                          <td style={{ textAlign: "right" }}>{money.format(row.rate || 0)}</td>
+                          <td style={{ textAlign: "right" }}>{money.format(row.line_amount || 0)}</td>
                           <td><StatusBadge valid={false} /></td>
                           <td style={{ color: "var(--red)", fontSize: "0.78rem" }}>
                             {(row._errors || []).join("; ") || row.error || "—"}
@@ -876,11 +877,11 @@ export default function POUpload() {
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                           <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                            {fmt.format(errorRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                            {qty.format(errorRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                           </td>{/* Qty */}
                           <td />{/* Rate */}
                           <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                            {fmt.format(errorRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                            {money.format(errorRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
                           </td>{/* Line Amount */}
                           <td /><td />{/* Status · Error */}
                         </tr>
@@ -1067,7 +1068,7 @@ function SummaryChip({ label, value, color = "#334155", bg = "rgba(100,116,139,0
     }}>
       <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text-secondary, #64748b)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
       <div style={{ fontSize: "1.4rem", fontWeight: 700, color, fontVariantNumeric: "tabular-nums", marginTop: 4 }}>
-        {fmt.format(value || 0)}
+        {money.format(value || 0)}
       </div>
     </div>
   );

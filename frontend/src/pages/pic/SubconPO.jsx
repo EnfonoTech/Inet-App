@@ -13,6 +13,7 @@ import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import { PoStatusBadge, PicStatusBadge, SubPoStatusBadge } from "./picShared";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -203,15 +204,15 @@ function DetailModal({ row, onClose }) {
             <DetailStatTile label="Subcon MS2"
               value={row.ms2_amount ? <SubPoStatusBadge value={row.sub_po_status_ms2} /> : "—"} />
             <DetailStatTile label="Payout %" value={row.payout_pct != null ? `${fmtQty.format(row.payout_pct)}%` : "—"} />
-            <DetailStatTile label="Line Amount" value={fmt.format(row.line_amount || 0)} />
+            <DetailStatTile label="Line Amount" value={money.format(row.line_amount || 0)} />
             <DetailStatTile label="Payout MS1"
-              value={fmt.format(row.sub_po_amount_ms1 || row.expected_payout_ms1 || 0)}
+              value={money.format(row.sub_po_amount_ms1 || row.expected_payout_ms1 || 0)}
               tone="green"
-              accent={row.vat_ms1 ? `+ ${fmt.format(row.vat_ms1)} VAT` : undefined} />
+              accent={row.vat_ms1 ? `+ ${money.format(row.vat_ms1)} VAT` : undefined} />
             <DetailStatTile label="Payout MS2"
-              value={row.ms2_amount ? fmt.format(row.sub_po_amount_ms2 || row.expected_payout_ms2 || 0) : "—"}
+              value={row.ms2_amount ? money.format(row.sub_po_amount_ms2 || row.expected_payout_ms2 || 0) : "—"}
               tone="green"
-              accent={row.ms2_amount && row.vat_ms2 ? `+ ${fmt.format(row.vat_ms2)} VAT` : undefined} />
+              accent={row.ms2_amount && row.vat_ms2 ? `+ ${money.format(row.vat_ms2)} VAT` : undefined} />
           </DetailHero>
         </div>
 
@@ -241,7 +242,7 @@ function DetailModal({ row, onClose }) {
                 </div>
               </div>
               <KV label="PO Date" value={d.date} />
-              <KV label="Total (incl. VAT)" value={`${d.currency || "SAR"} ${fmt.format(d.grand_total)}`} />
+              <KV label="Total (incl. VAT)" value={`${d.currency || "SAR"} ${money.format(d.grand_total)}`} />
             </div>
           ))}
         </div>
@@ -271,7 +272,7 @@ function DetailModal({ row, onClose }) {
                 </div>
                 <KV label="Supplier Bill No" value={d.bill_no} mono />
                 <KV label="Supplier Bill Date" value={d.bill_date} />
-                <KV label="Total (incl. VAT)" value={`${d.currency || "SAR"} ${fmt.format(d.grand_total)}`} />
+                <KV label="Total (incl. VAT)" value={`${d.currency || "SAR"} ${money.format(d.grand_total)}`} />
               </div>
               <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
@@ -893,7 +894,7 @@ export default function SubconPO() {
       creatable.map((r) => r.po_dispatch), "AUTO");
     setCreateResult(res);
     done(`${res.created.length} draft Purchase Order(s) created — `
-      + `${res.line_count} line(s), SAR ${fmt.format(res.amount)}.`, 9000);
+      + `${res.line_count} line(s), SAR ${money.format(res.amount)}.`, 9000);
   }, "Purchase Order creation failed", true);
 
   const receiveInvoice = () => run(async () => {
@@ -913,7 +914,7 @@ export default function SubconPO() {
       }
     }
     setRecvBillNo(""); setRecvBillDate(""); setRecvFile(null);
-    done(`Invoice received — draft ${res.purchase_invoice}, SAR ${fmt.format(res.amount)}.`
+    done(`Invoice received — draft ${res.purchase_invoice}, SAR ${money.format(res.amount)}.`
       + attachNote, 9000);
   }, "Could not record the invoice");
 
@@ -1000,7 +1001,7 @@ export default function SubconPO() {
             {!!totals.expected_ms1 || !!totals.expected_ms2 ? (
               <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", fontSize: "0.74rem", fontWeight: 700 }}>
                 <span style={{ opacity: 0.85 }}>Expected Payout</span>
-                <span>{fmt.format((totals.expected_ms1 || 0) + (totals.expected_ms2 || 0))}</span>
+                <span>{money.format((totals.expected_ms1 || 0) + (totals.expected_ms2 || 0))}</span>
               </div>
             ) : null}
           </div>
@@ -1201,31 +1202,31 @@ export default function SubconPO() {
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? fmtQty.format(r.qty) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? fmt.format(r.rate) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.line_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? money.format(r.rate) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.line_amount || 0)}</td>
                   <td><PoStatusBadge value={r.dispatch_status} /></td>
                   <td style={{ fontSize: "0.82rem" }} title={r.im || ""}>{r.im_full_name || "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmtInt.format(r.ms1_pct)}%` : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmt.format(r.ms1_pct)}%` : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms1_amount || 0)}</td>
                   <td><PicStatusBadge value={r.pic_status_ms1} /></td>
                   <td><SubPoStatusBadge value={r.sub_po_status_ms1} /></td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}
                       title={r.sub_po_amount_ms1 ? "Amount on the issued Purchase Order" : "Expected from the master payout %"}>
-                    {fmt.format(r.sub_po_amount_ms1 || r.expected_payout_ms1 || 0)}
+                    {money.format(r.sub_po_amount_ms1 || r.expected_payout_ms1 || 0)}
                   </td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(r.vat_ms1 || 0)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.vat_ms1 || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms2_amount || 0)}</td>
                   <td><PicStatusBadge value={r.pic_status_ms2} /></td>
                   <td>{r.ms2_amount ? <SubPoStatusBadge value={r.sub_po_status_ms2} />
                         : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}
                       title={r.sub_po_amount_ms2 ? "Amount on the issued Purchase Order" : "Expected from the master payout %"}>
                     {r.ms2_amount
-                      ? fmt.format(r.sub_po_amount_ms2 || r.expected_payout_ms2 || 0)
+                      ? money.format(r.sub_po_amount_ms2 || r.expected_payout_ms2 || 0)
                       : <span style={{ color: "#cbd5e1" }}>—</span>}
                   </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>
-                    {r.ms2_amount ? fmt.format(r.vat_ms2 || 0) : <span style={{ color: "#cbd5e1" }}>—</span>}
+                    {r.ms2_amount ? money.format(r.vat_ms2 || 0) : <span style={{ color: "#cbd5e1" }}>—</span>}
                   </td>
                   <td onClick={(e) => e.stopPropagation()}><DocLinks csv={r.purchase_orders_csv} base="purchase-order" /></td>
                   <td onClick={(e) => e.stopPropagation()}><DocLinks csv={r.purchase_invoices_csv} base="purchase-invoice" /></td>
@@ -1262,20 +1263,20 @@ export default function SubconPO() {
                   <td></td>{/* Description */}
                   <td></td>{/* Qty */}
                   <td></td>{/* Rate */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(footTotals.line_amount)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.line_amount)}</td>
                   <td></td>{/* PO Status */}
                   <td></td>{/* IM */}
                   <td></td>{/* MS1 % */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(footTotals.ms1_amount)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.ms1_amount)}</td>
                   <td></td>{/* Cust. MS1 */}
                   <td></td>{/* Subcon MS1 */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(footTotals.payout_ms1)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(footTotals.vat_ms1)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(footTotals.ms2_amount)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.payout_ms1)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.vat_ms1)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.ms2_amount)}</td>
                   <td></td>{/* Cust. MS2 */}
                   <td></td>{/* Subcon MS2 */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(footTotals.payout_ms2)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(footTotals.vat_ms2)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.payout_ms2)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.vat_ms2)}</td>
                   <td></td>{/* Purchase Orders */}
                   <td></td>{/* Purchase Invoices */}
                   <td></td>{/* Remark */}
@@ -1355,8 +1356,8 @@ export default function SubconPO() {
                 </select>
               </Field>
               <Summary rows={[
-                ["Total lines", fmtInt.format(readyTargets.length)],
-                ["Total amount", `SAR ${fmt.format(readyTotal)}`],
+                ["Total lines", fmt.format(readyTargets.length)],
+                ["Total amount", `SAR ${money.format(readyTotal)}`],
               ]} />
               <Field label="Remark (optional)">
                 <textarea rows={2} value={actRemark} disabled={busy}
@@ -1378,7 +1379,7 @@ export default function SubconPO() {
                       <td><a href={c.purchase_order_url} target="_blank" rel="noreferrer" style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{c.purchase_order}</a></td>
                       <td style={{ fontSize: "0.82rem" }}>{c.supplier}</td>
                       <td style={{ textAlign: "right" }}>{c.line_count}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(c.amount)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(c.amount)}</td>
                       <td>{c.milestones}</td>
                     </tr>
                   ))}
@@ -1413,10 +1414,10 @@ export default function SubconPO() {
                     </div>
                     <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#047857", fontVariantNumeric: "tabular-nums" }}>
-                        {fmt.format(g.payout + g.vat)}
+                        {money.format(g.payout + g.vat)}
                       </div>
                       <div style={{ fontSize: "0.74rem", color: "#64748b", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
-                        {fmt.format(g.payout)} + {fmt.format(g.vat)} VAT
+                        {money.format(g.payout)} + {money.format(g.vat)} VAT
                       </div>
                     </div>
                   </div>
@@ -1473,7 +1474,7 @@ export default function SubconPO() {
                     ["PO date", recvSummary?.transaction_date || "—"],
                     ["PO total (incl. VAT)", recvSummary ? fmt.format(recvSummary.grand_total) : "—"],
                     ["Lines on this PO", recvSummary ? fmtInt.format(recvSummary.line_count) : "—"],
-                    ["Already invoiced", recvSummary ? fmtInt.format(recvSummary.invoiced_line_count) : "—"],
+                    ["Already invoiced", recvSummary ? fmt.format(recvSummary.invoiced_line_count) : "—"],
                   ].map(([k, v]) => (
                     <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                       <span style={{ color: "#64748b" }}>{k}</span>
@@ -1482,11 +1483,11 @@ export default function SubconPO() {
                   ))}
                   <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "space-between", gap: 8, paddingTop: 6, marginTop: 2, borderTop: "1px solid #f1f5f9" }}>
                     <span style={{ fontWeight: 700 }}>
-                      This invoice · {fmtInt.format(recvOpen.length)} line{recvOpen.length !== 1 ? "s" : ""}
+                      This invoice · {fmt.format(recvOpen.length)} line{recvOpen.length !== 1 ? "s" : ""}
                     </span>
                     <span style={{ textAlign: "right" }}>
                       <span style={{ fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#047857" }}>
-                        {recvSummary ? `${recvSummary.currency || "SAR"} ${fmt.format(recvNet + recvVat)}` : "—"}
+                        {recvSummary ? `${recvSummary.currency || "SAR"} ${money.format(recvNet + recvVat)}` : "—"}
                       </span>
                       <span style={{ display: "block", fontWeight: 500, color: "#64748b", fontSize: "0.74rem", fontVariantNumeric: "tabular-nums" }}>
                         {fmt.format(recvNet)} + {fmt.format(recvVat)} VAT
@@ -1505,7 +1506,7 @@ export default function SubconPO() {
                           <span style={{ color: "#94a3b8" }}> {it.milestone}</span>
                         </span>
                         <span style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", textDecoration: it.invoiced_on ? "line-through" : "none" }}>
-                          {fmt.format(it.amount)}
+                          {money.format(it.amount)}
                         </span>
                       </div>
                     ))}

@@ -15,8 +15,8 @@ import DateRangePicker from "../../components/DateRangePicker";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { money, qty, count as fmt } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 const DOC_REQUIREMENTS = {
@@ -680,16 +680,16 @@ export default function PICTracker() {
           from the backend (see aggTotals), NOT just the loaded rows. */}
       <div style={{ display: "flex", gap: 8, margin: "0 16px 6px", flexWrap: "wrap", alignItems: "center" }}>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontSize: "0.74rem", fontWeight: 700 }}>
-          <span style={{ opacity: 0.85 }}>MS1 Total</span> <span>SAR {fmt.format(aggTotals.ms1_amount)}</span>
+          <span style={{ opacity: 0.85 }}>MS1 Total</span> <span>SAR {money.format(aggTotals.ms1_amount)}</span>
         </div>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", fontSize: "0.74rem", fontWeight: 700 }}>
-          <span style={{ opacity: 0.85 }}>MS1 Invoiced</span> <span>SAR {fmt.format(aggTotals.ms1_invoiced)}</span>
+          <span style={{ opacity: 0.85 }}>MS1 Invoiced</span> <span>SAR {money.format(aggTotals.ms1_invoiced)}</span>
         </div>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", fontSize: "0.74rem", fontWeight: 700 }}>
-          <span style={{ opacity: 0.85 }}>MS2 Total</span> <span>SAR {fmt.format(aggTotals.ms2_amount)}</span>
+          <span style={{ opacity: 0.85 }}>MS2 Total</span> <span>SAR {money.format(aggTotals.ms2_amount)}</span>
         </div>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a", fontSize: "0.74rem", fontWeight: 700 }}>
-          <span style={{ opacity: 0.85 }}>MS2 Invoiced</span> <span>SAR {fmt.format(aggTotals.ms2_invoiced)}</span>
+          <span style={{ opacity: 0.85 }}>MS2 Invoiced</span> <span>SAR {money.format(aggTotals.ms2_invoiced)}</span>
         </div>
       </div>
 
@@ -846,9 +846,9 @@ export default function PICTracker() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.item_description || ""}>{r.item_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.site_name || ""}>{r.site_code || "—"}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? fmtInt.format(r.qty) : "—"}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? fmt.format(r.rate) : "—"}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.line_amount || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? qty.format(r.qty) : "—"}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? money.format(r.rate) : "—"}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.line_amount || 0)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.tax_rate || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.payment_terms || ""}>{r.payment_terms || "—"}</td>
                     <td><IMStatusBadge value={r.im_submission_status} /></td>
@@ -858,18 +858,18 @@ export default function PICTracker() {
                     <td style={{ fontSize: "0.78rem", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.ibuy_owner || ""}>{r.ibuy_owner || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms1_applied_date ? String(r.ms1_applied_date).slice(0, 10) : "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms1_invoice_month ? fmtMonthLabel(String(r.ms1_invoice_month)) : "—"}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmtInt.format(r.ms1_pct)}%` : "—"}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms1_invoiced || 0)}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>{fmt.format(r.ms1_vat || 0)}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_unbilled || 0) > 0 ? "#b45309" : "#94a3b8" }}>{fmt.format(r.ms1_unbilled || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmt.format(r.ms1_pct)}%` : "—"}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms1_amount || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{money.format(r.ms1_invoiced || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>{money.format(r.ms1_vat || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_unbilled || 0) > 0 ? "#b45309" : "#94a3b8" }}>{money.format(r.ms1_unbilled || 0)}</td>
                     <td><PicStatusBadge value={r.pic_status_ms2} /></td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms2_invoice_month ? fmtMonthLabel(String(r.ms2_invoice_month)) : "—"}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmtInt.format(r.ms2_pct)}%` : "—"}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{fmt.format(r.ms2_invoiced || 0)}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>{fmt.format(r.ms2_vat || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmt.format(r.ms2_pct)}%` : "—"}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms2_amount || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{money.format(r.ms2_invoiced || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms2_vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>{money.format(r.ms2_vat || 0)}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       {(() => {
                         const csv = r.linked_invoices_csv;
@@ -934,9 +934,9 @@ export default function PICTracker() {
                   <td></td>{/* Item */}
                   <td></td>{/* Description */}
                   <td></td>{/* DUID */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtInt.format(totals.qty)}</td>{/* Qty */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{qty.format(totals.qty)}</td>{/* Qty */}
                   <td></td>{/* Unit Price */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.line_amount)}</td>{/* Line Amount */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.line_amount)}</td>{/* Line Amount */}
                   <td></td>{/* Tax Rate */}
                   <td></td>{/* Payment Terms */}
                   <td></td>{/* IM Status */}
@@ -947,17 +947,17 @@ export default function PICTracker() {
                   <td></td>{/* Applied MS1 */}
                   <td></td>{/* Invoicing Month MS1 */}
                   <td></td>{/* MS1 % */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms1_invoiced)}</td>{/* MS1 Invoiced */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(totals.ms1_vat)}</td>{/* MS1 VAT */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>{fmt.format(totals.ms1_unbilled)}</td>{/* MS1 Unbilled */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{money.format(totals.ms1_invoiced)}</td>{/* MS1 Invoiced */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(totals.ms1_vat)}</td>{/* MS1 VAT */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>{money.format(totals.ms1_unbilled)}</td>{/* MS1 Unbilled */}
                   <td></td>{/* PIC Status MS2 */}
                   <td></td>{/* Applied MS2 */}
                   <td></td>{/* Invoicing Month MS2 */}
                   <td></td>{/* MS2 % */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{fmt.format(totals.ms2_invoiced)}</td>{/* MS2 Invoiced */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(totals.ms2_vat)}</td>{/* MS2 VAT */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>{money.format(totals.ms2_invoiced)}</td>{/* MS2 Invoiced */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(totals.ms2_vat)}</td>{/* MS2 VAT */}
                   <td></td>{/* Linked Invoice */}
                   <td></td>{/* Edit */}
                 </tr>
@@ -1163,7 +1163,7 @@ export default function PICTracker() {
                   <div style={{ maxHeight: 120, overflow: "auto", marginTop: 6 }}>
                     {selectedRows.map((r) => (
                       <div key={r.po_dispatch} style={{ fontSize: "0.76rem", padding: "3px 0" }}>
-                        {r.poid || r.po_dispatch} · {r.customer || "—"} · MS1: SAR {fmt.format(r.ms1_amount || 0)} · MS2: SAR {fmt.format(r.ms2_amount || 0)}
+                        {r.poid || r.po_dispatch} · {r.customer || "—"} · MS1: SAR {money.format(r.ms1_amount || 0)} · MS2: SAR {money.format(r.ms2_amount || 0)}
                       </div>
                     ))}
                   </div>
@@ -1307,9 +1307,9 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
 
           {/* KPI strip */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8, marginTop: 12 }}>
-            <HeroKPI label="Line Amount" value={fmt.format(row.line_amount || 0)} suffix="SAR" />
+            <HeroKPI label="Line Amount" value={money.format(row.line_amount || 0)} suffix="SAR" />
             <HeroKPI label="MS1 / MS2" value={`${ms1Pct.toFixed(0)}% / ${ms2Pct.toFixed(0)}%`} />
-            <HeroKPI label="Invoiced" value={fmt.format(totalInv)} suffix="SAR" />
+            <HeroKPI label="Invoiced" value={money.format(totalInv)} suffix="SAR" />
             <HeroKPI label="Progress" value={`${invPct}%`}>
               <div style={{ height: 4, background: "rgba(255,255,255,0.25)", borderRadius: 99, marginTop: 6, overflow: "hidden" }}>
                 <div style={{ height: "100%", width: `${invPct}%`, background: invPct >= 100 ? "#10b981" : "#fff" }} />
@@ -1672,9 +1672,9 @@ function MilestonePanel({
     }>
       {/* Mini stat row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 12 }}>
-        <Stat label="Amount" value={fmt.format(amount)} fg="#0f172a" />
-        <Stat label="Invoiced" value={fmt.format(invoiced)} fg={invoiced > 0 ? "#047857" : "#94a3b8"} />
-        <Stat label="Unbilled" value={fmt.format(unbilled)} fg={unbilled > 0 ? "#b45309" : "#94a3b8"} />
+        <Stat label="Amount" value={money.format(amount)} fg="#0f172a" />
+        <Stat label="Invoiced" value={money.format(invoiced)} fg={invoiced > 0 ? "#047857" : "#94a3b8"} />
+        <Stat label="Unbilled" value={money.format(unbilled)} fg={unbilled > 0 ? "#b45309" : "#94a3b8"} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1695,7 +1695,7 @@ function MilestonePanel({
         </Field>
         <Field label="Invoiced Amount (SAR)">
           <span style={{ fontSize: "0.88rem", fontWeight: 700, fontFamily: "JetBrains Mono, ui-monospace, monospace", color: "var(--text)" }}>
-            SAR {fmt.format(invoiced || 0)}
+            SAR {money.format(invoiced || 0)}
           </span>
         </Field>
         <Field label="Invoicing Month">

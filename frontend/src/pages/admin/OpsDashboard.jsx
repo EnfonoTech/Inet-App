@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { pmApi } from "../../services/api";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en-US");
 const C = { blue: "#1565C0", green: "#2E7D32", amber: "#F57C00", red: "#C62828" };
@@ -50,7 +51,7 @@ export default function OpsDashboard() {
   // all-time here), so "avg daily" was all-time revenue over a fixed 30.
   // day_progress_pct is the elapsed fraction of the period the backend used.
   const elapsedDays = Math.max(Math.round(((company.day_progress_pct ?? 0) / 100) * 30), 1);
-  const dailyAvg = totalRevenue > 0 ? Math.round(totalRevenue / elapsedDays) : 0;
+  const dailyAvg = totalRevenue > 0 ? totalRevenue / elapsedDays : 0;
 
   const jobBreakdown = [
     { n: "INET", v: inet.active_inet_teams || 0, c: C.blue },
@@ -117,7 +118,7 @@ export default function OpsDashboard() {
       </div>
 
       <div className="nd-kpi-row">
-        {[{ l: "Total Revenue", v: `SAR ${fmt.format(totalRevenue)}` }, { l: "Avg Daily Rev", v: `SAR ${fmt.format(dailyAvg)}` },
+        {[{ l: "Total Revenue", v: `SAR ${money.format(totalRevenue)}` }, { l: "Avg Daily Rev", v: `SAR ${money.format(dailyAvg)}` },
           { l: "Jobs Completed", v: jobsCompleted, cl: C.green }, { l: "Open Orders", v: openOrders, cl: C.amber },
           { l: "Rev vs Target", v: `${coveragePct}%`, cl: Number(coveragePct) >= 50 ? C.green : C.amber }].map((k) => (
           <div className="nd-kpi-card" key={k.l}><div className="nd-kpi-label">{k.l}</div><div className="nd-kpi-value" style={k.cl ? { color: k.cl } : {}}>{k.v}</div></div>
@@ -148,7 +149,7 @@ export default function OpsDashboard() {
                     <YAxis tick={{ fontSize: 10 }} />
                     <Tooltip
                       formatter={(v, _k, p) => [
-                        `${fmt.format(v)} lines · SAR ${fmt.format(Math.round(p?.payload?.value || 0))}`,
+                        `${fmt.format(v)} lines · SAR ${money.format(p?.payload?.value || 0)}`,
                         p?.payload?.n,
                       ]}
                     />
@@ -185,26 +186,26 @@ export default function OpsDashboard() {
       <div className="nd-grid col3 stretch">
         <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
           <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>Operational Costs</h3></div><div className="nd-panel-body">
-            {costs.map((c) => (<div key={c.l} style={{ marginBottom: 6 }}><div className="nd-row-xs"><span style={{ fontSize: 12 }}>{c.l}</span><span style={{ fontWeight: 700, fontSize: 12 }}>SAR {fmt.format(c.v)}</span></div><div className="nd-progress thin"><div className="nd-progress-bar" style={{ width: (c.v / maxCost) * 100 + "%", background: c.bc }} /></div></div>))}
+            {costs.map((c) => (<div key={c.l} style={{ marginBottom: 6 }}><div className="nd-row-xs"><span style={{ fontSize: 12 }}>{c.l}</span><span style={{ fontWeight: 700, fontSize: 12 }}>SAR {money.format(c.v)}</span></div><div className="nd-progress thin"><div className="nd-progress-bar" style={{ width: (c.v / maxCost) * 100 + "%", background: c.bc }} /></div></div>))}
           </div></div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div className="nd-panel"><div className="nd-panel-header"><h3>Billing Overview</h3></div><div className="nd-panel-body">
             <div className="nd-donut-row">
               <div style={{ position: "relative", width: 90, height: 90, flexShrink: 0 }}><ResponsiveContainer><PieChart><Pie data={[{ v: billingPct }, { v: 100 - billingPct }]} dataKey="v" innerRadius={30} outerRadius={40} startAngle={90} endAngle={-270}><Cell fill={C.green} /><Cell fill="#e2e8f0" /></Pie></PieChart></ResponsiveContainer><div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.green }}>{billingPct}%</div></div>
-              <div><div style={{ fontSize: 18, fontWeight: 700 }}>SAR {fmt.format(totalRevenue)}</div><div style={{ fontSize: 11, color: "#64748b" }}>Revenue Achieved</div><div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>Unbilled MS1: SAR {fmt.format(unbilledMs1)}</div><div style={{ fontSize: 11, color: C.amber }}>Unbilled MS2: SAR {fmt.format(unbilledMs2)}</div></div>
+              <div><div style={{ fontSize: 18, fontWeight: 700 }}>SAR {money.format(totalRevenue)}</div><div style={{ fontSize: 11, color: "#64748b" }}>Revenue Achieved</div><div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>Unbilled MS1: SAR {money.format(unbilledMs1)}</div><div style={{ fontSize: 11, color: C.amber }}>Unbilled MS2: SAR {money.format(unbilledMs2)}</div></div>
             </div>
           </div></div>
           <div className="nd-panel"><div className="nd-panel-header"><h3>Team Performance</h3></div><div className="nd-panel-body">
             <table className="nd-table"><thead><tr><th>Team</th><th style={{ textAlign: "right" }}>Revenue</th><th style={{ textAlign: "right" }}>Cost</th><th style={{ textAlign: "right" }}>Profit</th></tr></thead><tbody>
-              {techs.map((t) => (<tr key={t.n}><td><strong>{t.n}</strong></td><td style={{ textAlign: "right" }}>SAR {fmt.format(t.r)}</td><td style={{ textAlign: "right" }}>SAR {fmt.format(t.cost)}</td><td style={{ textAlign: "right", color: t.profit >= 0 ? C.green : C.red }}>SAR {fmt.format(t.profit)}</td></tr>))}
+              {techs.map((t) => (<tr key={t.n}><td><strong>{t.n}</strong></td><td style={{ textAlign: "right" }}>SAR {money.format(t.r)}</td><td style={{ textAlign: "right" }}>SAR {money.format(t.cost)}</td><td style={{ textAlign: "right", color: t.profit >= 0 ? C.green : C.red }}>SAR {money.format(t.profit)}</td></tr>))}
             </tbody></table>
           </div></div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
           <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>IM Performance</h3></div><div className="nd-panel-body">
             <table className="nd-table"><thead><tr><th>IM</th><th style={{ textAlign: "right" }}>Revenue</th><th style={{ textAlign: "right" }}>Profit</th></tr></thead><tbody>
-              {(im_performance || []).slice(0, 5).map((im) => (<tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {fmt.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {fmt.format(im.profit || 0)}</td></tr>))}
+              {(im_performance || []).slice(0, 5).map((im) => (<tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {money.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {money.format(im.profit || 0)}</td></tr>))}
             </tbody></table>
           </div></div>
         </div>

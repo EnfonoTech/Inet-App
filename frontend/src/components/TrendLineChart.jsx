@@ -1,4 +1,5 @@
 import { useId, useMemo } from "react";
+import { money } from "../utils/numberFormat";
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer,
@@ -73,7 +74,7 @@ function CrosshairTooltip({ active, payload, label }) {
         <div key={p.dataKey} style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, flex: "0 0 auto" }} />
           <span style={{ color: "#64748b" }}>{p.name}</span>
-          <strong style={{ color: INK, marginLeft: "auto" }}>SAR {fmtInt.format(Math.round(p.value || 0))}</strong>
+          <strong style={{ color: INK, marginLeft: "auto" }}>SAR {money.format(p.value || 0)}</strong>
         </div>
       ))}
     </div>

@@ -5,6 +5,7 @@ import MiniTable from "../../components/MiniTable";
 import { BarChart, DonutChart } from "../../components/Charts";
 import DateRangePicker, { DATE_PRESETS } from "../../components/DateRangePicker";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
+import { money } from "../../utils/numberFormat";
 
 /* ── Formatters ─────────────────────────────────────────────────── */
 const fmt = new Intl.NumberFormat("en-US");
@@ -28,12 +29,18 @@ function fv(v) {
   return String(v);
 }
 
-// Format as SAR integer; negatives shown as (SAR 123)
+// Format as SAR; negatives shown as (SAR 123). Not rounded — Math.round
+// here discarded the halalas on every money tile on this dashboard.
 function sar(v) {
   if (v === null || v === undefined) return "—";
   const n = Number(v);
-  const s = `SAR ${fmt.format(Math.round(Math.abs(n)))}`;
+  const s = `SAR ${money.format(Math.abs(n))}`;
   return n < 0 ? `(${s})` : s;
+}
+
+// Watchlist rows mix units: pick the formatter the row declares.
+function wlFmt(item) {
+  return item?.unit === "sar" ? money : fmt;
 }
 
 function profitColor(v) {
@@ -417,7 +424,7 @@ export default function CommandDashboard() {
                   top and have no list of their own. */}
               <Stat label="Target"        value={sar(subcon.sub_target)}
                 sub={(subcon.monthly_target ?? 0) > 0
-                  ? `SAR ${fmt.format(subcon.monthly_target)}/month agreed`
+                  ? `SAR ${money.format(subcon.monthly_target)}/month agreed`
                   : "not set on Subcontract Master"}
                 hint="The monthly commitment agreed per subcontract, scaled to the months this range spans. A commercial figure, so it has to be entered — nothing in the data derives it. Opens Subcontract Master, where it is set."
                 onClick={() => navigate("/masters?expand=" + encodeURIComponent("Subcontract Master"))} />
@@ -599,10 +606,15 @@ export default function CommandDashboard() {
                 <span className={`watchlist-indicator ${dotColor(item.status)}`} />
                 <div className="watchlist-info">
                   <div className="watchlist-name">{item.indicator}</div>
+                  {/* `current`/`target` are SAR on the revenue-gap rows and a
+                      plain count on the QC/idle-team rows, so the row's own
+                      `unit` picks the formatter. Formatting both the same way
+                      either dropped halalas off a gap or printed "3.00" idle
+                      teams. */}
                   <div className="watchlist-detail">
-                    Current: <span className="mono">{fmt.format(item.current)}</span>
+                    Current: <span className="mono">{wlFmt(item).format(item.current)}</span>
                     {item.target !== null && item.target !== undefined && (
-                      <> &middot; Target: <span className="mono">{fmt.format(item.target)}</span></>
+                      <> &middot; Target: <span className="mono">{wlFmt(item).format(item.target)}</span></>
                     )}
                   </div>
                 </div>

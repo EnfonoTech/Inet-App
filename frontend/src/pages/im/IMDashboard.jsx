@@ -6,6 +6,7 @@ import DateRangePicker, { DATE_PRESETS } from "../../components/DateRangePicker"
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -79,7 +80,7 @@ function KpiTile({ icon, label, value, tone = "blue", suffix, sub }) {
         <span style={{ textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</span>
       </div>
       <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0f172a", lineHeight: 1.1, fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
-        {fmt.format(value || 0)}
+        {money.format(value || 0)}
         {suffix && <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "#64748b", marginLeft: 6 }}>{suffix}</span>}
       </div>
       {sub && <div style={{ fontSize: "0.66rem", color: "#94a3b8", fontWeight: 500 }}>{sub}</div>}

@@ -23,8 +23,8 @@ import RescheduleModal from "../../components/RescheduleModal";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
+import { money } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const CIAG_STATUS_OPTIONS = ["Open", "Approved", "Not Applicable"];
 
 const RESCHEDULE_TL_STATUSES = new Set(["Not Attended", "Hold", "Cancelled", "Postponed"]);
@@ -1711,7 +1711,7 @@ export default function IMExecution() {
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                      {fmt.format(totalAchieved)}
+                      {money.format(totalAchieved)}
                     </td>
                     <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />

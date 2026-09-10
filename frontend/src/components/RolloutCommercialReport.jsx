@@ -4,8 +4,8 @@ import MiniTable from "./MiniTable";
 import SearchableSelect from "./SearchableSelect";
 import useFilterOptions from "../hooks/useFilterOptions";
 import { pmApi } from "../services/api";
+import { money } from "../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 
 /**
@@ -93,7 +93,7 @@ export default function RolloutCommercialReport({ imName, initialProject = "" })
           <div key={label} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px", borderLeft: `4px solid ${color}` }}>
             <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>{label} (SAR)</div>
             <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#1e293b", fontVariantNumeric: "tabular-nums" }}>
-              {fmt.format(Number(value) || 0)}
+              {money.format(Number(value) || 0)}
             </div>
           </div>
         ))}
@@ -113,10 +113,10 @@ export default function RolloutCommercialReport({ imName, initialProject = "" })
           columns={[
             { label: "Project", key: "project_code" },
             { label: "Lines", key: "lines", align: "right" },
-            { label: "Planned SAR", key: "planned", align: "right", render: (v) => fmt.format(Number(v) || 0) },
-            { label: "Invoiced SAR", key: "invoiced", align: "right", render: (v) => fmt.format(Number(v) || 0) },
-            { label: "Collected SAR", key: "collected", align: "right", render: (v) => fmt.format(Number(v) || 0) },
-            { label: "Not invoiced", key: "not_invoiced", align: "right", render: (v) => fmt.format(Number(v) || 0) },
+            { label: "Planned SAR", key: "planned", align: "right", render: (v) => money.format(Number(v) || 0) },
+            { label: "Invoiced SAR", key: "invoiced", align: "right", render: (v) => money.format(Number(v) || 0) },
+            { label: "Collected SAR", key: "collected", align: "right", render: (v) => money.format(Number(v) || 0) },
+            { label: "Not invoiced", key: "not_invoiced", align: "right", render: (v) => money.format(Number(v) || 0) },
             { label: "Invoiced %", key: "invoiced_pct", align: "right", render: (v) => `${v}%` },
             { label: "Collected %", key: "collected_pct", align: "right", render: (v) => `${v}%` },
           ]}
@@ -131,9 +131,9 @@ export default function RolloutCommercialReport({ imName, initialProject = "" })
         {projects.length > 0 && (
           <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 12, paddingTop: 10, borderTop: "2px solid #e2e8f0", fontSize: "0.82rem", fontWeight: 700 }}>
             <span>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
-            <span>Planned {fmt.format(t?.planned || 0)}</span>
-            <span style={{ color: "#0369a1" }}>Invoiced {fmt.format(t?.invoiced || 0)}</span>
-            <span style={{ color: "#15803d" }}>Collected {fmt.format(t?.collected || 0)}</span>
+            <span>Planned {money.format(t?.planned || 0)}</span>
+            <span style={{ color: "#0369a1" }}>Invoiced {money.format(t?.invoiced || 0)}</span>
+            <span style={{ color: "#15803d" }}>Collected {money.format(t?.collected || 0)}</span>
           </div>
         )}
       </div>

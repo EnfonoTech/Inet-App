@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import { money } from "../../utils/numberFormat";
 
 // PM / Admin queue for Team Allocation Requests that have cleared the
 // source IM and are awaiting PM approval, plus Rollout Plan cancel
@@ -9,7 +10,6 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 // Approving fires the relevant atomic flip on the backend (INET Team.im,
 // PO Dispatch.dispatch_status, or PO Dispatch.im).
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
 function statusTone(status) {
   const s = (status || "").toLowerCase();
@@ -321,7 +321,7 @@ export default function TeamAllocationApprovals() {
                 <>
                   <strong>{decideTarget.from_im_name || decideTarget.from_im}</strong> → <strong>{decideTarget.to_im_name || decideTarget.to_im}</strong>
                   <br />
-                  {decideTarget.poid_count ?? decideTarget.lines?.length ?? 0} POID(s), SAR {fmt.format(decideTarget.total_amount || 0)}
+                  {decideTarget.poid_count ?? decideTarget.lines?.length ?? 0} POID(s), SAR {money.format(decideTarget.total_amount || 0)}
                   <div style={{ marginTop: 8, maxHeight: 220, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 6 }}>
                     {(decideTarget.lines || []).length > 0 ? (
                       <table className="data-table" style={{ margin: 0, fontSize: "0.76rem" }}>

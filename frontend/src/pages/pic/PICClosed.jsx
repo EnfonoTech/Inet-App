@@ -15,8 +15,8 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
+import { money, qty, count as fmt } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 const INV_MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
@@ -79,9 +79,9 @@ function DetailModal({ row, onClose }) {
           ].filter(Boolean)}
           hero={
             <DetailHero>
-              <DetailStatTile label="Qty" value={row.qty != null ? fmtInt.format(row.qty) : "—"} />
-              <DetailStatTile label="Rate" value={row.rate != null ? fmt.format(row.rate) : "—"} />
-              <DetailStatTile label="Line Amount" value={fmt.format(row.line_amount || 0)} tone="green" />
+              <DetailStatTile label="Qty" value={row.qty != null ? qty.format(row.qty) : "—"} />
+              <DetailStatTile label="Rate" value={row.rate != null ? money.format(row.rate) : "—"} />
+              <DetailStatTile label="Line Amount" value={money.format(row.line_amount || 0)} tone="green" />
               <DetailStatTile label="Closed on" value={row.dispatch_status || "—"} tone="green" />
             </DetailHero>
           }
@@ -487,22 +487,22 @@ export default function PICClosed() {
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.site_name || ""}>{r.site_code || "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? fmtInt.format(r.qty) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? fmt.format(r.rate) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.line_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? qty.format(r.qty) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? money.format(r.rate) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.line_amount || 0)}</td>
                   <td><IMStatusBadge value={r.im_submission_status} /></td>
                   <td><PicStatusBadge value={r.pic_status_effective} /></td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms1_applied_date ? String(r.ms1_applied_date).slice(0, 10) : "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms1_invoice_month ? fmtMonthLabel(String(r.ms1_invoice_month)) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmtInt.format(r.ms1_pct)}%` : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms1_amount || 0)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(r.ms1_vat || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmt.format(r.ms1_pct)}%` : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms1_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.ms1_vat || 0)}</td>
                   <td><PicStatusBadge value={r.pic_status_ms2} /></td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms2_invoice_month ? fmtMonthLabel(String(r.ms2_invoice_month)) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmtInt.format(r.ms2_pct)}%` : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.ms2_amount || 0)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(r.ms2_vat || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmt.format(r.ms2_pct)}%` : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms2_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.ms2_vat || 0)}</td>
                   <td onClick={(e) => e.stopPropagation()}>
                     {(() => {
                       const csv = r.linked_invoices_csv;
@@ -555,22 +555,22 @@ export default function PICClosed() {
                   <td></td>{/* Item */}
                   <td></td>{/* Description */}
                   <td></td>{/* DUID */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtInt.format(totals.qty)}</td>{/* Qty */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{qty.format(totals.qty)}</td>{/* Qty */}
                   <td></td>{/* Rate */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.line_amount)}</td>{/* Line Amount */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.line_amount)}</td>{/* Line Amount */}
                   <td></td>{/* IM Status */}
                   <td></td>{/* PIC Status MS1 */}
                   <td></td>{/* Applied Date MS1 */}
                   <td></td>{/* Invoicing Month MS1 */}
                   <td></td>{/* MS1 % */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(totals.ms1_vat)}</td>{/* MS1 VAT */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(totals.ms1_vat)}</td>{/* MS1 VAT */}
                   <td></td>{/* PIC Status MS2 */}
                   <td></td>{/* Applied Date MS2 */}
                   <td></td>{/* Invoicing Month MS2 */}
                   <td></td>{/* MS2 % */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(totals.ms2_vat)}</td>{/* MS2 VAT */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.ms2_amount)}</td>{/* MS2 Amt */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(totals.ms2_vat)}</td>{/* MS2 VAT */}
                   <td></td>{/* Linked Invoice */}
                   <td></td>{/* Remarks */}
                   <td></td>{/* View */}

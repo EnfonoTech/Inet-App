@@ -7,6 +7,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { pmApi } from "../../services/api";
 import { SubPoStatusBadge } from "./picShared";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -189,15 +190,15 @@ export default function SubconPayout() {
                     <td style={{ fontSize: "0.82rem" }}>{r.subcontract || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                     <td style={NUM}>{fmtInt.format(r.row_count || 0)}</td>
-                    <td style={NUM}>{fmt.format(r.ms_amount || 0)}</td>
-                    <td style={{ ...NUM, color: "#1d4ed8" }}>{fmt.format(r.inet_amount || 0)}</td>
-                    <td style={{ ...NUM, fontWeight: 700 }}>{fmt.format(r.payout || 0)}</td>
+                    <td style={NUM}>{money.format(r.ms_amount || 0)}</td>
+                    <td style={{ ...NUM, color: "#1d4ed8" }}>{money.format(r.inet_amount || 0)}</td>
+                    <td style={{ ...NUM, fontWeight: 700 }}>{money.format(r.payout || 0)}</td>
                     <td style={{ ...NUM, color: "#64748b" }}>{fmt.format(r.vat || 0)}</td>
-                    <td style={{ ...NUM, fontWeight: 700 }}>{fmt.format((Number(r.payout) || 0) + (Number(r.vat) || 0))}</td>
+                    <td style={{ ...NUM, fontWeight: 700 }}>{money.format((Number(r.payout) || 0) + (Number(r.vat) || 0))}</td>
                     <td style={{ ...NUM, color: "#b45309" }}>{fmt.format(r.not_ordered || 0)}</td>
                     <td style={{ ...NUM, color: "#0369a1" }}>{fmt.format(r.ready || 0)}</td>
                     <td style={{ ...NUM, color: "#1d4ed8" }}>{fmt.format(r.ordered || 0)}</td>
-                    <td style={{ ...NUM, color: "#6d28d9" }}>{fmt.format(r.invoiced || 0)}</td>
+                    <td style={{ ...NUM, color: "#6d28d9" }}>{money.format(r.invoiced || 0)}</td>
                     <td style={{ ...NUM, color: "#047857" }}>{fmt.format(r.closed || 0)}</td>
                     <td style={{ ...NUM, color: "#94a3b8" }}>{fmt.format(r.closed_no_po || 0)}</td>
                   </tr>
@@ -210,15 +211,15 @@ export default function SubconPayout() {
                     <td></td>{/* Subcontract */}
                     <td></td>{/* Contract Model */}
                     <td style={NUM}>{fmtInt.format(supplierTotals.row_count)}</td>
-                    <td style={NUM}>{fmt.format(supplierTotals.ms_amount)}</td>
-                    <td style={NUM}>{fmt.format(supplierTotals.inet_amount)}</td>
-                    <td style={NUM}>{fmt.format(supplierTotals.payout)}</td>
+                    <td style={NUM}>{money.format(supplierTotals.ms_amount)}</td>
+                    <td style={NUM}>{money.format(supplierTotals.inet_amount)}</td>
+                    <td style={NUM}>{money.format(supplierTotals.payout)}</td>
                     <td style={NUM}>{fmt.format(supplierTotals.vat)}</td>
                     <td style={NUM}>{fmt.format(supplierTotals.gross)}</td>
                     <td style={NUM}>{fmt.format(supplierTotals.not_ordered)}</td>
                     <td style={NUM}>{fmt.format(supplierTotals.ready)}</td>
                     <td style={NUM}>{fmt.format(supplierTotals.ordered)}</td>
-                    <td style={NUM}>{fmt.format(supplierTotals.invoiced)}</td>
+                    <td style={NUM}>{money.format(supplierTotals.invoiced)}</td>
                     <td style={NUM}>{fmt.format(supplierTotals.closed)}</td>
                     <td style={NUM}>{fmt.format(supplierTotals.closed_no_po)}</td>
                   </tr>
@@ -257,11 +258,11 @@ export default function SubconPayout() {
                   <tr key={r.status} style={r.row_count ? undefined : { color: "#94a3b8" }}>
                     <td><SubPoStatusBadge value={r.status === "Not Ordered" ? "" : r.status} /></td>
                     <td style={NUM}>{fmtInt.format(r.row_count || 0)}</td>
-                    <td style={NUM}>{fmt.format(r.ms_amount || 0)}</td>
-                    <td style={{ ...NUM, color: "#1d4ed8" }}>{fmt.format(r.inet_amount || 0)}</td>
-                    <td style={{ ...NUM, fontWeight: 700 }}>{fmt.format(r.payout || 0)}</td>
+                    <td style={NUM}>{money.format(r.ms_amount || 0)}</td>
+                    <td style={{ ...NUM, color: "#1d4ed8" }}>{money.format(r.inet_amount || 0)}</td>
+                    <td style={{ ...NUM, fontWeight: 700 }}>{money.format(r.payout || 0)}</td>
                     <td style={{ ...NUM, color: "#64748b" }}>{fmt.format(r.vat || 0)}</td>
-                    <td style={{ ...NUM, fontWeight: 700 }}>{fmt.format((Number(r.payout) || 0) + (Number(r.vat) || 0))}</td>
+                    <td style={{ ...NUM, fontWeight: 700 }}>{money.format((Number(r.payout) || 0) + (Number(r.vat) || 0))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -270,9 +271,9 @@ export default function SubconPayout() {
                   <tr style={{ background: "#f1f5f9", fontWeight: 800 }}>
                     <td>Total</td>
                     <td style={NUM}>{fmtInt.format(lineTotals.row_count)}</td>
-                    <td style={NUM}>{fmt.format(lineTotals.ms_amount)}</td>
-                    <td style={NUM}>{fmt.format(lineTotals.inet_amount)}</td>
-                    <td style={NUM}>{fmt.format(lineTotals.payout)}</td>
+                    <td style={NUM}>{money.format(lineTotals.ms_amount)}</td>
+                    <td style={NUM}>{money.format(lineTotals.inet_amount)}</td>
+                    <td style={NUM}>{money.format(lineTotals.payout)}</td>
                     <td style={NUM}>{fmt.format(lineTotals.vat)}</td>
                     <td style={NUM}>{fmt.format(lineTotals.gross)}</td>
                   </tr>
@@ -313,11 +314,11 @@ export default function SubconPayout() {
                   <tr key={r.status} style={r.row_count ? undefined : { color: "#94a3b8" }}>
                     <td><SubPoStatusBadge value={r.status === "Not Ordered" ? "" : r.status} /></td>
                     <td style={NUM}>{fmtInt.format(r.row_count || 0)}</td>
-                    <td style={NUM}>{fmt.format(r.ms_amount || 0)}</td>
-                    <td style={{ ...NUM, color: "#1d4ed8" }}>{fmt.format(r.inet_amount || 0)}</td>
-                    <td style={{ ...NUM, fontWeight: 700 }}>{fmt.format(r.payout || 0)}</td>
+                    <td style={NUM}>{money.format(r.ms_amount || 0)}</td>
+                    <td style={{ ...NUM, color: "#1d4ed8" }}>{money.format(r.inet_amount || 0)}</td>
+                    <td style={{ ...NUM, fontWeight: 700 }}>{money.format(r.payout || 0)}</td>
                     <td style={{ ...NUM, color: "#64748b" }}>{fmt.format(r.vat || 0)}</td>
-                    <td style={{ ...NUM, fontWeight: 700 }}>{fmt.format((Number(r.payout) || 0) + (Number(r.vat) || 0))}</td>
+                    <td style={{ ...NUM, fontWeight: 700 }}>{money.format((Number(r.payout) || 0) + (Number(r.vat) || 0))}</td>
                     <td style={{ ...NUM, color: "#94a3b8" }}>{fmt.format(r.closed_no_po || 0)}</td>
                   </tr>
                 ))}
@@ -327,9 +328,9 @@ export default function SubconPayout() {
                   <tr style={{ background: "#f1f5f9", fontWeight: 800 }}>
                     <td>Total</td>
                     <td style={NUM}>{fmtInt.format(statusTotals.row_count)}</td>
-                    <td style={NUM}>{fmt.format(statusTotals.ms_amount)}</td>
-                    <td style={NUM}>{fmt.format(statusTotals.inet_amount)}</td>
-                    <td style={NUM}>{fmt.format(statusTotals.payout)}</td>
+                    <td style={NUM}>{money.format(statusTotals.ms_amount)}</td>
+                    <td style={NUM}>{money.format(statusTotals.inet_amount)}</td>
+                    <td style={NUM}>{money.format(statusTotals.payout)}</td>
                     <td style={NUM}>{fmt.format(statusTotals.vat)}</td>
                     <td style={NUM}>{fmt.format(statusTotals.gross)}</td>
                     <td style={NUM}>{fmt.format(statusTotals.closed_no_po)}</td>

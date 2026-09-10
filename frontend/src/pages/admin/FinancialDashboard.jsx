@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { pmApi } from "../../services/api";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en-US");
 const C = { blue: "#1565C0", green: "#2E7D32", amber: "#F57C00", red: "#C62828" };
@@ -64,18 +65,18 @@ export default function FinancialDashboard() {
       </div>
 
       <div className="nd-kpi-row">
-        {[{ l: "Total Revenue", v: `SAR ${fmt.format(totalRevenue)}` }, { l: "Total Cost", v: `SAR ${fmt.format(totalCost)}`, cl: C.amber },
-          { l: "Net Profit", v: `SAR ${fmt.format(netProfit)}`, cl: netProfit >= 0 ? C.green : C.red },
+        {[{ l: "Total Revenue", v: `SAR ${money.format(totalRevenue)}` }, { l: "Total Cost", v: `SAR ${money.format(totalCost)}`, cl: C.amber },
+          { l: "Net Profit", v: `SAR ${money.format(netProfit)}`, cl: netProfit >= 0 ? C.green : C.red },
           { l: "Margin", v: `${margin}%`, cl: Number(margin) >= 15 ? C.green : C.amber },
-          { l: "Outstanding", v: `SAR ${fmt.format(outstanding)}`, cl: C.amber }].map((k) => (
+          { l: "Outstanding", v: `SAR ${money.format(outstanding)}`, cl: C.amber }].map((k) => (
           <div className="nd-kpi-card" key={k.l}><div className="nd-kpi-label">{k.l}</div><div className="nd-kpi-value" style={k.cl ? { color: k.cl } : {}}>{k.v}</div></div>
         ))}
       </div>
 
       <div className="nd-grid col2">
-        <div className="nd-panel"><div className="nd-panel-header"><h3>Cost Breakdown</h3></div><div className="nd-panel-body"><div className="nd-chart-h170"><ResponsiveContainer><PieChart><Pie data={costBD} dataKey="v" innerRadius={45} outerRadius={70} paddingAngle={2}>{costBD.map((d) => <Cell key={d.n} fill={d.c} />)}</Pie></PieChart></ResponsiveContainer></div><div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", justifyContent: "center", fontSize: 10, fontWeight: 600 }}>{costBD.map((d) => <span key={d.n} style={{ color: d.c }}>{d.n}: SAR {fmt.format(d.v)}</span>)}</div></div></div>
+        <div className="nd-panel"><div className="nd-panel-header"><h3>Cost Breakdown</h3></div><div className="nd-panel-body"><div className="nd-chart-h170"><ResponsiveContainer><PieChart><Pie data={costBD} dataKey="v" innerRadius={45} outerRadius={70} paddingAngle={2}>{costBD.map((d) => <Cell key={d.n} fill={d.c} />)}</Pie></PieChart></ResponsiveContainer></div><div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", justifyContent: "center", fontSize: 10, fontWeight: 600 }}>{costBD.map((d) => <span key={d.n} style={{ color: d.c }}>{d.n}: SAR {money.format(d.v)}</span>)}</div></div></div>
         <div className="nd-panel"><div className="nd-panel-header"><h3>Invoicing Pipeline</h3></div><div className="nd-panel-body">
-          {agingData.map((a) => (<div key={a.r} style={{ marginBottom: 8 }}><div className="nd-row-xs"><span style={{ fontSize: 12 }}>{a.r}</span><span style={{ fontWeight: 700, fontSize: 12 }}>SAR {fmt.format(a.v)}</span></div><div className="nd-progress thin"><div className="nd-progress-bar" style={{ width: (a.v / maxAging) * 100 + "%", background: a.c }} /></div></div>))}
+          {agingData.map((a) => (<div key={a.r} style={{ marginBottom: 8 }}><div className="nd-row-xs"><span style={{ fontSize: 12 }}>{a.r}</span><span style={{ fontWeight: 700, fontSize: 12 }}>SAR {money.format(a.v)}</span></div><div className="nd-progress thin"><div className="nd-progress-bar" style={{ width: (a.v / maxAging) * 100 + "%", background: a.c }} /></div></div>))}
           <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: C.green }}>Line Count: {picData?.kpi?.line_count || 0}</div>
         </div></div>
       </div>

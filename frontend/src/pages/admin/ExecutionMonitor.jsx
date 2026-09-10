@@ -22,6 +22,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -810,7 +811,7 @@ export default function ExecutionMonitor() {
                       </td>
                       <td>{row.visit_type}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
-                      <td style={{ textAlign: "right" }}>{fmt.format(target)}</td>
+                      <td style={{ textAlign: "right" }}>{money.format(target)}</td>
                       <td>
                         <span className={`status-badge ${statusBadgeClass(row.plan_status)}`}>
                           <span className="status-dot" />
@@ -886,7 +887,7 @@ export default function ExecutionMonitor() {
                         Huawei IM · DUID · Center area · Region · Team · IM · Plan Date · Access Time ·
                         Access · Visit Type · Visit No */}
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
-                      {fmt.format(totals.target)}
+                      {money.format(totals.target)}
                     </td>{/* Target */}
                     <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     {/* Plan Status · TL Status · Exec Status · QC · CIAG · Issue Category · General ·
@@ -984,7 +985,7 @@ export default function ExecutionMonitor() {
               hero={
                 <DetailHero>
                   <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} />
-                  <DetailStatTile label="Target (SAR)" value={fmt.format(detailRow.target_amount || 0)} tone="slate" />
+                  <DetailStatTile label="Target (SAR)" value={money.format(detailRow.target_amount || 0)} tone="slate" />
                   {detailRow.plan_status && (
                     <DetailStatTile
                       label="Plan Status"

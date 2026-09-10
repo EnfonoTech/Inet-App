@@ -23,8 +23,8 @@ import IMNoteCallout from "../../components/IMNoteCallout";
 import RescheduleModal from "../../components/RescheduleModal";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 import AttachmentsSection, { parseFileList } from "../../components/AttachmentsSection";
+import { money } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 function statusTone(value) {
   const s = String(value || "").toLowerCase();
@@ -499,7 +499,7 @@ export default function IMPlanning() {
         <div className="toolbar-actions">
           {selected.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-              {selected.size} selected · SAR {fmt.format(selectedAmt)}
+              {selected.size} selected · SAR {money.format(selectedAmt)}
             </span>
           )}
           {reschedulablePlans.length > 0 && (
@@ -647,7 +647,7 @@ export default function IMPlanning() {
                         )}
                       </div>
                     </td>
-                    <td style={{ textAlign: "right" }}>{fmt.format(p.target_amount || 0)}</td>
+                    <td style={{ textAlign: "right" }}>{money.format(p.target_amount || 0)}</td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.general_remark} tone="general" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.general_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.manager_remark} tone="manager" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.manager_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={p.team_lead_remark} tone="team_lead" poDispatch={p.po_dispatch || p.poid} poid={p.poid || p.po_dispatch} onSaved={(v) => { p.team_lead_remark = v; }} /></td>
@@ -712,7 +712,7 @@ export default function IMPlanning() {
                     </td>
                     <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
-                      {fmt.format(totalAmt)}
+                      {money.format(totalAmt)}
                     </td>
                     <td /><td /><td /><td /><td />
                   </tr>

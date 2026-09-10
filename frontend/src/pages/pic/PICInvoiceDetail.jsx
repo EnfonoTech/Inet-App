@@ -12,6 +12,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { money, qty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -81,9 +82,9 @@ function DetailModal({ row, onClose }) {
           ].filter(Boolean)}
           hero={
             <DetailHero>
-              <DetailStatTile label="Invoiced Amount" value={fmt.format(row.invoiced_amount || 0)} tone="green" />
-              <DetailStatTile label="VAT" value={fmt.format(row.vat_amount || 0)} />
-              <DetailStatTile label="Grand Total" value={fmt.format(row.grand_total || 0)} tone="green" />
+              <DetailStatTile label="Invoiced Amount" value={money.format(row.invoiced_amount || 0)} tone="green" />
+              <DetailStatTile label="VAT" value={money.format(row.vat_amount || 0)} />
+              <DetailStatTile label="Grand Total" value={money.format(row.grand_total || 0)} tone="green" />
               <DetailStatTile label="Invoice Date" value={fmtDate(row.invoice_date)} />
             </DetailHero>
           }
@@ -362,22 +363,22 @@ export default function PICInvoiceDetail() {
                   <td style={{ fontSize: "0.82rem" }}>{r.customer || "—"}</td>
                   <td style={{ fontSize: "0.82rem" }}>SAR</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>
-                    {r.invoice_tax_amount != null ? fmt.format(r.invoice_tax_amount) : "—"}
+                    {r.invoice_tax_amount != null ? money.format(r.invoice_tax_amount) : "—"}
                   </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {r.invoice_amount_incl_tax != null ? fmt.format(r.invoice_amount_incl_tax) : "—"}
+                    {r.invoice_amount_incl_tax != null ? money.format(r.invoice_amount_incl_tax) : "—"}
                   </td>
                   <td style={{ fontSize: "0.82rem" }}>{r.po_type || "—"}</td>
                   <td>{r.po_no || "—"}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? fmtInt.format(r.qty) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? fmt.format(r.rate) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.invoiced_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? qty.format(r.qty) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? money.format(r.rate) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.invoiced_amount || 0)}</td>
                   <td>{r.project_code || "—"}</td>
                   <td style={{ fontSize: "0.82rem" }}>{r.subcontract_no || "—"}</td>
                   <td><AcceptanceBadge value={r.acceptance} /></td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(r.vat_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.vat_amount || 0)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.grand_total || 0)}</td>
                   <td style={{ fontSize: "0.82rem" }} title={r.im || ""}>{r.im_full_name || "—"}</td>
                   <td style={{ fontSize: "0.78rem", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.payment_terms || ""}>{r.payment_terms || "—"}</td>
@@ -409,13 +410,13 @@ export default function PICInvoiceDetail() {
                   <td></td>{/* PO No */}
                   <td></td>{/* Item */}
                   <td></td>{/* Description */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtInt.format(totals.qty)}</td>{/* Qty */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{qty.format(totals.qty)}</td>{/* Qty */}
                   <td></td>{/* Rate */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.invoiced_amount)}</td>{/* Invoiced Amount */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.invoiced_amount)}</td>{/* Invoiced Amount */}
                   <td></td>{/* Project */}
                   <td></td>{/* Sub Contract No */}
                   <td></td>{/* Acceptance */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.vat_amount)}</td>{/* VAT Amount */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.vat_amount)}</td>{/* VAT Amount */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.grand_total)}</td>{/* Grand Total */}
                   <td></td>{/* IM */}
                   <td></td>{/* Payment Terms */}

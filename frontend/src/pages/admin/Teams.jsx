@@ -9,7 +9,6 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { useDebounced } from "../../hooks/useDebounced";
 import { handleSearchPaste } from "../../utils/searchPaste";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 function badgeTone(value) {
   const s = String(value || "").toLowerCase();

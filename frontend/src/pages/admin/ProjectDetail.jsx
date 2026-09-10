@@ -6,9 +6,9 @@ import SearchableSelect from "../../components/SearchableSelect";
 // Same badges the PIC pages use — pic_status / sub_po_status is the same
 // field and vocab here, so it must render identically.
 import { PicStatusBadge, SubPoStatusBadge } from "../pic/picShared";
+import { money, qty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-const fmtDec = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Mirrors server: Hard if center/area text contains "hard" (case-insensitive). */
 function regionTypePreviewFromText(text) {
@@ -173,9 +173,9 @@ function RolloutDuidModal({ group, onClose, onOpenDetail }) {
     { key: "po_line_no", label: "Line" },
     { key: "item_code", label: "Item" },
     { key: "item_description", label: "Description" },
-    { key: "qty", label: "Qty", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
-    { key: "rate", label: "Rate", align: "right", render: (v) => (v != null ? fmtDec.format(v) : "\u2014") },
-    { key: "line_amount", label: "Amount", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "qty", label: "Qty", align: "right", render: (v) => (v != null ? qty.format(v) : "\u2014") },
+    { key: "rate", label: "Rate", align: "right", render: (v) => (v != null ? money.format(v) : "\u2014") },
+    { key: "line_amount", label: "Amount", align: "right", render: (v) => (v != null ? money.format(v) : "\u2014") },
     { key: "team", label: "Team" },
     { key: "im", label: "IM" },
     { key: "dispatch_status", label: "Status", render: (v) => <Badge value={v} /> },
@@ -195,8 +195,8 @@ function RolloutDuidModal({ group, onClose, onOpenDetail }) {
     { key: "visit_type", label: "Visit type" },
     { key: "visit_number", label: "Visit #", align: "right" },
     { key: "visit_multiplier", label: "Multiplier", align: "right" },
-    { key: "target_amount", label: "Target", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
-    { key: "achieved_amount", label: "Achieved", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "target_amount", label: "Target", align: "right", render: (v) => (v != null ? money.format(v) : "\u2014") },
+    { key: "achieved_amount", label: "Achieved", align: "right", render: (v) => (v != null ? money.format(v) : "\u2014") },
     { key: "completion_pct", label: "Completion", align: "right", render: (v) => (v != null ? `${v}%` : "\u2014") },
     { key: "plan_status", label: "Status", render: (v) => <Badge value={v} /> },
     { key: "access_time", label: "Access time", render: (v) => v ? v.slice(0, 5) : "—" },
@@ -213,13 +213,13 @@ function RolloutDuidModal({ group, onClose, onOpenDetail }) {
     { key: "execution", label: "Execution", mono: true },
     { key: "item_code", label: "Item" },
     { key: "executed_qty", label: "Qty", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
-    { key: "billing_rate_sar", label: "Rate", align: "right", render: (v) => (v != null ? fmtDec.format(v) : "\u2014") },
-    { key: "revenue_sar", label: "Revenue", align: "right", render: (v) => (v != null ? fmt.format(v) : "\u2014") },
+    { key: "billing_rate_sar", label: "Rate", align: "right", render: (v) => (v != null ? money.format(v) : "\u2014") },
+    { key: "revenue_sar", label: "Revenue", align: "right", render: (v) => (v != null ? money.format(v) : "\u2014") },
     // Team cost / total cost / margin dropped \u2014 see workDoneColumns: the
     // team daily cost is a team-day figure and cannot be attributed to one
     // POID, so any margin derived from it here is not real.
-    { key: "subcontract_cost_sar", label: "Subcontract", align: "right", render: (v) => (v ? fmt.format(v) : "\u2014") },
-    { key: "activity_cost_sar", label: "Activity cost", align: "right", render: (v) => (v ? fmt.format(v) : "\u2014") },
+    { key: "subcontract_cost_sar", label: "Subcontract", align: "right", render: (v) => (v ? money.format(v) : "\u2014") },
+    { key: "activity_cost_sar", label: "Activity cost", align: "right", render: (v) => (v ? money.format(v) : "\u2014") },
     { key: "billing_status", label: "Billing" },
     { key: "region_type", label: "Region" },
     { key: "_open", label: "Details", render: (_, row) => viewBtn("Work done details", row) },
@@ -611,9 +611,9 @@ export default function ProjectDetail() {
     { key: "po_line_no", label: "Line", mono: true },
     { key: "item_code", label: "Item Code" },
     { key: "item_description", label: "Description" },
-    { key: "qty", label: "Qty", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
-    { key: "rate", label: "Rate", align: "right", render: v => v != null ? fmtDec.format(v) : "\u2014" },
-    { key: "line_amount", label: "Amount", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
+    { key: "qty", label: "Qty", align: "right", render: v => v != null ? qty.format(v) : "\u2014" },
+    { key: "rate", label: "Rate", align: "right", render: v => v != null ? money.format(v) : "\u2014" },
+    { key: "line_amount", label: "Amount", align: "right", render: v => v != null ? money.format(v) : "\u2014" },
     { key: "team", label: "Team" },
     { key: "im", label: "IM" },
     { key: "dispatch_status", label: "Status", render: v => <Badge value={v} /> },
@@ -626,8 +626,8 @@ export default function ProjectDetail() {
     { key: "rollout_plan", label: "Plan", mono: true },
     { key: "team", label: "Team" },
     { key: "execution_date", label: "Date" },
-    { key: "achieved_qty", label: "Achieved Qty", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
-    { key: "achieved_amount", label: "Achieved Amt", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
+    { key: "achieved_qty", label: "Achieved Qty", align: "right", render: v => v != null ? money.format(v) : "\u2014" },
+    { key: "achieved_amount", label: "Achieved Amt", align: "right", render: v => v != null ? money.format(v) : "\u2014" },
     { key: "execution_status", label: "Status", render: v => <Badge value={v} /> },
     { key: "qc_status", label: "QC", render: v => <Badge value={v} /> },
     { key: "region_type", label: "Region" },
@@ -640,13 +640,13 @@ export default function ProjectDetail() {
     { key: "item_code", label: "Item Code" },
     { key: "region_type", label: "Region" },
     { key: "executed_qty", label: "Qty", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
-    { key: "billing_rate_sar", label: "Rate (SAR)", align: "right", render: v => v != null ? fmtDec.format(v) : "\u2014" },
-    { key: "revenue_sar", label: "Revenue", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
+    { key: "billing_rate_sar", label: "Rate (SAR)", align: "right", render: v => v != null ? money.format(v) : "\u2014" },
+    { key: "revenue_sar", label: "Revenue", align: "right", render: v => v != null ? money.format(v) : "\u2014" },
     // Cost / Margin dropped: total_cost_sar is the team's whole daily cost
     // charged to this one POID (a team-day cost, not a line cost), so a
     // per-POID margin built on it is not a real figure. Team cost is
     // reported at team/company level instead.
-    { key: "subcontract_cost_sar", label: "Subcon Cost", align: "right", render: v => v ? fmt.format(v) : "\u2014" },
+    { key: "subcontract_cost_sar", label: "Subcon Cost", align: "right", render: v => v ? money.format(v) : "\u2014" },
     { key: "billing_status", label: "Billing", render: v => <Badge value={v} /> },
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Work Done Details", row })}>View</button> },
   ];
@@ -660,15 +660,15 @@ export default function ProjectDetail() {
     { key: "payment_terms", label: "Terms" },
     { key: "pic_status", label: "PIC Status (MS1)", render: v => <PicStatusBadge value={v} /> },
     { key: "ms1_pct", label: "MS1 %", align: "right", render: v => (v ? `${v}%` : "—") },
-    { key: "ms1_amount", label: "MS1 Amt", align: "right", render: v => v ? fmt.format(v) : "—" },
-    { key: "ms1_invoiced", label: "MS1 Invoiced", align: "right", render: v => v ? fmt.format(v) : "—" },
-    { key: "ms1_unbilled", label: "MS1 Unbilled", align: "right", render: v => v ? fmt.format(v) : "—" },
+    { key: "ms1_amount", label: "MS1 Amt", align: "right", render: v => v ? money.format(v) : "—" },
+    { key: "ms1_invoiced", label: "MS1 Invoiced", align: "right", render: v => v ? money.format(v) : "—" },
+    { key: "ms1_unbilled", label: "MS1 Unbilled", align: "right", render: v => v ? money.format(v) : "—" },
     { key: "ms1_invoice_month", label: "Inv. Month (MS1)" },
     { key: "ms1_payment_received_date", label: "Paid (MS1)" },
     { key: "pic_status_ms2", label: "PIC Status (MS2)", render: v => <PicStatusBadge value={v} /> },
-    { key: "ms2_amount", label: "MS2 Amt", align: "right", render: v => v ? fmt.format(v) : "—" },
-    { key: "ms2_invoiced", label: "MS2 Invoiced", align: "right", render: v => v ? fmt.format(v) : "—" },
-    { key: "ms2_unbilled", label: "MS2 Unbilled", align: "right", render: v => v ? fmt.format(v) : "—" },
+    { key: "ms2_amount", label: "MS2 Amt", align: "right", render: v => v ? money.format(v) : "—" },
+    { key: "ms2_invoiced", label: "MS2 Invoiced", align: "right", render: v => v ? money.format(v) : "—" },
+    { key: "ms2_unbilled", label: "MS2 Unbilled", align: "right", render: v => v ? money.format(v) : "—" },
     { key: "ms2_payment_received_date", label: "Paid (MS2)" },
     { key: "pic_detail_remark", label: "Remarks" },
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "PIC / Invoicing Details", row })}>View</button> },
@@ -681,7 +681,7 @@ export default function ProjectDetail() {
     { key: "poid", label: "POID", mono: true },
     { key: "po_no", label: "PO No" },
     { key: "site_code", label: "DUID" },
-    { key: "line_amount", label: "Line Amt", align: "right", render: v => v ? fmt.format(v) : "—" },
+    { key: "line_amount", label: "Line Amt", align: "right", render: v => v ? money.format(v) : "—" },
     { key: "backend_team", label: "Sub-Contract Team" },
     { key: "subcon_status", label: "Subcon Status", render: v => <Badge value={v} /> },
     { key: "subcon_submission_status", label: "Submission" },
@@ -689,10 +689,10 @@ export default function ProjectDetail() {
     { key: "sub_po_supplier", label: "Supplier" },
     { key: "sub_po_status", label: "Subcon PO", render: v => <SubPoStatusBadge value={v} /> },
     { key: "sub_po_status_ms1", label: "PO Status (MS1)", render: v => <SubPoStatusBadge value={v} /> },
-    { key: "sub_po_amount_ms1", label: "Payout (MS1)", align: "right", render: v => v ? fmt.format(v) : "—" },
+    { key: "sub_po_amount_ms1", label: "Payout (MS1)", align: "right", render: v => v ? money.format(v) : "—" },
     { key: "sub_paid_date_ms1", label: "Paid (MS1)" },
     { key: "sub_po_status_ms2", label: "PO Status (MS2)", render: v => <SubPoStatusBadge value={v} /> },
-    { key: "sub_po_amount_ms2", label: "Payout (MS2)", align: "right", render: v => v ? fmt.format(v) : "—" },
+    { key: "sub_po_amount_ms2", label: "Payout (MS2)", align: "right", render: v => v ? money.format(v) : "—" },
     { key: "sub_paid_date_ms2", label: "Paid (MS2)" },
     { key: "subcon_remark", label: "Remark" },
     { key: "_open", label: "View", render: (_, row) => <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "4px 8px" }} onClick={() => setDetailModal({ title: "Sub-Contract Details", row })}>View</button> },
@@ -754,10 +754,10 @@ export default function ProjectDetail() {
             monthly-salary overhead, not a per-POID cost, so it is reported at
             team/company level (Command dashboard) instead of here. Replaced
             with the project's real invoicing position. */}
-        <SummaryCard label="Total PO Value" value={`SAR ${fmt.format(fin.total_po_value)}`} sub={`${fmt.format(fin.dispatch_count)} PO lines`} accent="blue" />
-        <SummaryCard label="Revenue" value={`SAR ${fmt.format(fin.total_revenue)}`} sub={`${fmt.format(fin.work_done_count)} work done records`} accent="green" />
-        <SummaryCard label="Invoiced" value={`SAR ${fmt.format(invoiced)}`} sub={fin.total_po_value > 0 ? `${((invoiced / fin.total_po_value) * 100).toFixed(1)}% of PO value` : "—"} accent="green" />
-        <SummaryCard label="Unbilled" value={`SAR ${fmt.format(unbilled)}`} sub="MS1 + MS2 not yet invoiced" accent="amber" />
+        <SummaryCard label="Total PO Value" value={`SAR ${money.format(fin.total_po_value)}`} sub={`${fmt.format(fin.dispatch_count)} PO lines`} accent="blue" />
+        <SummaryCard label="Revenue" value={`SAR ${money.format(fin.total_revenue)}`} sub={`${fmt.format(fin.work_done_count)} work done records`} accent="green" />
+        <SummaryCard label="Invoiced" value={`SAR ${money.format(invoiced)}`} sub={fin.total_po_value > 0 ? `${((invoiced / fin.total_po_value) * 100).toFixed(1)}% of PO value` : "—"} accent="green" />
+        <SummaryCard label="Unbilled" value={`SAR ${money.format(unbilled)}`} sub="MS1 + MS2 not yet invoiced" accent="amber" />
       </div>
 
       {/* Tabs */}
@@ -846,9 +846,9 @@ export default function ProjectDetail() {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
                 {[
-                  ["Total Value", fin.total_po_value ? `SAR ${fmt.format(fin.total_po_value)}` : null],
-                  ["Monthly Target", project.monthly_target ? `SAR ${fmt.format(project.monthly_target)}` : null],
-                  ["Revenue Realized", fin.total_revenue ? `SAR ${fmt.format(fin.total_revenue)}` : null],
+                  ["Total Value", fin.total_po_value ? `SAR ${money.format(fin.total_po_value)}` : null],
+                  ["Monthly Target", project.monthly_target ? `SAR ${money.format(project.monthly_target)}` : null],
+                  ["Revenue Realized", fin.total_revenue ? `SAR ${money.format(fin.total_revenue)}` : null],
                   ["Completion %", fin.total_po_value ? `${((fin.total_revenue / fin.total_po_value) * 100).toFixed(1)}%` : null],
                 ].map(([label, value], i, arr) => (
                   <div key={label} style={{
@@ -878,10 +878,10 @@ export default function ProjectDetail() {
           {/* Invoicing rollup over EVERY line of the project, not just the
               listed ones — these come from the backend aggregate. */}
           <div className="summary-cards">
-            <SummaryCard label="MS1 Amount" value={`SAR ${fmt.format(pic.ms1_amount || 0)}`} sub="1st payment PO amount" accent="blue" />
-            <SummaryCard label="MS1 Invoiced" value={`SAR ${fmt.format(pic.ms1_invoiced || 0)}`} sub={pic.ms1_amount ? `${((pic.ms1_invoiced / pic.ms1_amount) * 100).toFixed(1)}% of MS1` : "—"} accent="green" />
-            <SummaryCard label="MS1 Unbilled" value={`SAR ${fmt.format(pic.ms1_unbilled || 0)}`} sub="not yet invoiced" accent="amber" />
-            <SummaryCard label="MS2 Amount" value={`SAR ${fmt.format(pic.ms2_amount || 0)}`} sub={`Invoiced SAR ${fmt.format(pic.ms2_invoiced || 0)} · Unbilled SAR ${fmt.format(pic.ms2_unbilled || 0)}`} accent="blue" />
+            <SummaryCard label="MS1 Amount" value={`SAR ${money.format(pic.ms1_amount || 0)}`} sub="1st payment PO amount" accent="blue" />
+            <SummaryCard label="MS1 Invoiced" value={`SAR ${money.format(pic.ms1_invoiced || 0)}`} sub={pic.ms1_amount ? `${((pic.ms1_invoiced / pic.ms1_amount) * 100).toFixed(1)}% of MS1` : "—"} accent="green" />
+            <SummaryCard label="MS1 Unbilled" value={`SAR ${money.format(pic.ms1_unbilled || 0)}`} sub="not yet invoiced" accent="amber" />
+            <SummaryCard label="MS2 Amount" value={`SAR ${money.format(pic.ms2_amount || 0)}`} sub={`Invoiced SAR ${money.format(pic.ms2_invoiced || 0)} · Unbilled SAR ${money.format(pic.ms2_unbilled || 0)}`} accent="blue" />
           </div>
 
           {(pic.by_pic_status || []).length > 0 && (
@@ -894,7 +894,7 @@ export default function ProjectDetail() {
                   <div key={s.status} style={{ padding: "12px 16px", borderRight: "1px solid var(--border)", minWidth: 190 }}>
                     <div style={{ marginBottom: 6 }}><PicStatusBadge value={s.status} /></div>
                     <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{fmt.format(s.lines_count)}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>lines · SAR {fmt.format(s.amount || 0)}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>lines · SAR {money.format(s.amount || 0)}</div>
                   </div>
                 ))}
               </div>
@@ -910,8 +910,8 @@ export default function ProjectDetail() {
         <div>
           <div className="summary-cards">
             <SummaryCard label="Sub-Contract Lines" value={fmt.format(pic.subcon_lines || 0)} sub={`of ${fmt.format(fin.dispatch_count)} PO lines`} accent="blue" />
-            <SummaryCard label="Completed" value={fmt.format(pic.subcon_done_lines || 0)} sub={pic.subcon_lines ? `${((pic.subcon_done_lines / pic.subcon_lines) * 100).toFixed(0)}% of subcon lines` : "—"} accent="green" />
-            <SummaryCard label="Subcon PO Value" value={`SAR ${fmt.format(pic.sub_po_amount || 0)}`} sub="MS1 + MS2 payout ordered" accent="amber" />
+            <SummaryCard label="Completed" value={money.format(pic.subcon_done_lines || 0)} sub={pic.subcon_lines ? `${((pic.subcon_done_lines / pic.subcon_lines) * 100).toFixed(0)}% of subcon lines` : "—"} accent="green" />
+            <SummaryCard label="Subcon PO Value" value={`SAR ${money.format(pic.sub_po_amount || 0)}`} sub="MS1 + MS2 payout ordered" accent="amber" />
           </div>
           {subconRows.length === 0 ? (
             <EmptyState message="No sub-contracted PO lines on this project. Lines get a sub-contract side when a Sub-Contract Team is assigned or a Subcon PO is raised." />

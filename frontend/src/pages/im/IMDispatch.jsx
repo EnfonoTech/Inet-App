@@ -18,6 +18,7 @@ import MaterialItemPicker from "../../components/MaterialItemPicker";
 import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { money, qty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
@@ -1251,7 +1252,7 @@ export default function IMDispatch() {
         <div className="toolbar-actions">
           {selected.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
-              {selected.size} selected · SAR {fmt.format(selectedAmt)}
+              {selected.size} selected · SAR {money.format(selectedAmt)}
             </span>
           )}
           <button
@@ -1318,7 +1319,7 @@ export default function IMDispatch() {
             ))}
           </div>
           <p style={{ fontSize: "0.78rem", color: "#64748b", margin: "8px 0 0" }}>
-            IM <strong>{imName || "—"}</strong> · {selected.size} line{selected.size !== 1 ? "s" : ""} · Qty <strong style={{ color: "#0f172a" }}>{fmt.format(createPlanTotalQty)}</strong> → <strong>Planned</strong> · SAR {fmt.format(selectedAmt)}
+            IM <strong>{imName || "—"}</strong> · {selected.size} line{selected.size !== 1 ? "s" : ""} · Qty <strong style={{ color: "#0f172a" }}>{qty.format(createPlanTotalQty)}</strong> → <strong>Planned</strong> · SAR {qty.format(selectedAmt)}
           </p>
         </div>
 
@@ -1363,7 +1364,7 @@ export default function IMDispatch() {
             background: planTeamsRemaining < 0 ? "#fef2f2" : "#eef2ff",
             border: planTeamsRemaining < 0 ? "1px solid #fecaca" : "1px solid #c7d2fe",
           }}>
-            Total qty <strong>{fmt.format(createPlanTotalQty)}</strong>
+            Total qty <strong>{qty.format(createPlanTotalQty)}</strong>
             {" · Assigned to extras "}
             <strong>{fmt.format(planTeamsAssignedQty)}</strong>
             {" · Remaining for lead team "}
@@ -1623,9 +1624,9 @@ export default function IMDispatch() {
               hero={
                 <DetailHero>
                   <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} />
-                  <DetailStatTile label="Qty" value={detailRow.qty != null ? fmt.format(detailRow.qty) : "—"} tone="blue" />
-                  <DetailStatTile label="Rate (SAR)" value={detailRow.rate != null ? fmt.format(detailRow.rate) : "—"} />
-                  <DetailStatTile label="Line Amount (SAR)" value={detailRow.line_amount != null ? fmt.format(detailRow.line_amount) : "—"} tone="green" />
+                  <DetailStatTile label="Qty" value={detailRow.qty != null ? qty.format(detailRow.qty) : "—"} tone="blue" />
+                  <DetailStatTile label="Rate (SAR)" value={detailRow.rate != null ? money.format(detailRow.rate) : "—"} />
+                  <DetailStatTile label="Line Amount (SAR)" value={detailRow.line_amount != null ? money.format(detailRow.line_amount) : "—"} tone="green" />
                   {detailRow.dispatch_status && (
                     <DetailStatTile
                       label="Status"
@@ -2159,7 +2160,7 @@ export default function IMDispatch() {
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.qty}</td>
-                      <td style={{ textAlign: "right" }}>{fmt.format(row.line_amount || 0)}</td>
+                      <td style={{ textAlign: "right" }}>{money.format(row.line_amount || 0)}</td>
                       <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.site_code}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>
@@ -2221,8 +2222,8 @@ export default function IMDispatch() {
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
-                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(dispatchTotals.qty)}</td>{/* Qty */}
-                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{fmt.format(dispatchTotals.amount)}</td>{/* Amount */}
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{qty.format(dispatchTotals.qty)}</td>{/* Qty */}
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{money.format(dispatchTotals.amount)}</td>{/* Amount */}
                     <td /><td /><td /><td /><td /><td />{/* IM..Actions — one <td> per column, no colSpan (see PODispatch.jsx tfoot comment) */}
                   </tr>
                 </tfoot>

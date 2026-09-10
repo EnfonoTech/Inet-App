@@ -15,8 +15,8 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
+import { money, qty } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 function DetailModal({ row, onClose }) {
@@ -39,9 +39,9 @@ function DetailModal({ row, onClose }) {
           ].filter(Boolean)}
           hero={
             <DetailHero>
-              <DetailStatTile label="Qty" value={row.qty != null ? fmtInt.format(row.qty) : "—"} />
-              <DetailStatTile label="Rate" value={row.rate != null ? fmt.format(row.rate) : "—"} />
-              <DetailStatTile label="Line Amount" value={fmt.format(row.line_amount || 0)} tone="green" />
+              <DetailStatTile label="Qty" value={row.qty != null ? qty.format(row.qty) : "—"} />
+              <DetailStatTile label="Rate" value={row.rate != null ? money.format(row.rate) : "—"} />
+              <DetailStatTile label="Line Amount" value={money.format(row.line_amount || 0)} tone="green" />
               <DetailStatTile label="PIC cancelled on" value={
                 row.pic_status_effective === "PO Line Canceled" && row.pic_status_ms2 === "PO Line Canceled" ? "MS1 + MS2"
                 : row.pic_status_effective === "PO Line Canceled" ? "MS1"
@@ -407,9 +407,9 @@ export default function PICCancelled() {
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.site_name || ""}>{r.site_code || "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? fmtInt.format(r.qty) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? fmt.format(r.rate) : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.line_amount || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? qty.format(r.qty) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? money.format(r.rate) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.line_amount || 0)}</td>
                   <td><IMStatusBadge value={r.im_submission_status} /></td>
                   <td><PicStatusBadge value={r.pic_status_effective} /></td>
                   <td><PicStatusBadge value={r.pic_status_ms2} /></td>
@@ -442,9 +442,9 @@ export default function PICCancelled() {
                   <td></td>{/* Item */}
                   <td></td>{/* Description */}
                   <td></td>{/* DUID */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtInt.format(totals.qty)}</td>{/* Qty */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{qty.format(totals.qty)}</td>{/* Qty */}
                   <td></td>{/* Rate */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.line_amount)}</td>{/* Line Amount */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.line_amount)}</td>{/* Line Amount */}
                   <td></td>{/* IM Status */}
                   <td></td>{/* PIC Status MS1 */}
                   <td></td>{/* PIC Status MS2 */}

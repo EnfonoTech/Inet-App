@@ -9,8 +9,8 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { money, qty } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
 const STATUS_TABS = [
   { id: "pending", label: "Pending" },
@@ -313,7 +313,7 @@ export default function IMBackend() {
         <div className="toolbar-actions">
           {selected.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
-              {selected.size} selected · SAR {fmt.format(selectedAmount)}
+              {selected.size} selected · SAR {money.format(selectedAmount)}
             </span>
           )}
           <button
@@ -408,8 +408,8 @@ export default function IMBackend() {
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>
                         {r.item_description || "—"}
                       </td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? fmt.format(r.qty) : "—"}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.line_amount || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? qty.format(r.qty) : "—"}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.line_amount || 0)}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.site_name || ""}>{r.site_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={r.center_area || ""}>{r.center_area || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{r.backend_team_name || r.backend_team || "—"}</td>
@@ -439,8 +439,8 @@ export default function IMBackend() {
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
-                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>{fmt.format(totalQty)}</td>{/* Qty */}
-                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>{fmt.format(totalAmount)}</td>{/* Amount (SAR) */}
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>{qty.format(totalQty)}</td>{/* Qty */}
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>{money.format(totalAmount)}</td>{/* Amount (SAR) */}
                     <td /><td /><td /><td /><td /><td />{/* DUID..Note */}
                   </tr>
                 </tfoot>
@@ -454,7 +454,7 @@ export default function IMBackend() {
           filterActive={!!hasFilters}
         />
         <div style={{ padding: "6px 16px", fontSize: "0.78rem", color: "#64748b", textAlign: "right" }}>
-          {rows.length} row{rows.length !== 1 ? "s" : ""} · Total SAR {fmt.format(totalAmount)}
+          {rows.length} row{rows.length !== 1 ? "s" : ""} · Total SAR {money.format(totalAmount)}
         </div>
       </div>
 

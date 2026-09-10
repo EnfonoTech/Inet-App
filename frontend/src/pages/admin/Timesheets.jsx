@@ -12,6 +12,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import useFilterOptions from "../../hooks/useFilterOptions";
+import { money, qty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
@@ -350,7 +351,7 @@ export default function Timesheets() {
               <span className="page-summary-label">Teams</span>
             </div>
             <div className="page-summary-chip tone-good">
-              <span className="page-summary-value">{fmt.format(dailyAvgSpan)}</span>
+              <span className="page-summary-value">{qty.format(dailyAvgSpan)}</span>
               <span className="page-summary-label">Avg Hrs / Day</span>
             </div>
             <div className={`page-summary-chip ${dailyLiveCount > 0 ? "tone-warn" : "tone-good"}`}>

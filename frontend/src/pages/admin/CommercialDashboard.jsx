@@ -5,6 +5,7 @@ import TrendLineChart, { compactSar } from "../../components/TrendLineChart";
 import { MonthRangeFilter, MonthsBackFilter } from "../../components/ChartFilters";
 import ChartActions from "../../components/ChartActions";
 import { pmApi } from "../../services/api";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en-US");
 
@@ -19,7 +20,8 @@ const C = {
   gray: "#64748b",
 };
 
-const sar = (v) => `SAR ${fmt.format(Math.round(Number(v) || 0))}`;
+// Not rounded: Math.round dropped the halalas on every money tile here.
+const sar = (v) => `SAR ${money.format(Number(v) || 0)}`;
 
 /* Matches CommandDashboard's fmtTimestamp so both headers read alike. */
 function fmtTimestamp(ts) {

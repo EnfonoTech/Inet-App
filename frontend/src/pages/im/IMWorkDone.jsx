@@ -20,8 +20,14 @@ import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge, PicStatusBadge } from "../pic/picShared";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-const money = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
+/* Money is never rounded to whole SAR: ms2_amount alone is fractional on
+   1,550 of 1,983 dispatches, so a milestone split of an odd line amount
+   displayed as a whole number that did not match its own line. Max 4 dp is
+   the deepest precision the data carries (275.1684, 251.2805), so every
+   stored amount renders exactly; min 2 keeps a clean figure reading as
+   3,250.00. Counts use the shared `count`/plain numbers — a row count
+   must never read "29.00". */
+const money = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 
 // Required documents per activity type.
 // doc2: null → Not applicable (only DOC1 needed)
@@ -982,7 +988,7 @@ export default function IMWorkDone() {
         <div>
           <h1 className="page-title">Work Done</h1>
           <div className="page-subtitle">
-            {tab === "all" ? "Every work row for your IM scope — active, confirmed, and PIC rejected combined." : tab === "confirmed" ? "Lines confirmed by PIC." : tab === "pic_rejected" ? "Lines rejected by PIC." : "Active work rows for your IM scope."}
+            {tab === "all" ? "Every work row for your IM scope, including closed and fully-invoiced ones. The other tabs hide those as resolved." : tab === "confirmed" ? "Lines confirmed by PIC." : tab === "pic_rejected" ? "Lines rejected by PIC." : "Active work rows for your IM scope."}
           </div>
         </div>
         <PageSummary source="work_done" filters={summaryQuery} />
@@ -1279,7 +1285,7 @@ export default function IMWorkDone() {
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.general_remark} tone="general" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.general_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.manager_remark} tone="manager" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.manager_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.team_lead_remark} tone="team_lead" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.team_lead_remark = v; }} /></td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.revenue_sar || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.revenue_sar || 0)}</td>
                     <td><StatusPill value={r.submission_status} /></td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: r.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={r.pic_rejection_remark || ""}>{r.pic_rejection_remark || "—"}</td>
                     <td>
@@ -1342,7 +1348,7 @@ export default function IMWorkDone() {
                     </td>
                     <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
-                      {fmt.format(totals.revenue)}
+                      {money.format(totals.revenue)}
                     </td>
                     <td /><td /><td /><td /><td /><td />
                   </tr>
@@ -1382,7 +1388,7 @@ export default function IMWorkDone() {
               <div><strong>Project:</strong> {detailRow.project_code || "—"}</div>
               <div><strong>Item:</strong> {detailRow.item_code || "—"}</div>
               <div><strong>Lead Team:</strong> {detailRow.team_name || detailRow.team || "—"}</div>
-              <div><strong>Revenue:</strong> {fmt.format(detailRow.revenue_sar || 0)}</div>
+              <div><strong>Revenue:</strong> {money.format(detailRow.revenue_sar || 0)}</div>
               {detailRow.subcontractor && (
                 <div><strong>Subcontract:</strong> {detailRow.subcontractor}</div>
               )}

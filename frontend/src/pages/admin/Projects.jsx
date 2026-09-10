@@ -10,8 +10,8 @@ import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { money } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 const STATUS_COLORS = {
   Active: { bg: "#ecfdf5", color: "#065f46", border: "#a7f3d0" },
@@ -482,10 +482,10 @@ export default function Projects() {
                   <td style={{ fontSize: 13 }}>{p.center_area || "\u2014"}</td>
                   <td style={{ fontSize: 13 }}>{p.region_type || "\u2014"}</td>
                   <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-                    {p.total_value ? fmt.format(p.total_value) : "\u2014"}
+                    {p.total_value ? money.format(p.total_value) : "\u2014"}
                   </td>
                   <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-                    {p.revenue ? fmt.format(p.revenue) : "\u2014"}
+                    {p.revenue ? money.format(p.revenue) : "\u2014"}
                   </td>
                   <td style={{ textAlign: "right" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>

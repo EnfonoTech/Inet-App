@@ -18,8 +18,21 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge } from "../pic/picShared";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+/* Money must not be rounded away. `fmt` above drops the decimals entirely,
+   which hid real halalas: ms2_amount alone is fractional on 1,550 of 1,983
+   dispatches, so a milestone split of an odd line amount displayed as a whole
+   number that did not match the line it came from. Max 4 dp because that is
+   the deepest precision the data actually carries (275.1684, 251.2805) — so
+   every stored amount renders exactly, while a clean figure still reads as
+   3,250.00 rather than 3,250.0000. `fmt` stays for counts: line and row
+   counts must not become "29.00". */
+const sar = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+/* Quantities are fractional too (0.5 of a line) but are not money, so no
+   forced decimals — a qty of 1 reads as "1", not "1.00". */
+const qtyFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 3 });
 
 // Full PO Dispatch.dispatch_status vocabulary (matches the doctype's actual
 // Select options exactly) — a Work Done row's underlying PO Dispatch can
@@ -1033,7 +1046,7 @@ export default function WorkDone() {
                     >
                       <span style={{ fontSize: "0.64rem", fontWeight: 700, color: s.fg, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</span>
                       <span style={{ fontSize: "1.35rem", fontWeight: 800, color: s.fg, lineHeight: 1.1 }}>{fmt.format(s.lines)}</span>
-                      <span style={{ fontSize: "0.72rem", color: s.fg, opacity: 0.75, fontWeight: 500 }}>SAR {fmt.format(s.revenue)}</span>
+                      <span style={{ fontSize: "0.72rem", color: s.fg, opacity: 0.75, fontWeight: 500 }}>SAR {sar.format(s.revenue)}</span>
                     </div>
                   ))}
                 </div>
@@ -1064,7 +1077,7 @@ export default function WorkDone() {
                       </div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
                         <span style={{ fontSize: "0.68rem", color: "#94a3b8" }}>Revenue</span>
-                        <span style={{ fontWeight: 600, fontSize: "0.82rem", color: "#1e293b" }}>SAR {fmt.format(revenue)}</span>
+                        <span style={{ fontWeight: 600, fontSize: "0.82rem", color: "#1e293b" }}>SAR {sar.format(revenue)}</span>
                       </div>
                       <div style={{ height: 5, borderRadius: 999, background: "#f1f5f9", overflow: "hidden" }}>
                         <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 999, transition: "width 0.5s" }} />
@@ -1185,10 +1198,10 @@ export default function WorkDone() {
                             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
                               <span style={{ fontSize: "0.72rem", fontWeight: 800, color, textTransform: "uppercase", letterSpacing: "0.06em" }}>{ms}</span>
                               <span style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: 500 }}>{label}</span>
-                              <span style={{ fontSize: "0.7rem", color: "#64748b" }}>— {fmt.format(msTotalL)} lines · SAR {fmt.format(msTotalR)}</span>
+                              <span style={{ fontSize: "0.7rem", color: "#64748b" }}>— {money.format(msTotalL)} lines · SAR {sar.format(msTotalR)}</span>
                               {msDoneL > 0 && (
                                 <span style={{ fontSize: "0.68rem", background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", borderRadius: 999, padding: "1px 8px", fontWeight: 600 }}>
-                                  ✓ {fmt.format(msDoneL)} done · SAR {fmt.format(msDoneR)}
+                                  ✓ {money.format(msDoneL)} done · SAR {sar.format(msDoneR)}
                                 </span>
                               )}
                             </div>
@@ -1303,8 +1316,8 @@ export default function WorkDone() {
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.execution_date || "—"}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
-                      <td style={{ textAlign: "right" }}>{row.executed_qty}</td>
-                      <td style={{ textAlign: "right", color: "var(--green)" }}>{fmt.format(revenue)}</td>
+                      <td style={{ textAlign: "right" }}>{row.executed_qty != null ? qtyFmt.format(row.executed_qty) : "—"}</td>
+                      <td style={{ textAlign: "right", color: "var(--green)" }}>{sar.format(revenue)}</td>
                       <td><StatusPill value={row.submission_status} /></td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: row.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={row.pic_rejection_remark || ""}>{row.pic_rejection_remark || "—"}</td>
                       <td>
@@ -1365,9 +1378,9 @@ export default function WorkDone() {
                       {displayedCount} rows
                     </td>
                     <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
-                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{fmt.format(totals.qty)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{qtyFmt.format(totals.qty)}</td>
                     <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
-                      {fmt.format(totals.revenue)}
+                      {sar.format(totals.revenue)}
                     </td>
                     <td /><td /><td /><td /><td /><td /><td /><td /><td />
                   </tr>
@@ -1729,8 +1742,8 @@ export default function WorkDone() {
               hero={
                 <DetailHero>
                   <DetailStatTile label="Item Code" value={detailRow.item_code || "—"} />
-                  <DetailStatTile label="Executed Qty" value={detailRow.executed_qty != null ? fmt.format(detailRow.executed_qty) : "—"} tone="blue" />
-                  <DetailStatTile label="Revenue (SAR)" value={fmt.format(detailRow.revenue_sar || 0)} tone="green" />
+                  <DetailStatTile label="Executed Qty" value={detailRow.executed_qty != null ? qtyFmt.format(detailRow.executed_qty) : "—"} tone="blue" />
+                  <DetailStatTile label="Revenue (SAR)" value={sar.format(detailRow.revenue_sar || 0)} tone="green" />
                 </DetailHero>
               }
               hiddenFields={[

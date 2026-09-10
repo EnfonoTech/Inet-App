@@ -7,8 +7,8 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { pmApi } from "../../services/api";
 import { isNotRequired } from "../../utils/qcCiagFlags";
 import { useDebounced } from "../../hooks/useDebounced";
+import { money } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 function statusBadgeClass(s) {
   const v = (s || "").toLowerCase().replace(/\s+/g, "-");
@@ -93,7 +93,7 @@ function HistoryCard({ r, hidden }) {
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
           <span style={{ color: "var(--text-muted)" }}>Achieved Qty</span>
-          <span style={{ fontWeight: 700, color: "var(--text)" }}>{fmt.format(r.execution_achieved_qty || 0)}</span>
+          <span style={{ fontWeight: 700, color: "var(--text)" }}>{money.format(r.execution_achieved_qty || 0)}</span>
         </div>
         {r.gps_location && (
           <div style={{ display: "flex", gap: 6, marginTop: 4, fontSize: "0.72rem", color: "var(--text-muted)", alignItems: "flex-start" }}>
@@ -339,7 +339,7 @@ export default function FieldHistory() {
                       <span className="status-dot" />{isNotRequired(r.ciag_required) ? "Not Applicable" : (r.ciag_status || "—")}
                     </span>
                   </td>
-                  <td style={{ textAlign: "right" }}>{fmt.format(r.execution_achieved_qty || 0)}</td>
+                  <td style={{ textAlign: "right" }}>{money.format(r.execution_achieved_qty || 0)}</td>
                   <td style={{ fontSize: "0.72rem", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
                     {r.gps_location || "—"}
                   </td>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { pmApi } from "../services/api";
+import { money } from "../utils/numberFormat";
 
 /**
  * Workflow #2 — POID stays unique to one active plan but can have
@@ -93,7 +94,7 @@ export default function DispatchVisitHistory({ poDispatch, rolloutPlan, currentP
                       ) : null}
                     </td>
                     <td style={{ padding: "6px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                      {fmt.format(Number(v.target_amount || 0))}
+                      {money.format(Number(v.target_amount || 0))}
                     </td>
                     <td style={{ padding: "6px 10px", fontSize: "0.74rem", fontFamily: "ui-monospace, monospace" }}>
                       {v.work_done ? (

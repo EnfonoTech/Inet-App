@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import DateRangePicker from "../../components/DateRangePicker";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 // Was defined identically to `fmt` (0 decimals) — every SAR figure on this
@@ -182,9 +183,9 @@ export default function PICDashboard({ showSwitcher = false }) {
         {/* KPI tiles */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10, marginTop: 16 }}>
           <HeroKPI label="All Lines" value={fmt.format(kpi.line_count || 0)} icon="📑" />
-          <HeroKPI label="Total Invoiced" value={fmtMoney.format(kpi.total_invoiced || 0)} suffix="SAR" tone="green" icon="✓" />
-          <HeroKPI label="Unbilled MS1" value={fmtMoney.format(kpi.unbilled_ms1 || 0)} suffix="SAR" tone="amber" icon="❶" />
-          <HeroKPI label="Unbilled MS2" value={fmtMoney.format(kpi.unbilled_ms2 || 0)} suffix="SAR" tone="amber" icon="❷" />
+          <HeroKPI label="Total Invoiced" value={money.format(kpi.total_invoiced || 0)} suffix="SAR" tone="green" icon="✓" />
+          <HeroKPI label="Unbilled MS1" value={money.format(kpi.unbilled_ms1 || 0)} suffix="SAR" tone="amber" icon="❶" />
+          <HeroKPI label="Unbilled MS2" value={money.format(kpi.unbilled_ms2 || 0)} suffix="SAR" tone="amber" icon="❷" />
         </div>
 
         {/* Breakdown strip — its own full-width row, not nested inside the
@@ -205,7 +206,7 @@ export default function PICDashboard({ showSwitcher = false }) {
         <div style={{ marginTop: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.74rem", opacity: 0.85, marginBottom: 4 }}>
             <span><strong style={{ fontWeight: 700 }}>{closedPct}%</strong> of total amount has reached <em>Commercial Invoice Closed</em></span>
-            <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(totals.closed)} / {fmtMoney.format(totals.grand)} SAR</span>
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{money.format(totals.closed)} / {money.format(totals.grand)} SAR</span>
           </div>
           <div style={{ height: 8, background: "rgba(255,255,255,0.18)", borderRadius: 99, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${closedPct}%`, background: "linear-gradient(90deg, #34d399, #10b981)", transition: "width 0.4s ease" }} />
@@ -279,8 +280,8 @@ export default function PICDashboard({ showSwitcher = false }) {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: row.line_count ? 700 : 400 }}>
                     {fmt.format(row.line_count || 0)}
                   </td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(row.ms1_total || 0)}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(row.ms2_total || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(row.ms1_total || 0)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(row.ms2_total || 0)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: row.total ? 700 : 400, color: row.total ? "#0f172a" : undefined }}>
                     {fmtMoney.format(row.total || 0)}
                   </td>
@@ -295,10 +296,10 @@ export default function PICDashboard({ showSwitcher = false }) {
                 {fmt.format(buckets.reduce((s, b) => s + (Number(b.line_count) || 0), 0))}
               </td>
               <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {fmtMoney.format(buckets.reduce((s, b) => s + (Number(b.ms1_total) || 0), 0))}
+                {money.format(buckets.reduce((s, b) => s + (Number(b.ms1_total) || 0), 0))}
               </td>
               <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {fmtMoney.format(buckets.reduce((s, b) => s + (Number(b.ms2_total) || 0), 0))}
+                {money.format(buckets.reduce((s, b) => s + (Number(b.ms2_total) || 0), 0))}
               </td>
               <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                 {fmtMoney.format(buckets.reduce((s, b) => s + (Number(b.total) || 0), 0))}
@@ -336,11 +337,11 @@ export default function PICDashboard({ showSwitcher = false }) {
                   {(showAllMonthly ? monthly : monthly.slice(0, 6)).map((m) => (
                     <tr key={m.invoice_month}>
                       <td>{m.invoice_month}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms1_invoiced || 0)}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(m.ms2_invoiced || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(m.ms1_invoiced || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(m.ms2_invoiced || 0)}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmtMoney.format(m.total || 0)}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmtMoney.format(m.vat_amount || 0)}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{fmtMoney.format(m.total_amount || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(m.vat_amount || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{money.format(m.total_amount || 0)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -468,8 +469,8 @@ function OwnerTable({ rows }) {
           <tr key={r.owner}>
             <td style={{ fontSize: "0.82rem" }}>{r.owner || "—"}</td>
             <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.line_count || 0)}</td>
-            <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(r.amount_ms1 || 0)}</td>
-            <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney.format(r.amount_ms2 || 0)}</td>
+            <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.amount_ms1 || 0)}</td>
+            <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.amount_ms2 || 0)}</td>
           </tr>
         ))}
       </tbody>
@@ -514,10 +515,10 @@ function InetSubconSplitCard({ data: d }) {
                 </div>
               </td>
               <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: r.fg, verticalAlign: "top" }}>
-                {fmtMoney.format(r.ms1 || 0)}
+                {money.format(r.ms1 || 0)}
               </td>
               <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: r.fg, verticalAlign: "top" }}>
-                {fmtMoney.format(r.ms2 || 0)}
+                {money.format(r.ms2 || 0)}
               </td>
               <td style={{ textAlign: "right", padding: "6px 0 6px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: r.fg, verticalAlign: "top" }}>
                 {fmtMoney.format(r.total || 0)}
@@ -535,10 +536,10 @@ function InetSubconSplitCard({ data: d }) {
           <tr style={{ borderTop: "1px solid #e2e8f0" }}>
             <td style={{ padding: "8px 0 2px", fontWeight: 700, fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#475569" }}>Total</td>
             <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#0f172a" }}>
-              {fmtMoney.format((d.inet_ms1 || 0) + (d.subcon_ms1 || 0))}
+              {money.format((d.inet_ms1 || 0) + (d.subcon_ms1 || 0))}
             </td>
             <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#0f172a" }}>
-              {fmtMoney.format((d.inet_ms2 || 0) + (d.subcon_ms2 || 0))}
+              {money.format((d.inet_ms2 || 0) + (d.subcon_ms2 || 0))}
             </td>
             <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: "#0f172a" }}>
               {fmtMoney.format(grand)}
@@ -547,7 +548,7 @@ function InetSubconSplitCard({ data: d }) {
               {fmtMoney.format(d.grand_total_vat || 0)}
             </td>
             <td style={{ textAlign: "right", padding: "8px 0 2px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: "#0f172a" }}>
-              {fmtMoney.format(d.grand_total_incl_vat || 0)} <span style={{ fontSize: "0.66rem", fontWeight: 600, color: "#94a3b8" }}>SAR</span>
+              {money.format(d.grand_total_incl_vat || 0)} <span style={{ fontSize: "0.66rem", fontWeight: 600, color: "#94a3b8" }}>SAR</span>
             </td>
           </tr>
         </tfoot>

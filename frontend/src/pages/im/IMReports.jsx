@@ -4,8 +4,8 @@ import { useAuth } from "../../context/AuthContext";
 import RolloutCommercialReport from "../../components/RolloutCommercialReport";
 import { pmApi } from "../../services/api";
 import MiniTable from "../../components/MiniTable";
+import { money } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const fmtDec = new Intl.NumberFormat("en", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 const TABS = [
@@ -132,7 +132,7 @@ export default function IMReports() {
                 </div>
                 <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #22c55e" }}>
                   <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Line amount (sum)</div>
-                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>SAR {fmt.format(ds?.total_amount ?? 0)}</div>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>SAR {money.format(ds?.total_amount ?? 0)}</div>
                 </div>
                 <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #6366f1" }}>
                   <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Active teams</div>
@@ -163,7 +163,7 @@ export default function IMReports() {
                       .map(([k, v]) => (
                         <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.84rem" }}>
                           <span style={{ color: "#475569" }}>{k}</span>
-                          <span style={{ fontWeight: 700 }}>SAR {fmt.format(v)}</span>
+                          <span style={{ fontWeight: 700 }}>SAR {money.format(v)}</span>
                         </div>
                       ))
                   )}
@@ -265,7 +265,7 @@ export default function IMReports() {
                 </div>
                 <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #22c55e" }}>
                   <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Revenue SAR (MTD)</div>
-                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{fmt.format(payload.work_done_mtd?.revenue_sar ?? 0)}</div>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{money.format(payload.work_done_mtd?.revenue_sar ?? 0)}</div>
                 </div>
               </div>
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
@@ -276,7 +276,7 @@ export default function IMReports() {
                   columns={[
                     { label: "Billing", key: "billing" },
                     { label: "Rows", key: "count", align: "right" },
-                    { label: "Revenue SAR", key: "revenue_sar", align: "right", render: (v) => fmt.format(Number(v) || 0) },
+                    { label: "Revenue SAR", key: "revenue_sar", align: "right", render: (v) => money.format(Number(v) || 0) },
                   ]}
                   rows={Object.entries(payload.work_done_mtd?.by_billing || {}).map(([billing, o]) => ({
                     billing,

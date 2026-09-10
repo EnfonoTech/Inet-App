@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
 import { useAuth } from "../../context/AuthContext";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -109,10 +110,10 @@ function TopSummaryCard({ top }) {
               <tr key={r.label} style={{ background: r.bold ? t.hd : "#fff", borderTop: "1px solid #f1f5f9" }}>
                 <td style={{ padding: "10px 14px", fontWeight: r.bold ? 700 : 600, color: t.fg }}>{r.label}</td>
                 <td style={{ padding: "10px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: r.bold ? 700 : 500, color: t.fg }}>
-                  {fmt.format(r.ms1 || 0)}
+                  {money.format(r.ms1 || 0)}
                 </td>
                 <td style={{ padding: "10px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: r.bold ? 700 : 500, color: t.fg }}>
-                  {fmt.format(r.ms2 || 0)}
+                  {money.format(r.ms2 || 0)}
                 </td>
                 <td style={{ padding: "10px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: t.fg }}>
                   {fmt.format(r.total || 0)}
@@ -216,22 +217,22 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
                   {fmtInt.format(r.row_count || 0)}
                 </td>
                 <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                  {fmt.format(r.po_amount || 0)}
+                  {money.format(r.po_amount || 0)}
                 </td>
                 <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>
-                  {fmt.format(r.invoiced || 0)}
+                  {money.format(r.invoiced || 0)}
                 </td>
                 <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>
                   {(r.vat || 0) > 0 ? fmt.format(r.vat) : <span style={{ color: "#cbd5e1" }}>—</span>}
                 </td>
                 <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.unbilled || 0) > 0 ? "#b45309" : "#94a3b8" }}>
-                  {fmt.format(r.unbilled || 0)}
+                  {money.format(r.unbilled || 0)}
                 </td>
                 <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#6d28d9" }}>
-                  {(r.subcon_amt || 0) > 0 ? fmt.format(r.subcon_amt) : <span style={{ color: "#cbd5e1" }}>—</span>}
+                  {(r.subcon_amt || 0) > 0 ? money.format(r.subcon_amt) : <span style={{ color: "#cbd5e1" }}>—</span>}
                 </td>
                 <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#1d4ed8" }}>
-                  {(r.inet_amt || 0) > 0 ? fmt.format(r.inet_amt) : <span style={{ color: "#cbd5e1" }}>—</span>}
+                  {(r.inet_amt || 0) > 0 ? money.format(r.inet_amt) : <span style={{ color: "#cbd5e1" }}>—</span>}
                 </td>
               </tr>
               );
@@ -244,22 +245,22 @@ function StatusTable({ title, rows, statusOrder, tone, milestone, navigable }) {
                 {fmtInt.format(totals.row_count)}
               </td>
               <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {fmt.format(totals.po_amount)}
+                {money.format(totals.po_amount)}
               </td>
               <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#047857" }}>
-                {fmt.format(totals.invoiced)}
+                {money.format(totals.invoiced)}
               </td>
               <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>
                 {fmt.format(totals.vat)}
               </td>
               <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#b45309" }}>
-                {fmt.format(totals.unbilled)}
+                {money.format(totals.unbilled)}
               </td>
               <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#6d28d9" }}>
-                {fmt.format(totals.subcon_amt)}
+                {money.format(totals.subcon_amt)}
               </td>
               <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#1d4ed8" }}>
-                {fmt.format(totals.inet_amt)}
+                {money.format(totals.inet_amt)}
               </td>
             </tr>
           </tfoot>
@@ -422,9 +423,9 @@ function PaymentLedgerTab({ refreshKey }) {
                       Total Payment Invoices in {year}
                     </td>
                     <td style={{ padding: "9px 14px" }} />
-                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{fmt.format(yTotal.invoiced_amount)}</td>
-                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{fmt.format(yTotal.vat_amount)}</td>
-                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{fmt.format(yTotal.total_amount)}</td>
+                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{money.format(yTotal.invoiced_amount)}</td>
+                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{money.format(yTotal.vat_amount)}</td>
+                    <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: "#1e40af" }}>{money.format(yTotal.total_amount)}</td>
                   </tr>
                   {yExpanded && byYear.get(year).map((m) => {
                     const mExpanded = expandedMonths.has(m.year_month);
@@ -438,9 +439,9 @@ function PaymentLedgerTab({ refreshKey }) {
                             Sum of total invoices in {fmtYearMonthLabel(m.year_month)}
                           </td>
                           <td style={{ padding: "8px 14px" }} />
-                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(m.invoiced_amount)}</td>
-                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(m.vat_amount)}</td>
-                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(m.total_amount)}</td>
+                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(m.invoiced_amount)}</td>
+                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(m.vat_amount)}</td>
+                          <td style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(m.total_amount)}</td>
                         </tr>
                         {mExpanded && (
                           loadingMonths.has(m.year_month) ? (
@@ -455,9 +456,9 @@ function PaymentLedgerTab({ refreshKey }) {
                                 {d.applied_date ? `Payment Invoice Date ${fmtDayLabel(d.applied_date)}` : "Payment Invoice Date (unspecified)"}
                               </td>
                               <td style={{ padding: "6px 14px", color: "#64748b", fontSize: "0.8rem" }}>{d.payment_received_date || "—"}</td>
-                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(d.invoiced_amount)}</td>
-                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(d.vat_amount)}</td>
-                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(d.total_amount)}</td>
+                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(d.invoiced_amount)}</td>
+                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(d.vat_amount)}</td>
+                              <td style={{ padding: "6px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(d.total_amount)}</td>
                             </tr>
                           ))
                         )}
@@ -471,9 +472,9 @@ function PaymentLedgerTab({ refreshKey }) {
           <tfoot>
             <tr style={{ background: "#f8fafc", borderTop: "2px solid #e2e8f0", fontWeight: 700 }}>
               <td style={{ padding: "9px 14px", color: "#0f172a" }} colSpan={2}>Grand Total</td>
-              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(grandTotal.invoiced_amount)}</td>
-              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(grandTotal.vat_amount)}</td>
-              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(grandTotal.total_amount)}</td>
+              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(grandTotal.invoiced_amount)}</td>
+              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(grandTotal.vat_amount)}</td>
+              <td style={{ padding: "9px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(grandTotal.total_amount)}</td>
             </tr>
           </tfoot>
         </table>
@@ -527,22 +528,22 @@ function MonthlyRollupCard({ rows, loading, error }) {
               {sorted.map((r, i) => (
                 <tr key={r.invoice_month} style={{ borderTop: "1px solid #f1f5f9" }}>
                   <td style={{ padding: "6px 12px", color: "#334155" }}>({String(i + 1).padStart(2, "0")}) {fmtYearMonthLabel(r.invoice_month)}</td>
-                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(r.ms1_invoiced || 0) > 0 ? fmt.format(r.ms1_invoiced) : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
-                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(r.ms2_invoiced || 0) > 0 ? fmt.format(r.ms2_invoiced) : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(r.ms1_invoiced || 0) > 0 ? money.format(r.ms1_invoiced) : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(r.ms2_invoiced || 0) > 0 ? money.format(r.ms2_invoiced) : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
                   <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmt.format(r.total || 0)}</td>
-                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(r.vat_amount || 0)}</td>
-                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{fmt.format(r.total_amount || 0)}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.vat_amount || 0)}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{money.format(r.total_amount || 0)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr style={{ background: "#f8fafc", borderTop: "2px solid #e2e8f0", fontWeight: 700 }}>
                 <td style={{ padding: "8px 12px", color: "#0f172a" }}>Grand Total</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms1_invoiced)}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.ms2_invoiced)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.ms1_invoiced)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.ms2_invoiced)}</td>
                 <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.total)}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{fmt.format(totals.vat_amount)}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(totals.total_amount)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(totals.vat_amount)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.total_amount)}</td>
               </tr>
             </tfoot>
           </table>

@@ -15,8 +15,8 @@ import RecordDetailView from "../../components/RecordDetailView";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { money, qty } from "../../utils/numberFormat";
 
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
 // Full Select-field option lists — used as filter option sources instead of
 // deriving them from whatever rows are currently loaded/filtered, which
@@ -1293,7 +1293,7 @@ export default function IMPOIntake() {
           <div className="toolbar-actions">
             {selected.size > 0 && (
               <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
-                {selected.size} selected · SAR {fmt.format(selectedAmount)}
+                {selected.size} selected · SAR {money.format(selectedAmount)}
               </span>
             )}
             <button type="button" className="btn-primary" disabled={selected.size === 0} onClick={() => { setAssignError(null); setShowAssignModal(true); }}>
@@ -1499,7 +1499,7 @@ export default function IMPOIntake() {
                         <td style={{ whiteSpace: "nowrap" }}>{r.from_im_name || r.from_im}</td>
                         <td style={{ whiteSpace: "nowrap" }}>{r.to_im_name || r.to_im}</td>
                         <td style={{ textAlign: "right" }}>{r.poid_count}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(r.total_amount || 0)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.total_amount || 0)}</td>
                         <td>
                           <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, background: sc.bg, color: sc.fg, border: `1px solid ${sc.bd}` }}>{r.request_status}</span>
                         </td>
@@ -1538,7 +1538,7 @@ export default function IMPOIntake() {
                         {transferVisibleRows.reduce((s, r) => s + (Number(r.poid_count) || 0), 0)}
                       </td>{/* POIDs */}
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(transferVisibleRows.reduce((s, r) => s + (Number(r.total_amount) || 0), 0))}
+                        {money.format(transferVisibleRows.reduce((s, r) => s + (Number(r.total_amount) || 0), 0))}
                       </td>{/* Amount (SAR) */}
                       <td /><td /><td /><td /><td />{/* Status..Actions */}
                     </tr>
@@ -1630,8 +1630,8 @@ export default function IMPOIntake() {
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.item_code || "—"}</td>
                         <td style={{ fontSize: "0.82rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
                         <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? fmt.format(row.qty) : "—"}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.line_amount != null ? fmt.format(row.line_amount) : "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? qty.format(row.qty) : "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.line_amount != null ? money.format(row.line_amount) : "—"}</td>
                         <td style={{ fontSize: "0.82rem" }}>{row.target_month || "—"}</td>
                         <td>
                           {ps ? (() => { const { bg, fg, bd } = planStatusColor(ps.plan_status); return <StatusBadge value={ps.plan_status} bg={bg} fg={fg} bd={bd} />; })()
@@ -1677,10 +1677,10 @@ export default function IMPOIntake() {
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(ovFilteredRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                        {qty.format(ovFilteredRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                       </td>{/* Qty */}
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(ovFilteredRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                        {money.format(ovFilteredRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
                       </td>{/* Line Amount (SAR) */}
                       <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />{/* Target Month..Actions */}
                     </tr>
@@ -1742,14 +1742,14 @@ export default function IMPOIntake() {
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.item_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
                       <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? fmt.format(row.qty) : "—"}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.rate != null ? fmt.format(row.rate) : "—"}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(row.line_amount || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? qty.format(row.qty) : "—"}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.rate != null ? money.format(row.rate) : "—"}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(row.line_amount || 0)}</td>
                       <td style={{ fontSize: "0.74rem", whiteSpace: "nowrap" }}>
                         {row.ms1_amount > 0 ? (() => {
                           const pct = row.line_amount > 0 ? Math.round((row.ms1_amount / row.line_amount) * 100) : 0;
                           return <span style={{ color: row.ms1_closed ? "#16a34a" : "#475569", fontWeight: row.ms1_closed ? 700 : 400 }}>
-                            {row.ms1_closed ? "✓ " : ""}{fmt.format(row.ms1_amount)} · {pct}%{row.ms1_closed && row.ms1_closed_at ? " · " + String(row.ms1_closed_at).slice(0, 10) : ""}
+                            {row.ms1_closed ? "✓ " : ""}{money.format(row.ms1_amount)} · {pct}%{row.ms1_closed && row.ms1_closed_at ? " · " + String(row.ms1_closed_at).slice(0, 10) : ""}
                           </span>;
                         })() : <span style={{ color: "#e2e8f0" }}>—</span>}
                       </td>
@@ -1757,7 +1757,7 @@ export default function IMPOIntake() {
                         {row.ms2_amount > 0 ? (() => {
                           const pct = row.line_amount > 0 ? Math.round((row.ms2_amount / row.line_amount) * 100) : 0;
                           return <span style={{ color: row.ms2_closed ? "#16a34a" : "#475569", fontWeight: row.ms2_closed ? 700 : 400 }}>
-                            {row.ms2_closed ? "✓ " : ""}{fmt.format(row.ms2_amount)} · {pct}%{row.ms2_closed && row.ms2_closed_at ? " · " + String(row.ms2_closed_at).slice(0, 10) : ""}
+                            {row.ms2_closed ? "✓ " : ""}{money.format(row.ms2_amount)} · {pct}%{row.ms2_closed && row.ms2_closed_at ? " · " + String(row.ms2_closed_at).slice(0, 10) : ""}
                           </span>;
                         })() : <span style={{ color: "#e2e8f0" }}>—</span>}
                       </td>
@@ -1788,11 +1788,11 @@ export default function IMPOIntake() {
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(rows.slice(0, intakeDisplayedCount).reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                        {qty.format(rows.slice(0, intakeDisplayedCount).reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                       </td>{/* Qty */}
                       <td />{/* Rate (SAR) */}
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(rows.slice(0, intakeDisplayedCount).reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                        {money.format(rows.slice(0, intakeDisplayedCount).reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
                       </td>{/* Amount (SAR) */}
                       <td /><td /><td /><td /><td /><td />{/* MS1..Actions */}
                     </tr>
@@ -1875,8 +1875,8 @@ export default function IMPOIntake() {
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.item_code || "—"}</td>
                         <td style={{ fontSize: "0.82rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.item_description || ""}>{row.item_description || "—"}</td>
                         <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? fmt.format(row.qty) : "—"}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.line_amount != null ? fmt.format(row.line_amount) : "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.qty != null ? qty.format(row.qty) : "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.line_amount != null ? money.format(row.line_amount) : "—"}</td>
                         <td style={{ fontSize: "0.82rem" }}>{row.target_month || "—"}</td>
                         <td>
                           {row.dispatch_status
@@ -1925,10 +1925,10 @@ export default function IMPOIntake() {
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(filteredDummyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
+                        {qty.format(filteredDummyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0))}
                       </td>{/* Qty */}
                       <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px" }}>
-                        {fmt.format(filteredDummyRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
+                        {money.format(filteredDummyRows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0))}
                       </td>{/* Line Amount (SAR) */}
                       <td /><td /><td /><td /><td /><td /><td /><td />{/* Target Month..Actions */}
                     </tr>
@@ -2174,8 +2174,8 @@ export default function IMPOIntake() {
                   <FieldRow label="Center Area">{detailRow.center_area || "—"}</FieldRow>
                   <FieldRow label="Region">{detailRow.region_type || "—"}</FieldRow>
                   <FieldRow label="Item Code">{detailRow.item_code || "—"}</FieldRow>
-                  <FieldRow label="Qty">{detailRow.qty != null ? fmt.format(detailRow.qty) : "—"}</FieldRow>
-                  <FieldRow label="Line Amount">{detailRow.line_amount != null ? `SAR ${fmt.format(detailRow.line_amount)}` : "—"}</FieldRow>
+                  <FieldRow label="Qty">{detailRow.qty != null ? qty.format(detailRow.qty) : "—"}</FieldRow>
+                  <FieldRow label="Line Amount">{detailRow.line_amount != null ? `SAR ${money.format(detailRow.line_amount)}` : "—"}</FieldRow>
                   <FieldRow label="Target Month">{detailRow.target_month || "—"}</FieldRow>
                   <FieldRow label="Status">{detailRow.dispatch_status || "—"}</FieldRow>
                   {(detailRow.original_dummy_poid || "").trim() && (
@@ -2202,11 +2202,11 @@ export default function IMPOIntake() {
                       : "—"}
                   </FieldRow>
                   <FieldRow label="Payment Terms">{detailRow.payment_terms || "—"}</FieldRow>
-                  <FieldRow label="Rate (SAR)">{detailRow.rate != null ? fmt.format(detailRow.rate) : "—"}</FieldRow>
-                  <FieldRow label="MS1 Amount">{detailRow.ms1_amount != null ? `SAR ${fmt.format(detailRow.ms1_amount)}` : "—"}</FieldRow>
+                  <FieldRow label="Rate (SAR)">{detailRow.rate != null ? money.format(detailRow.rate) : "—"}</FieldRow>
+                  <FieldRow label="MS1 Amount">{detailRow.ms1_amount != null ? `SAR ${money.format(detailRow.ms1_amount)}` : "—"}</FieldRow>
                   <FieldRow label="MS1 Invoiced">{detailRow.ms1_invoiced || "—"}</FieldRow>
                   <FieldRow label="MS1 Invoice Month">{detailRow.ms1_invoice_month || "—"}</FieldRow>
-                  <FieldRow label="MS2 Amount">{detailRow.ms2_amount != null ? `SAR ${fmt.format(detailRow.ms2_amount)}` : "—"}</FieldRow>
+                  <FieldRow label="MS2 Amount">{detailRow.ms2_amount != null ? `SAR ${money.format(detailRow.ms2_amount)}` : "—"}</FieldRow>
                   <FieldRow label="MS2 Invoiced">{detailRow.ms2_invoiced || "—"}</FieldRow>
                   <FieldRow label="MS2 Invoice Month">{detailRow.ms2_invoice_month || "—"}</FieldRow>
                   {detailRow.pic_detail_remark && (
@@ -2564,7 +2564,7 @@ export default function IMPOIntake() {
                     const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
                     return (
                       <div style={{ marginTop: 5, fontSize: "0.76rem", color: "#64748b" }}>
-                        Revenue: <strong>SAR {fmt.format(amt)}</strong> · {pct}% of total
+                        Revenue: <strong>SAR {money.format(amt)}</strong> · {pct}% of total
                       </div>
                     );
                   })()}
@@ -2719,7 +2719,7 @@ export default function IMPOIntake() {
             </div>
             <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 12 }}>
               {viewTransferTarget._direction === "outgoing" ? "To" : "From"} <strong>{viewTransferTarget._direction === "outgoing" ? (viewTransferTarget.to_im_name || viewTransferTarget.to_im) : (viewTransferTarget.from_im_name || viewTransferTarget.from_im)}</strong>
-              {" · "}{viewTransferTarget.poid_count} POID{viewTransferTarget.poid_count !== 1 ? "s" : ""}, SAR {fmt.format(viewTransferTarget.total_amount || 0)}
+              {" · "}{viewTransferTarget.poid_count} POID{viewTransferTarget.poid_count !== 1 ? "s" : ""}, SAR {money.format(viewTransferTarget.total_amount || 0)}
               {" · "}<span style={{ fontWeight: 700 }}>{viewTransferTarget.request_status}</span>
             </div>
             {viewTransferTarget.reason && (
@@ -2754,7 +2754,7 @@ export default function IMPOIntake() {
                       <td style={{ fontSize: "0.82rem" }}>{l.project_code || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{l.item_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.item_description || ""}>{l.item_description || "—"}</td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(l.line_amount || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(l.line_amount || 0)}</td>
                     </tr>
                   ))}
                 </tbody>

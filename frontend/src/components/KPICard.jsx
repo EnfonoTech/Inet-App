@@ -8,21 +8,24 @@
  *   colorClass (string, optional)  — e.g. "text-green", "text-red", "text-amber"
  */
 
-const fmt = new Intl.NumberFormat("en-US");
+import { count as fmt, money } from "../utils/numberFormat";
 
 function formatValue(v) {
   if (v === null || v === undefined || v === "") return "—";
   if (typeof v === "string") return v;
   if (typeof v === "number") {
     if (v < 0) return `(${fmt.format(Math.abs(v))})`;
-    return Math.abs(v) > 999 ? fmt.format(v) : String(v);
+    // Always through the formatter: the old `String(v)` shortcut for values
+    // under 1000 printed a raw float ("414.9") beside larger figures that had
+    // been formatted, so two cards in a row disagreed on their own format.
+    return fmt.format(v);
   }
   return String(v);
 }
 
 function formatSar(v) {
   if (v === null || v === undefined || v === "") return "";
-  return `SAR ${fmt.format(Number(v))}`;
+  return `SAR ${money.format(Number(v))}`;
 }
 
 export default function KPICard({ label, value, sub, colorClass = "", onClick }) {

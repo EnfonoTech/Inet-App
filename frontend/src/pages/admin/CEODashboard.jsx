@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
 import { pmApi } from "../../services/api";
+import { money } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en-US");
 const C = { blue: "#1565C0", green: "#2E7D32", amber: "#F57C00", red: "#C62828" };
@@ -94,10 +95,10 @@ export default function CEODashboard() {
 
       <div className="nd-kpi-row">
         {[
-          { l: "Total Revenue", v: `SAR ${fmt.format(totalRevenue)}` },
-          { l: "Net Profit", v: `SAR ${fmt.format(netProfit)}`, cl: netProfit < 0 ? C.red : C.green },
+          { l: "Total Revenue", v: `SAR ${money.format(totalRevenue)}` },
+          { l: "Net Profit", v: `SAR ${money.format(netProfit)}`, cl: netProfit < 0 ? C.red : C.green },
           { l: "Active Projects", v: activeProjects },
-          { l: "Pending Invoices", v: `SAR ${fmt.format(pendingInv)}`, cl: C.amber },
+          { l: "Pending Invoices", v: `SAR ${money.format(pendingInv)}`, cl: C.amber },
           { l: "Coverage", v: `${coveragePct}%`, cl: Number(coveragePct) >= 50 ? C.green : C.amber },
         ].map((k) => (
           <div className="nd-kpi-card" key={k.l}><div className="nd-kpi-label">{k.l}</div><div className="nd-kpi-value" style={k.cl ? { color: k.cl } : {}}>{k.v}</div></div>
@@ -119,8 +120,8 @@ export default function CEODashboard() {
                   <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.green }}>{coveragePct}%</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>SAR {fmt.format(totalRevenue)}</div>
-                  <div style={{ fontSize: 11, color: "#64748b" }}>Target: SAR {fmt.format(company.company_target || 0)}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>SAR {money.format(totalRevenue)}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>Target: SAR {money.format(company.company_target || 0)}</div>
                 </div>
               </div>
             </div></div>
@@ -138,9 +139,9 @@ export default function CEODashboard() {
               ))}</tbody></table>
             </div></div>
             <div className="nd-panel"><div className="nd-panel-header"><h3>Company Financial</h3></div><div className="nd-panel-body" style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 20, fontWeight: 800 }}>SAR {fmt.format(totalRevenue)}</div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: netProfit >= 0 ? C.green : C.red }}>Profit: SAR {fmt.format(netProfit)}</div>
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>Cost: SAR {fmt.format(company.total_cost || 0)}</div>
+              <div style={{ fontSize: 20, fontWeight: 800 }}>SAR {money.format(totalRevenue)}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: netProfit >= 0 ? C.green : C.red }}>Profit: SAR {money.format(netProfit)}</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>Cost: SAR {money.format(company.total_cost || 0)}</div>
             </div></div>
           </div>
         </div>
@@ -150,7 +151,7 @@ export default function CEODashboard() {
         <div className="nd-panel"><div className="nd-panel-header"><h3>IM Performance</h3></div><div className="nd-panel-body">
           <table className="nd-table"><thead><tr><th>IM</th><th>Revenue</th><th>Profit</th></tr></thead><tbody>
             {(im_performance || []).slice(0, 5).map((im) => (
-              <tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {fmt.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {fmt.format(im.profit || 0)}</td></tr>
+              <tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {money.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {money.format(im.profit || 0)}</td></tr>
             ))}
           </tbody></table>
         </div></div>
