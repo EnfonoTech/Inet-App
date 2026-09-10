@@ -28,8 +28,21 @@ const NA = "-";
 const NO_DOMAIN = "No Domain";
 
 /* Cell colours follow the delivered report: red Idle, green Other,
-   purple for a domain that matched the filter, grey for not-applicable. */
-function cellStyle(v, filterActive) {
+   purple for a domain that matched the filter, grey for not-applicable.
+
+   `kind` (from the backend, parallel to `cells`) is what separates a domain
+   the team ACTUALLY worked from one it is merely scheduled to work. Without
+   it the two render identically, which would read as though future work had
+   already happened. Planned cells get the same hue, outlined and italic
+   rather than filled, so the grid still scans by domain colour. */
+function cellStyle(v, filterActive, kind) {
+  if (kind === "planned") {
+    return {
+      color: "#1565C0", fontStyle: "italic", fontWeight: 600,
+      background: "#f5f9ff", boxShadow: "inset 0 0 0 1px #bbd6f7",
+    };
+  }
+  if (kind === "unplanned") return { color: "#b0b8c1", fontStyle: "italic" };
   if (v === NA) return { color: "#cbd5e1" };
   if (v === IDLE) return { color: "#C62828", fontWeight: 700 };
   if (v === OTHER) return { background: "#e8f5e9", color: "#2E7D32", fontWeight: 600 };
@@ -172,7 +185,9 @@ export default function TeamDomainReport({ onExportReady }) {
                           {d.label.split("-").map((part, i) => <div key={i}>{part}</div>)}
                         </th>
                       ))}
-                      <th className="tdr-total-head">Grand Total (Idle Days)</th>
+                      <th className="tdr-total-head" title="Idle days among the elapsed days only — future days are excluded">
+                        Grand Total (Idle Days)
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -183,11 +198,15 @@ export default function TeamDomainReport({ onExportReady }) {
                           {r.label}
                           {!r.has_isdp && <span className="tdr-warn" title="No ISDP Account on this team">*</span>}
                         </td>
-                        {r.cells.map((c, ci) => (
-                          <td key={ci} style={cellStyle(c, filterActive)} title={`${days[ci]?.label} · ${c}`}>
-                            {c}
-                          </td>
-                        ))}
+                        {r.cells.map((c, ci) => {
+                          const kind = r.kinds?.[ci];
+                          const what = kind === "planned" ? "planned" : kind === "unplanned" ? "not planned" : kind === "idle" ? "idle" : "worked";
+                          return (
+                            <td key={ci} style={cellStyle(c, filterActive, kind)} title={`${days[ci]?.label} · ${c} (${what})`}>
+                              {c}
+                            </td>
+                          );
+                        })}
                         <td className="tdr-total">{r.idle_days}</td>
                       </tr>
                     ))}
@@ -201,8 +220,12 @@ export default function TeamDomainReport({ onExportReady }) {
                     <tr>
                       <td className="tdr-sticky tdr-sr" />
                       <td className="tdr-sticky tdr-acct">Total (Idle Teams/Day)</td>
+                      {/* null = a future day: nothing is idle yet, and a 0
+                          here would read as "every team busy". */}
                       {(data?.totals?.idle_per_day || []).map((n, i) => (
-                        <td key={i}>{n}</td>
+                        <td key={i} style={n == null ? { color: "#cbd5e1" } : undefined}>
+                          {n == null ? "·" : n}
+                        </td>
                       ))}
                       <td className="tdr-grand">{data?.totals?.grand_total_idle ?? 0}</td>
                     </tr>

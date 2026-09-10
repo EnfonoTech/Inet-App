@@ -10962,10 +10962,27 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
 
     Days outside a team's start/end window render ``-`` and never count as
     idle — a team cannot be idle before it existed.
+
+    FUTURE days are never idle either: a day that has not happened yet cannot
+    have been wasted, and counting it made the current month's idle figures
+    read as though the rest of it were already lost (a mid-month view showed
+    every remaining day as Idle and rolled them into both totals). Those days
+    show the ROLLOUT PLAN instead — the planned domain where the team has one,
+    else ``No Plan``, which is a planning gap worth seeing rather than an idle
+    day. Neither counts toward idle_days, idle_per_day or grand_total_idle,
+    and idle_per_day is None for a future column so the footer can say "not
+    yet" instead of a misleading 0.
+
+    ``kinds`` runs parallel to ``cells`` and says what each value IS — actual /
+    idle / planned / unplanned / na — so the grid can colour a planned domain
+    differently from a domain actually worked instead of the two looking
+    identical.
     """
     from calendar import monthrange
 
-    NA, IDLE, OTHER, NO_DOMAIN = "-", "Idle", "Other", "No Domain"
+    NA, IDLE, OTHER, NO_DOMAIN, NO_PLAN = "-", "Idle", "Other", "No Domain", "No Plan"
+    K_NA, K_IDLE, K_ACTUAL, K_PLANNED, K_UNPLANNED = (
+        "na", "idle", "actual", "planned", "unplanned")
 
     today = getdate(nowdate())
     if month:
@@ -10978,8 +10995,14 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
     selected = set(_ensure_list(domains))
     keep_fri = cint(include_fridays)
 
+    # today.isoformat() is a required discriminator, not padding: the grid's
+    # past/future split is drawn against the current date, so the same data on
+    # a new day is a different answer. Without it the etag would still match
+    # overnight and a client would be told "unchanged" while yesterday's
+    # future column sat there as a plan that has since become an elapsed day.
     current_etag = _dashboard_etag(
-        "team_domain", f"{y:04d}-{m:02d}", ",".join(sorted(selected)), keep_fri)
+        "team_domain", f"{y:04d}-{m:02d}", ",".join(sorted(selected)), keep_fri,
+        today.isoformat())
     if etag and etag == current_etag:
         return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
 
@@ -11026,6 +11049,42 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
         as_dict=True,
     )
 
+    # Rollout plans from today onward, for the future half of the grid. Only
+    # the future needs them: a past day is judged on what was actually
+    # executed, and showing a plan there would paper over work that never
+    # happened.
+    #
+    # Both team sources, same as the multi-team fix applied to the performance
+    # reports: Rollout Plan.team is only the LEAD team, and the rest of a split
+    # plan live in Rollout Plan Team — without the UNION a team would look
+    # unplanned on a day it is in fact scheduled. Cancelled plans are excluded;
+    # a cancelled plan is not work anyone intends to do.
+    plans = frappe.db.sql(
+        """
+        SELECT t.team AS team,
+               rp.plan_date AS d,
+               NULLIF(COALESCE(NULLIF(pd.project_domain, ''), pcc.project_domain), '') AS domain
+        FROM `tabRollout Plan` rp
+        JOIN (
+            SELECT name AS plan, team FROM `tabRollout Plan` WHERE IFNULL(team, '') != ''
+            UNION
+            SELECT parent AS plan, team FROM `tabRollout Plan Team` WHERE IFNULL(team, '') != ''
+        ) t ON t.plan = rp.name
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+        WHERE rp.plan_date BETWEEN %s AND %s
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+        """,
+        (max(first, today), last), as_dict=True,
+    )
+
+    # (team, isodate) -> {domain: plan count}
+    planned = {}
+    for r in plans:
+        dom = r.get("domain") or NO_DOMAIN
+        slot = planned.setdefault((r["team"], getdate(r["d"]).isoformat()), {})
+        slot[dom] = slot.get(dom, 0) + 1
+
     # (team, isodate) -> {domain: execution count}
     worked = {}
     undomained = 0
@@ -11047,20 +11106,39 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
             return None
         return sorted(items, key=lambda kv: (-kv[1], kv[0]))[0][0]
 
+    # A future column's idle count is None, not 0 — nothing is idle yet, and a
+    # 0 would read as "every team busy".
+    is_future = [d > today for d in days]
     rows = []
-    idle_per_day = [0] * len(days)
+    idle_per_day = [None if fut else 0 for fut in is_future]
     grand_total = 0
     for t in teams:
         t_start = getdate(t["start_date"]) if t.get("start_date") else None
         t_end = getdate(t["end_date"]) if t.get("end_date") else None
-        cells, idle_days = [], 0
+        cells, kinds, idle_days, planned_days = [], [], 0, 0
         for i, day in enumerate(days):
             if (t_start and day < t_start) or (t_end and day > t_end):
                 cells.append(NA)
+                kinds.append(K_NA)
+                continue
+            if is_future[i]:
+                # Not yet happened, so not idle whatever the answer is.
+                p_counts = planned.get((t["name"], day.isoformat()))
+                if not p_counts:
+                    cells.append(NO_PLAN)
+                    kinds.append(K_UNPLANNED)
+                    continue
+                if selected:
+                    cells.append(pick(p_counts, allowed=selected) or OTHER)
+                else:
+                    cells.append(pick(p_counts) or OTHER)
+                kinds.append(K_PLANNED)
+                planned_days += 1
                 continue
             counts = worked.get((t["name"], day.isoformat()))
             if not counts:
                 cells.append(IDLE)
+                kinds.append(K_IDLE)
                 idle_days += 1
                 idle_per_day[i] += 1
                 continue
@@ -11069,6 +11147,7 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
                 cells.append(hit or OTHER)
             else:
                 cells.append(pick(counts) or OTHER)
+            kinds.append(K_ACTUAL)
         rows.append({
             "team": t["name"],
             "team_name": t.get("team_name"),
@@ -11076,7 +11155,11 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
             "label": t.get("isdp_account") or t.get("team_name") or t["name"],
             "has_isdp": bool(t.get("isdp_account")),
             "cells": cells,
+            "kinds": kinds,
+            # Idle counts elapsed days only, so on the running month this is
+            # "idle so far", not a forecast of the whole month.
             "idle_days": idle_days,
+            "planned_days": planned_days,
         })
         grand_total += idle_days
 
@@ -11091,9 +11174,18 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
         "month": f"{y:04d}-{m:02d}",
         "days": [{"d": d.isoformat(),
                   "label": d.strftime("%d-%b-%Y"),
-                  "dow": d.strftime("%a")} for d in days],
+                  "dow": d.strftime("%a"),
+                  "future": d > today} for d in days],
         "rows": rows,
-        "totals": {"idle_per_day": idle_per_day, "grand_total_idle": grand_total},
+        "totals": {
+            "idle_per_day": idle_per_day,
+            "grand_total_idle": grand_total,
+            # So the grid can say what the idle figure actually covers rather
+            # than implying it spans the whole month.
+            "elapsed_days": sum(1 for f in is_future if not f),
+            "future_days": sum(1 for f in is_future if f),
+            "grand_total_planned": sum(r["planned_days"] for r in rows),
+        },
         "domain_options": domain_options,
         "domains_selected": sorted(selected),
         "include_fridays": bool(keep_fri),
