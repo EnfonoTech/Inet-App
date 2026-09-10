@@ -8626,7 +8626,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         "attempt": "CAST(rp.visit_number AS CHAR)",
         "qc": "IFNULL(de.qc_status,'')",
         "execution_remarks": "IFNULL(de.remarks,'')",
-        "revenue": "CAST(wd.revenue_sar AS CHAR)",
+        "revenue": f"CAST({wd_revenue_sql('wd', 'pd', 'pd_sys')} AS CHAR)",
         "billing_status": billing_expr,
         "subcontract": f"IFNULL({_subcon_expr_wd},'')",
         "contract_model": f"IFNULL({_contract_model_expr_wd},'')",
@@ -8787,12 +8787,15 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         # PIC's job and lives on the PIC pages. So: the work mix (field vs
         # direct close vs backend), where each entry stands in the confirmation
         # flow, and anything flagged.
-        # NULLIF(...,0), not a plain COALESCE: the table falls back to the
-        # dispatch's line_amount whenever revenue_sar is FALSY
-        # (`r.revenue_sar || r.revenue || r.line_amount`), and a stored 0 is
-        # falsy in JS but not NULL in SQL. Without the NULLIF the chip reads
-        # 166 short of the total sitting directly beneath it.
-        _rev = "COALESCE(NULLIF(wd.revenue_sar, 0), pd.line_amount, pd_sys.line_amount, 0)"
+        # Straight off the PO line via wd_revenue_sql, so the chip and the
+        # Revenue column beneath it are the same expression. This used to be
+        # COALESCE(NULLIF(wd.revenue_sar, 0), pd.line_amount, ...) — a
+        # workaround for revenue_sar drifting from the line, which is now
+        # prevented at the source in Work Done's before_save. The NULLIF was
+        # there because a stored 0 is falsy in JS but not NULL in SQL, and
+        # without it the chip read 166 short of the total below it; reading
+        # the line directly makes that distinction moot.
+        _rev = wd_revenue_sql("wd", "pd", "pd_sys")
         _has_source = frappe.db.has_column("Work Done", "source")
         _has_sub = frappe.db.has_column("Work Done", "submission_status")
         _has_flag = frappe.db.has_column("Work Done", "issue_flag")
@@ -10629,6 +10632,73 @@ def _undated_invoiced_value():
 # snapshot — it stays counted as closed, which is exactly the old behaviour
 # and the conservative side to err on. 11,302 of the 12,044 have no MS2 at
 # all, so for 94% of them this reduces to the MS1 date.
+# A PO line whose work has been carried out. Status is the source of truth for
+# this, not Work Done: only 61 Work Done records exist against 12,000+ done
+# lines, because the rest were imported already completed — and often already
+# invoiced — with no plan or execution ever created. An invoiced or closed
+# line is work delivered, so all five count.
+#
+# Shared so the project reports and the project pages cannot drift to
+# different definitions of the same word, which is exactly what happened:
+# the pages measured revenue off Work Done and read SAR 47,470 company-wide
+# against SAR 9,428,121 of delivered line value.
+LINE_DONE_STATUSES = ('Completed', 'Partially Submitted', 'Submitted',
+                      'Partially Closed', 'Closed')
+
+
+def wd_revenue_sql(wd="wd", pd="pd", pd2=None):
+    """A Work Done row's revenue, taken from the PO LINE rather than from
+    Work Done's own ``revenue_sar`` column. Use this for every reported
+    revenue figure.
+
+    Revenue is not an independently editable number: a line is worth what the
+    PO says it is worth, so ``revenue_sar`` and ``pd.line_amount`` must agree.
+    They can drift because Work Done recomputes the column in before_save as
+    ``billing_rate_sar * executed_qty`` (there is even a patch,
+    fix_work_done_revenue_sar, whose whole job is realigning them). Reading
+    the line removes the drift by construction instead of chasing it.
+
+    The one real exception is a MILESTONE-SCOPED Direct Close, and this is why
+    the expression is a CASE rather than a plain column swap. Closing a single
+    milestone does not necessarily move the line's dispatch_status, and such a
+    row represents only the milestone it closed — so it is worth that
+    milestone's amount, not the whole line. The ms1_closed/ms2_closed test is
+    the same one list_work_done_rows already uses for its visibility rule:
+
+        ms1 only  -> pd.ms1_amount
+        ms2 only  -> pd.ms2_amount
+        both flags equal (0/0 normal row, or 1/1 whole-line close) -> line_amount
+
+    Measured on live data when this was introduced: 59 of 61 Work Done rows
+    already matched line_amount exactly, and both exceptions were MS2-only
+    Direct Closes whose stored revenue was wrong — one holding the full line
+    amount (1,383 against a 414.90 milestone) and one holding 0 against 49.80.
+
+    Falls back to the plain line amount where the milestone columns are absent,
+    so this is safe on a site that has not had that field yet.
+
+    ``pd2`` is a second dispatch alias to fall back to, for the queries that
+    reach the line two ways — list_work_done_rows joins it both through the
+    rollout plan and through wd.system_id, and only the latter is guaranteed
+    present on a teamless close.
+    """
+    def amt(field):
+        if pd2:
+            return f"COALESCE({pd}.{field}, {pd2}.{field}, 0)"
+        return f"COALESCE({pd}.{field}, 0)"
+
+    if not frappe.db.has_column("Work Done", "ms1_closed"):
+        return amt("line_amount")
+    return (
+        f"CASE"
+        f" WHEN IFNULL({wd}.ms1_closed, 0) = 1 AND IFNULL({wd}.ms2_closed, 0) = 0"
+        f" THEN {amt('ms1_amount')}"
+        f" WHEN IFNULL({wd}.ms2_closed, 0) = 1 AND IFNULL({wd}.ms1_closed, 0) = 0"
+        f" THEN {amt('ms2_amount')}"
+        f" ELSE {amt('line_amount')} END"
+    )
+
+
 _PO_LINE_CLOSED_ON = """GREATEST(
     COALESCE(pd.ms1_payment_received_date, pd.ms1_ibuy_inv_date, '1900-01-01'),
     COALESCE(pd.ms2_payment_received_date, pd.ms2_ibuy_inv_date, '1900-01-01')
@@ -12777,8 +12847,7 @@ def get_project_performance_report(from_date=None, to_date=None, **kwargs):
     has a usable date basis here (target_month is set on 95 of 17,449 lines),
     and filtering one side only made every percentage collapse.
     """
-    DONE_STATUSES = ('Completed', 'Partially Submitted', 'Submitted',
-                     'Partially Closed', 'Closed')
+    DONE_STATUSES = LINE_DONE_STATUSES
     _ph_done = ", ".join(["%s"] * len(DONE_STATUSES))
 
     # One row per project, straight off PO Dispatch. No Rollout Plan join at
@@ -12935,8 +13004,7 @@ def get_rollout_burn_down_report(from_date=None, to_date=None, **kwargs):
     widened backward to that same 8-week floor, ending at whatever to_date
     was asked for; a deliberately wide custom range is honoured as given.
     """
-    DONE_STATUSES = ('Completed', 'Partially Submitted', 'Submitted',
-                     'Partially Closed', 'Closed')
+    DONE_STATUSES = LINE_DONE_STATUSES
     _ph_done = ", ".join(["%s"] * len(DONE_STATUSES))
     scope_where = """
         IFNULL(pd.project_code, '') != ''
@@ -13508,6 +13576,253 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
     }
     return {"columns": columns, "data": data, "totals": totals}
 
+
+
+# The dispatch pipeline in the order work actually moves through it, with the
+# stage each status belongs to. Sorting these by size instead would scramble
+# the flow the report exists to show — the same reason the PIC status tables
+# are ordered by their workflow rather than by row count.
+#
+# The stage split follows the app's own vocabulary: everything from Completed
+# onward is DONE_STATUSES elsewhere in this module (work carried out), and
+# the three part-way statuses between it and Closed are the PIC's invoicing
+# ladder, not rollout states.
+_DISPATCH_STAGE_FLOW = (
+    ("Pending",             "Not Started"),
+    ("Dispatched",          "In Rollout"),
+    ("Planned",             "In Rollout"),
+    ("Backend Assigned",    "In Rollout"),
+    ("Completed",           "Work Done"),
+    ("Partially Submitted", "Invoicing"),
+    ("Submitted",           "Invoicing"),
+    ("Partially Closed",    "Invoicing"),
+    ("Closed",              "Closed"),
+    ("Cancelled",           "Cancelled"),
+)
+
+
+@frappe.whitelist()
+def get_po_dispatch_status_report(from_date=None, to_date=None, **kwargs):
+    """PO Dispatch Status — how the order book sits across the dispatch pipeline.
+
+    A SNAPSHOT of where every line stands right now, so it is deliberately
+    not date-filtered, the same call the two project reports make. There is
+    no usable date basis for a line's current status: target_month is set on
+    95 of 17,449 lines, and scoping by PO publish date would answer a
+    different question ("lines published this month") while the Reports page's
+    month-to-date default would leave the report all but empty.
+
+    Internal work is excluded, matching every other line-value report here.
+
+    Every status in the pipeline gets a row even at zero, so a stage that has
+    emptied out reads as an explicit 0 rather than vanishing from the table.
+    """
+    rows = frappe.db.sql(
+        """
+        SELECT IFNULL(NULLIF(dispatch_status, ''), 'Pending') AS status,
+               COUNT(*) AS lines_count,
+               COALESCE(SUM(line_amount), 0) AS value
+        FROM `tabPO Dispatch`
+        WHERE IFNULL(is_internal_work, 0) = 0
+        GROUP BY IFNULL(NULLIF(dispatch_status, ''), 'Pending')
+        """,
+        as_dict=True,
+    )
+    by_status = {r.status: r for r in rows}
+
+    total_lines = sum(cint(r.lines_count) for r in rows)
+    total_value = sum(flt(r.value) for r in rows)
+
+    data = []
+    for status, stage in _DISPATCH_STAGE_FLOW:
+        r = by_status.get(status)
+        cnt = cint(r.lines_count) if r else 0
+        val = flt(r.value) if r else 0.0
+        data.append({
+            "stage":       stage,
+            "status":      status,
+            "lines_count": cnt,
+            "lines_pct":   round(cnt / total_lines * 100, 1) if total_lines else 0.0,
+            "value":       round(val, 2),
+            "value_pct":   round(val / total_value * 100, 1) if total_value else 0.0,
+            "avg_value":   round(val / cnt, 2) if cnt else 0.0,
+        })
+    # Any status not in the flow above (a value added to the Select later, or
+    # dirty legacy data) still has to appear, or the table would silently
+    # under-report the book and its own percentages would not reach 100.
+    for extra in sorted(set(by_status) - {s for s, _ in _DISPATCH_STAGE_FLOW}):
+        r = by_status[extra]
+        cnt, val = cint(r.lines_count), flt(r.value)
+        data.append({
+            "stage":       "Other",
+            "status":      extra,
+            "lines_count": cnt,
+            "lines_pct":   round(cnt / total_lines * 100, 1) if total_lines else 0.0,
+            "value":       round(val, 2),
+            "value_pct":   round(val / total_value * 100, 1) if total_value else 0.0,
+            "avg_value":   round(val / cnt, 2) if cnt else 0.0,
+        })
+    for i, row in enumerate(data, 1):
+        row["sn"] = i
+
+    columns = [
+        {"fieldname": "sn",          "label": "#",            "fieldtype": "Int"},
+        {"fieldname": "stage",       "label": "Stage",        "fieldtype": "Data"},
+        {"fieldname": "status",      "label": "Status",       "fieldtype": "Data"},
+        {"fieldname": "lines_count", "label": "Lines",        "fieldtype": "Int"},
+        {"fieldname": "lines_pct",   "label": "Lines %",      "fieldtype": "Percent"},
+        {"fieldname": "value",       "label": "Value (SAR)",  "fieldtype": "Currency"},
+        {"fieldname": "value_pct",   "label": "Value %",      "fieldtype": "Percent"},
+        {"fieldname": "avg_value",   "label": "Avg / Line",   "fieldtype": "Currency"},
+    ]
+    # The two percent columns total to 100 by construction, not by summing the
+    # rows' own percentages. Avg / Line is the book average — total value over
+    # total lines — never the mean of the per-row averages, which would weight
+    # a 2-line status the same as a 10,590-line one.
+    totals = {
+        "lines_count": total_lines,
+        "value":       round(total_value, 2),
+        "lines_pct":   100.0 if total_lines else 0.0,
+        "value_pct":   100.0 if total_value else 0.0,
+        "avg_value":   round(total_value / total_lines, 2) if total_lines else 0.0,
+    }
+    # Explicit chart so Desk and the portal draw the same thing, and the
+    # Operations dashboard panel can read it straight off this endpoint
+    # instead of running its own query that could drift from the table.
+    chart = {
+        "data": {
+            "labels": [r["status"] for r in data],
+            "datasets": [
+                {"name": "Lines", "values": [r["lines_count"] for r in data]},
+            ],
+        },
+        "type": "bar",
+    }
+    return {"columns": columns, "data": data, "totals": totals, "chart": chart}
+
+
+@frappe.whitelist()
+def get_po_milestone_status_report(from_date=None, to_date=None, **kwargs):
+    """PO Milestone Status — the order book counted by MILESTONE, not by line.
+
+    dispatch_status is one value per line, but billing is per milestone, and a
+    line's two milestones are routinely at different stages. That is what the
+    "Partially Submitted" / "Partially Closed" statuses are papering over, and
+    the line-level report cannot express it: it books a partially-closed
+    line's WHOLE value into one stage. Measured on this data, the 801
+    partially-closed/submitted lines carry SAR 423,415 of MS1 that is already
+    Commercial Invoice Closed and only SAR 190,064 of MS2 still working
+    through invoicing — so a line-level view overstates in-flight money by
+    roughly the MS1 half.
+
+    Here each milestone is its own row in the population: an MS1-only line
+    contributes one, a two-milestone line contributes two, each carrying its
+    own PIC status and its own ms1_amount / ms2_amount. 2,073 of 17,449 lines
+    have an MS2; the other 15,376 are single-milestone, so the two views
+    differ only on that minority — but that minority is where the money in
+    flight actually sits.
+
+    Ordered by the PIC's own status order, shared with the PIC pages via
+    pic_status_order() so the same ladder reads the same way everywhere.
+
+    A snapshot, so not date-filtered — same reasoning as the line-level report.
+    """
+    from inet_app.api.pic import pic_status_order
+
+    rows = frappe.db.sql(
+        """
+        SELECT 'MS1' AS ms,
+               IFNULL(NULLIF(pic_status, ''), 'Work Not Done') AS status,
+               COUNT(*) AS milestones,
+               COALESCE(SUM(ms1_amount), 0) AS value
+        FROM `tabPO Dispatch`
+        WHERE IFNULL(is_internal_work, 0) = 0 AND IFNULL(ms1_pct, 0) > 0
+        GROUP BY IFNULL(NULLIF(pic_status, ''), 'Work Not Done')
+        UNION ALL
+        SELECT 'MS2' AS ms,
+               IFNULL(NULLIF(pic_status_ms2, ''), 'Work Not Done') AS status,
+               COUNT(*) AS milestones,
+               COALESCE(SUM(ms2_amount), 0) AS value
+        FROM `tabPO Dispatch`
+        WHERE IFNULL(is_internal_work, 0) = 0 AND IFNULL(ms2_pct, 0) > 0
+        GROUP BY IFNULL(NULLIF(pic_status_ms2, ''), 'Work Not Done')
+        """,
+        as_dict=True,
+    )
+
+    agg = {}
+    for r in rows:
+        a = agg.setdefault(r.status, {"ms1": 0, "ms2": 0, "ms1_val": 0.0, "ms2_val": 0.0})
+        if r.ms == "MS1":
+            a["ms1"] += cint(r.milestones)
+            a["ms1_val"] += flt(r.value)
+        else:
+            a["ms2"] += cint(r.milestones)
+            a["ms2_val"] += flt(r.value)
+
+    total_ms = sum(a["ms1"] + a["ms2"] for a in agg.values())
+    total_val = sum(a["ms1_val"] + a["ms2_val"] for a in agg.values())
+
+    # Every PIC status first, in the PIC's order, then anything the data holds
+    # that the list does not — a status left out would silently drop its
+    # milestones from the book and stop the percentages reaching 100.
+    ordered = list(pic_status_order())
+    ordered += [s for s in sorted(agg) if s not in ordered]
+
+    data = []
+    for status in ordered:
+        a = agg.get(status) or {"ms1": 0, "ms2": 0, "ms1_val": 0.0, "ms2_val": 0.0}
+        cnt = a["ms1"] + a["ms2"]
+        val = a["ms1_val"] + a["ms2_val"]
+        data.append({
+            "status":     status,
+            "ms1_count":  a["ms1"],
+            "ms2_count":  a["ms2"],
+            "milestones": cnt,
+            "ms_pct":     round(cnt / total_ms * 100, 1) if total_ms else 0.0,
+            "ms1_value":  round(a["ms1_val"], 2),
+            "ms2_value":  round(a["ms2_val"], 2),
+            "value":      round(val, 2),
+            "value_pct":  round(val / total_val * 100, 1) if total_val else 0.0,
+        })
+    for i, row in enumerate(data, 1):
+        row["sn"] = i
+
+    columns = [
+        {"fieldname": "sn",         "label": "#",              "fieldtype": "Int"},
+        {"fieldname": "status",     "label": "PIC Status",     "fieldtype": "Data"},
+        {"fieldname": "ms1_count",  "label": "MS1",            "fieldtype": "Int"},
+        {"fieldname": "ms2_count",  "label": "MS2",            "fieldtype": "Int"},
+        {"fieldname": "milestones", "label": "Milestones",     "fieldtype": "Int"},
+        {"fieldname": "ms_pct",     "label": "Milestones %",   "fieldtype": "Percent"},
+        {"fieldname": "ms1_value",  "label": "MS1 Value (SAR)", "fieldtype": "Currency"},
+        {"fieldname": "ms2_value",  "label": "MS2 Value (SAR)", "fieldtype": "Currency"},
+        {"fieldname": "value",      "label": "Value (SAR)",    "fieldtype": "Currency"},
+        {"fieldname": "value_pct",  "label": "Value %",        "fieldtype": "Percent"},
+    ]
+    # Percent totals are 100 by construction, not the sum of the rows' own
+    # rounded percentages.
+    totals = {
+        "ms1_count":  sum(r["ms1_count"] for r in data),
+        "ms2_count":  sum(r["ms2_count"] for r in data),
+        "milestones": total_ms,
+        "ms1_value":  round(sum(r["ms1_value"] for r in data), 2),
+        "ms2_value":  round(sum(r["ms2_value"] for r in data), 2),
+        "value":      round(total_val, 2),
+        "ms_pct":     100.0 if total_ms else 0.0,
+        "value_pct":  100.0 if total_val else 0.0,
+    }
+    chart = {
+        "data": {
+            "labels": [r["status"] for r in data],
+            "datasets": [
+                {"name": "MS1", "values": [r["ms1_count"] for r in data]},
+                {"name": "MS2", "values": [r["ms2_count"] for r in data]},
+            ],
+        },
+        "type": "bar",
+    }
+    return {"columns": columns, "data": data, "totals": totals, "chart": chart}
 
 @frappe.whitelist()
 def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):

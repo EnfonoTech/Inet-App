@@ -41,13 +41,24 @@ def execute(filters=None):
             SELECT project_code, SUM(line_amount) AS total_value
             FROM `tabPO Dispatch`
             WHERE IFNULL(is_internal_work, 0) = 0
+              AND IFNULL(dispatch_status, '') NOT IN ('Cancelled')
             GROUP BY project_code
         ) pv ON pv.project_code = pcc.name
+        -- Revenue is the value of the project's DONE lines, not the sum of
+        -- its Work Done records. Only 61 Work Done rows exist against 12,000+
+        -- done lines (the rest were imported already completed, often already
+        -- invoiced, with no plan or execution), so summing Work Done read
+        -- SAR 46,552 company-wide against SAR 9,428,121 actually delivered.
+        -- Same definition as the portal's Project Profitability report and
+        -- _project_value_revenue, so the three cannot disagree.
         LEFT JOIN (
-            SELECT pd.project_code, SUM(wd.revenue_sar) AS revenue
-            FROM `tabWork Done` wd
-            JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
-            GROUP BY pd.project_code
+            SELECT project_code, SUM(line_amount) AS revenue
+            FROM `tabPO Dispatch`
+            WHERE IFNULL(is_internal_work, 0) = 0
+              AND IFNULL(dispatch_status, '') NOT IN ('Cancelled')
+              AND dispatch_status IN ('Completed', 'Partially Submitted',
+                                      'Submitted', 'Partially Closed', 'Closed')
+            GROUP BY project_code
         ) rv ON rv.project_code = pcc.name
         WHERE {where}
         ORDER BY pcc.modified DESC

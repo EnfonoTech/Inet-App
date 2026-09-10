@@ -1,5 +1,6 @@
 import frappe
 from inet_app.api.command_center import (
+    LINE_DONE_STATUSES,
     excel_orm_filter,
     excel_options_from_orm,
 )
@@ -22,37 +23,60 @@ def _make_poid(po_no, po_line_no, shipment_number):
 
 
 def _project_value_revenue(project_codes):
-    """Total contracted value (PO Dispatch) and realized revenue (Work Done)
-    per project code — the real, always-available replacement for the dead
-    budget_amount/actual_cost/completion_percentage fields (manual Desk entry
-    only, never written by the app; meaningless for a customer project).
-    Revenue includes Direct Close/Backend closes via the universal
-    wd.system_id -> pd join, same as everywhere else in the app.
+    """Total contracted value and delivered revenue per project code — the
+    real, always-available replacement for the dead budget_amount/actual_cost/
+    completion_percentage fields (manual Desk entry only, never written by the
+    app; meaningless for a customer project).
+
+    Revenue is the value of the project's DONE lines (LINE_DONE_STATUSES), not
+    the sum of its Work Done records. Work Done was the original basis and it
+    made this figure useless: only 61 Work Done rows exist against 12,000+
+    done lines, because the rest were imported already completed — often
+    already invoiced — with no plan or execution ever created. Company-wide
+    that read SAR 47,470 against SAR 9,428,121 of genuinely delivered line
+    value, and a project like 56A0NPK (2,171 lines, 81.6% of its value closed)
+    showed Revenue SAR 0 and Completion 0%.
+
+    This is the same definition the Project Performance and Profitability
+    reports use, via the shared constant, so a project's card and its row in
+    those reports cannot disagree about the word "revenue".
     """
     codes = [c for c in (project_codes or []) if c]
     if not codes:
         return {}
     ph = ", ".join(["%s"] * len(codes))
+    # Cancelled lines are excluded, matching the Profitability report: a
+    # cancelled line is not value the project can still deliver, so leaving it
+    # in only depresses Completion % against a denominator nobody is working
+    # towards. This was the last remaining disagreement between the two — one
+    # project differed by the SAR 100 its cancelled lines carry.
     value_rows = frappe.db.sql(
         f"""
         SELECT project_code, COALESCE(SUM(line_amount), 0) AS total_value
         FROM `tabPO Dispatch`
-        WHERE project_code IN ({ph}) AND IFNULL(is_internal_work, 0) = 0
+        WHERE project_code IN ({ph})
+          AND IFNULL(is_internal_work, 0) = 0
+          AND IFNULL(dispatch_status, '') NOT LIKE '%%Cancel%%'
         GROUP BY project_code
         """,
         tuple(codes), as_dict=True,
     )
     value_by = {r.project_code: flt(r.total_value) for r in value_rows}
 
+    # Same is_internal_work exclusion as the value query above — without it a
+    # project's revenue could include lines its own total value leaves out,
+    # and Completion % could exceed 100 on nothing but that mismatch.
+    ph_done = ", ".join(["%s"] * len(LINE_DONE_STATUSES))
     revenue_rows = frappe.db.sql(
         f"""
-        SELECT pd.project_code, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
-        FROM `tabWork Done` wd
-        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
-        WHERE pd.project_code IN ({ph})
-        GROUP BY pd.project_code
+        SELECT project_code, COALESCE(SUM(line_amount), 0) AS revenue
+        FROM `tabPO Dispatch`
+        WHERE project_code IN ({ph})
+          AND IFNULL(is_internal_work, 0) = 0
+          AND dispatch_status IN ({ph_done})
+        GROUP BY project_code
         """,
-        tuple(codes), as_dict=True,
+        tuple(codes) + tuple(LINE_DONE_STATUSES), as_dict=True,
     )
     revenue_by = {r.project_code: flt(r.revenue) for r in revenue_rows}
 
@@ -229,14 +253,23 @@ def get_project_kpis():
     # total_budget/actual_spent/budget_utilization used to come from
     # budget_amount/actual_cost — dead fields, nothing writes them. Replaced
     # with the real company-wide totals: contracted value across all
-    # projects and revenue actually realized against it.
+    # projects and the value delivered against it.
+    #
+    # Both sides use the same definitions as _project_value_revenue and the
+    # two project reports — done LINES, not Work Done records, and cancelled
+    # and internal lines out of both. Summing Work Done here read SAR 46,552
+    # (0.34%) against SAR 9,428,121 of genuinely delivered value, because
+    # only 61 Work Done records exist against 12,000+ done lines.
+    ph_done = ", ".join(["%s"] * len(LINE_DONE_STATUSES))
+    _scope = ("WHERE IFNULL(is_internal_work, 0) = 0 "
+              "AND IFNULL(dispatch_status, '') NOT LIKE '%%Cancel%%'")
     total_value = flt(frappe.db.sql(
-        "SELECT COALESCE(SUM(line_amount), 0) FROM `tabPO Dispatch` "
-        "WHERE IFNULL(is_internal_work, 0) = 0"
+        f"SELECT COALESCE(SUM(line_amount), 0) FROM `tabPO Dispatch` {_scope}"
     )[0][0])
     total_revenue = flt(frappe.db.sql(
-        "SELECT COALESCE(SUM(wd.revenue_sar), 0) FROM `tabWork Done` wd "
-        "JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id"
+        f"SELECT COALESCE(SUM(line_amount), 0) FROM `tabPO Dispatch` {_scope} "
+        f"AND dispatch_status IN ({ph_done})",
+        tuple(LINE_DONE_STATUSES),
     )[0][0])
     revenue_pct = round(total_revenue / total_value * 100, 2) if total_value else 0
 
@@ -433,6 +466,25 @@ def create_customer(payload):
     return {"name": doc.name, "customer_name": doc.customer_name}
 
 
+def sync_inet_pm_roles(doc, method=None):
+    """Give every INET PM user the INET Admin role as well (User.validate).
+
+    INET PM deliberately carries no permissions of its own — it marks an
+    admin whose sidebar hides Switch to Desk, Masters and the Certificate
+    Tracker. The access itself still comes from INET Admin, which owns the
+    app's 35 DocType permission rows and is what all this app's
+    `"INET Admin" in roles` checks test. Pairing the two here means an
+    administrator assigns ONE role and the PM's portal simply works, instead
+    of the role silently granting nothing.
+
+    Runs on validate (not after_insert) so the row is added before the save
+    that triggered it is written — no second save, no recursion.
+    """
+    roles = {r.role for r in (doc.get("roles") or [])}
+    if "INET PM" in roles and "INET Admin" not in roles:
+        doc.append("roles", {"role": "INET Admin"})
+
+
 @frappe.whitelist(allow_guest=True)
 def get_logged_user():
     user = frappe.session.user
@@ -457,7 +509,26 @@ def get_logged_user():
     im_name = None
     team_id = None
 
+    # INET PM is the admin portal with the desk/masters/certificate entries
+    # hidden — same role set underneath (see sync_inet_pm_roles), so it
+    # resolves to "admin" here and is distinguished only by the is_pm flag
+    # the sidebar reads. A user who is genuinely a System Manager /
+    # Administrator is never treated as a PM, even if also tagged INET PM:
+    # taking options away from someone who demonstrably has desk access
+    # would be hiding a door they already hold the key to.
+    is_pm = (
+        "INET PM" in user_roles
+        and user != "Administrator"
+        and "System Manager" not in user_roles
+    )
+
     if user == "Administrator" or "System Manager" in user_roles or "INET Admin" in user_roles:
+        app_role = "admin"
+    elif "INET PM" in user_roles:
+        # Role assigned but the INET Admin pairing hasn't run yet (hook
+        # skipped, or roles edited directly in the DB). Treat as admin
+        # anyway so the portal is usable; sync_inet_pm_roles repairs the
+        # pairing on the user's next save, and migrate backfills it.
         app_role = "admin"
     elif "INET PIC" in user_roles:
         app_role = "pic"
@@ -510,6 +581,7 @@ def get_logged_user():
         "full_name": full_name,
         "authenticated": True,
         "app_role": app_role,
+        "is_pm": is_pm,
         "im_name": im_name,
         "team_id": team_id,
     }

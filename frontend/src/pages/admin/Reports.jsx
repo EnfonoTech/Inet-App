@@ -152,6 +152,28 @@ const REPORTS = [
     filterType: "dateonly",
   },
   {
+    key: "po_dispatch_status",
+    category: "Rollout & Delivery",
+    title: "PO Dispatch Status",
+    api: "reportPoDispatchStatus",
+    // No date filter: this is where every line stands right now. A line's
+    // current status has no date attached to it, so any range would answer a
+    // different question — see the backend docstring.
+    description: "Where the order book sits across the dispatch pipeline — lines, value and share per status, grouped by stage (current state)",
+    hasFilters: false,
+  },
+  {
+    key: "po_milestone_status",
+    category: "Rollout & Delivery",
+    title: "PO Milestone Status",
+    api: "reportPoMilestoneStatus",
+    // Companion to PO Dispatch Status, and the one to trust for money in
+    // flight: billing is per milestone, and a line's MS1/MS2 are routinely at
+    // different stages, which a single line-level status cannot express.
+    description: "The order book counted by milestone rather than by line — MS1/MS2 split per PIC status, so a part-closed line's closed half is not counted as still in flight",
+    hasFilters: false,
+  },
+  {
     key: "top_teams",
     category: "Performance",
     title: "Top Teams",

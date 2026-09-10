@@ -13,6 +13,9 @@ export default function OpsDashboard() {
   // "Unbilled". PIC numbers come from the PIC dashboard, same as the
   // Financial dashboard does it.
   const [picKpi, setPicKpi] = useState(null);
+  // Straight off the PO Dispatch Status report, so this panel and that report
+  // are the same numbers rather than two queries free to drift apart.
+  const [dispatchRows, setDispatchRows] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,6 +30,9 @@ export default function OpsDashboard() {
         setData(cmd);
         pmApi.getPicDashboard("", "", "")
           .then((pic) => { if (!cancelled) setPicKpi(pic?.kpi || null); }).catch(() => {});
+        pmApi.reportPoDispatchStatus()
+          .then((r) => { if (!cancelled) setDispatchRows(Array.isArray(r?.data) ? r.data : []); })
+          .catch(() => {});
       } catch { if (!cancelled) setData(null); }
     })();
     return () => { cancelled = true; };
@@ -51,6 +57,34 @@ export default function OpsDashboard() {
     { n: "Subcon", v: subcon.active_sub_teams || 0, c: C.amber },
     { n: "Backend", v: backend.active_teams || 0, c: C.red },
   ];
+
+  // Rolled up to STAGE rather than charting all 10 statuses: the book is
+  // heavily skewed (10,590 Closed against 2 Backend Assigned), so on one
+  // linear axis half the statuses would be invisible slivers. Six stages
+  // stay readable, and the report itself carries the per-status detail.
+  // Order comes from the rows, which the backend returns in pipeline order —
+  // sorting by size would scramble the flow this is meant to show.
+  const STAGE_COLOR = {
+    "Not Started": C.amber,
+    "In Rollout":  C.blue,
+    "Work Done":   "#00897B",
+    "Invoicing":   "#6A1B9A",
+    "Closed":      C.green,
+    "Cancelled":   C.red,
+    "Other":       "#78909C",
+  };
+  const pipelineStages = (() => {
+    const order = [];
+    const acc = {};
+    for (const r of dispatchRows) {
+      const st = r.stage || "Other";
+      if (!(st in acc)) { acc[st] = { n: st, lines: 0, value: 0 }; order.push(st); }
+      acc[st].lines += Number(r.lines_count) || 0;
+      acc[st].value += Number(r.value) || 0;
+    }
+    return order.map((st) => ({ ...acc[st], c: STAGE_COLOR[st] || STAGE_COLOR.Other }));
+  })();
+  const pipelineTotal = pipelineStages.reduce((s, x) => s + x.lines, 0);
 
   // "Backend" used to be invented here as active_teams × SAR 10,000 — a
   // hardcoded rate that exists nowhere in the data. Dropped: only the two
@@ -88,6 +122,56 @@ export default function OpsDashboard() {
           { l: "Rev vs Target", v: `${coveragePct}%`, cl: Number(coveragePct) >= 50 ? C.green : C.amber }].map((k) => (
           <div className="nd-kpi-card" key={k.l}><div className="nd-kpi-label">{k.l}</div><div className="nd-kpi-value" style={k.cl ? { color: k.cl } : {}}>{k.v}</div></div>
         ))}
+      </div>
+
+      <div className="nd-panel" style={{ marginBottom: 16 }}>
+        <div className="nd-panel-header">
+          <h3>PO Dispatch Pipeline</h3>
+          {pipelineTotal > 0 && (
+            <span style={{ fontSize: 12, color: "#64748b" }}>
+              {fmt.format(pipelineTotal)} lines
+            </span>
+          )}
+        </div>
+        <div className="nd-panel-body">
+          {pipelineStages.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+              Loading pipeline…
+            </div>
+          ) : (
+            <>
+              <div className="nd-chart-h170">
+                <ResponsiveContainer>
+                  <BarChart data={pipelineStages} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="n" tick={{ fontSize: 10 }} interval={0} />
+                    <YAxis tick={{ fontSize: 10 }} />
+                    <Tooltip
+                      formatter={(v, _k, p) => [
+                        `${fmt.format(v)} lines · SAR ${fmt.format(Math.round(p?.payload?.value || 0))}`,
+                        p?.payload?.n,
+                      ]}
+                    />
+                    <Bar dataKey="lines" radius={[3, 3, 0, 0]}>
+                      {pipelineStages.map((d) => <Cell key={d.n} fill={d.c} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", marginTop: 8 }}>
+                {pipelineStages.map((d) => (
+                  <span key={d.n} style={{ fontSize: 11, color: "#475569", display: "flex", alignItems: "center", gap: 5 }}>
+                    <i style={{ width: 8, height: 8, borderRadius: 2, background: d.c, display: "inline-block" }} />
+                    {d.n} · <strong>{fmt.format(d.lines)}</strong>
+                    <span style={{ color: "#94a3b8" }}>
+                      ({pipelineTotal ? ((d.lines / pipelineTotal) * 100).toFixed(1) : 0}%)
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="nd-grid col2">
