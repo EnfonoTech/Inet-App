@@ -95,7 +95,7 @@ function DefaultRedirect() {
 
 /* -- Authenticated App Content ---------------------------------- */
 function AppContent() {
-  const { user, loading, role } = useAuth();
+  const { user, loading, role, isPm } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -145,7 +145,7 @@ function AppContent() {
               <Route path="/approvals" element={<TeamAllocationApprovals />} />
               <Route path="/teams" element={<AdminTeams />} />
               <Route path="/expenses" element={<IMExpense isAdmin={true} />} />
-              <Route path="/masters" element={<Masters />} />
+              {!isPm && <Route path="/masters" element={<Masters />} />}
               <Route path="/overview" element={<OperationsOverview />} />
               <Route path="/im-material-request" element={<IMMaterialRequest />} />
             </>

@@ -6,7 +6,11 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);      // { email, full_name } or null
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState(null);       // "admin" | "im" | "field"
+  const [role, setRole] = useState(null);       // "admin" | "im" | "field" | "pic" | "warehouse"
+  // INET PM: the admin portal with Switch to Desk, Masters and the
+  // Certificate Tracker hidden. Same `role` ("admin"), so every existing
+  // role check keeps working — this only drives what the sidebar offers.
+  const [isPm, setIsPm] = useState(false);
   const [imName, setImName] = useState(null);
   const [teamId, setTeamId] = useState(null);
 
@@ -18,6 +22,7 @@ export function AuthProvider({ children }) {
         const resolvedRole = res.app_role || "field";
         setUser({ email: res.user, full_name: res.full_name || "" });
         setRole(resolvedRole);
+        setIsPm(!!res.is_pm);
         setImName(res.im_name || null);
         setTeamId(res.team_id || null);
         setLoading(false);
@@ -28,6 +33,7 @@ export function AuthProvider({ children }) {
     }
     setUser(null);
     setRole(null);
+    setIsPm(false);
     setImName(null);
     setTeamId(null);
     setLoading(false);
@@ -49,6 +55,7 @@ export function AuthProvider({ children }) {
           if (!res?.authenticated) {
             setUser(null);
             setRole(null);
+            setIsPm(false);
             setImName(null);
             setTeamId(null);
           }
@@ -92,12 +99,13 @@ export function AuthProvider({ children }) {
     }
     setUser(null);
     setRole(null);
+    setIsPm(false);
     setImName(null);
     setTeamId(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, role, imName, teamId, login, logout, checkSession }}>
+    <AuthContext.Provider value={{ user, loading, role, isPm, imName, teamId, login, logout, checkSession }}>
       {children}
     </AuthContext.Provider>
   );

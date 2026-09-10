@@ -24,7 +24,7 @@ fixtures = [
 	},
 	{
 		"dt": "Role",
-		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR"]]],
+		"filters": [["name", "in", ["INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR", "INET PM"]]],
 	},
 	{
 		"dt": "Report",
@@ -110,6 +110,8 @@ role_home_page = {
 	"INET Field Team": "pms/today",
 	"INET IM": "pms/im-dashboard",
 	"INET Admin": "pms/dashboard",
+	# Same portal as INET Admin — see sync_inet_pm_roles / get_logged_user.
+	"INET PM": "pms/dashboard",
 	"INET PIC": "pms/pic-dashboard",
 	# Warehouse Manager — lands straight on Material Requests, their actual
 	# job, rather than Desk's "No App" page or (before this) the Field
@@ -195,6 +197,12 @@ role_home_page = {
 # Hook on document methods and events
 
 doc_events = {
+	"User": {
+		# INET PM carries no permissions of its own; it marks an admin whose
+		# sidebar hides Switch to Desk / Masters / Certificate Tracker. The
+		# access comes from INET Admin, so the two are always assigned together.
+		"validate": "inet_app.api.project_management.sync_inet_pm_roles",
+	},
 	"Employee": {
 		# Names a new Employee by Employee Number (== Iqama/National ID here)
 		# instead of the HR-EMP- series, matching production's convention.

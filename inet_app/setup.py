@@ -264,7 +264,7 @@ def _ensure_inet_roles():
     Frappe stores roles in the ``Role`` doctype. Re-running ``bench migrate``
     should be idempotent — we only insert when missing.
     """
-    inet_roles = ["INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR"]
+    inet_roles = ["INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR", "INET PM"]
     for role_name in inet_roles:
         if frappe.db.exists("Role", role_name):
             continue
@@ -280,11 +280,47 @@ def _ensure_inet_roles():
             pass
     frappe.db.commit()
 
+    _pair_pm_users_with_admin()
+
     # Grant desk access to existing PIC role
     frappe.db.set_value("Role", "INET PIC", "desk_access", 1)
 
     # Grant INET PIC role access to Sales Invoice doctype for invoicing
     _ensure_pic_permissions()
+
+
+def _pair_pm_users_with_admin():
+    """Backfill: every INET PM user also holds INET Admin.
+
+    INET PM is the SAME portal as INET Admin with two sidebar entries hidden
+    (Switch to Desk, Masters) and no Certificate Tracker link — it is a
+    presentation variant, not a narrower permission set. Rather than mirror
+    INET Admin's 35 DocType permission rows onto a second role (which would
+    then have to be kept in sync forever, and would still leave every
+    `"INET Admin" in roles` check in this app failing for a PM), a PM user
+    simply holds both roles. INET PM then only has to answer one question:
+    "should this admin see the desk/masters/certificate options?"
+
+    Kept idempotent so it can run on every migrate. See
+    inet_app.api.project_management.sync_inet_pm_roles for the on-save hook
+    that keeps new/edited users paired.
+    """
+    pm_users = frappe.get_all(
+        "Has Role", filters={"role": "INET PM", "parenttype": "User"},
+        fields=["parent"], ignore_permissions=True,
+    )
+    for row in pm_users:
+        user = row.parent
+        if frappe.db.exists("Has Role", {"parent": user, "role": "INET Admin", "parenttype": "User"}):
+            continue
+        try:
+            doc = frappe.get_doc("User", user)
+            doc.append("roles", {"role": "INET Admin"})
+            doc.save(ignore_permissions=True)
+        except Exception:
+            # Best-effort — a single bad user must not fail the whole migrate.
+            pass
+    frappe.db.commit()
 
 
 def _ensure_pic_permissions():
