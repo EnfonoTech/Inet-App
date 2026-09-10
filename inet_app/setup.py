@@ -258,6 +258,18 @@ def _ensure_item_activity_type_field():
         pass
 
 
+# Roles that carry Frappe Desk access. Everything except INET PM, which is
+# the portal-only admin variant — though a PM also holds INET Admin (see
+# _pair_pm_users_with_admin), so this flag is not what keeps them out of
+# Desk; the sidebar simply doesn't offer the link.
+#
+# Desk access and the "Switch to Desk" link are separate decisions: a field
+# user has desk access here but no link in the portal (AppShell's
+# canSwitchToDesk), because Desk is not part of their day-to-day job even
+# though the account is allowed there.
+DESK_ACCESS_ROLES = {"INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR"}
+
+
 def _ensure_inet_roles():
     """Create the INET application roles if they aren't already present.
 
@@ -272,7 +284,7 @@ def _ensure_inet_roles():
             doc = frappe.get_doc({
                 "doctype": "Role",
                 "role_name": role_name,
-                "desk_access": 1 if role_name == "INET PIC" else 0,
+                "desk_access": 1 if role_name in DESK_ACCESS_ROLES else 0,
             })
             doc.insert(ignore_permissions=True)
         except Exception:
@@ -282,8 +294,12 @@ def _ensure_inet_roles():
 
     _pair_pm_users_with_admin()
 
-    # Grant desk access to existing PIC role
-    frappe.db.set_value("Role", "INET PIC", "desk_access", 1)
+    # Enforced on every migrate, not just at creation: these roles predate the
+    # list above, and Frappe's own login path branches on desk access (a user
+    # with none gets "No App" instead of "Logged In").
+    for role_name in DESK_ACCESS_ROLES:
+        if frappe.db.exists("Role", role_name):
+            frappe.db.set_value("Role", role_name, "desk_access", 1)
 
     # Grant INET PIC role access to Sales Invoice doctype for invoicing
     _ensure_pic_permissions()

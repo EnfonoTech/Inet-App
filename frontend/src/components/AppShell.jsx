@@ -217,6 +217,15 @@ export default function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, role, isPm, logout } = useAuth();
+  // Desk is only part of the job for the admin (housekeeping), the PIC
+  // (invoicing) and the warehouse (stock entries). An IM or field user works
+  // entirely in the portal, so the link is noise for them.
+  //
+  // Deliberately NOT tied to the role's desk_access flag: every INET role
+  // except INET PM has desk access (see DESK_ACCESS_ROLES in setup.py) —
+  // "allowed into Desk" and "should be pointed at Desk from the portal" are
+  // separate questions, and this only answers the second.
+  const canSwitchToDesk = role === "pic" || role === "warehouse" || (role === "admin" && !isPm);
   const [collapsed, setCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -482,7 +491,7 @@ export default function AppShell() {
                 <span>Certificate Tracker</span>
               </a>
             )}
-            {!isPm && (
+            {canSwitchToDesk && (
               <a href="/app" className="sidebar-action-link">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
