@@ -38,6 +38,7 @@ const IMProjects          = lazy(() => import("./pages/im/IMProjects"));
 const IMTeams             = lazy(() => import("./pages/im/IMTeams"));
 const IMPlanning          = lazy(() => import("./pages/im/IMPlanning"));
 const IMExecution         = lazy(() => import("./pages/im/IMExecution"));
+const IMExecutionAnalytics = lazy(() => import("./pages/im/IMExecutionAnalytics"));
 const IMReports           = lazy(() => import("./pages/im/IMReports"));
 const IMTimesheets        = lazy(() => import("./pages/im/IMTimesheets"));
 const IMDispatch          = lazy(() => import("./pages/im/IMDispatch"));
@@ -164,6 +165,7 @@ function AppContent() {
               <Route path="/im-dispatch" element={<IMDispatch />} />
               <Route path="/im-planning" element={<IMPlanning />} />
               <Route path="/im-execution" element={<IMExecution />} />
+              <Route path="/im-exec-analytics" element={<IMExecutionAnalytics />} />
               <Route path="/im-work-done" element={<IMWorkDone />} />
               <Route path="/im-issues-risks" element={<IMIssuesRisks />} />
               <Route path="/im-material-request" element={<IMMaterialRequest />} />

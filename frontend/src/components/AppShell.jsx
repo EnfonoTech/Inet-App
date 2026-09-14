@@ -167,6 +167,7 @@ const imNav = [
   { to: "/im-dispatch",  label: "Rollout Planning", icon: "send" },
   { to: "/im-planning",  label: "Rollout Execution", icon: "calendar" },
   { to: "/im-execution", label: "Rollout Work Done", icon: "eye" },
+  { to: "/im-exec-analytics", label: "Execution Analytics", icon: "barChart" },
   { to: "/im-work-done", label: "Work Done",    icon: "checkCircle" },
   { to: "/im-issues-risks", label: "Issues & Risks", icon: "clipboard" },
   { to: "/im-material-request", label: "Material Management", icon: "package" },
