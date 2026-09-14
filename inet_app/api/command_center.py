@@ -912,6 +912,18 @@ def _sql_search_clause(concat_expr, term, exact_cols=None):
     clause = f"({ands})"
     params = list(patterns)
     value_tokens = _sql_value_tokens(term)
+    # A batch pasted with plain SPACES (no newline/comma/tab — e.g. copied out
+    # of a single Excel cell, or typed) collapses to one whole-value token, so
+    # the exact-match branch below never armed. The AND-across-words clause was
+    # then the only thing left, and it can never match a batch: no single row
+    # contains every pasted identifier. Reproduced — two POIDs separated by a
+    # newline returned 2 rows, the same two separated by a space returned 0.
+    # Fall back to word tokens for the exact side only when the term carries no
+    # hard separator at all, so a pasted value with an internal space (a DUID
+    # like "...M24_rack Fuse Upgrade") still arrives with one and keeps its
+    # whole-value handling untouched.
+    if len(value_tokens) <= 1 and len(tokens) > 1:
+        value_tokens = tokens
     if exact_cols and len(value_tokens) > 1:
         ph = ", ".join(["%s"] * len(value_tokens))
         exact_ors = " OR ".join(f"{col} IN ({ph})" for col in exact_cols)
