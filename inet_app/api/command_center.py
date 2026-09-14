@@ -287,6 +287,71 @@ def _current_plan_subquery(select_expr, join=""):
     )
 
 
+_NUMERIC_COLS_CACHE = {}
+
+# Frappe bookkeeping columns. No portal page renders any of them.
+_ROW_JUNK_COLS = frozenset(
+    ("_assign", "_comments", "_liked_by", "_user_tags",
+     "docstatus", "idx", "parent", "parentfield", "parenttype")
+)
+
+
+def _numeric_columns(doctype):
+    """Physical numeric columns of a doctype, cached per process."""
+    if doctype in _NUMERIC_COLS_CACHE:
+        return _NUMERIC_COLS_CACHE[doctype]
+    try:
+        rows = frappe.db.sql(
+            """SELECT COLUMN_NAME FROM information_schema.COLUMNS
+               WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s
+                 AND DATA_TYPE IN ('int','bigint','decimal','float','double',
+                                   'tinyint','smallint','mediumint')""",
+            (f"tab{doctype}",),
+        )
+        cols = {r[0] for r in (rows or [])}
+    except Exception:
+        cols = set()
+    _NUMERIC_COLS_CACHE[doctype] = cols
+    return cols
+
+
+def _shrink_rows(rows, doctype):
+    """Drop empty text values and bookkeeping columns from a row list.
+
+    A full PO Dispatch row carries 114 columns of which the grids render
+    about fifteen, and 68% of all cells are null or blank — at row limit
+    "All" that is 56 MB of JSON for 17k rows, most of it `"key": null`. The
+    browser pays for that twice, downloading it and then parsing it, before
+    React draws anything.
+
+    Dropping a key is safe for the JS that reads it: `undefined` behaves like
+    `null` through `||`, `?.` and every truthiness test the pages use.
+
+    NUMERIC columns are never dropped, even when null. Several places format
+    them unguarded (`money.format(row.line_amount)`), and Intl renders null as
+    "0" but undefined as "NaN" — so removing a null number would put NaN on
+    screen. They are coerced to 0 instead, which is what the column means.
+
+    Consumers that enumerate keys rather than naming them — the detail modal,
+    and Excel export when no explicit columns are given — see only populated
+    fields. That is why exportExcel's auto-columns unions keys across all
+    rows instead of trusting the first one.
+    """
+    numeric = _numeric_columns(doctype)
+    out = []
+    for r in rows:
+        d = {}
+        for k, v in r.items():
+            if k in _ROW_JUNK_COLS:
+                continue
+            if k in numeric:
+                d[k] = 0 if v is None else v
+            elif v is not None and v != "":
+                d[k] = v
+        out.append(d)
+    return out
+
+
 def _po_dispatch_excel_expr(col_key, fields):
     """SQL expression an Excel-style column filter matches against, or None.
 
@@ -4826,7 +4891,7 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
                 r["ms2_closed_at"] = wd_ms.get("ms2_closed_at")
                 r["wd_subcontractor"] = wd_ms.get("subcontractor") or None
 
-    return rows
+    return _shrink_rows(rows, "PO Dispatch")
 
 
 def _next_visit_number_for_dispatch(po_dispatch_name):

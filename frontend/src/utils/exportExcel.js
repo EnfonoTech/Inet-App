@@ -80,11 +80,18 @@ function _humanise(key) {
 }
 
 function _autoColumns(rows) {
-  const first = rows.find((r) => r && typeof r === "object");
-  if (!first) return [];
-  return Object.keys(first)
-    .filter((k) => !k.startsWith("__"))
-    .map((k) => ({ key: k, label: _humanise(k) }));
+  // Union the keys across every row, in first-seen order, rather than
+  // trusting row 0. List endpoints omit empty fields to keep the payload
+  // down, so rows are sparse and no single row carries the full set — taking
+  // the first row's keys would silently drop whole columns from the export.
+  const seen = new Map();
+  for (const r of rows) {
+    if (!r || typeof r !== "object") continue;
+    for (const k of Object.keys(r)) {
+      if (!k.startsWith("__") && !seen.has(k)) seen.set(k, true);
+    }
+  }
+  return [...seen.keys()].map((k) => ({ key: k, label: _humanise(k) }));
 }
 
 export function exportToExcel({ filename = "export", columns, rows, sheetName = "Sheet1" }) {
