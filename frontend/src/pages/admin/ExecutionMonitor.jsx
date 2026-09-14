@@ -4,6 +4,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import ExecutionAnalyticsPanel from "../../components/ExecutionAnalytics";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -153,17 +154,22 @@ export default function ExecutionMonitor() {
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [planStatusFilter, setPlanStatusFilter] = useState(_navExec?.planStatusFilter ?? ["Planned", "In Execution", "Completed", "Planning with Issue"]);
-  const [executionStatusFilter, setExecutionStatusFilter] = useState([]);
+  const [executionStatusFilter, setExecutionStatusFilter] = useState(_navExec?.executionStatusFilter ?? []);
   // Accepts a visit type from dashboard drill-through (Command dashboard's
   // Re-Visits tile), same as planStatusFilter/fromDate/toDate above.
   const [visitFilter, setVisitFilter] = useState(_navExec?.visitFilter ?? []);
-  const [imFilter, setImFilter] = useState([]);
-  const [projectFilter, setProjectFilter] = useState([]);
-  const [teamFilter, setTeamFilter] = useState([]);
-  const [duidFilter, setDuidFilter] = useState([]);
+  const [imFilter, setImFilter] = useState(_navExec?.imFilter ?? []);
+  const [projectFilter, setProjectFilter] = useState(_navExec?.projectFilter ?? []);
+  const [teamFilter, setTeamFilter] = useState(_navExec?.teamFilter ?? []);
+  const [duidFilter, setDuidFilter] = useState(_navExec?.duidFilter ?? []);
   const [fromDate, setFromDate] = useState(_navExec?.fromDate ?? "");
   const [toDate, setToDate] = useState(_navExec?.toDate ?? "");
-  const [tab, setTab] = useState("all"); // "all" | "internal_done"
+  const [tab, setTab] = useState(_navExec?.tab ?? "all"); // "all" | "internal_done"
+  // Drill-through scope from Execution Analytics. No toolbar control — these
+  // exist so the list shows exactly the set the tile counted.
+  const [navBucket, setNavBucket] = useState(_navExec?.bucket ?? "");
+  const [navClosure, setNavClosure] = useState(_navExec?.closure ?? "");
+  const [navVisits, setNavVisits] = useState(_navExec?.visits ?? "");
   // "All" is stored per-path, not per-tab — the backend fetch is tab-scoped
   // (filters.tab below), so switching tabs is a genuinely different,
   // separately-limited fetch. Without this, picking "All" on one tab and
@@ -306,7 +312,12 @@ export default function ExecutionMonitor() {
         // Main and Internal Work Done are two tabs sharing one fetch -
         // without this, one row-limited batch had to cover both, so
         // whichever tab wasn't the majority of that batch lost rows.
-        filters.tab = tab === "internal_done" ? "internal_done" : "main";
+        // A bucket drill-in must NOT be re-split by the internal-work tab, or
+        // completed internal lines vanish from a count that included them.
+        filters.tab = navBucket ? "all" : (tab === "internal_done" ? "internal_done" : "main");
+        if (navBucket) filters.bucket = navBucket;
+        if (navClosure) filters.closure = navClosure;
+        if (navVisits) filters.visits = navVisits;
         if (planStatusFilter.length) filters.status = planStatusFilter;
         if (executionStatusFilter.length) filters.execution_status = executionStatusFilter;
         if (visitFilter.length) filters.visit_type = visitFilter;
@@ -368,7 +379,7 @@ export default function ExecutionMonitor() {
         intervalRef.current = null;
       }
     };
-  }, [effectiveRowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, internalImFilter, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate, tab]);
+  }, [effectiveRowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, internalImFilter, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate, tab, navBucket, navClosure, navVisits]);
 
   function formatTime(d) {
     if (!d) return "";
@@ -494,12 +505,14 @@ export default function ExecutionMonitor() {
         {[
           { id: "all", label: "Execution Monitor" },
           { id: "internal_done", label: "Internal Work Done", count: internalDoneRows.length },
+          { id: "analytics", label: "📊 Analytics" },
         ].map((tt) => {
           const active = tab === tt.id;
           const teal = tt.id === "internal_done";
+          const violet = tt.id === "analytics";
           return (
             <button key={tt.id} type="button" role="tab" aria-selected={active} onClick={() => setTab(tt.id)}
-              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? (teal ? "#0d9488" : "#1d4ed8") : "transparent", color: active ? "#fff" : "#475569", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? (teal ? "#0d9488" : violet ? "#6d28d9" : "#1d4ed8") : "transparent", color: active ? "#fff" : "#475569", display: "inline-flex", alignItems: "center", gap: 6 }}>
               {tt.label}
               {!!tt.count && (
                 <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, fontSize: "0.66rem", fontWeight: 800, background: active ? "#fff" : "#14b8a6", color: active ? "#0d9488" : "#fff" }}>
@@ -593,12 +606,46 @@ export default function ExecutionMonitor() {
       )}
 
       <div className="page-content">
+        {navBucket && (
+          <div className="notice" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10, background: "#EEF4FE", border: "1px solid #CFE0F8", color: "#1D5AAE" }}>
+            <span>Showing one Execution Analytics bucket{navClosure ? ` · ${navClosure} lines` : ""}{navVisits === "all" ? " · all visits" : ""}.</span>
+            <button type="button" className="btn-secondary" style={{ marginLeft: "auto", padding: "3px 9px", fontSize: 11 }} onClick={() => { setNavBucket(""); setNavClosure(""); setNavVisits(""); }}>
+              Clear
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className="notice error" style={{ marginBottom: 16 }}>
             <span>⚠</span> {error}
           </div>
         )}
 
+        {tab === "analytics" && (
+          <ExecutionAnalyticsPanel
+            onDrill={(f) => {
+              // Same page, so a bucket click is a tab switch — the table then
+              // fetches with the very predicate the tile counted with.
+              setNavBucket(f.bucket || "");
+              setNavClosure(f.closure || "");
+              setNavVisits(f.visits || "");
+              setPlanStatusFilter(f.planStatusFilter ?? []);
+              setExecutionStatusFilter(f.executionStatusFilter ?? []);
+              setImFilter(f.imFilter ?? []);
+              setProjectFilter(f.projectFilter ?? []);
+              setDuidFilter(f.duidFilter ?? []);
+              setVisitFilter(f.visitFilter ?? []);
+              setFromDate(f.fromDate || "");
+              setToDate(f.toDate || "");
+              setTab("all");
+            }}
+          />
+        )}
+
+        {/* Hidden, never unmounted — see RolloutPlanning.jsx for the same
+            rule: DataTablePro observes this wrapper, and losing it loses the
+            table's enhancement state. */}
+        <div style={tab === "analytics" ? { display: "none" } : undefined}>
         <DataTableWrapper loading={loading && rows.length > 0}>
           {tab === "internal_done" ? (
             <table key="execution-monitor-internal-done" className="data-table" data-excel-filter-all="1" data-table-key="execution-monitor-internal-done">
@@ -906,6 +953,7 @@ export default function ExecutionMonitor() {
           value={effectiveRowLimit}
           onChange={confirmRowLimit}
         />
+        </div>
       </div>
 
       {tlStatusFor && (

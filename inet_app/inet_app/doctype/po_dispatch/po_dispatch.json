@@ -25,7 +25,6 @@
   "im",
   "huawei_im",
   "column_break_vuud",
-  "target_month",
   "planning_mode",
   "dispatch_status",
   "dispatch_mode",
@@ -35,6 +34,14 @@
   "is_internal_work",
   "internal_work_type",
   "internal_domain",
+  "section_forecast",
+  "target_month",
+  "target_week",
+  "target_date",
+  "target_team",
+  "column_break_forecast",
+  "forecast_set_on",
+  "forecast_set_by",
   "section_site",
   "center_area",
   "region_type",
@@ -196,7 +203,8 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Project Code",
-   "options": "Project Control Center"
+   "options": "Project Control Center",
+   "search_index": 1
   },
   {
    "fieldname": "customer",
@@ -209,18 +217,14 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Implementation Manager",
-   "options": "IM Master"
+   "options": "IM Master",
+   "search_index": 1
   },
   {
    "fieldname": "huawei_im",
    "fieldtype": "Link",
    "label": "Huawei IM",
    "options": "Huawei IM"
-  },
-  {
-   "fieldname": "target_month",
-   "fieldtype": "Date",
-   "label": "Target Month"
   },
   {
    "default": "Plan",
@@ -293,6 +297,50 @@
    "options": "Project Domain"
   },
   {
+   "fieldname": "section_forecast",
+   "fieldtype": "Section Break",
+   "label": "Forecast (IM Dispatch)"
+  },
+  {
+   "fieldname": "target_month",
+   "fieldtype": "Date",
+   "label": "Target Month"
+  },
+  {
+   "fieldname": "target_week",
+   "fieldtype": "Date",
+   "label": "Target Week",
+   "search_index": 1
+  },
+  {
+   "fieldname": "target_date",
+   "fieldtype": "Date",
+   "label": "Target Date"
+  },
+  {
+   "fieldname": "target_team",
+   "fieldtype": "Link",
+   "label": "Target Team",
+   "options": "INET Team"
+  },
+  {
+   "fieldname": "column_break_forecast",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "forecast_set_on",
+   "fieldtype": "Datetime",
+   "label": "Forecast Set On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "forecast_set_by",
+   "fieldtype": "Link",
+   "label": "Forecast Set By",
+   "options": "IM Master",
+   "read_only": 1
+  },
+  {
    "fieldname": "section_site",
    "fieldtype": "Section Break",
    "label": "Site Details"
@@ -314,7 +362,8 @@
    "fieldname": "site_code",
    "fieldtype": "Link",
    "label": "DUID",
-   "options": "DUID Master"
+   "options": "DUID Master",
+   "search_index": 1
   },
   {
    "fieldname": "site_name",

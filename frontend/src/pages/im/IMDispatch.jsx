@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import RolloutWeeklyPlan from "../../components/RolloutWeeklyPlan";
+import RolloutWeeklyForecast from "../../components/RolloutWeeklyForecast";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
@@ -19,6 +20,7 @@ import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty } from "../../utils/numberFormat";
+import { isoLocal, weekRangeLabel } from "../../utils/weeks";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const VISIT_TYPES = ["Execution", "Re-Visit", "Extra Visit"];
@@ -896,17 +898,56 @@ export default function IMDispatch() {
     }
   }
 
+  // What the IM forecast for the selected lines, shown beside the (editable)
+  // plan fields so a deliberate change is visible rather than silent.
+  const forecastHint = useMemo(() => {
+    if (!showModal) return null;
+    const sel = rows.filter((r) => selected.has(r.name));
+    if (!sel.length) return null;
+    const teams = [...new Set(sel.map((r) => r.target_team_name || r.target_team).filter(Boolean))];
+    const dates = [...new Set(sel.map((r) => r.target_date).filter(Boolean))];
+    const weeks = [...new Set(sel.map((r) => r.target_week).filter(Boolean))];
+    if (!teams.length && !dates.length && !weeks.length) return null;
+    return {
+      team: teams.length === 1 ? teams[0] : teams.length ? "mixed" : "no team",
+      when: dates.length === 1
+        ? String(dates[0]).slice(0, 10)
+        : weeks.length === 1
+          ? weekRangeLabel(String(weeks[0]).slice(0, 10))
+          : "",
+    };
+  }, [showModal, rows, selected]);
+
   function openCreatePlanModal() {
     setCreateError(null);
-    setPlanTeam("");
     setPlanTeams([]);
-    setPlanEndDate(planDate);
     setAccessTime("");
     setAccessPeriod("");
     // Pre-fill only when every selected row already agrees on the value
     // (own override or project default); otherwise leave blank so submitting
     // doesn't silently overwrite a mixed batch with one value.
     const selRows = rows.filter((r) => selected.has(r.name));
+
+    // Seed team and date from the forecast the IM set at dispatch. Same
+    // "only when they all agree" rule as the overrides below — a mixed batch
+    // must not be silently unified under one row's forecast. Both stay fully
+    // editable: the forecast is a starting point, never a constraint, and
+    // nothing here is written back to the forecast fields.
+    const fcTeams = [...new Set(selRows.map((r) => r.target_team).filter(Boolean))];
+    setPlanTeam(fcTeams.length === 1 ? fcTeams[0] : "");
+    const fcDates = [...new Set(selRows.map((r) => r.target_date).filter(Boolean))];
+    const fcWeeks = [...new Set(selRows.map((r) => r.target_week).filter(Boolean))];
+    const today = isoLocal(new Date());
+    let seedDate = planDate;
+    if (fcDates.length === 1) {
+      seedDate = String(fcDates[0]).slice(0, 10);
+    } else if (fcWeeks.length === 1) {
+      // Week-only forecast: land on its Monday, or today if it has started.
+      const wk = String(fcWeeks[0]).slice(0, 10);
+      seedDate = wk > today ? wk : today;
+    }
+    setPlanDate(seedDate);
+    setPlanEndDate(seedDate);
     const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
     setHuaweiImOverride(huaweiVals.length === 1 ? huaweiVals[0] : "");
     const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
@@ -1113,7 +1154,7 @@ export default function IMDispatch() {
       {/* KPI row + scope toggle share the same line to save vertical
           space. Toggle uses a stronger active state so it reads as a
           clickable tab control, not a label. */}
-      {(view === "week" || (!loading && hasAnyDispatches)) && (
+      {(view === "week" || view === "forecast" || (!loading && hasAnyDispatches)) && (
         <div style={{ display: "flex", gap: 8, margin: "0 16px 6px", flexWrap: "wrap", alignItems: "center" }}>
           <div style={{
             display: "inline-flex", alignItems: "center", gap: 6,
@@ -1168,8 +1209,9 @@ export default function IMDispatch() {
               { id: "unplanned", label: "Unplanned", view: "table" },
               { id: "all",       label: "All POIDs (re-plan)", view: "table" },
               { id: "week",      label: "🗓 Weekly Plan", view: "week" },
+              { id: "forecast",  label: "📈 Weekly Forecast", view: "forecast" },
             ].map((tab) => {
-              const active = tab.view === "week" ? view === "week" : (view === "table" && planScope === tab.id);
+              const active = tab.view !== "table" ? view === tab.view : (view === "table" && planScope === tab.id);
               return (
                 <button
                   key={tab.id}
@@ -1336,7 +1378,20 @@ export default function IMDispatch() {
               {teamsList.map((t) => (
                 <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
               ))}
+              {/* The team list loads AFTER planTeam is seeded from the
+                  forecast, and a <select> whose value isn't among its options
+                  renders blank — so a forecast team outside the IM's active
+                  field teams would look unset while actually being set. */}
+              {planTeam && !teamsList.some((t) => t.team_id === planTeam) && (
+                <option value={planTeam}>{planTeam} — forecast team</option>
+              )}
             </select>
+            {forecastHint && (
+              <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: 5 }}>
+                Forecast: <strong style={{ color: "#0f172a" }}>{forecastHint.team}</strong>
+                {forecastHint.when ? ` · ${forecastHint.when}` : ""}
+              </div>
+            )}
           </div>
           <div>
             <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>Visit type</label>
@@ -1647,7 +1702,7 @@ export default function IMDispatch() {
                 "name", "system_id", "poid", "po_no", "po_intake",
                 "po_line_no", "shipment_number",
                 "site_code", "site_name", "area", "center_area", "region_type",
-                "target_month", "planning_mode",
+                "target_month", "target_week", "target_date", "target_team", "planning_mode",
                 "is_dummy_po", "was_dummy_po", "original_dummy_poid",
                 "customer",
               ]}
@@ -1992,6 +2047,13 @@ export default function IMDispatch() {
         {view === "week" && (
           <RolloutWeeklyPlan imName={imName} portal={summaryQuery?.portal} refreshKey={refreshKey} />
         )}
+        {view === "forecast" && (
+          <RolloutWeeklyForecast
+            imName={imName}
+            portal={summaryQuery?.portal}
+            refreshKey={refreshKey}
+          />
+        )}
         {/* Hidden, never unmounted. DataTablePro observes THIS wrapper's inner
             node to know when to re-enhance; unmounting it takes the observer
             with it, so on the way back the new table gets no Manage Table,
@@ -2031,13 +2093,16 @@ export default function IMDispatch() {
                   <th>Center area</th>
                   <th>Region</th>
                   <th>Status</th>
+                  <th data-excel-filter-bucket="day">Target Week</th>
+                  <th data-excel-filter-bucket="day">Target Date</th>
+                  <th>Target Team</th>
                   <th style={{ minWidth: 160, width: 160, whiteSpace: "nowrap" }} data-excel-filter="0">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleRows.length === 0 ? (
                   <tr>
-                    <td colSpan={19} style={{ padding: 0 }}>
+                    <td colSpan={22} style={{ padding: 0 }}>
                       {loading && rows.length === 0 ? (
                         <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
                           Loading dispatches...
@@ -2173,6 +2238,19 @@ export default function IMDispatch() {
                           {row.dispatch_status || "Pending"}
                         </span>
                       </td>
+                      <td style={{ fontSize: "0.82rem" }}>
+                        {row.target_week ? weekRangeLabel(String(row.target_week).slice(0, 10)) : (
+                          <span style={{ color: "#b45309", fontWeight: 600 }} title="No forecast week — invisible on the Weekly Forecast">
+                            Week not set
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: "0.82rem" }}>
+                        {row.target_date
+                          ? new Date(`${String(row.target_date).slice(0, 10)}T00:00:00`).toLocaleDateString("en", { month: "short", day: "numeric" })
+                          : "—"}
+                      </td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.target_team_name || row.target_team || "—"}</td>
                       <td style={{ minWidth: 175, width: 175, whiteSpace: "nowrap" }}>
                         <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                           <button
@@ -2202,7 +2280,7 @@ export default function IMDispatch() {
                 <tfoot>
                   {/* checkbox·POID·Mode·Dummy POID·PO No·Project·Domain·Huawei IM·Item·Description·
                       Activity Type = 11 columns, then Qty·Amount, then IM·DUID·Center area·Region·
-                      Status·Actions = 6 columns */}
+                      Status·Target Week·Target Date·Target Team·Actions = 9 columns */}
                   <tr>
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
@@ -2224,7 +2302,7 @@ export default function IMDispatch() {
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{qty.format(dispatchTotals.qty)}</td>{/* Qty */}
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>{money.format(dispatchTotals.amount)}</td>{/* Amount */}
-                    <td /><td /><td /><td /><td /><td />{/* IM..Actions — one <td> per column, no colSpan (see PODispatch.jsx tfoot comment) */}
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td />{/* IM..Actions — one <td> per column, no colSpan (see PODispatch.jsx tfoot comment) */}
                   </tr>
                 </tfoot>
               )}

@@ -42,7 +42,8 @@
    "fieldname": "rollout_plan",
    "fieldtype": "Link",
    "label": "Rollout Plan",
-   "options": "Rollout Plan"
+   "options": "Rollout Plan",
+   "search_index": 1
   },
   {
    "fieldname": "im",
@@ -73,7 +74,8 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Execution Date",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "last_progress_date",

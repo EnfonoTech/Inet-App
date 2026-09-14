@@ -16,6 +16,7 @@ import IMNoteCallout from "../../components/IMNoteCallout";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { money, qty } from "../../utils/numberFormat";
+import { weekOptionsForMonth, weekRangeLabel, weekBoundsOf } from "../../utils/weeks";
 
 
 // Full Select-field option lists — used as filter option sources instead of
@@ -312,6 +313,18 @@ export default function IMPOIntake() {
   const [modeFilter, setModeFilter] = useState("all");
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignMonth, setAssignMonth] = useState(todayMonth());
+  // Week is mandatory and deliberately NOT pre-selected: "mandatory" and
+  // "pre-filled" cancel out, and the whole point is a considered choice.
+  const [assignWeek, setAssignWeek] = useState("");
+  const [assignDate, setAssignDate] = useState("");
+  const [assignTeam, setAssignTeam] = useState("");
+  const [assignTeams, setAssignTeams] = useState([]);
+  const [assignTeamsLoading, setAssignTeamsLoading] = useState(false);
+  // Declared here, above every callback and JSX block that reads them — a
+  // const referenced from a dep array evaluated earlier is a TDZ
+  // ReferenceError that `yarn build` will not catch.
+  const assignWeekOptions = useMemo(() => weekOptionsForMonth(assignMonth), [assignMonth]);
+  const assignWeekBounds = useMemo(() => weekBoundsOf(assignWeek), [assignWeek]);
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState(null);
   const [toastMsg, setToastMsg] = useState(null);
@@ -1033,21 +1046,48 @@ export default function IMPOIntake() {
   }
 
   async function submitAssign() {
-    if (!assignMonth || selected.size === 0) return;
+    if (!assignMonth || !assignWeek || selected.size === 0) return;
     setAssigning(true);
     setAssignError(null);
     try {
-      const res = await pmApi.assignIMTargetMonth({ dispatches: Array.from(selected), target_month: assignMonth });
+      const res = await pmApi.assignIMTargetMonth({
+        dispatches: Array.from(selected),
+        target_month: assignMonth,
+        target_week: assignWeek,
+        target_date: assignDate || undefined,
+        target_team: assignTeam || undefined,
+      });
       setShowAssignModal(false);
       const n = res?.updated || selected.size;
-      setToastMsg(`Moved ${n} line${n !== 1 ? "s" : ""} to My Dispatches (target month ${assignMonth}).`);
+      setToastMsg(`Moved ${n} line${n !== 1 ? "s" : ""} to My Dispatches (${weekRangeLabel(assignWeek)}).`);
       setTimeout(() => setToastMsg(null), 4500);
       setSelected(new Set());
       await load();
     } catch (err) {
-      setAssignError(err.message || "Failed to assign target month");
+      setAssignError(err.message || "Failed to set the forecast");
     } finally {
       setAssigning(false);
+    }
+  }
+
+  // Same team source as the plan modal: the IM's active FIELD teams.
+  async function openAssignModal() {
+    setAssignError(null);
+    setAssignWeek("");
+    setAssignDate("");
+    setAssignTeam("");
+    setShowAssignModal(true);
+    if (!imName) return;
+    setAssignTeamsLoading(true);
+    try {
+      const list = await pmApi.listINETTeams({ im: imName, status: "Active" });
+      setAssignTeams((list || []).filter(
+        (t) => (t.team_category || "Field Team") !== "Backend Team"
+      ));
+    } catch {
+      setAssignTeams([]);
+    } finally {
+      setAssignTeamsLoading(false);
     }
   }
 
@@ -1296,7 +1336,7 @@ export default function IMPOIntake() {
                 {selected.size} selected · SAR {money.format(selectedAmount)}
               </span>
             )}
-            <button type="button" className="btn-primary" disabled={selected.size === 0} onClick={() => { setAssignError(null); setShowAssignModal(true); }}>
+            <button type="button" className="btn-primary" disabled={selected.size === 0} onClick={openAssignModal}>
               Dispatch ({selected.size})
             </button>
             {canBackend && (
@@ -2615,25 +2655,74 @@ export default function IMPOIntake() {
       {showAssignModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
              onClick={assigning ? undefined : () => setShowAssignModal(false)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(440px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(560px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
                onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Dispatch <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size} line{selected.size !== 1 ? "s" : ""}</span></h3>
               <button type="button" onClick={() => setShowAssignModal(false)} disabled={assigning} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
             </div>
             <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 12 }}>
-              Pick a target month. These lines will move into <strong>My Dispatches</strong> and become available for rollout planning.
+              Pick the forecast week. Date and team are optional.
             </div>
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Target month *</label>
-              <select value={assignMonth} onChange={(e) => setAssignMonth(e.target.value)} required disabled={assigning}>
-                {monthOptions().map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Target month *</label>
+                <select
+                  value={assignMonth}
+                  onChange={(e) => { setAssignMonth(e.target.value); setAssignWeek(""); setAssignDate(""); }}
+                  required
+                  disabled={assigning}
+                >
+                  {monthOptions().map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Target week *</label>
+                <select
+                  value={assignWeek}
+                  onChange={(e) => {
+                    const wk = e.target.value;
+                    setAssignWeek(wk);
+                    // Drop a date that no longer sits inside the chosen week.
+                    const b = assignWeekOptions.find((w) => w.id === wk);
+                    if (assignDate && b && (assignDate < b.start || assignDate > b.end)) setAssignDate("");
+                  }}
+                  required
+                  disabled={assigning}
+                >
+                  <option value="">— select week —</option>
+                  {assignWeekOptions.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+                </select>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Target date</label>
+                <input
+                  type="date"
+                  value={assignDate}
+                  min={assignWeekBounds.start || undefined}
+                  max={assignWeekBounds.end || undefined}
+                  onChange={(e) => setAssignDate(e.target.value)}
+                  disabled={assigning || !assignWeek}
+                  style={{ width: "100%", boxSizing: "border-box" }}
+                />
+                <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: 4 }}>
+                  {assignWeek ? `Optional — inside ${weekRangeLabel(assignWeek)}` : "Pick a week first"}
+                </div>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Forecast team</label>
+                <select value={assignTeam} onChange={(e) => setAssignTeam(e.target.value)} disabled={assigning || assignTeamsLoading}>
+                  <option value="">{assignTeamsLoading ? "Loading teams…" : "— none (choose at planning) —"}</option>
+                  {assignTeams.map((t) => (
+                    <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             {assignError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {assignError}</div>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <button type="button" className="btn-secondary" onClick={() => setShowAssignModal(false)} disabled={assigning}>Cancel</button>
-              <button type="button" className="btn-primary" onClick={submitAssign} disabled={assigning || !assignMonth}>
+              <button type="button" className="btn-primary" onClick={submitAssign} disabled={assigning || !assignMonth || !assignWeek}>
                 {assigning ? "Dispatching…" : `Dispatch ${selected.size} line${selected.size !== 1 ? "s" : ""}`}
               </button>
             </div>

@@ -16,6 +16,7 @@ from inet_app.inet_app.doctype.po_intake.po_intake import normalize_po_intake_st
 from inet_app.region_type import is_hard_region, region_type_from_center_area
 from frappe.utils import (
     add_days,
+    add_months,
     cint,
     flt,
     get_datetime,
@@ -258,6 +259,9 @@ PO_DISPATCH_COL_FILTER_MAP = {
     "original_dummy_poid": "original_dummy_poid",
     "region": "region_type",
     "target_month": "target_month",
+    "target_week": "target_week",
+    "target_date": "target_date",
+    "target_team": "target_team",
     "status": "dispatch_status",
     "dispatch_status": "dispatch_status",
     "line_amount_sar": "line_amount",
@@ -307,6 +311,13 @@ def _po_dispatch_excel_expr(col_key, fields):
         return (
             "IFNULL(NULLIF((SELECT full_name FROM `tabIM Master` "
             "WHERE name = `tabPO Dispatch`.`im`), ''), IFNULL(`im`, ''))"
+        )
+    if col_key == "target_team" and "target_team" in fields:
+        # Same reasoning as `im` above: the cell shows target_team_name.
+        return (
+            "IFNULL(NULLIF((SELECT team_name FROM `tabINET Team` "
+            "WHERE name = `tabPO Dispatch`.`target_team`), ''), "
+            "IFNULL(`target_team`, ''))"
         )
     if col_key == "description" and {"item_description", "is_dummy_po", "manager_remark"} <= set(fields):
         # Mirrors _apply_dummy_description: dummy POs with no description
@@ -3237,6 +3248,104 @@ def _pcc_im_allows_project(project_code, im_identifiers):
     return im_on in set(im_identifiers)
 
 
+def _forecast_week_bounds(target_week):
+    """Snap any date to (monday, sunday) of the week containing it."""
+    wk = getdate(target_week)
+    monday = add_days(wk, -wk.weekday())
+    return monday, add_days(monday, 6)
+
+
+def _validate_forecast_input(
+    target_month, target_week, target_date, target_team, im_identifiers,
+    require_week=True,
+):
+    """Normalise + validate the forecast an IM sets when dispatching PO lines.
+
+    Returns ``(month, monday, day, team)`` — the first two as YYYY-MM-DD
+    strings (month is always the 1st), ``day`` and ``team`` None when unset.
+
+    Shared by every path that writes a forecast so the rules cannot drift
+    between bulk dispatch, dummy create/update and internal work.
+
+    The week is *snapped* to its Monday rather than rejected when it isn't
+    one. ``_rollout_week_bounds`` already makes the server the authority on
+    where a week starts, and snapping keeps the endpoint immune to a client
+    that builds dates in local time and serialises them in UTC.
+
+    Month membership is tested by OVERLAP, not containment: the picker offers
+    every week that overlaps the chosen month, so a month's first week usually
+    starts in the previous one. Requiring the Monday to land inside the month
+    would make that option un-submittable in 6 months out of 7. The trade-off
+    is that a straddling week is valid under either adjacent month — the
+    picker's label ("W1 - Aug 31 to Sep 6") is what tells the IM which.
+    """
+    target_month = (target_month or "").strip()
+    if not target_month:
+        frappe.throw("target_month is required")
+    try:
+        if len(target_month) == 7:
+            target_month = f"{target_month}-01"
+        month_start = getdate(target_month).replace(day=1)
+    except Exception:
+        frappe.throw("Invalid target_month (expected YYYY-MM or YYYY-MM-DD)")
+
+    target_week = (target_week or "").strip()
+    if not target_week:
+        if require_week:
+            frappe.throw(
+                "target_week is required - pick the forecast week for these lines"
+            )
+        return str(month_start), None, None, None
+    try:
+        monday, sunday = _forecast_week_bounds(target_week)
+    except Exception:
+        frappe.throw("Invalid target_week (expected YYYY-MM-DD)")
+
+    month_end = get_last_day(month_start)
+    if monday > month_end or sunday < month_start:
+        frappe.throw(
+            f"Target week {monday} - {sunday} does not fall in "
+            f"{month_start.strftime('%B %Y')}"
+        )
+
+    day = None
+    target_date = (target_date or "").strip()
+    if target_date:
+        try:
+            day = getdate(target_date)
+        except Exception:
+            frappe.throw("Invalid target_date (expected YYYY-MM-DD)")
+        if not (monday <= day <= sunday):
+            frappe.throw(
+                f"Target date {day} must fall inside the target week "
+                f"({monday} - {sunday})"
+            )
+
+    team = None
+    target_team = (target_team or "").strip()
+    if target_team:
+        row = frappe.db.get_value(
+            "INET Team", target_team, ["status", "team_category", "im"], as_dict=True
+        )
+        if not row:
+            frappe.throw(f"INET Team {target_team} not found")
+        if (row.get("status") or "") != "Active":
+            frappe.throw(f"Team {target_team} is not Active")
+        if (row.get("team_category") or "Field Team") == "Backend Team":
+            frappe.throw(
+                "Backend teams are assigned through the sub-contract flow, "
+                "not the forecast"
+            )
+        # A team with no IM is in every IM's pool, matching how the plan
+        # modal's own team picker sources its options.
+        if (row.get("im") or "") and row["im"] not in set(im_identifiers or []):
+            frappe.throw(f"Team {target_team} does not belong to you")
+        team = target_team
+
+    return str(month_start), str(monday), (str(day) if day else None), team
+
+
+
 @frappe.whitelist()
 @frappe.whitelist()
 def search_po_items(query=""):
@@ -3744,6 +3853,7 @@ def _po_dispatch_portal_pf_active(pf):
         "dispatch_mode",
         "dummy_preset",
         "has_target_month",
+        "has_target_week",
         "domain",
         "dispatch_status",
         "direct_close_only",
@@ -3753,7 +3863,7 @@ def _po_dispatch_portal_pf_active(pf):
             continue
         if k == "dummy_preset" and str(v).strip().lower() == "all":
             continue
-        if k == "has_target_month" and str(v).strip().lower() in ("", "any"):
+        if k in ("has_target_month", "has_target_week") and str(v).strip().lower() in ("", "any"):
             continue
         return True
     # "include" alone doesn't need the SQL path (get_list default already
@@ -3893,6 +4003,15 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             )
     elif htm == "no" and "target_month" in fields:
         wheres.append("(`target_month` IS NULL OR `target_month` = '')")
+
+    # has_target_week: the forecast gap. Separate from has_target_month
+    # because a line promoted by the PM dispatch path gets a month but never
+    # a week, so "has a month" and "has a week" are genuinely different sets.
+    htw = (pf.get("has_target_week") or "").strip().lower()
+    if htw == "yes" and "target_week" in fields:
+        wheres.append("`target_week` IS NOT NULL AND `target_week` != ''")
+    elif htw == "no" and "target_week" in fields:
+        wheres.append("(`target_week` IS NULL OR `target_week` = '')")
 
     # Per-column "Manage Table" filters — see list_im_rollout_plans for the
     # rationale (each column matched independently and ANDed, not blended
@@ -4376,11 +4495,20 @@ def _summary_po_dispatch(pf, extra):
     # tab (which shows exactly the lines with no month) just restates the
     # total, and a chip that always equals the total tells you nothing.
     scoped_by_month = str(pf.get("has_target_month") or "").strip().lower() in ("yes", "no")
-    if "dispatch_target_month" in have and not scoped_by_month:
+    # `have` is PO Dispatch's own columns, so this tests `target_month` — it
+    # read `dispatch_target_month` (a name only the PO-Intake-driven query
+    # produces), which meant the chip never rendered on this source at all.
+    if "target_month" in have and not scoped_by_month:
         metrics.append({"key": "no_month", "label": "No month", "agg": "count_if",
-                        "group": "Gaps", "cond": "IFNULL(`dispatch_target_month`,'') = ''",
+                        "group": "Gaps", "cond": "IFNULL(`target_month`,'') = ''",
                         "tone": "warn", "hide_if_zero": True,
                         "hint": "No target month set — cannot be scheduled"})
+    scoped_by_week = str(pf.get("has_target_week") or "").strip().lower() in ("yes", "no")
+    if "target_week" in have and not scoped_by_week:
+        metrics.append({"key": "no_week", "label": "No week", "agg": "count_if",
+                        "group": "Gaps", "cond": "IFNULL(`target_week`,'') = ''",
+                        "tone": "warn", "hide_if_zero": True,
+                        "hint": "No forecast week — invisible on the Weekly Forecast"})
     if "im" in have and not _has_im_filter(filters, pf):
         metrics.append({"key": "no_im", "label": "No IM", "agg": "count_if",
                         "group": "Gaps", "cond": "IFNULL(`im`,'') = ''",
@@ -4644,10 +4772,25 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
             limit_page_length=len(im_names) + 1,
         ):
             im_labels[imm.name] = imm.full_name or imm.name
+    # Forecast team label, resolved the same way as the IM above so the
+    # column and its Excel filter agree on what they show.
+    team_labels = {}
+    if "target_team" in (rows[0] or {}):
+        team_ids = [t for t in {r.get("target_team") for r in rows} if t]
+        if team_ids:
+            for t in frappe.get_all(
+                "INET Team",
+                filters={"name": ["in", team_ids]},
+                fields=["name", "team_name"],
+                limit_page_length=len(team_ids) + 1,
+            ):
+                team_labels[t.name] = t.team_name or t.name
     act_map = _batch_item_activity_types(rows)
     for r in rows:
         imn = r.get("im")
         r["im_full_name"] = im_labels.get(imn) if imn else None
+        tt = r.get("target_team")
+        r["target_team_name"] = (team_labels.get(tt) or tt) if tt else None
         r["activity_type"] = act_map.get(r.get("item_code") or "")
     _enrich_with_project_fields(rows)
     _apply_dummy_description(rows)
@@ -4969,49 +5112,99 @@ def list_po_intake_lines_for_im_map(project_code=None):
 
 @frappe.whitelist()
 def assign_im_target_month(payload=None):
-    """Bulk-assign `target_month` on a set of PO Dispatch rows so the IM
-    promotes them from "PO Intake" (dispatched but not yet scheduled) into
-    "My Dispatches" (ready for rollout planning).
+    """Bulk-assign the IM's *forecast* on a set of PO Dispatch rows, promoting
+    them from "PO Intake" (dispatched but not yet scheduled) into "My
+    Dispatches" (ready for rollout planning).
+
+    This is the only place in the portal where a forecast is set. Corrections
+    afterwards happen on the desk form, by a PM or admin.
+
+    The name still says "target_month" because it is the whitelisted path the
+    frontend and any bookmarked caller already use; it now assigns the whole
+    forecast.
 
     payload = {
-        "dispatches": ["SYS-2026-0001", ...],
-        "target_month": "2026-04"  (or "YYYY-MM-DD")
+        "dispatches":   ["SYS-2026-0001", ...],
+        "target_month": "2026-04"    (or "YYYY-MM-DD")   required
+        "target_week":  "2026-04-06" (the week's Monday)  required
+        "target_date":  "2026-04-08"                      optional
+        "target_team":  "T-014"                           optional
     }
+
+    Forecast value and quantity are NOT snapshotted here: a PO line's amount
+    and qty are fixed by the business once the line exists, so the live
+    ``line_amount`` / ``qty`` are the forecast figures. If they ever do change
+    it is a data-entry correction, and the forecast should move with it rather
+    than keep reporting the wrong number.
     """
     if isinstance(payload, str):
         payload = frappe.parse_json(payload)
     payload = payload or {}
 
     dispatches = payload.get("dispatches") or []
-    target_month = (payload.get("target_month") or "").strip()
     if not dispatches or not isinstance(dispatches, list):
         frappe.throw("dispatches (list of PO Dispatch names) is required")
-    if not target_month:
-        frappe.throw("target_month is required")
-
-    # YYYY-MM shorthand → first day of month
-    if len(target_month) == 7 and target_month[4] == "-":
-        target_month = target_month + "-01"
 
     _im_resolved, im_identifiers = _require_inet_im_session()
-    # Only allow the IM to update their own dispatches.
+    target_month, target_week, target_date, target_team = _validate_forecast_input(
+        payload.get("target_month"),
+        payload.get("target_week"),
+        payload.get("target_date"),
+        payload.get("target_team"),
+        im_identifiers,
+    )
+
+    # Only physical columns that survived migration - an un-migrated site must
+    # still be able to set the month rather than 500.
+    has = {
+        c: frappe.db.has_column("PO Dispatch", c)
+        for c in (
+            "target_week", "target_date", "target_team",
+            "forecast_set_on", "forecast_set_by",
+        )
+    }
+
+    # Only allow the IM to update their own dispatches. Same predicate as
+    # before; it now also returns the values the snapshot needs, so the
+    # forecast costs no extra query.
     allowed = frappe.db.sql(
         "SELECT name FROM `tabPO Dispatch` WHERE name IN ({ph}) AND IFNULL(im, '') IN ({im_ph})".format(
             ph=",".join(["%s"] * len(dispatches)),
             im_ph=",".join(["%s"] * len(im_identifiers)),
         ),
         tuple(dispatches) + tuple(im_identifiers),
-    )
-    allowed_names = [r[0] for r in (allowed or [])]
+        as_dict=True,
+    ) or []
+    allowed_names = [r["name"] for r in allowed]
     if not allowed_names:
         frappe.throw("No matching dispatches belong to the current IM.")
 
-    updated = 0
-    for name in allowed_names:
-        frappe.db.set_value("PO Dispatch", name, "target_month", target_month, update_modified=True)
-        updated += 1
+    now = now_datetime()
+    for row in allowed:
+        updates = {"target_month": target_month}
+        if has["target_week"]:
+            updates["target_week"] = target_week
+        if has["target_date"]:
+            updates["target_date"] = target_date
+        if has["target_team"]:
+            updates["target_team"] = target_team
+        if has["forecast_set_on"]:
+            updates["forecast_set_on"] = now
+        if has["forecast_set_by"]:
+            updates["forecast_set_by"] = _im_resolved
+        frappe.db.set_value("PO Dispatch", row["name"], updates, update_modified=True)
     frappe.db.commit()
-    return {"updated": updated, "target_month": target_month, "names": allowed_names}
+
+    requested = {str(d) for d in dispatches}
+    return {
+        "updated": len(allowed_names),
+        "target_month": target_month,
+        "target_week": target_week,
+        "target_date": target_date,
+        "target_team": target_team,
+        "names": allowed_names,
+        "skipped": sorted(requested - set(allowed_names)),
+    }
 
 
 @frappe.whitelist()
@@ -7517,6 +7710,43 @@ def _batch_im_master_full_names(im_ids):
     return out
 
 
+def _execution_closed_exists_sql(alias="rp"):
+    """EXISTS(...) that is true when a line is fully closed.
+
+    Closed means: an execution marked Completed, a Work Done record built from
+    that execution, and QC/CIAG satisfied. The OR short-circuit on each gate
+    honours the per-plan _required flags — when qc_required = 0 for that plan
+    we do not require a Pass.
+
+    Shared by the monitor (which hides these) and Execution Analytics (which
+    counts them), so "closed" means one thing in both places.
+    """
+    ciag_col = "de_wd.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
+    qc_req = f"{alias}.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
+    ciag_req = f"{alias}.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
+    return (
+        "EXISTS ("
+        " SELECT 1 FROM `tabDaily Execution` de_wd"
+        " INNER JOIN `tabWork Done` wd0 ON wd0.execution = de_wd.name"
+        f" WHERE de_wd.rollout_plan = {alias}.name"
+        " AND de_wd.execution_status = 'Completed'"
+        f" AND ({qc_req} = 0 OR IFNULL(de_wd.qc_status, '') IN ('Pass', 'Not Applicable'))"
+        f" AND ({ciag_req} = 0 OR IFNULL({ciag_col}, '') IN ('Approved', 'Not Applicable'))"
+        ")"
+    )
+
+
+def _execution_superseded_exists_sql(alias="rp"):
+    """EXISTS(...) that is true when a later visit exists for the same dispatch."""
+    return (
+        "EXISTS ("
+        " SELECT 1 FROM `tabRollout Plan` rp_later"
+        f" WHERE rp_later.po_dispatch = {alias}.po_dispatch"
+        f" AND IFNULL(rp_later.visit_number, 0) > IFNULL({alias}.visit_number, 0)"
+        ")"
+    )
+
+
 @frappe.whitelist()
 def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary=None):
     """
@@ -7663,30 +7893,38 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
     # from the monitor — operators don't need to act on it anymore. The
     # OR short-circuit on each gate honours per-plan _required flags: when
     # qc_required = 0 for that plan, we don't require qc_status = Pass.
-    ciag_col = "de_wd.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
-    qc_req_col = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
-    ciag_req_col = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
-    wheres.append(
-        "NOT EXISTS ("
-        " SELECT 1 FROM `tabDaily Execution` de_wd"
-        " INNER JOIN `tabWork Done` wd0 ON wd0.execution = de_wd.name"
-        " WHERE de_wd.rollout_plan = rp.name"
-        " AND de_wd.execution_status = 'Completed'"
-        f" AND ({qc_req_col} = 0 OR IFNULL(de_wd.qc_status, '') IN ('Pass', 'Not Applicable'))"
-        f" AND ({ciag_req_col} = 0 OR IFNULL({ciag_col}, '') IN ('Approved', 'Not Applicable'))"
-        ")"
-    )
+    # `closure` / `visits` default to the monitor's historical behaviour, so
+    # every existing caller gets a byte-identical query. Execution Analytics
+    # passes them explicitly because its whole point is to look at closed and
+    # superseded work too.
+    closure = (str(filters.get("closure") or "open")).strip().lower()
+    if closure not in ("open", "all", "closed"):
+        closure = "open"
+    if closure != "all":
+        negate = "NOT " if closure == "open" else ""
+        wheres.append(negate + _execution_closed_exists_sql())
 
-    # When a plan was re-planned (a higher-visit_number plan exists for the
-    # same dispatch), the older plan represents a past attempt — drop it
-    # from the live monitor so operators only see the current visit.
-    wheres.append(
-        "NOT EXISTS ("
-        " SELECT 1 FROM `tabRollout Plan` rp_later"
-        " WHERE rp_later.po_dispatch = rp.po_dispatch"
-        " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)"
-        ")"
-    )
+    visits = (str(filters.get("visits") or "current")).strip().lower()
+    if visits != "all":
+        # A higher-visit_number plan for the same dispatch means this one is a
+        # past attempt — drop it so operators see only the current visit.
+        wheres.append("NOT " + _execution_superseded_exists_sql())
+
+    # Drill-through from Execution Analytics. The predicate comes from the
+    # SAME registry the tile counted with, so the number and the list it opens
+    # cannot disagree. The dex/wdx joins are added only in this branch, so the
+    # ordinary monitor query is untouched.
+    _bucket = (str(filters.get("bucket") or "")).strip()
+    bucket_join = ""
+    if _bucket:
+        _spec = EXECUTION_ATTENTION_BUCKETS.get(_bucket)
+        if not _spec:
+            frappe.throw(f"Unknown bucket: {_bucket}")
+        bucket_join = (
+            f" LEFT JOIN ({_DEX_SQL}) dex ON dex.rollout_plan = rp.name"
+            f" LEFT JOIN ({_WDX_SQL}) wdx ON wdx.rollout_plan = rp.name "
+        )
+        wheres.append(f"({_spec['cond']})")
 
     # Per-column "Manage Table" filters — see list_im_rollout_plans for the
     # rationale. This one backend serves 4 different table shapes (PM
@@ -7915,7 +8153,7 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
         "LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch "
         "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
         "LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code "
-        f"{rp_im_join} {pd_im_join}"
+        f"{rp_im_join} {pd_im_join}{bucket_join}"
     )
     if _options:
         _e = col_filter_map.get(_options.get("col_key"))
@@ -14476,6 +14714,955 @@ def get_rollout_week_dashboard(im=None, week_start=None, portal_filters=None):
         "activity": activity,
         "teams": teams,
         "rows": out_rows,
+        "im": im_resolved,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Rollout Planning — weekly FORECAST (what the IM committed to at dispatch)
+# ---------------------------------------------------------------------------
+
+# Unlike ROLLOUT_WEEK_BUCKETS (a real partition of plan_status), the forecast
+# reads a LINE's state plus an independent "did it slip" flag. A line completed
+# in the wrong week is BOTH executed and slipped, and forcing that into one
+# bucket loses whichever half the reader cared about.
+FORECAST_STATES = ("not_planned", "planned", "executed")
+
+
+def _forecast_month_weeks(month_start):
+    """Every week that OVERLAPS the month, as (index, monday, sunday).
+
+    Starts at the Monday of the 1st — so W1 usually begins in the previous
+    month — and includes the week containing the last day. This is exactly the
+    set the dispatch picker offers and the set _validate_forecast_input
+    accepts, so a forecast can never land in a week this view has no column
+    for.
+    """
+    out = []
+    cur = add_days(month_start, -month_start.weekday())
+    month_end = get_last_day(month_start)
+    i = 1
+    while cur <= month_end:
+        out.append((i, cur, add_days(cur, 6)))
+        cur = add_days(cur, 7)
+        i += 1
+    return out
+
+
+def _forecast_month_start(month=None):
+    """First day of the forecast month (this month when unset)."""
+    if not month:
+        return getdate(nowdate()).replace(day=1)
+    m = str(month).strip()
+    if len(m) == 7:
+        m = f"{m}-01"
+    return getdate(m).replace(day=1)
+
+
+@frappe.whitelist()
+def get_rollout_forecast_dashboard(
+    im=None, month=None, months_ahead=6, portal_filters=None, limit=1500
+):
+    """The Weekly Forecast tab: one month, split into its weeks.
+
+    The forecast is a MONTHLY commitment that the IM breaks down by week, so
+    the month is the unit of the page and the weeks are how it is read inside.
+    A rolling N-week horizon was the wrong frame — it cuts across month
+    boundaries, which is not how this business plans.
+
+    Three readings, one round trip:
+      - the selected month's lines, bucketed into that month's weeks
+      - a month strip either side of it, so the pipeline ahead is visible
+      - the forecast-vs-planned-vs-executed variance for the selected month
+
+    Where get_rollout_week_dashboard is Rollout Plan-driven (INNER JOIN to PO
+    Dispatch), this is PO DISPATCH-driven with a LEFT JOIN to the current plan,
+    because "forecast with nothing planned yet" is the most important row here
+    and a plan-driven query cannot see it.
+
+    Scope is the DISPATCHED population only (``target_month`` set). A line with
+    no month has not been forecast at all — it is still in PO Control — so
+    counting it as a "missing week" would report thousands of false gaps.
+
+    A line's amount and qty are read live: a PO line's value is fixed once it
+    exists, and a later change is a data-entry correction the forecast should
+    follow rather than outrun.
+
+    Nothing here constrains planning; a slip is reported, never blocked.
+    """
+    scope_clause, scope_params, im_resolved = _rollout_scope_clause(im)
+    month_start = _forecast_month_start(month)
+    month_end = get_last_day(month_start)
+    weeks = _forecast_month_weeks(month_start)
+    this_month = getdate(nowdate()).replace(day=1)
+    today_monday, _ = _rollout_week_bounds(None)
+
+    def _week_buckets():
+        return [{
+            "index": i, "start": str(mon), "end": str(sun),
+            "label": f"W{i}",
+            "range": f"{mon.strftime('%b %-d')} – {sun.strftime('%b %-d')}",
+            "is_current": mon == today_monday,
+            "total": 0, "not_planned": 0, "planned": 0, "executed": 0, "slipped": 0,
+            "forecast_amount": 0.0, "planned_amount": 0.0, "executed_amount": 0.0,
+        } for i, mon, sun in weeks]
+
+    empty = {
+        "month": {"start": str(month_start), "end": str(month_end),
+                  "label": month_start.strftime("%B %Y"),
+                  "is_current": month_start == this_month,
+                  "weeks": _week_buckets()},
+        "months": [],
+        "summary": {k: 0 for k in ("total", "not_planned", "planned", "executed",
+                                   "slipped", "team_changed", "no_week")}
+                   | {k: 0.0 for k in ("forecast_amount", "planned_amount", "executed_amount")}
+                   | {"plan_coverage_pct": 0.0, "week_accuracy_pct": 0.0},
+        "unset": {"count": 0, "amount": 0.0, "rows": [], "truncated": False},
+        "overdue": {"count": 0, "amount": 0.0},
+        "activity": [], "teams": [], "ims": [], "projects": [],
+        "rows": [], "rows_truncated": False, "im": im_resolved,
+    }
+    if scope_clause is None or not frappe.db.has_column("PO Dispatch", "target_week"):
+        return empty
+
+    pf = _portal_filters_dict(portal_filters)
+
+    # Shared by the month query and the month-strip aggregate so the strip can
+    # never disagree with the month it links to.
+    base = [
+        scope_clause,
+        # Mirrors the has_target_month="yes" rule: once PIC owns the commercial
+        # side there is no rollout left to forecast.
+        "IFNULL(pd.dispatch_status, 'Pending') NOT IN "
+        "('Cancelled', 'Submitted', 'Partially Submitted', 'Partially Closed', 'Closed')",
+        "pd.target_month IS NOT NULL",
+    ]
+    base_params = list(scope_params)
+
+    for col, key in (("pd.project_code", "project_code"),
+                     ("pd.site_code", "site_code"),
+                     ("pd.dispatch_mode", "dispatch_mode"),
+                     # Narrows WITHIN the scope clause, never past it.
+                     ("pd.im", "im")):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            base.append(c)
+            base_params.extend(p)
+
+    dummy_preset = (pf.get("dummy_preset") or "").strip()
+    if dummy_preset == "dummy":
+        base.append("IFNULL(pd.is_dummy_po, 0) = 1")
+    elif dummy_preset == "standard":
+        base.append("IFNULL(pd.is_dummy_po, 0) = 0")
+    elif dummy_preset == "mapped_dummy":
+        base.append("(IFNULL(pd.was_dummy_po, 0) = 1 AND IFNULL(pd.is_dummy_po, 0) = 0)")
+    elif dummy_preset == "dummy_any":
+        base.append("(IFNULL(pd.is_dummy_po, 0) = 1 OR IFNULL(pd.was_dummy_po, 0) = 1)")
+
+    internal_preset = (pf.get("internal_preset") or "").strip()
+    if internal_preset == "only":
+        base.append("IFNULL(pd.is_internal_work, 0) = 1")
+    elif internal_preset != "include":
+        base.append("IFNULL(pd.is_internal_work, 0) = 0")
+
+    # ── Month strip: one row per forecast month, around the selected one ────
+    months_ahead = max(1, min(cint(months_ahead) or 6, 12))
+    strip_from = add_months(month_start, -1)
+    strip_to = get_last_day(add_months(month_start, months_ahead - 1))
+    strip = frappe.db.sql(
+        f"""
+        SELECT pd.target_month AS month, COUNT(*) AS total,
+               SUM(IFNULL(pd.line_amount, 0)) AS forecast_amount,
+               SUM(CASE WHEN IFNULL(pd.target_week, '') = '' THEN 1 ELSE 0 END) AS no_week
+        FROM `tabPO Dispatch` pd
+        WHERE {' AND '.join(base)} AND pd.target_month BETWEEN %s AND %s
+        GROUP BY pd.target_month ORDER BY pd.target_month
+        """,
+        tuple(base_params) + (str(strip_from), str(strip_to)),
+        as_dict=True,
+    ) or []
+    by_month = {str(r["month"]): r for r in strip}
+    months = []
+    for k in range(-1, months_ahead):
+        ms = add_months(month_start, k)
+        hit = by_month.get(str(ms)) or {}
+        months.append({
+            "month": str(ms),
+            "label": ms.strftime("%b %Y"),
+            "total": cint(hit.get("total") or 0),
+            "forecast_amount": flt(hit.get("forecast_amount") or 0),
+            "no_week": cint(hit.get("no_week") or 0),
+            "is_selected": ms == month_start,
+            "is_current": ms == this_month,
+        })
+
+    # ── The selected month's lines ─────────────────────────────────────────
+    lim = _portal_row_limit(limit, 1500)
+    wheres = list(base) + ["pd.target_month = %s"]
+    params = list(base_params) + [str(month_start)]
+
+    like_pat = _sql_like_pattern(pf.get("search") or "")
+    if like_pat:
+        wheres.append(
+            "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''), "
+            "IFNULL(pd.project_code,''), IFNULL(pd.site_code,''), "
+            "IFNULL(pd.site_name,''), IFNULL(ft.team_name,''), "
+            "IFNULL(pt.team_name,'')) LIKE %s"
+        )
+        params.append(like_pat)
+
+    tc, tp = _sql_in_or_eq("pd.target_team", pf.get("team"))
+    pc, pp = _sql_in_or_eq("rp.team", pf.get("team"))
+    if tc and pc:
+        wheres.append(f"({tc} OR {pc})")
+        params.extend(list(tp) + list(pp))
+
+    # The current-plan join reproduces _current_plan_subquery's ORDER BY
+    # verbatim (visit_number DESC, modified DESC) so this tab can never
+    # disagree with the table's Plan Status column. It cannot reuse that helper
+    # literally — the helper hardcodes its outer reference and returns a scalar.
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.name AS po_dispatch, IFNULL(pd.poid, pd.name) AS poid,
+               IFNULL(pd.dispatch_mode, '') AS mode,
+               IFNULL(pd.project_code, '') AS project_code,
+               COALESCE(NULLIF(pd.project_domain, ''), pcc.project_domain, '') AS domain,
+               IFNULL(pd.site_code, '') AS duid,
+               IFNULL(pd.item_description, '') AS item_description,
+               IFNULL(itm.activity_type, '') AS activity_type,
+               pd.dispatch_status, pd.target_month, pd.target_week, pd.target_date,
+               pd.target_team, IFNULL(ft.team_name, pd.target_team) AS target_team_name,
+               IFNULL(pd.im, '') AS im_code,
+               COALESCE(NULLIF(rim.full_name, ''), NULLIF(pd.im, ''), '') AS im_name,
+               IFNULL(pd.line_amount, 0) AS forecast_amount,
+               IFNULL(pd.qty, 0) AS forecast_qty,
+               rp.name AS plan, rp.plan_date, rp.plan_end_date, rp.plan_status,
+               IFNULL(rp.completion_pct, 0) AS completion_pct,
+               IFNULL(rp.target_amount, 0) AS planned_amount,
+               IFNULL(rp.achieved_amount, 0) AS executed_amount,
+               rp.team AS plan_team, IFNULL(pt.team_name, rp.team) AS plan_team_name
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+        LEFT JOIN `tabItem` itm ON itm.name = pd.item_code
+        LEFT JOIN `tabINET Team` ft ON ft.name = pd.target_team
+        LEFT JOIN `tabIM Master` rim ON rim.name = pd.im
+        LEFT JOIN `tabRollout Plan` rp ON rp.name = (
+            SELECT rp2.name FROM `tabRollout Plan` rp2
+            WHERE rp2.po_dispatch = pd.name AND rp2.plan_status != 'Cancelled'
+            ORDER BY IFNULL(rp2.visit_number, 0) DESC, rp2.modified DESC LIMIT 1)
+        LEFT JOIN `tabINET Team` pt ON pt.name = rp.team
+        WHERE {' AND '.join(wheres)}
+        ORDER BY IFNULL(pd.target_week, '9999-12-31') ASC, pd.poid ASC
+        """,
+        tuple(params),
+        as_dict=True,
+    ) or []
+
+    # Executed dates, keyed by the plans actually returned — mirroring how the
+    # weekly view fetches Rollout Plan Team. A LEFT JOIN (SELECT ... GROUP BY)
+    # here would scan all of Daily Execution on every call.
+    exec_map = {}
+    plan_names = [r["plan"] for r in rows if r.get("plan")]
+    if plan_names:
+        for chunk in _chunked(plan_names, 1000):
+            ph = ", ".join(["%s"] * len(chunk))
+            for e in frappe.db.sql(
+                f"""SELECT rollout_plan, MIN(execution_date) AS first_exec,
+                           MAX(execution_date) AS last_exec,
+                           SUM(IFNULL(achieved_qty, 0)) AS exec_qty
+                    FROM `tabDaily Execution` WHERE rollout_plan IN ({ph})
+                    GROUP BY rollout_plan""",
+                tuple(chunk), as_dict=True,
+            ) or []:
+                exec_map[e["rollout_plan"]] = e
+
+    week_buckets = _week_buckets()
+    by_week = {b["start"]: b for b in week_buckets}
+    summary = dict(empty["summary"])
+    dated_rows, unset_rows = [], []
+    overdue_n, overdue_amt = 0, 0.0
+    activity_counts, team_stats, project_stats, im_stats = {}, {}, {}, {}
+
+    for r in rows:
+        tw = r.get("target_week")
+        fa = flt(r.get("forecast_amount"))
+        ex = exec_map.get(r.get("plan")) or {}
+        r["first_exec_date"] = str(ex["first_exec"]) if ex.get("first_exec") else None
+        r["last_exec_date"] = str(ex["last_exec"]) if ex.get("last_exec") else None
+        r["executed_qty"] = flt(ex.get("exec_qty") or 0)
+
+        if not r.get("plan"):
+            state = "not_planned"
+        elif (r.get("plan_status") or "") == "Completed" or flt(r.get("completion_pct")) >= 100:
+            state = "executed"
+        else:
+            state = "planned"
+        r["state"] = state
+
+        plan_week = None
+        if r.get("plan_date"):
+            plan_week, _ = _rollout_week_bounds(r["plan_date"])
+            r["plan_week"] = str(plan_week)
+
+        # Slip = the plan's SPAN does not overlap the forecast week. Overlap,
+        # not equality: a multi-day plan straddling the boundary is not a miss.
+        slipped = False
+        week_delta = None
+        if tw and r.get("plan_date"):
+            tw_d = getdate(tw)
+            sun = add_days(tw_d, 6)
+            p_start = getdate(r["plan_date"])
+            p_end = getdate(r.get("plan_end_date") or r["plan_date"])
+            slipped = (p_start > sun or p_end < tw_d)
+            week_delta = (plan_week - tw_d).days // 7
+        if (r.get("plan_status") or "") in ("Overdue", "Not Attended"):
+            slipped = True
+        r["slipped"] = slipped
+        r["week_delta"] = week_delta
+        r["team_changed"] = bool(
+            r.get("target_team") and r.get("plan_team")
+            and r["target_team"] != r["plan_team"]
+        )
+
+        # Every line counts toward the MONTH, whether or not it has a week —
+        # the month is the commitment, the week is only how it is broken down.
+        summary["total"] += 1
+        summary[state] += 1
+        if slipped:
+            summary["slipped"] += 1
+        if r["team_changed"]:
+            summary["team_changed"] += 1
+        summary["forecast_amount"] += fa
+        summary["planned_amount"] += flt(r.get("planned_amount"))
+        summary["executed_amount"] += flt(r.get("executed_amount"))
+
+        act = r.get("activity_type") or "Unspecified"
+        activity_counts[act] = activity_counts.get(act, 0) + 1
+        tid = r.get("target_team") or ""
+        ts = team_stats.setdefault(
+            tid, {"team": tid, "team_name": r.get("target_team_name") or (tid or "No team"),
+                  "forecast": 0, "planned": 0, "executed": 0})
+        ts["forecast"] += 1
+        if state == "planned":
+            ts["planned"] += 1
+        elif state == "executed":
+            ts["executed"] += 1
+        proj = r.get("project_code") or ""
+        ps = project_stats.setdefault(
+            proj, {"project_code": proj or "No project", "total": 0, "forecast_amount": 0.0})
+        ps["total"] += 1
+        ps["forecast_amount"] += fa
+
+        # Per-IM roll-up. An IM's own view collapses to a single row, so the
+        # frontend only shows this rail when no IM scope is in play.
+        imc = r.get("im_code") or ""
+        ims = im_stats.setdefault(imc, {
+            "im": imc, "im_name": r.get("im_name") or (imc or "No IM"),
+            "total": 0, "not_planned": 0, "planned": 0, "executed": 0,
+            "slipped": 0, "no_week": 0, "forecast_amount": 0.0,
+        })
+        ims["total"] += 1
+        ims[state] += 1
+        if slipped:
+            ims["slipped"] += 1
+        if not tw:
+            ims["no_week"] += 1
+        ims["forecast_amount"] += fa
+
+        if not tw:
+            summary["no_week"] += 1
+            unset_rows.append(r)
+            continue
+        dated_rows.append(r)
+        if getdate(tw) < today_monday and state != "executed":
+            overdue_n += 1
+            overdue_amt += fa
+
+        b = by_week.get(str(tw))
+        if b:
+            b["total"] += 1
+            b[state] += 1
+            if slipped:
+                b["slipped"] += 1
+            b["forecast_amount"] += fa
+            b["planned_amount"] += flt(r.get("planned_amount"))
+            b["executed_amount"] += flt(r.get("executed_amount"))
+
+    planned_or_better = summary["planned"] + summary["executed"]
+    summary["plan_coverage_pct"] = round(
+        planned_or_better * 100.0 / summary["total"], 1) if summary["total"] else 0.0
+    summary["week_accuracy_pct"] = round(
+        (planned_or_better - summary["slipped"]) * 100.0 / planned_or_better, 1
+    ) if planned_or_better else 0.0
+
+    total_act = sum(activity_counts.values()) or 1
+    activity = sorted(
+        ({"label": k, "count": v, "pct": round(v * 100.0 / total_act, 1)}
+         for k, v in activity_counts.items()),
+        key=lambda x: -x["count"])
+
+    out_rows = dated_rows + unset_rows
+    return {
+        "month": {"start": str(month_start), "end": str(month_end),
+                  "label": month_start.strftime("%B %Y"),
+                  "is_current": month_start == this_month,
+                  "weeks": week_buckets},
+        "months": months,
+        "summary": summary,
+        "unset": {
+            "count": len(unset_rows),
+            "amount": sum(flt(r.get("forecast_amount")) for r in unset_rows),
+            "rows": unset_rows[:200],
+            "truncated": len(unset_rows) > 200,
+        },
+        "overdue": {"count": overdue_n, "amount": overdue_amt},
+        "activity": activity,
+        "teams": sorted(team_stats.values(), key=lambda t: -t["forecast"]),
+        "ims": sorted(im_stats.values(), key=lambda x: -x["total"]),
+        "projects": sorted(project_stats.values(), key=lambda p: -p["forecast_amount"])[:10],
+        "rows": out_rows[:lim] if lim else out_rows,
+        "rows_truncated": bool(lim and len(out_rows) > lim),
+        "im": im_resolved,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Execution Analytics — the Execution Monitor dataset, read analytically
+# ---------------------------------------------------------------------------
+
+# One pass over Daily Execution gives BOTH the per-plan aggregates and the
+# latest-DE values. The monitor derives each DE column with its own correlated
+# subquery (_latest_de), which EXPLAIN shows as a DEPENDENT SUBQUERY with no
+# usable index on rollout_plan — O(plans x DEs). This materialises once and
+# joins on an auto-key instead.
+#
+# ORDER BY modified DESC + rn = 1 reproduces the monitor's "first seen per
+# plan is the latest" rule exactly, so both pages agree on what "the latest
+# execution" means.
+_DEX_SQL = """
+  SELECT * FROM (
+    SELECT rollout_plan,
+           execution_status AS latest_exec_status,
+           tl_status        AS latest_tl_status,
+           qc_status        AS latest_qc_status,
+           ciag_status      AS latest_ciag_status,
+           issue_category   AS latest_issue_category,
+           execution_date   AS latest_exec_date,
+           team             AS latest_exec_team,
+           COUNT(*)                                         OVER w AS de_count,
+           MAX(execution_status = 'Completed')              OVER w AS any_im_done,
+           MAX(tl_status = 'Completed')                     OVER w AS any_tl_done,
+           MAX(qc_status   IN ('Pass', 'Not Applicable'))   OVER w AS qc_ok,
+           MAX(qc_status   = 'Fail')                        OVER w AS qc_fail,
+           MAX(ciag_status IN ('Approved', 'Not Applicable')) OVER w AS ciag_ok,
+           MAX(IFNULL(issue_category, '') <> '')            OVER w AS any_issue,
+           MIN(execution_date)                              OVER w AS first_exec_date,
+           MAX(execution_date)                              OVER w AS last_exec_date,
+           ROW_NUMBER() OVER (PARTITION BY rollout_plan ORDER BY modified DESC) AS rn
+    FROM `tabDaily Execution`
+    WINDOW w AS (PARTITION BY rollout_plan)
+  ) z WHERE z.rn = 1
+"""
+
+# Work Done reaches a plan through its execution, never directly.
+_WDX_SQL = """
+  SELECT de.rollout_plan,
+         MIN(DATE(wd.creation)) AS wd_created,
+         MAX(IFNULL(wd.ms1_closed, 0)) AS ms1_closed,
+         MAX(IFNULL(wd.ms2_closed, 0)) AS ms2_closed
+  FROM `tabWork Done` wd
+  INNER JOIN `tabDaily Execution` de ON de.name = wd.execution
+  GROUP BY de.rollout_plan
+"""
+
+_QC_REQ = "IFNULL(rp.qc_required, 1)"
+_CIAG_REQ = "IFNULL(rp.ciag_required, 1)"
+
+# Predicates are shared with list_execution_monitor_rows (via the `bucket`
+# filter) so a tile's count and the list you land on cannot disagree.
+# NOTE: buckets deliberately overlap — a line can be QC-pending AND overdue
+# AND issue-flagged. They do not sum to the total, and the UI says so.
+EXECUTION_ATTENTION_BUCKETS = {
+    "no_execution": {
+        "label": "No execution yet", "tone": "warn",
+        "hint": "Planned, but no Daily Execution has been filed",
+        "cond": "dex.rollout_plan IS NULL",
+    },
+    "qc_pending": {
+        "label": "QC pending", "tone": "warn",
+        "hint": "Executed, still waiting on a QC pass",
+        "cond": f"dex.rollout_plan IS NOT NULL AND {_QC_REQ} = 1 AND IFNULL(dex.qc_ok, 0) = 0",
+    },
+    "qc_failed": {
+        "label": "QC failed", "tone": "bad",
+        "hint": "At least one execution failed QC",
+        "cond": "IFNULL(dex.qc_fail, 0) = 1",
+    },
+    "ciag_pending": {
+        "label": "CIAG pending", "tone": "warn",
+        "hint": "Executed, still waiting on CIAG approval",
+        "cond": f"dex.rollout_plan IS NOT NULL AND {_CIAG_REQ} = 1 AND IFNULL(dex.ciag_ok, 0) = 0",
+    },
+    "im_confirmation_pending": {
+        "label": "IM confirmation pending", "tone": "warn",
+        "hint": "Team lead finished; the IM has not confirmed",
+        "cond": "IFNULL(dex.any_tl_done, 0) = 1 AND IFNULL(dex.any_im_done, 0) = 0",
+    },
+    "im_confirmation_only": {
+        "label": "IM confirmation ONLY pending", "tone": "bad",
+        "hint": "Nothing else is outstanding — one click from done",
+        # QC/CIAG short-circuit on the per-plan _required flags, exactly as the
+        # closure test does, so a plan that never needed QC is not held back by
+        # a qc_status still reading 'Pending'.
+        "cond": (
+            "IFNULL(dex.any_tl_done, 0) = 1 AND IFNULL(dex.any_im_done, 0) = 0"
+            f" AND ({_QC_REQ} = 0 OR IFNULL(dex.qc_ok, 0) = 1)"
+            f" AND ({_CIAG_REQ} = 0 OR IFNULL(dex.ciag_ok, 0) = 1)"
+            " AND IFNULL(rp.plan_status, '') <> 'Cancelled'"
+        ),
+    },
+    "work_done_missing": {
+        "label": "Work Done not created", "tone": "warn",
+        "hint": "IM-confirmed but no Work Done record exists",
+        "cond": "IFNULL(dex.any_im_done, 0) = 1 AND wdx.rollout_plan IS NULL",
+    },
+    "dummy_unmapped": {
+        "label": "Dummy PO not mapped", "tone": "warn",
+        "hint": "Still a placeholder — never mapped to a real PO line",
+        # is_dummy_po, NOT was_dummy_po: mapping clears the former and leaves
+        # the latter set forever.
+        "cond": "IFNULL(pd.is_dummy_po, 0) = 1",
+    },
+    "internal_unclassified": {
+        "label": "Internal work unclassified", "tone": "warn",
+        "hint": "Internal work with no work type, or Domain with no domain set",
+        "cond": (
+            "IFNULL(pd.is_internal_work, 0) = 1 AND ("
+            " IFNULL(pd.internal_work_type, '') = ''"
+            " OR (pd.internal_work_type = 'Domain' AND IFNULL(pd.internal_domain, '') = '')"
+            ")"
+        ),
+    },
+    "internal_no_project": {
+        "label": "Internal work, no project", "tone": "warn",
+        "hint": "Internal work not attached to any project",
+        "cond": "IFNULL(pd.is_internal_work, 0) = 1 AND IFNULL(pd.project_code, '') = ''",
+    },
+    "overdue_flagged": {
+        "label": "Overdue (flagged)", "tone": "bad",
+        "hint": "plan_status is Overdue — written by the nightly job",
+        "cond": "IFNULL(rp.plan_status, '') = 'Overdue'",
+    },
+    "overdue_by_date": {
+        "label": "Overdue (by date)", "tone": "bad",
+        "hint": "Plan end date has passed and it is neither complete nor cancelled",
+        # Shown next to the flagged count on purpose: a gap between the two
+        # means the scheduler is behind, which is itself worth knowing.
+        "cond": (
+            "COALESCE(rp.plan_end_date, rp.plan_date) < CURDATE()"
+            " AND IFNULL(rp.plan_status, '') NOT IN ('Completed', 'Cancelled')"
+        ),
+    },
+    "not_attended": {
+        "label": "Not attended", "tone": "bad",
+        "hint": "Planned but the team never attended",
+        "cond": "IFNULL(rp.plan_status, '') = 'Not Attended'",
+    },
+    "issue_flagged": {
+        "label": "Issue flagged", "tone": "bad",
+        "hint": "An issue category is set on the plan or an execution",
+        "cond": "IFNULL(rp.issue_category, '') <> '' OR IFNULL(dex.any_issue, 0) = 1",
+    },
+    "no_team": {
+        "label": "No team assigned", "tone": "warn",
+        "hint": "Neither a lead team nor any split team",
+        "cond": (
+            "IFNULL(rp.team, '') = '' AND NOT EXISTS ("
+            " SELECT 1 FROM `tabRollout Plan Team` rpt WHERE rpt.parent = rp.name)"
+        ),
+    },
+}
+
+# Every dimension the client may group by. The client sends a KEY; the SQL
+# never comes from the request.
+#
+# Two traps encoded here:
+#  - project_domain must NOT reuse col_filter_map["domain"], which is a
+#    CONCAT_WS built for LIKE matching. As a group key it yields labels like
+#    "Zain Fixes Zain Fixes" whenever both domain columns are populated.
+#  - `im` groups on the code and labels with the full name, so a breakdown row
+#    can drill through to a filter that matches what the cell renders.
+EXECUTION_ANALYTICS_DIMENSIONS = {
+    "project_domain": {"label": "Project domain", "blank": "(No domain)", "expr":
+        "CASE WHEN IFNULL(pd.is_internal_work, 0) = 1 THEN IFNULL(pd.internal_domain, '')"
+        " ELSE COALESCE(NULLIF(pd.project_domain, ''), pcc.project_domain, '') END"},
+    "project": {"label": "Project", "blank": "(No project)", "expr": "IFNULL(pd.project_code, '')"},
+    "duid": {"label": "DUID / site", "blank": "(No DUID)", "expr": "IFNULL(pd.site_code, '')"},
+    "im": {"label": "IM", "blank": "(No IM)",
+           "expr": "COALESCE(NULLIF(pd.im, ''), rp.im, '')",
+           "label_expr": "COALESCE(NULLIF(rim.full_name, ''), NULLIF(pd.im, ''), rp.im, '')"},
+    "huawei_im": {"label": "Huawei IM", "blank": "(No Huawei IM)", "expr":
+        "COALESCE(NULLIF(pd.huawei_im, ''), pcc.huawei_im, '')"},
+    "team": {"label": "Team (plan lead)", "blank": "(No team)", "expr":
+        "IFNULL(NULLIF(it.team_name, ''), IFNULL(rp.team, ''))"},
+    "visit_type": {"label": "Visit type", "blank": "(Unset)", "expr": "IFNULL(rp.visit_type, '')"},
+    "visit_number": {"label": "Visit number", "blank": "0", "expr":
+        "CASE WHEN IFNULL(rp.visit_number, 0) >= 5 THEN '5+'"
+        " ELSE CAST(IFNULL(rp.visit_number, 0) AS CHAR) END"},
+    "plan_status": {"label": "Plan status", "blank": "(Unset)", "expr": "IFNULL(rp.plan_status, '')"},
+    "execution_status": {"label": "Execution status (IM)", "blank": "(No execution)", "expr":
+        "IFNULL(dex.latest_exec_status, '')"},
+    "tl_status": {"label": "TL status", "blank": "(No execution)", "expr":
+        "IFNULL(dex.latest_tl_status, '')"},
+    "issue_category": {"label": "Issue category", "blank": "(No issue)", "expr":
+        "COALESCE(NULLIF(dex.latest_issue_category, ''), NULLIF(rp.issue_category, ''), '')"},
+    "issue_status": {"label": "Issue status", "blank": "(No issue)", "expr":
+        "IFNULL(rp.issue_status, '')"},
+    "qc_status": {"label": "QC status", "blank": "(No execution)", "expr":
+        f"CASE WHEN {_QC_REQ} = 0 THEN 'Not required' ELSE IFNULL(dex.latest_qc_status, '') END"},
+    "ciag_status": {"label": "CIAG status", "blank": "(No execution)", "expr":
+        f"CASE WHEN {_CIAG_REQ} = 0 THEN 'Not required' ELSE IFNULL(dex.latest_ciag_status, '') END"},
+    "access_period": {"label": "Access period", "blank": "(Unset)", "expr":
+        "IFNULL(rp.access_period, '')"},
+    "access_time": {"label": "Access time", "blank": "(Unset)", "expr":
+        "CASE WHEN rp.access_time IS NULL THEN ''"
+        " ELSE CONCAT(LPAD(HOUR(rp.access_time), 2, '0'), ':00') END"},
+    "region_type": {"label": "Region", "blank": "(Unset)", "expr":
+        "COALESCE(NULLIF(rp.region_type, ''), pd.region_type, '')"},
+    "center_area": {"label": "Center area", "blank": "(Unset)", "expr": "IFNULL(pd.center_area, '')"},
+    "activity_type": {"label": "Activity type", "blank": "(Unspecified)", "expr":
+        "IFNULL(itm.activity_type, '')"},
+    "item_code": {"label": "Item", "blank": "(No item)", "expr": "IFNULL(pd.item_code, '')"},
+    "dispatch_status": {"label": "Dispatch status", "blank": "(Unset)", "expr":
+        "IFNULL(pd.dispatch_status, '')"},
+    "internal_work_type": {"label": "Internal work type", "blank": "(Not internal)", "expr":
+        "IFNULL(pd.internal_work_type, '')"},
+    "work_mode": {"label": "Work mode", "blank": "(Unset)", "expr":
+        "CASE WHEN IFNULL(pd.is_internal_work, 0) = 1 THEN 'Internal'"
+        " WHEN IFNULL(pd.is_dummy_po, 0) = 1 THEN 'Dummy (open)'"
+        " WHEN IFNULL(pd.was_dummy_po, 0) = 1 THEN 'Mapped dummy'"
+        " ELSE 'Standard' END"},
+}
+
+EXECUTION_ANALYTICS_DEFAULT_DIMS = [
+    "project_domain", "project", "im", "execution_status", "plan_status", "team",
+]
+
+_EXEC_DATE_BASES = {
+    # Span overlap, not "starts inside": a Thu-to-Tue plan belongs to both
+    # windows. Mirrors get_rollout_week_dashboard; the monitor's plain BETWEEN
+    # on plan_date silently drops straddling plans.
+    "plan": {"label": "Plan date", "expr": "rp.plan_date", "overlap": True},
+    "execution": {"label": "Execution date",
+                  "expr": "COALESCE(dex.last_exec_date, rp.plan_date)"},
+    # Work Done carries no work date of its own; COALESCE(execution_date,
+    # DATE(wd.creation)) is the convention already used in six other reports.
+    "work_done": {"label": "Work done date",
+                  "expr": "COALESCE(dex.latest_exec_date, wdx.wd_created)"},
+}
+
+_EXEC_ANALYTICS_FROM = f"""
+FROM `tabRollout Plan` rp
+LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+LEFT JOIN `tabINET Team` it ON it.name = rp.team
+LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+LEFT JOIN `tabIM Master` rim ON rim.name = COALESCE(NULLIF(pd.im, ''), rp.im)
+LEFT JOIN `tabItem` itm ON itm.name = pd.item_code
+LEFT JOIN ({_DEX_SQL}) dex ON dex.rollout_plan = rp.name
+LEFT JOIN ({_WDX_SQL}) wdx ON wdx.rollout_plan = rp.name
+"""
+
+
+def _execution_analytics_where(pf, im):
+    """(wheres, params, im_resolved) shared by every rail on the page.
+
+    Returning one WHERE for all of them is the point: the tiles, the
+    breakdowns and the concentration rail are readings of a single set, so
+    they cannot describe different populations.
+    """
+    scope_clause, scope_params, im_resolved = _rollout_scope_clause(im)
+    if scope_clause is None:
+        return None, [], im_resolved
+
+    wheres = [scope_clause]
+    params = list(scope_params)
+
+    closure = (pf.get("closure") or "all").strip().lower()
+    if closure not in ("open", "all", "closed"):
+        closure = "all"
+    if closure != "all":
+        wheres.append(("NOT " if closure == "open" else "") + _execution_closed_exists_sql())
+
+    visits = (pf.get("visits") or "current").strip().lower()
+    if visits != "all":
+        wheres.append("NOT " + _execution_superseded_exists_sql())
+
+    basis_key = (pf.get("date_basis") or "plan").strip().lower()
+    basis = _EXEC_DATE_BASES.get(basis_key) or _EXEC_DATE_BASES["plan"]
+    from_date, to_date = pf.get("from_date"), pf.get("to_date")
+    if from_date or to_date:
+        if basis.get("overlap"):
+            if to_date:
+                wheres.append("rp.plan_date <= %s")
+                params.append(to_date)
+            if from_date:
+                wheres.append("COALESCE(rp.plan_end_date, rp.plan_date) >= %s")
+                params.append(from_date)
+        else:
+            if from_date:
+                wheres.append(f"{basis['expr']} >= %s")
+                params.append(from_date)
+            if to_date:
+                wheres.append(f"{basis['expr']} <= %s")
+                params.append(to_date)
+
+    for col, key in (("pd.project_code", "project_code"),
+                     ("pd.site_code", "site_code"),
+                     ("rp.team", "team"),
+                     ("rp.visit_type", "visit_type"),
+                     ("rp.plan_status", "status"),
+                     ("dex.latest_exec_status", "execution_status"),
+                     # Narrows WITHIN the scope clause, never past it.
+                     ("pd.im", "im")):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            wheres.append(c)
+            params.extend(p)
+
+    dom = pf.get("project_domain")
+    c, p = _sql_in_or_eq(EXECUTION_ANALYTICS_DIMENSIONS["project_domain"]["expr"], dom)
+    if c:
+        wheres.append(c)
+        params.extend(p)
+
+    bucket = (pf.get("bucket") or "").strip()
+    if bucket:
+        spec = EXECUTION_ATTENTION_BUCKETS.get(bucket)
+        if not spec:
+            frappe.throw(f"Unknown bucket: {bucket}")
+        wheres.append(f"({spec['cond']})")
+
+    internal_preset = (pf.get("internal_preset") or "include").strip().lower()
+    if internal_preset == "only":
+        wheres.append("IFNULL(pd.is_internal_work, 0) = 1")
+    elif internal_preset == "exclude":
+        wheres.append("IFNULL(pd.is_internal_work, 0) = 0")
+
+    dummy_preset = (pf.get("dummy_preset") or "").strip().lower()
+    if dummy_preset == "dummy":
+        wheres.append("IFNULL(pd.is_dummy_po, 0) = 1")
+    elif dummy_preset == "standard":
+        wheres.append("IFNULL(pd.is_dummy_po, 0) = 0")
+
+    like_pat = _sql_like_pattern(pf.get("search") or "")
+    if like_pat:
+        wheres.append(
+            "CONCAT_WS(' ', IFNULL(pd.poid,''), IFNULL(pd.po_no,''), "
+            "IFNULL(pd.project_code,''), IFNULL(pd.site_code,''), "
+            "IFNULL(pd.site_name,''), IFNULL(it.team_name,'')) LIKE %s"
+        )
+        params.append(like_pat)
+
+    return wheres, params, im_resolved
+
+
+@frappe.whitelist()
+def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
+    """A full analytical read of the Execution Monitor dataset.
+
+    Answers, in one round trip: what needs attention, how it splits across any
+    of ~25 dimensions, where work is concentrated (repeat visits, busy DUIDs),
+    and how it has moved month to month.
+
+    Four tiers of aggregate SQL — no rows are ever fetched and counted in
+    Python. Every count comes from GROUP BY or SUM(condition).
+
+    Unlike the monitor this defaults to closure='all': the whole point is to
+    include finished and historical work. That costs nothing in bucket
+    accuracy, because a fully closed line fails every attention bucket on its
+    own predicate anyway.
+
+    Buckets deliberately OVERLAP. They do not sum to the total.
+    """
+    pf = _portal_filters_dict(portal_filters)
+    wheres, params, im_resolved = _execution_analytics_where(pf, im)
+
+    # One GROUP BY per selected dimension — capped at 6 so the page stays a
+    # single round trip of bounded cost.
+    dims = _ensure_list(dimensions) or EXECUTION_ANALYTICS_DEFAULT_DIMS
+    dims = [d for d in dims if d in EXECUTION_ANALYTICS_DIMENSIONS][:6]
+    if not dims:
+        dims = EXECUTION_ANALYTICS_DEFAULT_DIMS
+
+    empty = {
+        "totals": {"lines": 0, "poids": 0, "duids": 0, "projects": 0, "value": 0.0,
+                   "closed": 0, "open": 0},
+        "buckets": [], "dimensions": [], "trend": [],
+        "concentration": {"visits": [], "top_poids": [], "duids": [], "top_duids": []},
+        "meta": {"date_basis": (pf.get("date_basis") or "plan"),
+                 "closure": (pf.get("closure") or "all"),
+                 "visits": (pf.get("visits") or "current"),
+                 "from_date": pf.get("from_date") or "", "to_date": pf.get("to_date") or "",
+                 "available_dimensions": [
+                     {"key": k, "label": v["label"]}
+                     for k, v in EXECUTION_ANALYTICS_DIMENSIONS.items()],
+                 "selected_dimensions": dims},
+        "im": im_resolved,
+    }
+    if wheres is None:
+        return empty
+
+    where_sql = " AND ".join(wheres)
+
+    # ── Tier A: totals + every attention bucket, in ONE statement ──────────
+    bucket_keys = list(EXECUTION_ATTENTION_BUCKETS.keys())
+    bucket_cols = ", ".join(
+        f"SUM(CASE WHEN ({EXECUTION_ATTENTION_BUCKETS[k]['cond']}) THEN 1 ELSE 0 END) AS `b_{k}`,"
+        f" SUM(CASE WHEN ({EXECUTION_ATTENTION_BUCKETS[k]['cond']})"
+        f" THEN IFNULL(pd.line_amount, 0) ELSE 0 END) AS `v_{k}`"
+        for k in bucket_keys
+    )
+    closed_sql = _execution_closed_exists_sql()
+    head = frappe.db.sql(
+        f"""SELECT COUNT(*) AS lines_n,
+                   COUNT(DISTINCT pd.name) AS poids,
+                   COUNT(DISTINCT NULLIF(pd.site_code, '')) AS duids,
+                   COUNT(DISTINCT NULLIF(pd.project_code, '')) AS projects,
+                   SUM(IFNULL(pd.line_amount, 0)) AS value,
+                   SUM(CASE WHEN {closed_sql} THEN 1 ELSE 0 END) AS closed_n,
+                   {bucket_cols}
+            {_EXEC_ANALYTICS_FROM}
+            WHERE {where_sql}""",
+        tuple(params), as_dict=True,
+    ) or [{}]
+    head = head[0] or {}
+    total = cint(head.get("lines_n") or 0)
+    closed_n = cint(head.get("closed_n") or 0)
+
+    buckets = []
+    for k in bucket_keys:
+        spec = EXECUTION_ATTENTION_BUCKETS[k]
+        buckets.append({
+            "key": k, "label": spec["label"], "tone": spec.get("tone") or "info",
+            "hint": spec.get("hint") or "", "value": cint(head.get(f"b_{k}") or 0),
+            "amount": flt(head.get(f"v_{k}") or 0),
+        })
+
+    # ── Tier B: one GROUP BY per selected dimension ────────────────────────
+    out_dims = []
+    for key in dims:
+        spec = EXECUTION_ANALYTICS_DIMENSIONS[key]
+        expr = spec["expr"]
+        label_expr = spec.get("label_expr") or expr
+        rows = frappe.db.sql(
+            f"""SELECT {expr} AS k, MAX({label_expr}) AS label, COUNT(*) AS n,
+                       COUNT(DISTINCT NULLIF(pd.site_code, '')) AS duids,
+                       SUM(IFNULL(pd.line_amount, 0)) AS value
+                {_EXEC_ANALYTICS_FROM}
+                WHERE {where_sql}
+                GROUP BY {expr} ORDER BY n DESC LIMIT 26""",
+            tuple(params), as_dict=True,
+        ) or []
+        top = rows[:25]
+        shown = sum(cint(r["n"]) for r in top)
+        items = [{
+            "key": (r["k"] or ""),
+            "label": (r.get("label") or r["k"] or "") or spec["blank"],
+            "n": cint(r["n"]), "duids": cint(r["duids"] or 0),
+            "value": flt(r["value"] or 0),
+            "pct": round(cint(r["n"]) * 100.0 / total, 1) if total else 0.0,
+            "is_blank": not (r["k"] or ""),
+        } for r in top]
+        # Without the fold, the rows on screen would not add up to the total —
+        # the same trap as a truncated table whose footer reads as the whole answer.
+        if total > shown:
+            items.append({"key": "__others__", "label": f"Others ({len(rows) - len(top)}+)",
+                          "n": total - shown, "duids": 0, "value": 0.0,
+                          "pct": round((total - shown) * 100.0 / total, 1) if total else 0.0,
+                          "is_blank": False, "is_others": True})
+        out_dims.append({"key": key, "label": spec["label"], "items": items,
+                         "sums_to_total": True})
+
+    # ── Tier C: monthly trend on the chosen date basis ─────────────────────
+    basis_key = (pf.get("date_basis") or "plan").strip().lower()
+    basis_expr = (_EXEC_DATE_BASES.get(basis_key) or _EXEC_DATE_BASES["plan"])["expr"]
+    trend = frappe.db.sql(
+        f"""SELECT DATE_FORMAT({basis_expr}, '%%Y-%%m') AS month, COUNT(*) AS lines_n,
+                   COUNT(DISTINCT NULLIF(pd.site_code, '')) AS duids,
+                   SUM(IFNULL(pd.line_amount, 0)) AS value,
+                   SUM(CASE WHEN IFNULL(dex.any_im_done, 0) = 1 THEN 1 ELSE 0 END) AS im_confirmed,
+                   SUM(CASE WHEN wdx.rollout_plan IS NOT NULL THEN 1 ELSE 0 END) AS work_done
+            {_EXEC_ANALYTICS_FROM}
+            WHERE {where_sql} AND {basis_expr} IS NOT NULL
+            GROUP BY 1 ORDER BY 1""",
+        tuple(params), as_dict=True,
+    ) or []
+
+    # ── Tier D: concentration — computed over ALL visits on purpose, because
+    # "how many times has this POID been re-planned" is the question. ──────
+    conc_wheres = [w for w in wheres if "rp_later" not in w]
+    visit_rows = frappe.db.sql(
+        f"""SELECT visits, COUNT(*) AS poids, SUM(visits) AS lines_n FROM (
+              SELECT rp.po_dispatch, COUNT(*) AS visits
+              {_EXEC_ANALYTICS_FROM}
+              WHERE {' AND '.join(conc_wheres)} AND IFNULL(rp.po_dispatch, '') <> ''
+              GROUP BY rp.po_dispatch
+            ) x GROUP BY visits ORDER BY visits""",
+        tuple(params), as_dict=True,
+    ) or []
+    top_poids = frappe.db.sql(
+        f"""SELECT rp.po_dispatch, MAX(IFNULL(pd.poid, rp.po_dispatch)) AS poid,
+                   MAX(IFNULL(pd.site_code, '')) AS duid,
+                   MAX(IFNULL(pd.project_code, '')) AS project_code,
+                   COUNT(*) AS visits
+            {_EXEC_ANALYTICS_FROM}
+            WHERE {' AND '.join(conc_wheres)} AND IFNULL(rp.po_dispatch, '') <> ''
+            GROUP BY rp.po_dispatch HAVING visits > 1 ORDER BY visits DESC LIMIT 10""",
+        tuple(params), as_dict=True,
+    ) or []
+    duid_rows = frappe.db.sql(
+        f"""SELECT n, COUNT(*) AS duids FROM (
+              SELECT pd.site_code, COUNT(*) AS n
+              {_EXEC_ANALYTICS_FROM}
+              WHERE {where_sql} AND IFNULL(pd.site_code, '') <> ''
+              GROUP BY pd.site_code
+            ) y GROUP BY n ORDER BY n DESC""",
+        tuple(params), as_dict=True,
+    ) or []
+    top_duids = frappe.db.sql(
+        f"""SELECT pd.site_code AS duid, MAX(IFNULL(pd.site_name, '')) AS site_name,
+                   MAX(IFNULL(pd.project_code, '')) AS project_code,
+                   COUNT(*) AS lines_n, COUNT(DISTINCT pd.name) AS poids
+            {_EXEC_ANALYTICS_FROM}
+            WHERE {where_sql} AND IFNULL(pd.site_code, '') <> ''
+            GROUP BY pd.site_code HAVING lines_n > 1 ORDER BY lines_n DESC LIMIT 10""",
+        tuple(params), as_dict=True,
+    ) or []
+
+    return {
+        "totals": {
+            "lines": total,
+            "poids": cint(head.get("poids") or 0),
+            "duids": cint(head.get("duids") or 0),
+            "projects": cint(head.get("projects") or 0),
+            "value": flt(head.get("value") or 0),
+            "closed": closed_n,
+            "open": total - closed_n,
+        },
+        "buckets": buckets,
+        "dimensions": out_dims,
+        "trend": [{"month": t["month"], "lines": cint(t["lines_n"]),
+                   "duids": cint(t["duids"] or 0), "value": flt(t["value"] or 0),
+                   "im_confirmed": cint(t["im_confirmed"] or 0),
+                   "work_done": cint(t["work_done"] or 0)} for t in trend],
+        "concentration": {
+            "visits": [{"visits": cint(v["visits"]), "poids": cint(v["poids"]),
+                        "lines": cint(v["lines_n"])} for v in visit_rows],
+            "top_poids": top_poids,
+            "duids": [{"lines": cint(d["n"]), "duids": cint(d["duids"])} for d in duid_rows],
+            "top_duids": top_duids,
+        },
+        "meta": empty["meta"],
         "im": im_resolved,
     }
 

@@ -35,13 +35,15 @@
    "fieldname": "system_id",
    "fieldtype": "Link",
    "label": "System ID",
-   "options": "PO Dispatch"
+   "options": "PO Dispatch",
+   "search_index": 1
   },
   {
    "fieldname": "execution",
    "fieldtype": "Link",
    "label": "Execution",
-   "options": "Daily Execution"
+   "options": "Daily Execution",
+   "search_index": 1
   },
   {
    "fieldname": "subcontractor",

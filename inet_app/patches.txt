@@ -19,3 +19,4 @@ inet_app.patches.backfill_subcon_overall_status
 inet_app.patches.repair_duid_field_split
 inet_app.patches.backfill_mapped_dummy_po_financials
 inet_app.patches.fix_work_done_revenue_milestone_aware
+inet_app.patches.v1_0.add_po_dispatch_forecast_indexes

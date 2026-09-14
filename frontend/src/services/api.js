@@ -812,6 +812,24 @@ export const pmApi = {
       week_start: week_start || "",
       portal_filters: JSON.stringify(portal_filters || {}),
     }),
+  // Weekly Forecast — the IM's intent at dispatch time, across upcoming weeks,
+  // against what actually got planned and executed.
+  getRolloutForecastDashboard: ({ im, month, months_ahead, portal_filters }) =>
+    call("inet_app.api.command_center.get_rollout_forecast_dashboard", {
+      im: im || "",
+      month: month || "",
+      months_ahead: months_ahead || 6,
+      portal_filters: JSON.stringify(portal_filters || {}),
+    }),
+  // Execution Analytics — attention buckets, dimensional breakdowns,
+  // concentration and the monthly trend, all from one filtered set.
+  getExecutionAnalytics: ({ im, portal_filters, dimensions }) =>
+    call("inet_app.api.command_center.get_execution_analytics", {
+      im: im || "",
+      portal_filters: JSON.stringify(portal_filters || {}),
+      dimensions: JSON.stringify(dimensions || []),
+    }),
+
   getRolloutFiscalQuarter: (day) =>
     call("inet_app.api.command_center.get_rollout_fiscal_quarter", { day: day || "" }),
 

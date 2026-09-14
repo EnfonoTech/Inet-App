@@ -41,7 +41,7 @@ function mondayOf(d) {
 
 function Card({ title, right, children, style }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, ...style }}>
+    <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: 10, ...style }}>
       {(title || right) && (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 11 }}>
           <h4 style={{ margin: 0, fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: ".04em", textTransform: "uppercase" }}>
@@ -74,7 +74,7 @@ function Donut({ slices, total, size = 76 }) {
 function Gauge({ value, caption, sub, color }) {
   const v = Math.max(0, Math.min(100, Math.round(value)));
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", flex: "1 1 240px", minWidth: 220 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "9px 11px", flex: "1 1 190px", minWidth: 178 }}>
       <div style={{ width: 58, height: 58, borderRadius: "50%", flexShrink: 0, position: "relative", background: `conic-gradient(${color} 0% ${v}%, #EDEEF4 ${v}% 100%)` }}>
         <div style={{ position: "absolute", inset: 9, background: "#fff", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800 }}>
           {v}%
@@ -260,9 +260,9 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
     <div style={{ padding: "0 16px 16px" }}>
       {error && <div className="notice error" style={{ marginBottom: 10 }}><span>!</span> {error}</div>}
 
-      <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap", opacity: loading ? 0.6 : 1, transition: "opacity 120ms ease" }}>
+      <div style={{ display: "flex", gap: 9, alignItems: "flex-start", flexWrap: "wrap", opacity: loading ? 0.6 : 1, transition: "opacity 120ms ease" }}>
         {/* ── LEFT RAIL ── */}
-        <div style={{ width: 225, flexShrink: 0, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ width: 186, flexShrink: 0, display: "flex", flexDirection: "column", gap: 9 }}>
           <Card
             title="Weekly summary"
             right={
@@ -329,7 +329,7 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
         </div>
 
         {/* ── CENTRE: the week grid ── */}
-        <div style={{ flex: "1 1 820px", minWidth: 820, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ flex: "1 1 440px", minWidth: 0, display: "flex", flexDirection: "column", gap: 9 }}>
           <Card
             title={`Weekly plan (${weekLabel})`}
             right={
@@ -338,7 +338,7 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
               </button>
             }
           >
-            <div style={{ overflowX: "auto" }}>
+            <div style={{ overflow: "auto", maxHeight: "clamp(180px, 38vh, 430px)" }}>
               <div style={{
                 display: "grid",
                 gridTemplateColumns: [
@@ -349,14 +349,14 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
                 minWidth: "100%", fontSize: 11.5,
               }}>
                 {DETAIL_COLS.map((c) => (
-                  <div key={c.key} style={{ ...gh, position: "relative" }} title={c.label}>
+                  <div key={c.key} style={{ ...ghSticky, position: "sticky" }} title={c.label}>
                     {c.label}
                     <span onMouseDown={startResize(c.key)} style={grip} />
                   </div>
                 ))}
-                {days.map((d) => <div key={d.date} style={ghDay} title={d.label}>{d.label}</div>)}
+                {days.map((d) => <div key={d.date} style={ghDaySticky} title={d.label}>{d.label}</div>)}
                 {TAIL_COLS.map((c) => (
-                  <div key={c.key} style={{ ...gh, position: "relative" }} title={c.label}>
+                  <div key={c.key} style={{ ...ghSticky, position: "sticky" }} title={c.label}>
                     {c.label}
                     <span onMouseDown={startResize(c.key)} style={grip} />
                   </div>
@@ -389,7 +389,7 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
         </div>
 
         {/* ── RIGHT RAIL: commercial ── */}
-        <div style={{ width: 290, flexShrink: 0, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ width: 210, flexShrink: 0, display: "flex", flexDirection: "column", gap: 9 }}>
           <Card
             title={`Commercial summary · ${quarter?.label || "…"}${quarter?.span ? ` (${quarter.span})` : ""}`}
             right={
@@ -501,7 +501,7 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
       </div>
 
       {/* ── BOTTOM: headline tiles + gauges ── */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 14 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 9 }}>
         {BUCKETS.map((b) => (
           <div key={b.key} style={bstat}>
             <div style={bstatL}>{b.label === "Planned" ? "Planned this week" : b.label}</div>
@@ -621,7 +621,11 @@ const tile = { background: "#FAFAFD", border: `1px solid ${C.border}`, borderRad
 const tileN = { fontSize: 19, fontWeight: 700, fontVariantNumeric: "tabular-nums" };
 const tileL = { fontSize: 10.5, color: C.muted, marginTop: 1 };
 const moneyN = { ...tileN, fontSize: 15.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
-const gh = { padding: "8px 4px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".03em", borderBottom: `1px solid ${C.border}`, background: "#FAFAFD", whiteSpace: "nowrap" };
+// Sticky header variants: the grid scrolls vertically, so the header row has
+// to stay put. Needs an opaque background or rows show through it.
+const ghSticky = { padding: "8px 7px", fontSize: 10, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: ".03em", borderBottom: "1px solid #E4E6EF", background: "#FAFAFD", whiteSpace: "nowrap", top: 0, zIndex: 3 };
+const ghDaySticky = { padding: "8px 4px", fontSize: 9.5, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", borderBottom: "1px solid #E4E6EF", background: "#FAFAFD", whiteSpace: "nowrap", textAlign: "center", overflow: "hidden", position: "sticky", top: 0, zIndex: 3 };
+const gh = { padding: "8px 7px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".03em", borderBottom: `1px solid ${C.border}`, background: "#FAFAFD", whiteSpace: "nowrap" };
 const grip = {
   position: "absolute", top: 0, right: -3, width: 7, height: "100%",
   cursor: "col-resize", userSelect: "none", zIndex: 2,
@@ -630,15 +634,15 @@ const resetBtn = {
   border: `1px solid ${C.border}`, background: "#fff", borderRadius: 6,
   padding: "3px 8px", fontSize: 10.5, color: C.muted, cursor: "pointer",
 };
-const ghDay = { padding: "8px 2px", fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0, borderBottom: `1px solid ${C.border}`, background: "#FAFAFD", whiteSpace: "nowrap", textAlign: "center", overflow: "hidden" };
-const gc = { padding: "9px 4px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+const ghDay = { padding: "8px 4px", fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0, borderBottom: `1px solid ${C.border}`, background: "#FAFAFD", whiteSpace: "nowrap", textAlign: "center", overflow: "hidden" };
+const gc = { padding: "9px 7px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 const pth = { padding: "6px 3px", textAlign: "left", fontSize: 10, textTransform: "uppercase", color: C.muted, borderBottom: `1px solid ${C.border}` };
 const pthR = { ...pth, textAlign: "right" };
 const ptd = { padding: "5px 3px", borderBottom: "1px solid #F1F5F9", whiteSpace: "nowrap" };
 const ptdR = { ...ptd, textAlign: "right", fontVariantNumeric: "tabular-nums" };
 const ptf = { ...ptd, fontWeight: 800, borderTop: `2px solid ${C.border}`, borderBottom: "none" };
 const ptfR = { ...ptdR, fontWeight: 800, borderTop: `2px solid ${C.border}`, borderBottom: "none" };
-const bstat = { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", flex: "1 1 150px", minWidth: 145 };
+const bstat = { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "9px 11px", flex: "1 1 118px", minWidth: 114 };
 const bstatL = { fontSize: 11, color: C.muted, fontWeight: 600 };
 const bstatN = { fontSize: 26, fontWeight: 800, letterSpacing: "-0.5px", lineHeight: 1.15, marginTop: 2 };
 const bstatS = { fontSize: 11, color: C.muted, marginTop: 1 };

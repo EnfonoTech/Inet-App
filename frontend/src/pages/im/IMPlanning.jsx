@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import ExecutionAnalyticsPanel from "../../components/ExecutionAnalytics";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
@@ -67,6 +68,7 @@ export default function IMPlanning() {
   const { rowLimit } = useTableRowLimit();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("plans"); // "plans" | "analytics"
   const [statusFilter, setStatusFilter] = useState(["Planned", "Overdue", "Not Attended", "Extended"]);
   const [visitFilter, setVisitFilter] = useState([]);
   const [search, setSearch] = useState("");
@@ -534,7 +536,36 @@ export default function IMPlanning() {
         </div>
       </div>
 
+      <div role="tablist" aria-label="View" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 8px", width: "fit-content" }}>
+        {[{ id: "plans", label: "Rollout Execution" }, { id: "analytics", label: "\u{1F4CA} Analytics" }].map((tt) => {
+          const active = tab === tt.id;
+          return (
+            <button key={tt.id} type="button" role="tab" aria-selected={active} onClick={() => setTab(tt.id)}
+              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? (tt.id === "analytics" ? "#6d28d9" : "#1d4ed8") : "transparent", color: active ? "#fff" : "#475569" }}>
+              {tt.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="page-content">
+        {tab === "analytics" && (
+          <ExecutionAnalyticsPanel
+            imName={imName}
+            // This page IS Rollout Plan-keyed, the same grain the analytics
+            // counts on, so a drill-in genuinely ties. (Rollout Work Done is
+            // Daily Execution-keyed, which is why it stays read-only there.)
+            onDrill={(f) => {
+              setStatusFilter(f.planStatusFilter?.length ? f.planStatusFilter : []);
+              setTab("plans");
+            }}
+            // Always one IM on this page, so an IM breakdown says nothing.
+            hideDimensions={["im"]}
+          />
+        )}
+
+        {/* Hidden, never unmounted — DataTablePro observes this wrapper. */}
+        <div style={tab === "analytics" ? { display: "none" } : undefined}>
         <DataTableWrapper loading={loading && plans.length > 0}>
           <>
             <table className="data-table" data-excel-filter-all="1" data-table-key="im-planning-rollout">
@@ -740,6 +771,7 @@ export default function IMPlanning() {
           filteredCount={displayedCount}
           filterActive={!!hasFilters}
         />
+        </div>
       </div>
       <IMPlanningExecutionModal
         open={executionModalOpen}

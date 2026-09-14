@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import RolloutWeeklyPlan from "../../components/RolloutWeeklyPlan";
+import RolloutWeeklyForecast from "../../components/RolloutWeeklyForecast";
 import { pmApi } from "../../services/api";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
@@ -18,6 +19,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty } from "../../utils/numberFormat";
+import { weekRangeLabel } from "../../utils/weeks";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -579,6 +581,9 @@ export default function RolloutPlanning() {
               { key: "qty",         label: "Qty" },
               { key: "line_amount", label: "Line Amount" },
               { key: "target_month", label: "Target Month" },
+              { key: "target_week", label: "Target Week" },
+              { key: "target_date", label: "Target Date" },
+              { key: "target_team_name", label: "Target Team" },
               { key: "dispatch_status", label: "Status" },
             ]}
           />
@@ -607,13 +612,16 @@ export default function RolloutPlanning() {
               { id: "all",         label: "All POIDs (re-plan)", view: "table" },
               { id: "open_dummy",  label: "Dummy POs",           view: "table" },
               { id: "week",        label: "🗓 Weekly Plan",       view: "week" },
+              { id: "forecast",    label: "📈 Weekly Forecast",   view: "forecast", accent: "#0f766e" },
             ].map((tab) => {
-              const active = tab.view === "week"
-                ? view === "week"
+              // Any non-table view compares against itself; only the table
+              // tabs are distinguished by planScope.
+              const active = tab.view !== "table"
+                ? view === tab.view
                 : (view === "table" && planScope === tab.id);
-              const isDummy = tab.id === "open_dummy";
-              const activeBg = isDummy ? "#b45309" : "#1d4ed8";
-              const activeShadow = isDummy ? "0 1px 3px rgba(180,83,9,0.3)" : "0 1px 3px rgba(29,78,216,0.3)";
+              const accent = tab.accent || (tab.id === "open_dummy" ? "#b45309" : "#1d4ed8");
+              const activeBg = accent;
+              const activeShadow = `0 1px 3px ${accent}4d`;
               return (
                 <button
                   key={tab.id}
@@ -631,7 +639,7 @@ export default function RolloutPlanning() {
                     padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700,
                     border: "none", borderRadius: 6, cursor: "pointer",
                     background: active ? activeBg : "transparent",
-                    color: active ? "#fff" : isDummy ? "#b45309" : "#475569",
+                    color: active ? "#fff" : tab.accent || (tab.id === "open_dummy" ? "#b45309" : "#475569"),
                     boxShadow: active ? activeShadow : "none",
                     transition: "background 120ms",
                   }}
@@ -744,6 +752,12 @@ export default function RolloutPlanning() {
         {view === "week" && (
           <RolloutWeeklyPlan portal={queryArgs?.portal} refreshKey={refreshKey} reportHref="/reports?tab=rollout_commercial" />
         )}
+        {view === "forecast" && (
+          <RolloutWeeklyForecast
+            portal={queryArgs?.portal}
+            refreshKey={refreshKey}
+          />
+        )}
         {/* Hidden, never unmounted — DataTablePro's observer lives on this
             wrapper, so unmounting it costs the table its Manage Table,
             filters and column state on the way back. */}
@@ -772,6 +786,9 @@ export default function RolloutPlanning() {
                   <th>Region</th>
                   <th>IM</th>
                   <th data-excel-filter-bucket="month">Target Month</th>
+                  <th data-excel-filter-bucket="day">Target Week</th>
+                  <th data-excel-filter-bucket="day">Target Date</th>
+                  <th>Target Team</th>
                   <th style={{ textAlign: "right" }}>Line Amount</th>
                   <th data-excel-filter="0">Open</th>
                 </tr>
@@ -779,7 +796,7 @@ export default function RolloutPlanning() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={planScope === "open_dummy" ? 16 : 15} style={{ padding: 0 }}>
+                    <td colSpan={planScope === "open_dummy" ? 19 : 18} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
                           Loading dispatches…
@@ -901,6 +918,21 @@ export default function RolloutPlanning() {
                         ? new Date(row.target_month).toLocaleDateString("en", { month: "short", year: "numeric" })
                         : "—"}
                     </td>
+                    <td style={{ fontSize: "0.82rem" }}>
+                      {row.target_week ? weekRangeLabel(String(row.target_week).slice(0, 10)) : (
+                        // Worded, not "—", so the gap is findable by the
+                        // column filter and reads as something to fix.
+                        <span style={{ color: "#b45309", fontWeight: 600 }} title="No forecast week — invisible on the Weekly Forecast">
+                          Week not set
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ fontSize: "0.82rem" }}>
+                      {row.target_date
+                        ? new Date(`${String(row.target_date).slice(0, 10)}T00:00:00`).toLocaleDateString("en", { month: "short", day: "numeric" })
+                        : "—"}
+                    </td>
+                    <td style={{ fontSize: "0.82rem" }}>{row.target_team_name || row.target_team || "—"}</td>
                     <td style={{ textAlign: "right" }}>{money.format(row.line_amount || 0)}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <button
@@ -927,6 +959,7 @@ export default function RolloutPlanning() {
                     )}
                   </td>
                   <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td /><td /><td />
                   {planScope === "open_dummy" && <td />}
                   <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
                     {money.format(totalAmt)}
@@ -1348,7 +1381,7 @@ export default function RolloutPlanning() {
               "item_description",
               "name", "po_no", "system_id", "po_dispatch",
               "site_code", "site_name", "area", "center_area", "region_type",
-              "planning_mode", "target_month",
+              "planning_mode", "target_month", "target_week", "target_date", "target_team",
               "customer",
             ]}
           />

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
+import ExecutionAnalyticsPanel from "../../components/ExecutionAnalytics";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
@@ -1173,12 +1174,14 @@ export default function IMExecution() {
         {[
           { id: "poid", label: "Rollout Work Done" },
           { id: "internal_done", label: "Internal Work Done", count: internalDoneExecutions.length },
+          { id: "analytics", label: "📊 Analytics" },
         ].map((tt) => {
           const active = tab === tt.id;
           const teal = tt.id === "internal_done";
+          const violet = tt.id === "analytics";
           return (
             <button key={tt.id} type="button" role="tab" aria-selected={active} onClick={() => setTab(tt.id)}
-              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? (teal ? "#0d9488" : "#1d4ed8") : "transparent", color: active ? "#fff" : "#475569", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? (teal ? "#0d9488" : violet ? "#6d28d9" : "#1d4ed8") : "transparent", color: active ? "#fff" : "#475569", display: "inline-flex", alignItems: "center", gap: 6 }}>
               {tt.label}
               {!!tt.count && (
                 <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, fontSize: "0.66rem", fontWeight: 800, background: active ? "#fff" : "#14b8a6", color: active ? "#0d9488" : "#fff" }}>
@@ -1317,6 +1320,13 @@ export default function IMExecution() {
       </>)}
 
       <div className="page-content">
+        {tab === "analytics" && (
+          <ExecutionAnalyticsPanel imName={imName} monitorHref={null} hideDimensions={["im"]} />
+        )}
+
+        {/* Hidden, never unmounted — DataTablePro observes this wrapper, so
+            losing it loses the table's Manage Table / filters / column state. */}
+        <div style={tab === "analytics" ? { display: "none" } : undefined}>
         <DataTableWrapper loading={loading && executions.length > 0}>
           {tab === "internal_done" ? (
               <table key="im-execution-internal-done" className="data-table" data-excel-filter-all="1" data-table-key="im-execution-internal-done">
@@ -1746,6 +1756,7 @@ export default function IMExecution() {
           value={effectiveRowLimit}
           onChange={confirmRowLimit}
         />
+        </div>
       </div>
       {mapForRow && (
         <div
