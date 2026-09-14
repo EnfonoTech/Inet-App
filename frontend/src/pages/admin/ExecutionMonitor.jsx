@@ -168,6 +168,7 @@ export default function ExecutionMonitor() {
   // Drill-through scope from Execution Analytics. No toolbar control — these
   // exist so the list shows exactly the set the tile counted.
   const [navBucket, setNavBucket] = useState(_navExec?.bucket ?? "");
+  const [navLabel, setNavLabel] = useState(_navExec?.bucketLabel ?? "");
   const [navClosure, setNavClosure] = useState(_navExec?.closure ?? "");
   const [navVisits, setNavVisits] = useState(_navExec?.visits ?? "");
   // "All" is stored per-path, not per-tab — the backend fetch is tab-scoped
@@ -608,8 +609,8 @@ export default function ExecutionMonitor() {
       <div className="page-content">
         {navBucket && (
           <div className="notice" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10, background: "#EEF4FE", border: "1px solid #CFE0F8", color: "#1D5AAE" }}>
-            <span>Showing one Execution Analytics bucket{navClosure ? ` · ${navClosure} lines` : ""}{navVisits === "all" ? " · all visits" : ""}.</span>
-            <button type="button" className="btn-secondary" style={{ marginLeft: "auto", padding: "3px 9px", fontSize: 11 }} onClick={() => { setNavBucket(""); setNavClosure(""); setNavVisits(""); }}>
+            <span>Showing <strong>{navLabel || "one bucket"}</strong> — the plans behind that number.</span>
+            <button type="button" className="btn-secondary" style={{ marginLeft: "auto", padding: "3px 9px", fontSize: 11 }} onClick={() => { setNavBucket(""); setNavLabel(""); setNavClosure(""); setNavVisits(""); }}>
               Clear
             </button>
           </div>
@@ -627,6 +628,7 @@ export default function ExecutionMonitor() {
               // Same page, so a bucket click is a tab switch — the table then
               // fetches with the very predicate the tile counted with.
               setNavBucket(f.bucket || "");
+              setNavLabel(f.bucketLabel || "");
               setNavClosure(f.closure || "");
               setNavVisits(f.visits || "");
               setPlanStatusFilter(f.planStatusFilter ?? []);

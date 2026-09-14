@@ -29,10 +29,6 @@ const CLOSURE = [
   { id: "open", label: "Open" },
   { id: "closed", label: "Closed" },
 ];
-const VISITS = [
-  { id: "current", label: "Current visit" },
-  { id: "all", label: "All visits" },
-];
 const BASES = [
   { id: "plan", label: "Plan date" },
   { id: "execution", label: "Execution date" },
@@ -78,7 +74,6 @@ function Seg({ options, value, onChange }) {
 export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideDimensions }) {
   const navigate = useNavigate();
   const [closure, setClosure] = useState("all");
-  const [visits, setVisits] = useState("current");
   const [basis, setBasis] = useState("plan");
   const [range, setRange] = useState({ from: "", to: "" });
   const hidden = useMemo(() => new Set(hideDimensions || []), [hideDimensions]);
@@ -90,9 +85,9 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
   const [error, setError] = useState(null);
 
   const portal = useMemo(() => ({
-    closure, visits, date_basis: basis,
+    closure, date_basis: basis,
     from_date: range.from || "", to_date: range.to || "",
-  }), [closure, visits, basis, range.from, range.to]);
+  }), [closure, basis, range.from, range.to]);
   const portalKey = JSON.stringify(portal);
   const dimsKey = JSON.stringify(dims);
 
@@ -114,19 +109,19 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
 
   const canDrill = !!(onDrill || monitorHref);
 
-  function openMonitor(extra) {
+  function openMonitor(extra, target) {
     if (!canDrill) return;
     const execFilters = {
       // Empty = every status. The monitor otherwise defaults to a 4-of-8
       // subset that silently hides Overdue / Not Attended / Cancelled, which
       // would make the list disagree with the tile that opened it.
       planStatusFilter: [],
-      closure, visits, tab: "all",
+      closure, visits: "current", tab: "all",
       fromDate: range.from || "", toDate: range.to || "",
       ...extra,
     };
     // On the monitor's own page this is a tab switch, not a navigation.
-    if (onDrill) onDrill(execFilters);
+    if (onDrill) onDrill(execFilters, target || "plans");
     else navigate(monitorHref, { state: { execFilters } });
   }
 
@@ -152,7 +147,6 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
           data-table full height, and there is no table on this page. */}
       <div style={{ display: "flex", gap: 9, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         <Seg options={CLOSURE} value={closure} onChange={setClosure} />
-        <Seg options={VISITS} value={visits} onChange={setVisits} />
         <select
           value={basis}
           onChange={(e) => setBasis(e.target.value)}
@@ -199,7 +193,7 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
               <button
                 key={b.key}
                 type="button"
-                onClick={() => openMonitor({ bucket: b.key })}
+                onClick={() => openMonitor({ bucket: b.key, bucketLabel: b.label }, b.target)}
                 title={`${b.hint}${canDrill ? " · click to open these lines" : ""}`}
                 style={{
                   ...bstat, flex: "1 1 132px", minWidth: 128, textAlign: "left",

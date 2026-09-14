@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import ExecutionAnalytics from "../../components/ExecutionAnalytics";
 import { useAuth } from "../../context/AuthContext";
 
@@ -9,11 +10,15 @@ import { useAuth } from "../../context/AuthContext";
  * analysis is per Rollout Plan. Hanging the same figures off both would make
  * at least one of them describe a different population than the table below.
  *
- * Read-only for the same reason — there is no IM list at this grain to drill
- * into whose count would match. A dead tile beats a lying one.
+ * Each tile drills into whichever list can actually answer it: planning-state
+ * buckets (no execution yet, overdue, no team, unmapped dummy) go to Rollout
+ * Execution; execution-state buckets (QC, CIAG, IM confirmation, Work Done)
+ * go to Rollout Work Done. Both endpoints accept the same bucket predicate
+ * the tile counted with, so the number and the list agree by construction.
  */
 export default function IMExecutionAnalytics() {
   const { imName } = useAuth();
+  const navigate = useNavigate();
   return (
     <>
       <div className="page-header">
@@ -26,7 +31,15 @@ export default function IMExecutionAnalytics() {
       </div>
       <div className="page-content">
         {/* One IM by definition, so an IM breakdown would be a single row. */}
-        <ExecutionAnalytics imName={imName} monitorHref={null} hideDimensions={["im"]} />
+        <ExecutionAnalytics
+          imName={imName}
+          hideDimensions={["im"]}
+          onDrill={(f, target) =>
+            navigate(target === "work_done" ? "/im-execution" : "/im-planning", {
+              state: { execFilters: f },
+            })
+          }
+        />
       </div>
     </>
   );

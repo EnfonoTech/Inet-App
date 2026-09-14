@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
@@ -67,7 +68,14 @@ export default function IMPlanning() {
   const { rowLimit } = useTableRowLimit();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState(["Planned", "Overdue", "Not Attended", "Extended"]);
+  const location = useLocation();
+  const _navExec = location.state?.execFilters;
+  const [navBucket, setNavBucket] = useState(_navExec?.bucket ?? "");
+  const [navLabel, setNavLabel] = useState(_navExec?.bucketLabel ?? "");
+  const [navClosure, setNavClosure] = useState(_navExec?.closure ?? "");
+  const [navVisits, setNavVisits] = useState(_navExec?.visits ?? "");
+  const [statusFilter, setStatusFilter] = useState(
+    _navExec ? (_navExec.planStatusFilter ?? []) : ["Planned", "Overdue", "Not Attended", "Extended"]);
   const [visitFilter, setVisitFilter] = useState([]);
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState([]);
@@ -212,6 +220,11 @@ export default function IMPlanning() {
       if (fromDate) portal.from_date = fromDate;
       if (toDate) portal.to_date = toDate;
       if (dummyFilter) portal.dummy_preset = "dummy";
+      // Drill-in scope from Execution Analytics — no toolbar control; it
+      // exists so this list is exactly the set the tile counted.
+      if (navBucket) portal.bucket = navBucket;
+      if (navClosure) portal.closure = navClosure;
+      if (navVisits) portal.visits = navVisits;
       const portalArg = Object.keys(portal).length ? portal : undefined;
       const signature = JSON.stringify([imName, statusFilter, portal, refreshKey]);
 
@@ -249,6 +262,9 @@ export default function IMPlanning() {
   }, [
     imName,
     statusFilter,
+    navBucket,
+    navClosure,
+    navVisits,
     rowLimit,
     searchDebounced,
     visitFilter,
@@ -535,6 +551,16 @@ export default function IMPlanning() {
       </div>
 
       <div className="page-content">
+        {navBucket && (
+          <div className="notice" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10, background: "#EEF4FE", border: "1px solid #CFE0F8", color: "#1D5AAE" }}>
+            <span>Showing <strong>{navLabel || "one bucket"}</strong> — the plans behind that number.</span>
+            <button type="button" className="btn-secondary" style={{ marginLeft: "auto", padding: "3px 9px", fontSize: 11 }}
+              onClick={() => { setNavBucket(""); setNavLabel(""); setNavClosure(""); setNavVisits(""); }}>
+              Clear
+            </button>
+          </div>
+        )}
+
         <DataTableWrapper loading={loading && plans.length > 0}>
           <>
             <table className="data-table" data-excel-filter-all="1" data-table-key="im-planning-rollout">

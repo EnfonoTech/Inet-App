@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
@@ -159,6 +160,14 @@ export default function IMExecution() {
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [dummyFilter, setDummyFilter] = useState("");
+  const location = useLocation();
+  const _navExec = location.state?.execFilters;
+  // Drill-in scope from Execution Analytics. No toolbar control — it exists
+  // so this list is exactly the set the tile counted.
+  const [navBucket, setNavBucket] = useState(_navExec?.bucket ?? "");
+  const [navLabel, setNavLabel] = useState(_navExec?.bucketLabel ?? "");
+  const [navClosure, setNavClosure] = useState(_navExec?.closure ?? "");
+  const [navVisits, setNavVisits] = useState(_navExec?.visits ?? "");
   const [tab, setTab] = useState("poid"); // "poid" | "internal_done"
   // "All" is stored per-path, not per-tab — the backend fetch is tab-scoped
   // (portal.tab below), so switching tabs is a genuinely different,
@@ -317,7 +326,10 @@ export default function IMExecution() {
         // POID Work and Internal Work Done are two tabs sharing one fetch -
         // without this, one row-limited batch had to cover both, so
         // whichever tab wasn't the majority of that batch lost rows.
-        portal.tab = tab === "internal_done" ? "internal_done" : "main";
+        portal.tab = navBucket ? "all" : (tab === "internal_done" ? "internal_done" : "main");
+        if (navBucket) portal.bucket = navBucket;
+        if (navClosure) portal.closure = navClosure;
+        if (navVisits) portal.visits = navVisits;
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) portal.column_filters = colFilters;
@@ -390,6 +402,9 @@ export default function IMExecution() {
     internalFromDate,
     internalToDate,
     tab,
+    navBucket,
+    navClosure,
+    navVisits,
   ]);
 
   const qcOptions = [...new Set(executions.map((e) => e.qc_status).filter(Boolean))].sort();
@@ -1317,6 +1332,16 @@ export default function IMExecution() {
       </>)}
 
       <div className="page-content">
+        {navBucket && (
+          <div className="notice" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10, background: "#EEF4FE", border: "1px solid #CFE0F8", color: "#1D5AAE" }}>
+            <span>Showing <strong>{navLabel || "one bucket"}</strong> — the executions behind that number.</span>
+            <button type="button" className="btn-secondary" style={{ marginLeft: "auto", padding: "3px 9px", fontSize: 11 }}
+              onClick={() => { setNavBucket(""); setNavLabel(""); setNavClosure(""); setNavVisits(""); }}>
+              Clear
+            </button>
+          </div>
+        )}
+
         <DataTableWrapper loading={loading && executions.length > 0}>
           {tab === "internal_done" ? (
               <table key="im-execution-internal-done" className="data-table" data-excel-filter-all="1" data-table-key="im-execution-internal-done">

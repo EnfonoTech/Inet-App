@@ -7967,14 +7967,11 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
     _bucket = (str(filters.get("bucket") or "")).strip()
     bucket_join = ""
     if _bucket:
-        _spec = EXECUTION_ATTENTION_BUCKETS.get(_bucket)
-        if not _spec:
-            frappe.throw(f"Unknown bucket: {_bucket}")
         bucket_join = (
             f" LEFT JOIN ({_DEX_SQL}) dex ON dex.rollout_plan = rp.name"
             f" LEFT JOIN ({_WDX_SQL}) wdx ON wdx.rollout_plan = rp.name "
         )
-        wheres.append(f"({_spec['cond']})")
+        wheres.append(execution_bucket_condition(_bucket))
 
     # Per-column "Manage Table" filters — see list_im_rollout_plans for the
     # rationale. This one backend serves 4 different table shapes (PM
@@ -15225,6 +15222,15 @@ _WDX_SQL = """
   GROUP BY de.rollout_plan
 """
 
+# Work nobody is going to do is not "attention". A cancelled plan, or one
+# waiting on a PM to approve its cancellation, is deliberately excluded from
+# every bucket — chasing QC on a line the IM has asked to cancel is noise.
+# Both remain visible in the plan_status dimension and in the totals.
+_ACTIONABLE = (
+    "IFNULL(rp.plan_status, '') <> 'Cancelled'"
+    " AND IFNULL(rp.cancel_request_status, '') <> 'Pending PM Approval'"
+)
+
 _QC_REQ = "IFNULL(rp.qc_required, 1)"
 _CIAG_REQ = "IFNULL(rp.ciag_required, 1)"
 
@@ -15234,31 +15240,37 @@ _CIAG_REQ = "IFNULL(rp.ciag_required, 1)"
 # AND issue-flagged. They do not sum to the total, and the UI says so.
 EXECUTION_ATTENTION_BUCKETS = {
     "no_execution": {
+        "target": "plans",
         "label": "No execution yet", "tone": "warn",
         "hint": "Planned, but no Daily Execution has been filed",
         "cond": "dex.rollout_plan IS NULL",
     },
     "qc_pending": {
+        "target": "work_done",
         "label": "QC pending", "tone": "warn",
         "hint": "Executed, still waiting on a QC pass",
         "cond": f"dex.rollout_plan IS NOT NULL AND {_QC_REQ} = 1 AND IFNULL(dex.qc_ok, 0) = 0",
     },
     "qc_failed": {
+        "target": "work_done",
         "label": "QC failed", "tone": "bad",
         "hint": "At least one execution failed QC",
         "cond": "IFNULL(dex.qc_fail, 0) = 1",
     },
     "ciag_pending": {
+        "target": "work_done",
         "label": "CIAG pending", "tone": "warn",
         "hint": "Executed, still waiting on CIAG approval",
         "cond": f"dex.rollout_plan IS NOT NULL AND {_CIAG_REQ} = 1 AND IFNULL(dex.ciag_ok, 0) = 0",
     },
     "im_confirmation_pending": {
+        "target": "work_done",
         "label": "IM confirmation pending", "tone": "warn",
         "hint": "Team lead finished; the IM has not confirmed",
         "cond": "IFNULL(dex.any_tl_done, 0) = 1 AND IFNULL(dex.any_im_done, 0) = 0",
     },
     "im_confirmation_only": {
+        "target": "work_done",
         "label": "IM confirmation ONLY pending", "tone": "bad",
         "hint": "Nothing else is outstanding — one click from done",
         # QC/CIAG short-circuit on the per-plan _required flags, exactly as the
@@ -15272,11 +15284,13 @@ EXECUTION_ATTENTION_BUCKETS = {
         ),
     },
     "work_done_missing": {
+        "target": "work_done",
         "label": "Work Done not created", "tone": "warn",
         "hint": "IM-confirmed but no Work Done record exists",
         "cond": "IFNULL(dex.any_im_done, 0) = 1 AND wdx.rollout_plan IS NULL",
     },
     "dummy_unmapped": {
+        "target": "plans",
         "label": "Dummy PO not mapped", "tone": "warn",
         "hint": "Still a placeholder — never mapped to a real PO line",
         # is_dummy_po, NOT was_dummy_po: mapping clears the former and leaves
@@ -15284,6 +15298,7 @@ EXECUTION_ATTENTION_BUCKETS = {
         "cond": "IFNULL(pd.is_dummy_po, 0) = 1",
     },
     "internal_unclassified": {
+        "target": "plans",
         "label": "Internal work unclassified", "tone": "warn",
         "hint": "Internal work with no work type, or Domain with no domain set",
         "cond": (
@@ -15293,17 +15308,20 @@ EXECUTION_ATTENTION_BUCKETS = {
             ")"
         ),
     },
-    "internal_no_project": {
-        "label": "Internal work, no project", "tone": "warn",
-        "hint": "Internal work not attached to any project",
-        "cond": "IFNULL(pd.is_internal_work, 0) = 1 AND IFNULL(pd.project_code, '') = ''",
+    "internal_pending": {
+        "target": "plans",
+        "label": "Internal work pending", "tone": "warn",
+        "hint": "Internal work still outstanding",
+        "cond": "IFNULL(pd.is_internal_work, 0) = 1 AND IFNULL(dex.any_im_done, 0) = 0",
     },
     "overdue_flagged": {
+        "target": "plans",
         "label": "Overdue (flagged)", "tone": "bad",
         "hint": "plan_status is Overdue — written by the nightly job",
         "cond": "IFNULL(rp.plan_status, '') = 'Overdue'",
     },
     "overdue_by_date": {
+        "target": "plans",
         "label": "Overdue (by date)", "tone": "bad",
         "hint": "Plan end date has passed and it is neither complete nor cancelled",
         # Shown next to the flagged count on purpose: a gap between the two
@@ -15314,16 +15332,26 @@ EXECUTION_ATTENTION_BUCKETS = {
         ),
     },
     "not_attended": {
+        "target": "plans",
         "label": "Not attended", "tone": "bad",
         "hint": "Planned but the team never attended",
         "cond": "IFNULL(rp.plan_status, '') = 'Not Attended'",
     },
     "issue_flagged": {
+        "target": "work_done",
         "label": "Issue flagged", "tone": "bad",
         "hint": "An issue category is set on the plan or an execution",
         "cond": "IFNULL(rp.issue_category, '') <> '' OR IFNULL(dex.any_issue, 0) = 1",
     },
+    "cancel_pending": {
+        "target": "plans",
+        "label": "Cancel awaiting PM", "tone": "info",
+        "hint": "IM asked to cancel; a PM has not responded yet",
+        "cond": "IFNULL(rp.cancel_request_status, '') = 'Pending PM Approval'",
+        "always": True,
+    },
     "no_team": {
+        "target": "plans",
         "label": "No team assigned", "tone": "warn",
         "hint": "Neither a lead team nor any split team",
         "cond": (
@@ -15423,6 +15451,22 @@ LEFT JOIN ({_WDX_SQL}) wdx ON wdx.rollout_plan = rp.name
 """
 
 
+def execution_bucket_condition(key):
+    """A bucket's SQL, with the shared actionable guard applied.
+
+    Every consumer goes through here — the analytics tiles and both drill-in
+    list endpoints — so a tile and the list it opens can never diverge on what
+    counts as still-actionable. Buckets marked `always` opt out of the guard
+    because they ARE the cancellation state.
+    """
+    spec = EXECUTION_ATTENTION_BUCKETS.get(key)
+    if not spec:
+        frappe.throw(f"Unknown bucket: {key}")
+    if spec.get("always"):
+        return f"({spec['cond']})"
+    return f"(({spec['cond']}) AND {_ACTIONABLE})"
+
+
 def _execution_analytics_where(pf, im):
     """(wheres, params, im_resolved) shared by every rail on the page.
 
@@ -15443,9 +15487,15 @@ def _execution_analytics_where(pf, im):
     if closure != "all":
         wheres.append(("NOT " if closure == "open" else "") + _execution_closed_exists_sql())
 
-    visits = (pf.get("visits") or "current").strip().lower()
-    if visits != "all":
-        wheres.append("NOT " + _execution_superseded_exists_sql())
+    wheres.append("NOT " + _execution_superseded_exists_sql())
+
+    # Internal work that is already done needs nothing from anyone — it would
+    # only pad the totals and the breakdowns. Mirrors the "Internal Work Done"
+    # split both list pages already make.
+    wheres.append(
+        "NOT (IFNULL(pd.is_internal_work, 0) = 1"
+        " AND IFNULL(dex.any_im_done, 0) = 1)"
+    )
 
     basis_key = (pf.get("date_basis") or "plan").strip().lower()
     basis = _EXEC_DATE_BASES.get(basis_key) or _EXEC_DATE_BASES["plan"]
@@ -15487,10 +15537,7 @@ def _execution_analytics_where(pf, im):
 
     bucket = (pf.get("bucket") or "").strip()
     if bucket:
-        spec = EXECUTION_ATTENTION_BUCKETS.get(bucket)
-        if not spec:
-            frappe.throw(f"Unknown bucket: {bucket}")
-        wheres.append(f"({spec['cond']})")
+        wheres.append(execution_bucket_condition(bucket))
 
     internal_preset = (pf.get("internal_preset") or "include").strip().lower()
     if internal_preset == "only":
@@ -15551,7 +15598,7 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
         "concentration": {"visits": [], "top_poids": [], "duids": [], "top_duids": []},
         "meta": {"date_basis": (pf.get("date_basis") or "plan"),
                  "closure": (pf.get("closure") or "all"),
-                 "visits": (pf.get("visits") or "current"),
+                 "visits": "current",
                  "from_date": pf.get("from_date") or "", "to_date": pf.get("to_date") or "",
                  "available_dimensions": [
                      {"key": k, "label": v["label"]}
@@ -15567,8 +15614,8 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
     # ── Tier A: totals + every attention bucket, in ONE statement ──────────
     bucket_keys = list(EXECUTION_ATTENTION_BUCKETS.keys())
     bucket_cols = ", ".join(
-        f"SUM(CASE WHEN ({EXECUTION_ATTENTION_BUCKETS[k]['cond']}) THEN 1 ELSE 0 END) AS `b_{k}`,"
-        f" SUM(CASE WHEN ({EXECUTION_ATTENTION_BUCKETS[k]['cond']})"
+        f"SUM(CASE WHEN {execution_bucket_condition(k)} THEN 1 ELSE 0 END) AS `b_{k}`,"
+        f" SUM(CASE WHEN {execution_bucket_condition(k)}"
         f" THEN IFNULL(pd.line_amount, 0) ELSE 0 END) AS `v_{k}`"
         for k in bucket_keys
     )
@@ -15596,6 +15643,7 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
             "key": k, "label": spec["label"], "tone": spec.get("tone") or "info",
             "hint": spec.get("hint") or "", "value": cint(head.get(f"b_{k}") or 0),
             "amount": flt(head.get(f"v_{k}") or 0),
+            "target": spec.get("target") or "plans",
         })
 
     # ── Tier B: one GROUP BY per selected dimension ────────────────────────
@@ -15888,6 +15936,32 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
     # dummy_preset convention: "dummy" = open dummy POs only.
     if (pf.get("dummy_preset") or "").strip().lower() == "dummy":
         portal_clause += " AND IFNULL(pd.is_dummy_po, 0) = 1"
+
+    # Drill-through from Execution Analytics. Same predicate registry the tile
+    # counted with, so the number and the list it opens agree. All three
+    # default to NO filtering — this page has never hidden closed or
+    # superseded plans, and that stays true for every ordinary call.
+    bucket_join = ""
+    _bucket = (pf.get("bucket") or "").strip()
+    if _bucket:
+        bucket_join = (
+            f" LEFT JOIN ({_DEX_SQL}) dex ON dex.rollout_plan = rp.name"
+            f" LEFT JOIN ({_WDX_SQL}) wdx ON wdx.rollout_plan = rp.name "
+        )
+        portal_clause += " AND " + execution_bucket_condition(_bucket)
+        # Match the analytics base exactly: current visit only, and no
+        # internal work that is already finished.
+        portal_clause += " AND NOT " + _execution_superseded_exists_sql()
+        portal_clause += (
+            " AND NOT (IFNULL(pd.is_internal_work, 0) = 1"
+            " AND IFNULL(dex.any_im_done, 0) = 1)"
+        )
+    _closure = (pf.get("closure") or "all").strip().lower()
+    if _closure in ("open", "closed"):
+        portal_clause += " AND " + ("NOT " if _closure == "open" else "") + _execution_closed_exists_sql()
+    if (pf.get("visits") or "all").strip().lower() == "current":
+        portal_clause += " AND NOT " + _execution_superseded_exists_sql()
+
     rp_im_join = ""
     im_full_sql = "im_pd.full_name AS im_full_name"
     if frappe.db.has_column("Rollout Plan", "im"):
@@ -16040,7 +16114,8 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
             "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
             "LEFT JOIN `tabProject Control Center` pcc_rp ON pcc_rp.name = pd.project_code "
             f"{rp_im_join} "
-            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im",
+            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im"
+            f"{bucket_join}",
             f"pd.im IN ({ph}){status_clause}{portal_clause}", params, _e,
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
@@ -16055,7 +16130,8 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
             "LEFT JOIN `tabINET Team` it ON it.name = rp.team "
             "LEFT JOIN `tabProject Control Center` pcc_rp ON pcc_rp.name = pd.project_code "
             f"{rp_im_join} "
-            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im",
+            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im"
+            f"{bucket_join}",
             f"pd.im IN ({ph}){status_clause}{portal_clause}", params, [
                 {"key": "plans", "label": "Plans", "agg": "count"},
                 {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
@@ -16106,6 +16182,7 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         LEFT JOIN `tabProject Control Center` pcc_rp ON pcc_rp.name = pd.project_code
         {rp_im_join}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
+        {bucket_join}
         WHERE pd.im IN ({ph}){status_clause}{portal_clause}
         ORDER BY rp.plan_date DESC, rp.creation DESC
         {_sql_limit_suffix(lim_rp)}
@@ -16171,6 +16248,42 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     if (pf.get("dummy_preset") or "").strip().lower() == "dummy":
         portal_clause += " AND IFNULL(pd.is_dummy_po, 0) = 1"
 
+    # Drill-through from Execution Analytics, on the same registry the tile
+    # counted with. NOTE the grain: the tile counts Rollout PLANS, this list
+    # is one row per Daily Execution, so a multi-team plan contributes several
+    # rows. The rows are the right rows; the count is legitimately larger, and
+    # the page says so rather than pretending otherwise.
+    future_planned_clause = "AND NOT (rp.plan_status = 'Planned' AND rp.plan_date > CURDATE())"
+    extended_clause = "AND rp.plan_status != 'Extended'"
+    issue_block_clause = (
+        "AND NOT ("
+        " IFNULL(rp.issue_status,'') = 'Reported'"
+        " OR (IFNULL(rp.issue_status,'') = '' AND rp.plan_status = 'Planning with Issue'))"
+    )
+    bucket_join_ex = ""
+    _bucket_ex = (pf.get("bucket") or "").strip()
+    if _bucket_ex:
+        bucket_join_ex = (
+            f" LEFT JOIN ({_DEX_SQL}) dex ON dex.rollout_plan = rp.name"
+            f" LEFT JOIN ({_WDX_SQL}) wdx ON wdx.rollout_plan = rp.name "
+        )
+        portal_clause += " AND " + execution_bucket_condition(_bucket_ex)
+        # Match the analytics base exactly: current visit only, and no
+        # internal work that is already finished.
+        portal_clause += " AND NOT " + _execution_superseded_exists_sql()
+        portal_clause += (
+            " AND NOT (IFNULL(pd.is_internal_work, 0) = 1"
+            " AND IFNULL(dex.any_im_done, 0) = 1)"
+        )
+        future_planned_clause = ""
+        extended_clause = ""
+        issue_block_clause = ""
+    _closure_ex = (pf.get("closure") or "all").strip().lower()
+    if _closure_ex in ("open", "closed"):
+        portal_clause += " AND " + ("NOT " if _closure_ex == "open" else "") + _execution_closed_exists_sql()
+    if (pf.get("visits") or "all").strip().lower() == "current":
+        portal_clause += " AND NOT " + _execution_superseded_exists_sql()
+
     # The "Internal Work Done" sub-table (client-side split of this same
     # fetch by is_internal_work=1) has its own dedicated team/domain/type/date
     # filters — previously applied only to the already-loaded rows. Each
@@ -16221,7 +16334,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     ciag_col_hide = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
     qc_req_col2 = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
     ciag_req_col2 = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
-    portal_clause += (
+    portal_clause += "" if _bucket_ex else (
         " AND NOT ("
         " de.execution_status = 'Completed'"
         " AND ("
@@ -16410,7 +16523,8 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             "LEFT JOIN `tabINET Team` it ON it.name = de.team "
             "LEFT JOIN `tabProject Control Center` pcc_ex ON pcc_ex.name = pd.project_code "
             f"{rp_im_join_ex} "
-            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im",
+            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im"
+            f"{bucket_join_ex}",
             f"pd.im IN ({ph}){status_clause}{portal_clause}", params, _e,
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
@@ -16426,7 +16540,8 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             "LEFT JOIN `tabINET Team` it ON it.name = de.team "
             "LEFT JOIN `tabProject Control Center` pcc_ex ON pcc_ex.name = pd.project_code "
             f"{rp_im_join_ex} "
-            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im",
+            "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im"
+            f"{bucket_join_ex}",
             f"pd.im IN ({ph}){status_clause}{portal_clause}", params, [
                 {"key": "executions", "label": "Executions", "agg": "count"},
                 {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
@@ -16482,24 +16597,22 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         LEFT JOIN `tabProject Control Center` pcc_ex ON pcc_ex.name = pd.project_code
         {rp_im_join_ex}
         LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im
+        {bucket_join_ex}
         WHERE pd.im IN ({ph}){status_clause}{portal_clause}
-        AND NOT (rp.plan_status = 'Planned' AND rp.plan_date > CURDATE())
+        {future_planned_clause}
         -- Extended: IM pushed the deadline on a stalled plan but the TL
         -- hasn't re-engaged yet — belongs on Rollout Execution (needs the
         -- TL to start/restart it), not here, even though an old Daily
         -- Execution from before it stalled may still exist. The moment the
         -- TL logs activity, the sync logic flips this to In Execution and
         -- it reappears here normally.
-        AND rp.plan_status != 'Extended'
+        {extended_clause}
         AND NOT EXISTS (
             SELECT 1 FROM `tabRollout Plan` rp_later
             WHERE rp_later.po_dispatch = rp.po_dispatch
             AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)
         )
-        AND NOT (
-            IFNULL(rp.issue_status,'') = 'Reported'
-            OR (IFNULL(rp.issue_status,'') = '' AND rp.plan_status = 'Planning with Issue')
-        )
+        {issue_block_clause}
         ORDER BY de.execution_date DESC, de.creation DESC
         {_sql_limit_suffix(lim_de)}
         """,
