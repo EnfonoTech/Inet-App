@@ -36,7 +36,8 @@
    "fieldtype": "Link",
    "label": "System ID",
    "options": "PO Dispatch",
-   "search_index": 1
+   "search_index": 1,
+   "unique": 1
   },
   {
    "fieldname": "execution",

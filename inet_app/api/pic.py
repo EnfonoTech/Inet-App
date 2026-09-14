@@ -1492,6 +1492,47 @@ def _compute_dispatch_status_from_pic(ms1_status, ms2_status, ms2_amount, curren
     return None
 
 
+def _apply_pic_rejection_to_work_done(po_dispatch_name, closed_flag):
+    """Land a PIC rejection on the line's Work Done, creating one only when the
+    line genuinely has none.
+
+    The lookup matches on system_id ALONE, and that is the whole point. It used
+    to also filter submission_status == "Confirmation Done", which does not ask
+    "does a Work Done exist" but "does one exist in this one state" — so a line
+    whose Work Done was blank, Ready for Confirmation, or already PIC Rejected
+    fell through to the create branch and gained a second record carrying the
+    full line_amount all over again. The record it created was itself
+    PIC Rejected, so the next rejection on that line produced a third. Only one
+    Work Done may ever exist per line.
+    """
+    existing = frappe.get_all(
+        "Work Done",
+        filters={"system_id": po_dispatch_name},
+        fields=["name"],
+        order_by="creation asc",
+        limit=1,
+    )
+    if existing:
+        frappe.db.set_value(
+            "Work Done", existing[0].name, "submission_status", "PIC Rejected",
+            update_modified=True,
+        )
+        return existing[0].name
+
+    # Genuinely no Work Done (legacy/archive line) — create one so the reject is
+    # a real, addressable record the IM can find and resubmit, not a silent
+    # no-op. Source is "Backend" because nothing executed here: labelling these
+    # "Direct Close" made a system-generated placeholder indistinguishable from
+    # an IM closing a line by hand, which is how this bug stayed hidden.
+    new_wd = frappe.new_doc("Work Done")
+    new_wd.system_id = po_dispatch_name
+    new_wd.submission_status = "PIC Rejected"
+    new_wd.source = "Backend"
+    new_wd.set(closed_flag, 1)
+    new_wd.insert(ignore_permissions=True)
+    return new_wd.name
+
+
 def _reflect_pic_rejection(po_dispatch_name, closed_flag):
     """Mirror a milestone landing on I-BUY Rejected / ISDP Rejected onto the
     IM's own portal: marks/creates a Work Done record 'PIC Rejected' (same
@@ -1502,21 +1543,7 @@ def _reflect_pic_rejection(po_dispatch_name, closed_flag):
     "Bulk Set Status" path (instead of the dedicated Reject action) silently
     skipped both the IM notification and the Work Done record entirely.
     """
-    wd_docs = frappe.get_all(
-        "Work Done",
-        filters={"system_id": po_dispatch_name, "submission_status": "Confirmation Done"},
-        fields=["name"],
-    )
-    if wd_docs:
-        for wd in wd_docs:
-            frappe.db.set_value("Work Done", wd.name, "submission_status", "PIC Rejected", update_modified=True)
-    else:
-        new_wd = frappe.new_doc("Work Done")
-        new_wd.system_id = po_dispatch_name
-        new_wd.submission_status = "PIC Rejected"
-        new_wd.source = "Direct Close"  # closest existing option; no real execution chain behind this
-        new_wd.set(closed_flag, 1)
-        new_wd.insert(ignore_permissions=True)
+    _apply_pic_rejection_to_work_done(po_dispatch_name, closed_flag)
     frappe.db.commit()
     try:
         from inet_app.api.notifications import notify_im_pic_rejected
@@ -3420,24 +3447,7 @@ def reject_pic_line(po_dispatches, milestone="MS1", remark=None, im=None, new_st
                 continue
             frappe.db.set_value("PO Dispatch", name, "im", im, update_modified=False)
 
-        wd_docs = frappe.get_all(
-            "Work Done",
-            filters={"system_id": name, "submission_status": "Confirmation Done"},
-            fields=["name"],
-        )
-        if wd_docs:
-            for wd in wd_docs:
-                frappe.db.set_value("Work Done", wd.name, "submission_status", "PIC Rejected", update_modified=True)
-        else:
-            # No confirmed Work Done to reject (legacy/archive line) —
-            # create one now so the reject is a real, addressable record
-            # the IM can find and resubmit, instead of a silent no-op.
-            new_wd = frappe.new_doc("Work Done")
-            new_wd.system_id = name
-            new_wd.submission_status = "PIC Rejected"
-            new_wd.source = "Direct Close"  # closest existing option; no real execution chain behind this
-            new_wd.set(closed_flag, 1)
-            new_wd.insert(ignore_permissions=True)
+        _apply_pic_rejection_to_work_done(name, closed_flag)
 
         frappe.db.set_value("PO Dispatch", name, status_field, new_status, update_modified=True)
         if frappe.db.has_column("PO Dispatch", remark_field):

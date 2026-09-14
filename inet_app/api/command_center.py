@@ -7450,13 +7450,42 @@ def generate_work_done(execution_name, issue_flag=None):
     # plan — a genuinely different (later) visit for the SAME po_dispatch
     # sails straight past it, and each Work Done carries the FULL
     # dispatch.line_amount as revenue, so a second one silently double-
-    # counts revenue for one PO line. Same idempotent no-op shape as above.
+    # counts revenue for one PO line.
+    #
+    # When one already exists, the visit number decides what happens next.
+    # Business rule: the HIGHEST visit plan is the line's current plan and
+    # the Work Done must sit on it. So a later visit neither no-ops nor
+    # creates a second record — it TAKES OVER the existing one, re-pointing
+    # it at this execution and refreshing every figure from this higher
+    # visit. At or below the visit that already owns the record, it stays
+    # the idempotent no-op it always was.
+    existing_wd_name = None
     if dispatch_name:
-        existing_for_dispatch = frappe.db.get_value(
+        existing_wd_name = frappe.db.get_value(
             "Work Done", {"system_id": dispatch_name}, "name"
         )
-        if existing_for_dispatch:
-            return {"name": existing_for_dispatch, "already_exists": True}
+    if existing_wd_name:
+        owner_visit_row = frappe.db.sql(
+            """
+            SELECT rp.visit_number
+            FROM `tabWork Done` wd
+            JOIN `tabDaily Execution` de ON de.name = wd.execution
+            JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+            WHERE wd.name = %s
+            """,
+            (existing_wd_name,),
+        )
+        # No execution chain behind the existing record (Direct Close,
+        # Backend, or a PIC-rejection placeholder) leaves no visit to
+        # compare against, and those carry milestone flags and PIC status
+        # that a rollout execution must not silently overwrite — left
+        # alone, exactly as before.
+        if not owner_visit_row:
+            return {"name": existing_wd_name, "already_exists": True}
+        if cint(frappe.db.get_value("Rollout Plan", rp_name, "visit_number")) <= cint(
+            owner_visit_row[0][0]
+        ):
+            return {"name": existing_wd_name, "already_exists": True}
 
     # Never allow Work Done while this plan carries an open Issue & Risk
     # flag — same "open issue" definition as list_issue_risk_rows. A plan
@@ -7563,7 +7592,13 @@ def generate_work_done(execution_name, issue_flag=None):
     total_cost = team_cost + subcontract_cost + activity_cost
     margin = revenue - total_cost
 
-    wd = frappe.new_doc("Work Done")
+    # Superseding a lower visit reuses that record; only a line with no Work
+    # Done at all gets a fresh one. Either way exactly one exists per POID.
+    wd = (
+        frappe.get_doc("Work Done", existing_wd_name)
+        if existing_wd_name
+        else frappe.new_doc("Work Done")
+    )
     wd.execution = execution_name
     wd.system_id = exec_doc.system_id
     wd.region_type = dispatch.get("region_type") or region_type_from_center_area(center_area)
@@ -7586,7 +7621,10 @@ def generate_work_done(execution_name, issue_flag=None):
     if frappe.db.has_column("Work Done", "source"):
         wd.source = "Rollout Execution"
 
-    wd.insert(ignore_permissions=True)
+    if existing_wd_name:
+        wd.save(ignore_permissions=True)
+    else:
+        wd.insert(ignore_permissions=True)
     frappe.db.commit()
 
     # Snapshot the subcontractor on PO Dispatch (only if not already set — preserve archive import value).
@@ -7619,7 +7657,7 @@ def generate_work_done(execution_name, issue_flag=None):
                 frappe.db.set_value("PO Intake Line", intake_line, "po_line_status", "Completed")
         frappe.db.commit()
 
-    return {"name": wd.name}
+    return {"name": wd.name, "superseded_earlier_visit": bool(existing_wd_name)}
 
 
 def _ensure_work_done_for_execution(execution_name):
