@@ -304,7 +304,8 @@
   {
    "fieldname": "target_month",
    "fieldtype": "Date",
-   "label": "Target Month"
+   "label": "Target Month",
+   "search_index": 1
   },
   {
    "fieldname": "target_week",
@@ -424,7 +425,8 @@
    "fieldname": "subcon_status",
    "fieldtype": "Select",
    "label": "Sub-Contract Status",
-   "options": "\nPending\nWork Done"
+   "options": "\nPending\nWork Done",
+   "search_index": 1
   },
   {
    "fieldname": "subcon_submission_status",
@@ -536,7 +538,8 @@
    "fieldtype": "Select",
    "in_standard_filter": 1,
    "label": "PIC Status (MS1)",
-   "options": "\nWork Not Done\nUnder Process to Apply\nUnder I-BUY\nUnder ISDP\nI-BUY Rejected\nISDP Rejected\nReady for Invoice\nCommercial Invoice Submitted\nCommercial Invoice Closed\nPO Need to Cancel\nPO Line Canceled"
+   "options": "\nWork Not Done\nUnder Process to Apply\nUnder I-BUY\nUnder ISDP\nI-BUY Rejected\nISDP Rejected\nReady for Invoice\nCommercial Invoice Submitted\nCommercial Invoice Closed\nPO Need to Cancel\nPO Line Canceled",
+   "search_index": 1
   },
   {
    "fieldname": "isdp_owner",
@@ -593,7 +596,8 @@
    "fieldtype": "Select",
    "in_standard_filter": 1,
    "label": "PIC Status (MS2)",
-   "options": "\nWork Not Done\nUnder Process to Apply\nUnder I-BUY\nUnder ISDP\nI-BUY Rejected\nISDP Rejected\nReady for Invoice\nCommercial Invoice Submitted\nCommercial Invoice Closed\nPO Need to Cancel\nPO Line Canceled"
+   "options": "\nWork Not Done\nUnder Process to Apply\nUnder I-BUY\nUnder ISDP\nI-BUY Rejected\nISDP Rejected\nReady for Invoice\nCommercial Invoice Submitted\nCommercial Invoice Closed\nPO Need to Cancel\nPO Line Canceled",
+   "search_index": 1
   },
   {
    "fieldname": "ibuy_owner",
