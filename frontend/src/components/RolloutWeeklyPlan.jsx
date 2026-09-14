@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../services/api";
+import { isoLocal as iso, mondayOfLocal as mondayOf, parseLocal } from "../utils/weeks";
 
 /**
  * Rollout Planning — weekly dashboard.
@@ -32,12 +33,6 @@ const BUCKETS = [
 
 const DONUT_COLORS = [C.amber, C.blue, C.teal, C.purple, C.gray];
 
-function iso(d) { return d.toISOString().slice(0, 10); }
-function mondayOf(d) {
-  const x = new Date(d);
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
-  return x;
-}
 
 function Card({ title, right, children, style }) {
   return (
@@ -201,7 +196,8 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
   }, [imName, weekStart, portalKey, refreshKey, quarter, commProject]);
 
   const shiftWeek = (weeks) => {
-    const d = new Date(`${weekStart}T00:00:00`);
+    const d = parseLocal(weekStart);
+    if (!d) return;
     d.setDate(d.getDate() + weeks * 7);
     setWeekStart(iso(d));
   };

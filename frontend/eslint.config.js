@@ -19,12 +19,6 @@ export default [
       "dist/**",
       "node_modules/**",
       "../inet_app/public/portal/**",
-      // src/modules/ is dead code: nothing in the app imports any of it, and
-      // POIntake.jsx does not even parse (the file contains two concatenated
-      // copies of itself, so `useEffect` is imported twice). It has been like
-      // that since the first commit. Excluded so the gate stays meaningful
-      // rather than always red — delete the directory and drop this entry.
-      "src/modules/**",
     ],
   },
   {
