@@ -7760,6 +7760,60 @@ def _batch_im_master_full_names(im_ids):
     return out
 
 
+def _execution_monitor_scope():
+    """(clause, params) restricting the Execution Monitor to the caller's own work.
+
+    This endpoint had no scoping at all: @frappe.whitelist() means
+    login-required and nothing more, so any authenticated user could read
+    every IM's plans, and the `team` filter the field pages send is a
+    client-supplied narrowing rather than a boundary.
+
+    It serves three different audiences, which is why it cannot simply reuse
+    _rollout_scope_clause: that helper resolves an IM and returns None for
+    anyone who is not one, which would empty Field History and Field QC/CIAG
+    for every field user.
+
+      PM / admin      -> everything
+      INET IM         -> their own lines (PO Dispatch.im, or Rollout Plan.im)
+      INET Field Team -> their own team's plans only, matching the lead team
+                         or any team on the plan's split
+      anyone else     -> nothing
+
+    A field user whose team cannot be resolved gets nothing rather than
+    everything: the safe direction to fail.
+    """
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return "1=0", []
+    roles = set(frappe.get_roles(user))
+    if roles & {"Administrator", "System Manager", "INET Admin"}:
+        return "1=1", []
+
+    if "INET IM" in roles:
+        _im, im_identifiers, _ = resolve_im_for_session()
+        if im_identifiers:
+            ids = list(im_identifiers)
+            ph = ", ".join(["%s"] * len(ids))
+            if frappe.db.has_column("Rollout Plan", "im"):
+                return (
+                    f"(IFNULL(pd.im,'') IN ({ph}) OR IFNULL(rp.im,'') IN ({ph}))",
+                    ids + ids,
+                )
+            return f"IFNULL(pd.im,'') IN ({ph})", ids
+
+    if "INET Field Team" in roles:
+        team_id = _session_inet_field_team_id()
+        if team_id:
+            return (
+                "(IFNULL(rp.team,'') = %s OR EXISTS ("
+                " SELECT 1 FROM `tabRollout Plan Team` rpt"
+                " WHERE rpt.parent = rp.name AND IFNULL(rpt.team,'') = %s))",
+                [team_id, team_id],
+            )
+
+    return "1=0", []
+
+
 def _execution_closed_exists_sql(alias="rp"):
     """EXISTS(...) that is true when a line is fully closed.
 
@@ -7850,8 +7904,11 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
         rp_fields.append("plan_documents")
     lim = _portal_row_limit(limit, 500)
 
-    wheres = ["1=1"]
-    params = []
+    # Scope BEFORE any client-supplied filter: the `team` key the field pages
+    # send narrows within this, it does not define it.
+    scope_c, scope_p = _execution_monitor_scope()
+    wheres = [scope_c]
+    params = list(scope_p)
     for col, key in (("rp.plan_status", "status"),
                      ("rp.visit_type", "visit_type"),
                      ("rp.team", "team"),
