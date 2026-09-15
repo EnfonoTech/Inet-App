@@ -39,6 +39,23 @@ const INV_SERIES = [
   { key: "invoiced", name: "Invoiced (SAR)", color: C.teal, showLabels: true },
 ];
 
+/* The PO series dates each line by the first basis that is present: the date
+   it was uploaded, then the customer's publish date, then the PO start date.
+   Archive imports never date a line. Only the buckets that actually carry
+   lines are named, so the note stays readable as the mix shifts. */
+function poDateBasisText(b) {
+  const parts = [
+    [b.upload_date, "PO upload date"],
+    [b.publish_date, "publish date"],
+    [b.start_date, "PO start date"],
+    [b.creation, "record creation date"],
+  ].filter(([n]) => Number(n) > 0);
+  if (!parts.length) return "the PO upload date";
+  return parts
+    .map(([n, label], i) => `${i ? "otherwise " : ""}${label} (${fmt.format(n)} lines)`)
+    .join(", ");
+}
+
 function Panel({ title, eyebrow, right, children, note, innerRef, fill }) {
   return (
     <div className="nd-panel" ref={innerRef} style={fill ? { display: "flex", flexDirection: "column", height: "100%" } : undefined}>
@@ -265,7 +282,7 @@ export default function CommercialDashboard() {
             </div>
           }
           note={poTrend?.po_date_basis && (
-            <>PO month = publish date where recorded ({fmt.format(poTrend.po_date_basis.publish_date)} lines), otherwise PO start date ({fmt.format(poTrend.po_date_basis.start_date)} lines).
+            <>PO month = {poDateBasisText(poTrend.po_date_basis)}.
             Invoiced = full MS1/MS2 amount for milestones at Commercial Invoice Submitted or Closed, placed on their invoicing month.
             {poTrend?.undated_invoiced > 0 && <> A further {sar(poTrend.undated_invoiced)} is invoiced but has no invoicing month recorded, so it cannot be placed on any month here.</>}</>
           )}

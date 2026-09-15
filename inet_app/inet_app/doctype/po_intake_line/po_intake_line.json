@@ -27,6 +27,7 @@
   "payment_terms",
   "project_name",
   "publish_date",
+  "po_upload_date",
   "rate",
   "line_amount",
   "project_code",
@@ -164,6 +165,12 @@
    "fieldname": "publish_date",
    "fieldtype": "Datetime",
    "label": "Publish Date"
+  },
+  {
+   "fieldname": "po_upload_date",
+   "fieldtype": "Datetime",
+   "label": "PO Upload Date",
+   "read_only": 1
   },
   {
    "fieldname": "rate",

@@ -2425,6 +2425,10 @@ def confirm_po_upload(rows):
     item_code_from_desc = 0  # rows where item_code was blank / "NA" — fell back to item_description
     auto_dispatched = 0
     po_summary = []  # per-PO breakdown for audit/UI: [{po_no, intake_name, lines_added, lines_skipped, is_new}]
+    # One arrival stamp for every line this call imports. The FE uploads in
+    # chunks, so a large file spans several calls a few minutes apart — that
+    # is fine, the charts bucket by month.
+    upload_stamp = now_datetime()
 
     for po_no, lines in po_groups.items():
         first = lines[0]
@@ -2586,6 +2590,14 @@ def confirm_po_upload(rows):
                 "center_area": line_center_area,
                 "region_type": line_region,
                 "publish_date": line.get("publish_date"),
+                # The moment this line reached us. Stamped per line because
+                # Frappe gives every child row its PARENT's `creation`, so a
+                # line appended to an existing PO months later is otherwise
+                # indistinguishable from the PO's original lines. Set only
+                # here: the archive importer leaves it null on purpose, so a
+                # backfill of historic closed lines can never be read as an
+                # arrival. See _po_line_published_on().
+                "po_upload_date": upload_stamp,
             }
             new_entries.append((line, append_row))
             existing_poids.add(poid)
@@ -2707,6 +2719,11 @@ def record_po_upload_log(payload):
     doc = frappe.new_doc("PO Upload Log")
     doc.uploaded_by = frappe.session.user
     doc.uploaded_at = frappe.utils.now_datetime()
+    # Stamped so the log is self-describing: the commercial charts date a PO
+    # line off its first NON-archive upload, and until this was set the field
+    # was empty on every standard run. See _PO_LINE_FROM_ARCHIVE, which
+    # keys off this field to tell an archive backfill from a real upload.
+    doc.upload_mode = "Standard"
     doc.file_name = (payload.get("file_name") or "")[:140]
     doc.file_url = (payload.get("file_url") or "")[:240]
     doc.customer = payload.get("customer") or None
@@ -11289,6 +11306,58 @@ _PO_LINE_CLOSED_ON = """GREATEST(
 )"""
 
 
+# ── PO line "published" date basis ──────────────────────────────────────
+# A PO line is dated by when it REACHED US — the business event the
+# commercial charts are about — which is `PO Intake Line.po_upload_date`,
+# stamped per line by the standard upload in confirm_po_upload().
+#
+# It has to be a stored field. Neither thing that looks like it would do is
+# actually line-level:
+#   * `PO Intake Line.creation` is the PARENT's creation. Frappe stamps child
+#     rows with the parent doc's timestamp, verified across all 9,956 PO
+#     Intakes on dev — every line of a PO shares one value, including lines
+#     appended by a later upload. So it cannot tell a line that arrived today
+#     from one that arrived when the PO was opened.
+#   * `PO Upload Log Detail` keys on `intake_name`, so it is per PO by design,
+#     and it is written by the browser after the import commits inside a
+#     try/catch that treats failure as non-fatal — dev holds 3,468 lines whose
+#     upload left no log at all.
+# Both collapse a growing PO onto its first upload date, which is exactly the
+# case that matters: the lines of one PO do not all arrive together.
+#
+# The archive importer never sets the field. An archive run is a bulk backfill
+# of historic, already-closed lines, so its timestamp is the day we loaded
+# history, not the day the PO arrived; that history keeps falling back to the
+# dump's own dates. Leaving the field null there makes that structural rather
+# than a filter we could get wrong later.
+_PO_LINE_FROM_ARCHIVE = """EXISTS (
+    SELECT 1 FROM `tabPO Upload Log` a
+    WHERE a.upload_mode = 'Archive'
+      AND il.creation BETWEEN a.uploaded_at AND a.modified
+)"""
+
+
+def _po_line_published_on():
+    """SQL for the date a PO line reached us. The line must be aliased ``il``.
+
+    publish_date is the customer's own stamp and start_date the work-window
+    start off the PO dump; both are fallbacks for archive-imported history,
+    which has no arrival date we can trust. The final ``il.creation`` catches
+    lines carrying neither dump date, so nothing is silently dropped, and
+    get_po_vs_invoice_trend counts that bucket separately so the chart's note
+    can own up to it.
+
+    Column-guarded so the code is safe to deploy before the migrate that adds
+    the field.
+    """
+    upload = (
+        "il.po_upload_date, "
+        if frappe.db.has_column("PO Intake Line", "po_upload_date")
+        else ""
+    )
+    return f"COALESCE({upload}il.publish_date, il.start_date, il.creation)"
+
+
 def _open_po_line_totals(from_date=None, to_date=None):
     """Open order book: PO Intake Lines whose per-line status is not terminal.
 
@@ -11303,10 +11372,9 @@ def _open_po_line_totals(from_date=None, to_date=None):
     because every line published earlier and still open was excluded.
 
     ``to_date`` is the as-of date, and bounds existence only: a line counts
-    if it had been published by then, on the basis
-    ``COALESCE(publish_date, start_date, creation)`` — the same basis
-    get_po_vs_invoice_trend() buckets by, since publish_date lands on only a
-    minority of lines and start_date carries the rest.
+    if it had arrived by then, on the _po_line_published_on() basis — the same
+    basis get_po_vs_invoice_trend() buckets by: first standard upload date,
+    else the customer's publish_date, else start_date.
 
     A line that has closed SINCE ``to_date`` is re-opened by the snapshot, so
     "as of yesterday" still counts what closed today. There is no closed-on
@@ -11324,7 +11392,7 @@ def _open_po_line_totals(from_date=None, to_date=None):
     params = []
     if to_date:
         # Existed by then...
-        wheres.append("DATE(COALESCE(il.publish_date, il.start_date, il.creation)) <= %s")
+        wheres.append(f"DATE({_po_line_published_on()}) <= %s")
         params.append(to_date)
         # ...and was still open then: either it is open now, or it has closed
         # since the as-of date. _PO_LINE_CLOSED_ON dates that closure.
@@ -11386,11 +11454,15 @@ def get_po_vs_invoice_trend(from_date=None, to_date=None, months=0, etag=None):
 
     Two series on a shared dense month spine:
 
-    * ``po_value``  — SUM(`PO Intake Line`.line_amount) bucketed by the PO's
-      published month, ``COALESCE(publish_date, start_date, creation)``.
-      ``publish_date`` only lands on ~30% of lines (it comes from an optional
-      upload column), so ``start_date`` carries most rows; ``po_date_basis``
-      in the payload reports the split so the UI can be honest about it.
+    * ``po_value``  — SUM(`PO Intake Line`.line_amount) bucketed by the month
+      the line reached us, _po_line_published_on(): its own upload date, else
+      the customer's ``publish_date``, else ``start_date``. The upload date is
+      the business event this chart is about, and it is read per line, so a PO
+      that grew across several uploads places each line in its own month.
+      Archive imports never date a line (they leave po_upload_date null); that
+      history falls back to the dump's own dates, where ``publish_date`` lands
+      on only a minority of rows and ``start_date`` carries the rest.
+      ``po_date_basis`` reports the split so the UI can be honest about it.
     * ``invoiced``  — the PIC "Monthly Invoicing Roll-up" verbatim, so this
       chart and the PIC dashboard always show the same number for a month.
 
@@ -11438,8 +11510,7 @@ def get_po_vs_invoice_trend(from_date=None, to_date=None, months=0, etag=None):
 
     po_rows = frappe.db.sql(
         f"""
-        SELECT DATE_FORMAT(COALESCE(il.publish_date, il.start_date, il.creation),
-                           '%%Y-%%m') AS m,
+        SELECT DATE_FORMAT({_po_line_published_on()}, '%%Y-%%m') AS m,
                COALESCE(SUM(il.line_amount), 0) AS po_value,
                COUNT(*) AS po_lines
         FROM `tabPO Intake Line` il
@@ -11485,14 +11556,25 @@ def get_po_vs_invoice_trend(from_date=None, to_date=None, months=0, etag=None):
     total_po = sum(r["po_value"] for r in series)
     total_inv = sum(r["invoiced"] for r in series)
 
+    # Mirrors the COALESCE order in _po_line_published_on(), so the counts add
+    # up to the lines on the chart and say which date actually placed each one.
+    has_upload = (
+        "il.po_upload_date IS NOT NULL"
+        if frappe.db.has_column("PO Intake Line", "po_upload_date")
+        else "FALSE"
+    )
     basis = frappe.db.sql(
-        """
+        f"""
         SELECT
-          SUM(publish_date IS NOT NULL)                              AS by_publish,
-          SUM(publish_date IS NULL AND start_date IS NOT NULL)       AS by_start,
-          SUM(publish_date IS NULL AND start_date IS NULL)           AS by_creation
-        FROM `tabPO Intake Line`
-        WHERE IFNULL(po_line_status, 'New') <> 'Cancelled'
+          SUM({has_upload})                                           AS by_upload,
+          SUM(NOT ({has_upload})
+              AND il.publish_date IS NOT NULL)                        AS by_publish,
+          SUM(NOT ({has_upload}) AND il.publish_date IS NULL
+              AND il.start_date IS NOT NULL)                          AS by_start,
+          SUM(NOT ({has_upload}) AND il.publish_date IS NULL
+              AND il.start_date IS NULL)                              AS by_creation
+        FROM `tabPO Intake Line` il
+        WHERE IFNULL(il.po_line_status, 'New') <> 'Cancelled'
         """,
         as_dict=True,
     )
@@ -11506,6 +11588,7 @@ def get_po_vs_invoice_trend(from_date=None, to_date=None, months=0, etag=None):
             "conversion_pct": flt((total_inv / total_po * 100) if total_po else 0, 1),
         },
         "po_date_basis": {
+            "upload_date": cint(basis_row.get("by_upload") or 0),
             "publish_date": cint(basis_row.get("by_publish") or 0),
             "start_date": cint(basis_row.get("by_start") or 0),
             "creation": cint(basis_row.get("by_creation") or 0),

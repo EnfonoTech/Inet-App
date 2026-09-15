@@ -24,3 +24,4 @@ inet_app.patches.backfill_mapped_dummy_po_financials
 inet_app.patches.fix_work_done_revenue_milestone_aware
 inet_app.patches.v1_0.add_po_dispatch_forecast_indexes
 inet_app.patches.drop_unused_sales_order_inet_fields
+inet_app.patches.backfill_po_line_upload_date
