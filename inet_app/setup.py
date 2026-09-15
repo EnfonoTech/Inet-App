@@ -25,6 +25,7 @@ def after_migrate():
     _ensure_project_accounting_dimension()
     _ensure_duid_accounting_dimension()
     _ensure_subcon_po_fields()
+    _ensure_pic_sales_invoice_fields()
     _separate_duid_dimensions()
     _ensure_material_permissions()
     _ensure_material_return_field()
@@ -902,6 +903,43 @@ def _ensure_subcon_po_fields():
             if frappe.db.exists("Custom Field", cf):
                 frappe.db.set_value("Custom Field", cf, {"print_hide": 1, "no_copy": 0})
 
+    frappe.db.commit()
+
+
+def _ensure_pic_sales_invoice_fields():
+    """Sales Invoice Item: the milestone tag the PIC invoice flow writes.
+
+    The purchase side got this field with the Subcon PO work above; the sales
+    side never did, and nothing else created it — it is not in the fixtures
+    either. ``poid`` was there anyway because the POID Accounting Dimension
+    adds it to every financial document (_ensure_poid_accounting_dimension),
+    so a site ended up with one column and not the other. create_sales_invoice
+    _from_pic writes both onto each item row, and the draft-duplicate check
+    reads both back, so on such a site invoicing died with
+    "Unknown column 'sii.milestone' in 'SELECT'".
+
+    Same definition as the Purchase Order/Invoice Item milestone so a line
+    reconciles across the sales and purchase sides on the same vocabulary.
+    """
+    dt = "Sales Invoice Item"
+    if not frappe.db.exists("DocType", dt):
+        return
+    # insert_after poid to match the purchase side; falls back to a stable
+    # core field on a site where the accounting dimension has not run yet.
+    after = "poid" if frappe.db.has_column(dt, "poid") else "item_name"
+    _add_field(dt, f"{dt}-milestone", {
+        "fieldname": "milestone",
+        "label": "Milestone",
+        "fieldtype": "Select",
+        "options": "\nMS1\nMS2",
+        "insert_after": after,
+        "print_hide": 1,
+        "no_copy": 0,
+        "module": "Inet App",
+    })
+    if frappe.db.exists("Custom Field", f"{dt}-milestone"):
+        frappe.db.set_value("Custom Field", f"{dt}-milestone",
+                            {"print_hide": 1, "no_copy": 0})
     frappe.db.commit()
 
 

@@ -662,9 +662,25 @@ def _batch_draft_invoices_by_milestone(poids):
     if not names or not frappe.db.has_column("Sales Invoice Item", "poid"):
         return {}
     ph = ", ".join(["%s"] * len(names))
+    # Selecting milestone only when the column is really there. Guarding on
+    # `poid` alone was not enough: `poid` arrives on every financial document
+    # from the POID Accounting Dimension, while `milestone` is an inet_app
+    # custom field the sales side only started creating later (see
+    # setup._ensure_pic_sales_invoice_fields), so a site can have the first
+    # and not the second — the guard passed there and the query then died on
+    # "Unknown column 'sii.milestone' in 'SELECT'", which is a 500 out of
+    # create_sales_invoice_from_pic. Without the column every draft reads as
+    # untagged, which the loop below already treats as blocking BOTH
+    # milestones — so duplicate protection stays on rather than switching
+    # itself off, which returning {} here would have done.
+    ms_expr = (
+        "UPPER(IFNULL(sii.milestone,''))"
+        if frappe.db.has_column("Sales Invoice Item", "milestone")
+        else "''"
+    )
     rows = frappe.db.sql(
         f"""
-        SELECT sii.poid AS poid, UPPER(IFNULL(sii.milestone,'')) AS milestone, si.name AS si_name
+        SELECT sii.poid AS poid, {ms_expr} AS milestone, si.name AS si_name
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
         WHERE si.docstatus = 0 AND sii.poid IN ({ph})
@@ -767,6 +783,17 @@ def _invoice_detail_milestone_sql(ms, where_extra):
     ibuy_date_col = f"pd.ms{n}_ibuy_inv_date"
     vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
     vat_frac_p2 = _TAX_RATE_FRACTION_SQL.format(col="p2.tax_rate")
+    # Same column-may-not-exist problem as _batch_draft_invoices_by_milestone:
+    # without `milestone` on Sales Invoice Item this report 500s instead of
+    # rendering. Dropping the predicate matches the POID's invoice to both
+    # milestone rows rather than to neither — the number shown is still a real
+    # invoice for that line, where the alternative is an empty column on every
+    # system-invoiced row. Sites that have run the migrate keep the split.
+    ms_match = (
+        f" AND UPPER(IFNULL(sii.milestone,'')) = '{acc}'"
+        if frappe.db.has_column("Sales Invoice Item", "milestone")
+        else ""
+    )
     where = [
         "IFNULL(pd.is_internal_work, 0) = 0",
         f"(IFNULL({invoiced_col}, 0) > 0 OR (IFNULL({legacy_no_col}, '') != ''))",
@@ -789,7 +816,7 @@ def _invoice_detail_milestone_sql(ms, where_extra):
         (SELECT GROUP_CONCAT(DISTINCT si.name ORDER BY si.name SEPARATOR ', ')
          FROM `tabSales Invoice Item` sii
          JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus = 1
-         WHERE sii.poid = pd.name AND UPPER(IFNULL(sii.milestone,'')) = '{acc}')
+         WHERE sii.poid = pd.name{ms_match})
       ) AS invoice_no,
       IF(IFNULL({legacy_no_col}, '') != '', 'Legacy', 'System') AS source,
       COALESCE(
@@ -797,7 +824,7 @@ def _invoice_detail_milestone_sql(ms, where_extra):
         (SELECT MIN(si.posting_date)
          FROM `tabSales Invoice Item` sii
          JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus = 1
-         WHERE sii.poid = pd.name AND UPPER(IFNULL(sii.milestone,'')) = '{acc}')
+         WHERE sii.poid = pd.name{ms_match})
       ) AS invoice_date,
       pd.customer,
       pd.legacy_po_type AS po_type,
