@@ -379,6 +379,33 @@ export default function IMWorkDone() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selectedRows, setSelectedRows] = useState(new Set());
+
+  // A row that leaves the list takes its selection with it. The fetch is
+  // tab-scoped (`filters = { im, tab }`), so a bulk submission status change
+  // moves the line to another tab and it drops out of `rows` on the reload —
+  // but its name stayed in the Set: invisible, still counted in the bulk
+  // button, and picked up again by the NEXT bulk action, so acting on new
+  // lines silently re-acted on ones already done.
+  //
+  // Pruning against the loaded rows, rather than clearing outright, is what
+  // makes a partial failure behave: the lines that succeeded leave the list
+  // and drop out of the selection here, while the ones that failed stay
+  // checked and ready to retry. Pruning against the client-filtered `tabRows`
+  // instead would be wrong — it would silently drop picks the moment someone
+  // narrowed a column filter to go looking for more rows.
+  useEffect(() => {
+    setSelectedRows((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(rows.map((r) => r.name));
+      const next = new Set();
+      prev.forEach((n) => {
+        if (live.has(n)) next.add(n);
+      });
+      // Same object back when nothing was dropped — a new Set every time would
+      // re-run every memo keyed on this state on each load.
+      return next.size === prev.size ? prev : next;
+    });
+  }, [rows]);
   const [submissionFor, setSubmissionFor] = useState(null);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState("");

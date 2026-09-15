@@ -231,6 +231,31 @@ export default function IMExecution() {
   const [wdErr, setWdErr] = useState(null);
   const [wdIssueFlag, setWdIssueFlag] = useState("");
   const [selectedExecs, setSelectedExecs] = useState(new Set());
+
+  // A row that leaves the list takes its selection with it. Creating Work Done
+  // moves the line on to the next tab, so it vanishes from this one — but its
+  // name stayed in the Set: invisible, still counted in the "Create Work Done
+  // (n / m)" button, and picked up again by the NEXT bulk action, so acting on
+  // new lines silently re-acted on ones already done.
+  //
+  // Pruning against the loaded rows rather than clearing outright is what makes
+  // a partial failure behave: createWorkDoneBulk stops at the first error, so
+  // the lines that succeeded leave the list and drop out of the selection here,
+  // while the ones still to do stay checked and ready to retry.
+  useEffect(() => {
+    setSelectedExecs((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(executions.map((e) => e.name));
+      const next = new Set();
+      prev.forEach((n) => {
+        if (live.has(n)) next.add(n);
+      });
+      // Same object back when nothing was dropped — a new Set every time would
+      // re-run every memo keyed on this state on each load.
+      return next.size === prev.size ? prev : next;
+    });
+  }, [executions]);
+
   const [bulkQcOpen, setBulkQcOpen] = useState(false);
   const [bulkQcPick, setBulkQcPick] = useState("Pass");
   const [bulkQcBusy, setBulkQcBusy] = useState(false);

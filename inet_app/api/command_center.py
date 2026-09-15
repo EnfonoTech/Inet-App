@@ -5906,7 +5906,6 @@ def _sync_plan_teams(rollout_plan, teams_payload, primary_team, total_qty, targe
     plan_doc.save(ignore_permissions=True)
 
 
-@frappe.whitelist()
 def _require_dispatch_im(names, action):
     """Refuse the action on any PO line that has no IM assigned.
 
@@ -5965,7 +5964,17 @@ def _require_line_attributes(names, huawei_im, project_domain, action):
     if hi and dom:
         # Overrides cover every line in this call — nothing can be missing.
         return
+    # Internal work is exempt. Huawei IM and Project Domain describe the
+    # customer engagement a line belongs to; internal work has no customer, so
+    # there is nothing for either field to point at and requiring them would
+    # make internal lines unplannable. The query below filters them out rather
+    # than the caller, so every entry point gets the exemption for free.
     ph = ", ".join(["%s"] * len(ids))
+    internal_cond = (
+        " AND IFNULL(pd.is_internal_work, 0) = 0"
+        if frappe.db.has_column("PO Dispatch", "is_internal_work")
+        else ""
+    )
     rows = frappe.db.sql(
         f"""
         SELECT IFNULL(NULLIF(pd.poid, ''), pd.name) AS label,
@@ -5973,7 +5982,7 @@ def _require_line_attributes(names, huawei_im, project_domain, action):
                COALESCE(NULLIF(pd.project_domain, ''), NULLIF(pcc.project_domain, ''), '') AS project_domain
         FROM `tabPO Dispatch` pd
         LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
-        WHERE pd.name IN ({ph})
+        WHERE pd.name IN ({ph}){internal_cond}
         ORDER BY label
         """,
         tuple(ids),
@@ -5998,6 +6007,7 @@ def _require_line_attributes(names, huawei_im, project_domain, action):
     )
 
 
+@frappe.whitelist()
 def create_rollout_plans(payload):
     """
     Create Rollout Plans for a list of PO Dispatch system IDs.

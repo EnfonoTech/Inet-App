@@ -451,6 +451,13 @@ export default function RolloutPlanning() {
       setCreateError(imRequiredMessage(noIm, "plan"));
       return;
     }
+    // Internal work has no customer engagement behind it, so Huawei IM and
+    // Project Domain have nothing to point at and are not required — matching
+    // _require_line_attributes, which exempts is_internal_work lines. Asked
+    // per selection: a mixed batch still needs them for the customer lines.
+    const customerLines = rows.some(
+      (r) => selected.has(r.name) && !Number(r.is_internal_work || 0),
+    );
     const missing = missingFields({
       "Plan Date": planDate,
       "Planned End Date": planEndDate,
@@ -458,8 +465,9 @@ export default function RolloutPlanning() {
       "Team": planTeam,
       "Access Time": accessTime,
       "Access Period": accessPeriod,
-      "Huawei IM": huaweiImOverride,
-      "Project Domain": projectDomainOverride,
+      ...(customerLines
+        ? { "Huawei IM": huaweiImOverride, "Project Domain": projectDomainOverride }
+        : {}),
     });
     if (missing.length > 0) {
       setCreateError(missingFieldsMessage(missing, "plan"));
