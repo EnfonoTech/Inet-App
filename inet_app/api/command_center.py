@@ -287,6 +287,33 @@ def _current_plan_subquery(select_expr, join=""):
     )
 
 
+# The columns the PO-backed grids, their detail modals and their exports
+# actually read. Everything else on PO Dispatch — the PIC milestone block,
+# the subcon PO block, the legacy invoice block, ISDP/iBuy owners — belongs
+# to the PIC pages, which query it themselves.
+#
+# This is the shape export_po_dump has always used (an explicit 29-column
+# list) and it is why PO Dump stays fast at 5,390 rows while these grids
+# crawled at 17,449: 62 columns of every row, most of them irrelevant here.
+PO_DISPATCH_LIST_COLS = frozenset((
+    "name", "system_id", "poid", "po_no", "po_intake", "po_line_no",
+    "item_code", "item_description", "qty", "rate", "line_amount",
+    "project_code", "project_domain", "customer", "site_code", "site_name",
+    "center_area", "region_type", "im", "huawei_im", "team",
+    "dispatch_mode", "dispatch_status", "planning_mode", "direct_close_by",
+    "target_month", "target_week", "target_date", "target_team",
+    "is_dummy_po", "was_dummy_po", "original_dummy_poid",
+    "is_internal_work", "internal_work_type", "internal_domain",
+    "general_remark", "manager_remark", "team_lead_remark",
+    "ms1_amount", "ms2_amount",
+    "creation", "modified",
+    # enrichment added after the query
+    "im_full_name", "target_team_name", "activity_type",
+    "ms1_closed", "ms2_closed", "ms1_closed_at", "ms2_closed_at",
+    "wd_subcontractor",
+))
+
+
 _NUMERIC_COLS_CACHE = {}
 
 # Frappe bookkeeping columns. No portal page renders any of them.
@@ -315,7 +342,7 @@ def _numeric_columns(doctype):
     return cols
 
 
-def _shrink_rows(rows, doctype):
+def _shrink_rows(rows, doctype, keep=None):
     """Drop empty text values and bookkeeping columns from a row list.
 
     A full PO Dispatch row carries 114 columns of which the grids render
@@ -343,6 +370,8 @@ def _shrink_rows(rows, doctype):
         d = {}
         for k, v in r.items():
             if k in _ROW_JUNK_COLS:
+                continue
+            if keep is not None and k not in keep:
                 continue
             if k in numeric:
                 d[k] = 0 if v is None else v
@@ -4891,7 +4920,7 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
                 r["ms2_closed_at"] = wd_ms.get("ms2_closed_at")
                 r["wd_subcontractor"] = wd_ms.get("subcontractor") or None
 
-    return _shrink_rows(rows, "PO Dispatch")
+    return _shrink_rows(rows, "PO Dispatch", keep=PO_DISPATCH_LIST_COLS)
 
 
 def _next_visit_number_for_dispatch(po_dispatch_name):
