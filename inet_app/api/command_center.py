@@ -3315,7 +3315,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
         line["plan_date"] = latest_plan_date.get(dispatch_name)
         line["work_type"] = work_type.get(dispatch_name)
 
-    return lines
+    return _shrink_rows(lines, "PO Intake Line")
 
 
 def _require_inet_im_session():
@@ -11413,6 +11413,23 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
     differently from a domain actually worked instead of the two looking
     identical.
     """
+    # Never scoped from the browser — see get_po_dispatch_status_report.
+    return _team_domain_utilization(month, domains, include_fridays, etag)
+
+
+def _team_domain_utilization(month=None, domains=None, include_fridays=0, etag=None,
+                             team_ids=None, all_statuses=False):
+    """Builder for get_team_domain_utilization.
+
+    `team_ids` restricts the TEAM ROSTER — the grid's row axis — and
+    `all_statuses` keeps teams whatever their INET Team.status.
+
+    Deliberately scoped by team roster and NOT by the IM stamped on the plan
+    or execution: the question this grid answers is "was this team idle on
+    this day", and a team that spent the day on another IM's plan was not
+    idle. Filtering the work by IM as well would paint those days Idle and
+    invent idle time that never happened.
+    """
     from calendar import monthrange
 
     NA, IDLE, OTHER, NO_DOMAIN, NO_PLAN = "-", "Idle", "Other", "No Domain", "No Plan"
@@ -11437,7 +11454,11 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
     # future column sat there as a plan that has since become an elapsed day.
     current_etag = _dashboard_etag(
         "team_domain", f"{y:04d}-{m:02d}", ",".join(sorted(selected)), keep_fri,
-        today.isoformat())
+        today.isoformat(),
+        # Part of the key, not padding: the same month scoped to two different
+        # IMs' rosters is two different answers, and without this the second
+        # caller would be told "unchanged" and shown the first one's grid.
+        ",".join(sorted(team_ids or [])), int(bool(all_statuses)))
     if etag and etag == current_etag:
         return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
 
@@ -11449,14 +11470,24 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
             days.append(d)
         d = add_days(d, 1)
 
+    # A report covering last month must still show a team that went On
+    # Vacation this week — it did the work, and dropping it leaves a total
+    # that looks plausible and is wrong. So the IM catalog asks for every
+    # status; the PM page keeps the Active-only roster it has always had.
+    _status_cond = "" if all_statuses else " WHERE IFNULL(status, '') = 'Active'"
+    _roster_cond, _roster_params = "", []
+    if team_ids:
+        _ph = ", ".join(["%s"] * len(team_ids))
+        _roster_cond = (" AND " if _status_cond else " WHERE ") + f"name IN ({_ph})"
+        _roster_params = list(team_ids)
     teams = frappe.db.sql(
-        """
+        f"""
         SELECT name, team_name, isdp_account, start_date, end_date, team_category
         FROM `tabINET Team`
-        WHERE IFNULL(status, '') = 'Active'
+        {_status_cond}{_roster_cond}
         ORDER BY IFNULL(NULLIF(isdp_account, ''), team_name)
         """,
-        as_dict=True,
+        tuple(_roster_params), as_dict=True,
     )
 
     # Executions overlapping the month, with the domain resolved from the
@@ -13382,8 +13413,16 @@ def get_project_performance_report(from_date=None, to_date=None, **kwargs):
     has a usable date basis here (target_month is set on 95 of 17,449 lines),
     and filtering one side only made every percentage collapse.
     """
+    # Never scoped from the browser — see get_po_dispatch_status_report.
+    return _project_performance_report()
+
+
+def _project_performance_report(im_ids=None):
+    """Builder for get_project_performance_report; `im_ids` narrows to one IM's
+    own PO lines (PO Dispatch.im). Unscoped when im_ids is empty."""
     DONE_STATUSES = LINE_DONE_STATUSES
     _ph_done = ", ".join(["%s"] * len(DONE_STATUSES))
+    _sc, _sp = _im_scope_cond("pd.im", im_ids)
 
     # One row per project, straight off PO Dispatch. No Rollout Plan join at
     # all: the target is what the lines are worth and the achieved side is
@@ -13403,9 +13442,10 @@ def get_project_performance_report(from_date=None, to_date=None, **kwargs):
         WHERE IFNULL(pd.project_code, '') != ''
           AND IFNULL(pd.is_internal_work, 0) != 1
           AND IFNULL(pd.dispatch_status, '') NOT LIKE '%%Cancel%%'
+          {_sc}
         GROUP BY pd.project_code
         """,
-        tuple(DONE_STATUSES) * 2, as_dict=True,
+        tuple(DONE_STATUSES) * 2 + tuple(_sp), as_dict=True,
     ) or []
     meta = _project_meta_map()
 
@@ -13539,12 +13579,28 @@ def get_rollout_burn_down_report(from_date=None, to_date=None, **kwargs):
     widened backward to that same 8-week floor, ending at whatever to_date
     was asked for; a deliberately wide custom range is honoured as given.
     """
+    # Never scoped from the browser — see get_po_dispatch_status_report.
+    return _rollout_burn_down_report(from_date, to_date)
+
+
+def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
+    """Builder for get_rollout_burn_down_report; `im_ids` narrows to one IM's
+    own PO lines (PO Dispatch.im). Unscoped when im_ids is empty.
+
+    The scope rides inside scope_where, which every query here shares, so it
+    narrows the backlog UNIVERSE itself — total_lines, the pre-window baseline
+    and each week's snapshot are all measured against the IM's own book.
+    Scoping only the closures would have burned an IM's progress down against
+    the whole company's backlog and shown every IM stuck near 0%.
+    """
     DONE_STATUSES = LINE_DONE_STATUSES
     _ph_done = ", ".join(["%s"] * len(DONE_STATUSES))
-    scope_where = """
+    _sc, _sp = _im_scope_cond("pd.im", im_ids)
+    scope_where = f"""
         IFNULL(pd.project_code, '') != ''
         AND IFNULL(pd.is_internal_work, 0) != 1
         AND IFNULL(pd.dispatch_status, '') NOT LIKE '%%Cancel%%'
+        {_sc}
     """
 
     # The Reports page's own "dateonly" picker defaults to month-to-date for
@@ -13584,7 +13640,7 @@ def get_rollout_burn_down_report(from_date=None, to_date=None, **kwargs):
         ) wdd ON wdd.pdname = pd.name
         WHERE {scope_where}
         """,
-        tuple(DONE_STATUSES), as_dict=True,
+        tuple(DONE_STATUSES) + tuple(_sp), as_dict=True,
     ) or []
 
     total_lines = len(per_line)
@@ -13601,7 +13657,7 @@ def get_rollout_burn_down_report(from_date=None, to_date=None, **kwargs):
           AND {scope_where}
         GROUP BY DATE(de.execution_date)
         """,
-        as_dict=True,
+        tuple(_sp), as_dict=True,
     ) or []
     revisit_by_date = {getdate(r.d): cint(r.c) for r in revisit_rows}
 
@@ -13688,7 +13744,23 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
       SUB   → revenue × (1 - inet_margin_pct/100)  i.e. revenue × subcon_rate
     Utilization % = distinct days worked / period days × 100
     """
+    # Never scoped from the browser — see get_po_dispatch_status_report.
+    return _top_teams_report(from_date, to_date)
+
+
+def _top_teams_report(from_date=None, to_date=None, im_ids=None):
+    """Builder for get_top_teams_report; `im_ids` narrows to one IM's own
+    plans/executions (Rollout Plan.im / Daily Execution.im). Unscoped when
+    im_ids is empty.
+
+    Scoping the PLANS rather than the team master is what makes this
+    historical: the teams that surface are the ones that actually worked this
+    IM's plans in the window, so a team since handed to another IM still
+    appears for the months it was working here.
+    """
     fd, td = _perf_date_range(from_date, to_date)
+    _sc_rp, _sp_rp = _im_scope_cond("rp.im", im_ids)
+    _sc_de, _sp_de = _im_scope_cond("de.im", im_ids)
     fd_date = getdate(fd)
     td_date = getdate(td)
     period_days = (td_date - fd_date).days + 1
@@ -13712,7 +13784,7 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     # the project reports settled on. It is then split across the plan's teams
     # by Rollout Plan Team.assigned_amount, which exists for that purpose.
     plan_value_rows = frappe.db.sql(
-        """
+        f"""
         SELECT rp.name AS plan, rp.plan_status,
                COALESCE(pd.line_amount, 0) AS line_amount,
                IFNULL(sm.sub_payout_pct, 0) AS payout_pct,
@@ -13725,13 +13797,14 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+          {_sc_rp}
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_rp), as_dict=True,
     )
     # The split child table where a plan has one (it carries the prorated
     # assigned_amount), else the plan's own lead team.
     split_rows = frappe.db.sql(
-        """
+        f"""
         SELECT rpt.parent AS plan, rpt.team,
                COALESCE(rpt.assigned_amount, 0) AS assigned_amount
         FROM `tabRollout Plan Team` rpt
@@ -13739,18 +13812,20 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
           AND rpt.team IS NOT NULL AND rpt.team != ''
+          {_sc_rp}
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_rp), as_dict=True,
     )
     lead_rows = frappe.db.sql(
-        """
+        f"""
         SELECT rp.name AS plan, rp.team
         FROM `tabRollout Plan` rp
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
           AND rp.team IS NOT NULL AND rp.team != ''
+          {_sc_rp}
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_rp), as_dict=True,
     )
     splits_by_plan = {}
     for _s in split_rows:
@@ -13797,12 +13872,13 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     # Utilization % reads 0% for a team whose completions are all legacy,
     # the same gap the revenue attribution above closes.
     day_rows = frappe.db.sql(
-        """
+        f"""
         SELECT team, COUNT(DISTINCT d) AS days_worked FROM (
             SELECT de.team AS team, DATE(de.execution_date) AS d
             FROM `tabDaily Execution` de
             WHERE DATE(de.execution_date) BETWEEN %s AND %s
               AND de.team IS NOT NULL AND de.team != ''
+              {_sc_de}
             UNION
             SELECT t.team AS team, DATE(rp.plan_date) AS d
             FROM `tabRollout Plan` rp
@@ -13814,9 +13890,10 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
             WHERE DATE(rp.plan_date) BETWEEN %s AND %s
               AND rp.plan_status = 'Completed'
               AND t.team IS NOT NULL AND t.team != ''
+              {_sc_rp}
         ) x GROUP BY team
         """,
-        (fd, td, fd, td), as_dict=True,
+        (fd, td, *_sp_de, fd, td, *_sp_rp), as_dict=True,
     )
     for _d in day_rows:
         _tt_bucket(_d.team).days_worked = cint(_d.days_worked)
@@ -13826,7 +13903,7 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     # multi-team plan credits ALL of its teams, not just the lead — a plan
     # split Team A + Team B previously gave Team B's row a silent 0 here.
     plan_rows = frappe.db.sql(
-        """
+        f"""
         SELECT t.team,
                COUNT(DISTINCT rp.name) AS assigned_lines,
                SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines
@@ -13839,9 +13916,10 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND t.team IS NOT NULL AND t.team != ''
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+          {_sc_rp}
         GROUP BY t.team
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_rp), as_dict=True,
     )
     plan_by_team = {r.team: r for r in plan_rows}
 
@@ -13854,7 +13932,7 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     # as plan_rows above, so a split plan's IM is counted for every team
     # it's assigned to, not just the lead.
     im_plan_rows = frappe.db.sql(
-        """
+        f"""
         SELECT t.team, pd.im, COUNT(*) AS cnt
         FROM `tabRollout Plan` rp
         JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
@@ -13867,10 +13945,11 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
           AND t.team IS NOT NULL AND t.team != ''
           AND pd.im IS NOT NULL AND pd.im != ''
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+          {_sc_rp}
         GROUP BY t.team, pd.im
         ORDER BY t.team, cnt DESC
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_rp), as_dict=True,
     )
     im_by_team = {}
     for row in im_plan_rows:
@@ -13878,7 +13957,7 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
             im_by_team[row.team] = row.im
 
     im_rows = frappe.db.sql(
-        """
+        f"""
         SELECT de.team, pd.im, COUNT(*) AS cnt
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` de ON de.name = wd.execution
@@ -13886,10 +13965,11 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
           AND de.team IS NOT NULL AND de.team != ''
           AND pd.im IS NOT NULL AND pd.im != ''
+          {_sc_de}
         GROUP BY de.team, pd.im
         ORDER BY de.team, cnt DESC
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_de), as_dict=True,
     )
     for row in im_rows:
         if row.team not in im_by_team:
@@ -13999,7 +14079,6 @@ def get_top_teams_report(from_date=None, to_date=None, **kwargs):
 def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
     """Team Utilization PVA — Planned vs Actual per team per day."""
     import json as _json
-    fd, td = _perf_date_range(from_date, to_date)
 
     raw_team = kwargs.get("team") or []
     if isinstance(raw_team, str):
@@ -14007,6 +14086,19 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
             raw_team = _json.loads(raw_team)
         except Exception:
             raw_team = [raw_team] if raw_team else []
+    # A team list from the browser only ever NARROWS, so it is safe to pass
+    # through here. The IM scope is not: it is derived from the session in
+    # api/im_reports.py and never read off the request.
+    return _team_utilization_pva(from_date, to_date, teams=raw_team)
+
+
+def _team_utilization_pva(from_date=None, to_date=None, teams=None, im_ids=None):
+    """Builder for get_team_utilization_pva. `teams` narrows to specific teams;
+    `im_ids` narrows to one IM's own plans/executions (Rollout Plan.im /
+    Daily Execution.im). Unscoped when both are empty."""
+    fd, td = _perf_date_range(from_date, to_date)
+
+    raw_team = list(teams or [])
 
     team_cond   = ""
     team_params = []
@@ -14014,6 +14106,8 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
         ph = ", ".join(["%s"] * len(raw_team))
         team_cond   = f" AND t.team IN ({ph})"
         team_params = list(raw_team)
+    _sc_rp, _sp_rp = _im_scope_cond("rp.im", im_ids)
+    _sc_de, _sp_de = _im_scope_cond("de.im", im_ids)
 
     # Joined through Rollout Plan Team so a multi-team split plan credits
     # EVERY team it's split across, not just the lead (rp.team). Target uses
@@ -14042,13 +14136,21 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
           AND t.team IS NOT NULL AND t.team != ''
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
           {team_cond}
+          {_sc_rp}
         GROUP BY DATE(rp.plan_date), t.team
         ORDER BY plan_date, t.team
         """,
-        (fd, td, *team_params), as_dict=True,
+        (fd, td, *team_params, *_sp_rp), as_dict=True,
     )
 
-    team_cond_de = team_cond.replace("rp.team", "de.team") if team_cond else ""
+    # The revenue query below has no `t` alias — Daily Execution carries the
+    # team as de.team. This fragment used to be built with
+    # team_cond.replace("rp.team", "de.team"), which matched nothing: the
+    # condition names t.team, not rp.team. The unrewritten " AND t.team IN
+    # (...)" then went into a query with no such alias, so EVERY call that
+    # passed a team filter died on "Unknown column 't.team' in 'WHERE'" —
+    # including the PM Reports page's own Team filter on this report.
+    team_cond_de = team_cond.replace("t.team", "de.team")
     rev_rows = frappe.db.sql(
         f"""
         SELECT DATE(de.execution_date) AS exec_date, de.team,
@@ -14058,9 +14160,10 @@ def get_team_utilization_pva(from_date=None, to_date=None, **kwargs):
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
           AND de.team IS NOT NULL
           {team_cond_de}
+          {_sc_de}
         GROUP BY DATE(de.execution_date), de.team
         """,
-        (fd, td, *team_params), as_dict=True,
+        (fd, td, *team_params, *_sp_de), as_dict=True,
     )
     rev_map    = {(str(r.exec_date), r.team): flt(r.revenue) for r in rev_rows}
     team_names = {}
@@ -14152,16 +14255,28 @@ def get_po_dispatch_status_report(from_date=None, to_date=None, **kwargs):
     Every status in the pipeline gets a row even at zero, so a stage that has
     emptied out reads as an explicit 0 rather than vanishing from the table.
     """
+    # Never scoped from the browser. The IM report catalog calls the builder
+    # below directly with a scope derived from its OWN session — see
+    # api/im_reports.py — so an im= in the request body can never widen or
+    # redirect what this returns.
+    return _po_dispatch_status_report()
+
+
+def _po_dispatch_status_report(im_ids=None):
+    """Builder for get_po_dispatch_status_report; `im_ids` narrows to one IM's
+    own PO lines (PO Dispatch.im). Unscoped when im_ids is empty."""
+    _sc, _sp = _im_scope_cond("im", im_ids)
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT IFNULL(NULLIF(dispatch_status, ''), 'Pending') AS status,
                COUNT(*) AS lines_count,
                COALESCE(SUM(line_amount), 0) AS value
         FROM `tabPO Dispatch`
         WHERE IFNULL(is_internal_work, 0) = 0
+          {_sc}
         GROUP BY IFNULL(NULLIF(dispatch_status, ''), 'Pending')
         """,
-        as_dict=True,
+        tuple(_sp), as_dict=True,
     )
     by_status = {r.status: r for r in rows}
 
@@ -14262,16 +14377,25 @@ def get_po_milestone_status_report(from_date=None, to_date=None, **kwargs):
 
     A snapshot, so not date-filtered — same reasoning as the line-level report.
     """
+    # Never scoped from the browser — see get_po_dispatch_status_report.
+    return _po_milestone_status_report()
+
+
+def _po_milestone_status_report(im_ids=None):
+    """Builder for get_po_milestone_status_report; `im_ids` narrows to one IM's
+    own PO lines (PO Dispatch.im). Unscoped when im_ids is empty."""
     from inet_app.api.pic import pic_status_order
 
+    _sc, _sp = _im_scope_cond("im", im_ids)
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT 'MS1' AS ms,
                IFNULL(NULLIF(pic_status, ''), 'Work Not Done') AS status,
                COUNT(*) AS milestones,
                COALESCE(SUM(ms1_amount), 0) AS value
         FROM `tabPO Dispatch`
         WHERE IFNULL(is_internal_work, 0) = 0 AND IFNULL(ms1_pct, 0) > 0
+          {_sc}
         GROUP BY IFNULL(NULLIF(pic_status, ''), 'Work Not Done')
         UNION ALL
         SELECT 'MS2' AS ms,
@@ -14280,9 +14404,10 @@ def get_po_milestone_status_report(from_date=None, to_date=None, **kwargs):
                COALESCE(SUM(ms2_amount), 0) AS value
         FROM `tabPO Dispatch`
         WHERE IFNULL(is_internal_work, 0) = 0 AND IFNULL(ms2_pct, 0) > 0
+          {_sc}
         GROUP BY IFNULL(NULLIF(pic_status_ms2, ''), 'Work Not Done')
         """,
-        as_dict=True,
+        tuple(_sp) * 2, as_dict=True,
     )
 
     agg = {}
@@ -14362,10 +14487,20 @@ def get_po_milestone_status_report(from_date=None, to_date=None, **kwargs):
 @frappe.whitelist()
 def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
     """Weekly Performance — aggregated by ISO week: lines, revenue, re-visits."""
+    # Never scoped from the browser — see get_po_dispatch_status_report.
+    return _weekly_performance_report(from_date, to_date)
+
+
+def _weekly_performance_report(from_date=None, to_date=None, im_ids=None):
+    """Builder for get_weekly_performance_report; `im_ids` narrows to one IM's
+    own plans/executions (Rollout Plan.im / Daily Execution.im). Unscoped when
+    im_ids is empty."""
     fd, td = _perf_date_range(from_date, to_date)
+    _sc_rp, _sp_rp = _im_scope_cond("rp.im", im_ids)
+    _sc_de, _sp_de = _im_scope_cond("de.im", im_ids)
 
     plan_rows = frappe.db.sql(
-        """
+        f"""
         SELECT YEARWEEK(rp.plan_date, 1)        AS yw,
                MIN(DATE(rp.plan_date))           AS week_start,
                COUNT(DISTINCT rp.name)           AS assigned_lines,
@@ -14375,10 +14510,11 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
         FROM `tabRollout Plan` rp
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+          {_sc_rp}
         GROUP BY YEARWEEK(rp.plan_date, 1)
         ORDER BY yw
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_rp), as_dict=True,
     )
 
     # Active teams per week — separate query (not joined into plan_rows above,
@@ -14386,7 +14522,7 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
     # multi-team plan). Unions rp.team (lead) with every Rollout Plan Team
     # split row so a multi-team plan counts all of its teams.
     team_split_rows = frappe.db.sql(
-        """
+        f"""
         SELECT YEARWEEK(rp.plan_date, 1) AS yw, t.team
         FROM `tabRollout Plan` rp
         JOIN (
@@ -14397,24 +14533,26 @@ def get_weekly_performance_report(from_date=None, to_date=None, **kwargs):
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
           AND t.team IS NOT NULL AND t.team != ''
+          {_sc_rp}
         GROUP BY YEARWEEK(rp.plan_date, 1), t.team
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_rp), as_dict=True,
     )
     active_teams_by_yw = {}
     for r in team_split_rows:
         active_teams_by_yw.setdefault(r.yw, set()).add(r.team)
 
     rev_rows = frappe.db.sql(
-        """
+        f"""
         SELECT YEARWEEK(de.execution_date, 1) AS yw,
                COALESCE(SUM(wd.revenue_sar), 0) AS revenue
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` de ON de.name = wd.execution
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          {_sc_de}
         GROUP BY YEARWEEK(de.execution_date, 1)
         """,
-        (fd, td), as_dict=True,
+        (fd, td, *_sp_de), as_dict=True,
     )
     rev_by_yw = {r.yw: flt(r.revenue) for r in rev_rows}
 
@@ -18932,6 +19070,45 @@ def _im_team_ids_for_filter(im_filter=None):
         limit_page_length=500,
     )
     return [t.team_id for t in teams if t.team_id]
+
+
+def _im_team_ids_all(im_filter=None):
+    """Every team the IM manages, WHATEVER its status — the report catalog's
+    team set.
+
+    Deliberately not _im_team_ids_for_filter: that one keeps only `Active`
+    teams, which is right for a picker or an "assign work now" flow but wrong
+    for a report. A team that is On Vacation this week did real work last
+    month; filtering it out silently drops that month's rows and leaves a
+    total that looks plausible and is wrong. Same for Inactive and Disbanded
+    teams with history behind them.
+
+    Leave _im_team_ids_for_filter alone — its existing callers genuinely want
+    Active only.
+    """
+    _im_r, im_ids, _meta = resolve_im_for_session(im_filter)
+    if not im_ids:
+        return []
+    teams = frappe.get_all(
+        "INET Team",
+        filters={"im": ["in", im_ids]},
+        fields=["team_id"],
+        limit_page_length=500,
+    )
+    return [t.team_id for t in teams if t.team_id]
+
+
+def _im_scope_cond(column, im_ids):
+    """(sql, params) restricting `column` to the IM's identifiers.
+
+    Returns ("", []) when im_ids is falsy, so an unscoped (PM) call splices in
+    an empty string and runs byte-identical SQL to before this existed. Every
+    report builder below takes its scope this way.
+    """
+    if not im_ids:
+        return "", []
+    ph = ", ".join(["%s"] * len(im_ids))
+    return f" AND {column} IN ({ph})", list(im_ids)
 
 
 @frappe.whitelist()

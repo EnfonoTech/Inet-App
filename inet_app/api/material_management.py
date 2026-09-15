@@ -3732,9 +3732,16 @@ def _sla_status(pending_days):
 
 
 @frappe.whitelist()
-def get_site_sign_status():
+def get_site_sign_status(duids=None):
     """Bills received but not yet fully consumed (used/"signed") at their
     site. Pending Days = days since the bill's outbound (dispatch) date.
+
+    `duids`, when given, keeps only bills whose site is in that set — how the
+    IM report catalog scopes this to one IM. Huawei Outbound Plan carries
+    neither an IM nor a team (its only site handle is du_id/duid_master), so
+    an IM's DUID set has to be reached through their PO Dispatch lines and
+    executions instead; see _im_duid_scope in api/im_reports.py, which also
+    documents what that indirection does and does not guarantee.
 
     A bill's received/issued qty is reconstructed from Batch (batch = bill)
     — the same mechanism the DUID Stock "Bills" popup uses — so this only
@@ -3747,6 +3754,12 @@ def get_site_sign_status():
         filters={"subcon": "INET", "outbound_status": "Received"},
         fields=["bill_no", "project_name", "du_id", "duid_master", "outbound_date"],
     )
+    # Filtered here rather than in the query: the site can sit in either
+    # du_id or duid_master, and the rest of this function already resolves
+    # the two the same way.
+    if duids is not None:
+        _want = set(duids)
+        plans = [p for p in plans if (p.du_id or p.duid_master) in _want]
     if not plans:
         return []
 
@@ -3802,19 +3815,32 @@ def get_site_sign_status():
 
 
 @frappe.whitelist()
-def get_site_verify_status():
+def get_site_verify_status(im_ids=None):
     """Sites where the TL has completed work (material used) but the
     client hasn't yet approved CIAG. Pending Days = days since
     ciag_status_date; falls back to execution_date for older records
     saved before that field existed.
+
+    Unlike the two bill reports either side of it, this one sits on Daily
+    Execution, which carries its own `im` stamp — so `im_ids` scopes it
+    directly and exactly, with no DUID indirection.
     """
+    _scope, _params = "", []
+    if im_ids:
+        _ph = ", ".join(["%s"] * len(im_ids))
+        # de.im is the stamp on the execution itself; pd.im is the one on the
+        # PO line. Either identifying the IM is enough, matching how the
+        # Team Utilization script report already resolves an IM filter.
+        _scope = f" AND (de.im IN ({_ph}) OR pd.im IN ({_ph}))"
+        _params = list(im_ids) * 2
     rows = frappe.db.sql(
-        """SELECT de.name, de.system_id, de.execution_date, de.ciag_status_date,
+        f"""SELECT de.name, de.system_id, de.execution_date, de.ciag_status_date,
                   pd.project_code, pd.site_code
            FROM `tabDaily Execution` de
            JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
-           WHERE de.tl_status = 'Completed' AND de.ciag_status = 'Open'""",
-        as_dict=True,
+           WHERE de.tl_status = 'Completed' AND de.ciag_status = 'Open'
+             {_scope}""",
+        tuple(_params), as_dict=True,
     )
     if not rows:
         return []
@@ -3896,7 +3922,7 @@ def report_site_verify_status(filters=None):
 
 
 @frappe.whitelist()
-def get_bill_wise_status():
+def get_bill_wise_status(duids=None):
     """Per (bill, item) received/issued/remaining — the detailed bill-level
     breakdown PM/IM asked for: how much of each item in a bill actually
     reached site vs. what's still sitting unconsumed. One row per bill+item
@@ -3914,6 +3940,11 @@ def get_bill_wise_status():
         filters={"subcon": "INET"},
         fields=["bill_no", "project_name", "du_id", "duid_master", "outbound_date", "outbound_status"],
     )
+    # `duids` scopes this to one IM's sites — same mechanism and same caveats
+    # as get_site_sign_status above.
+    if duids is not None:
+        _want = set(duids)
+        plans = [p for p in plans if (p.du_id or p.duid_master) in _want]
     if not plans:
         return []
 

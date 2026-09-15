@@ -36,6 +36,19 @@ def execute(filters=None):
     if project:
         where += " AND hop.project = %s"
         params.append(project)
+    # A LIST of projects, distinct from the single `project` picker above.
+    # The IM report catalog scopes this report by handing over every project
+    # its IM's own PO lines touch — there is no IM or team on Huawei Outbound
+    # Plan to filter on directly. An empty list is NOT "no filter": it means
+    # the IM has no projects, and must return nothing rather than everything.
+    projects = f.get("projects")
+    if projects is not None:
+        if not projects:
+            where += " AND 1=0"
+        else:
+            ph = ", ".join(["%s"] * len(projects))
+            where += f" AND hop.project IN ({ph})"
+            params.extend(list(projects))
     if domain:
         where += " AND NULLIF(pcc.project_domain, '') = %s"
         params.append(domain)
