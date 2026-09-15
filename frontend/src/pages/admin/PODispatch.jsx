@@ -316,14 +316,16 @@ export default function PODispatch() {
   // paused:loading skips growing/shrinking a tab's own render while a NEW
   // tab's fetch is already in flight, so we don't waste frames growing a
   // table we're about to switch away from anyway.
-  const [mountingRows, setMountingRows] = useState(false);
-  const visibleRows = useProgressiveRows(rows, { paused: loading, onMountingChange: setMountingRows });
+  const visibleRows = useProgressiveRows(rows, { paused: loading });
   // How many of `visibleRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`. See
   // the skip-fetch logic in the fetch effect below / PICTracker.jsx. Doesn't
   // apply to integrity tabs — those never use the row-limit selector at all.
   const displayLimit = effectiveRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveRowLimit;
   const displayedCount = isIntegrityTab ? rows.length : Math.min(rows.length, displayLimit);
+  // True only while THIS view still has rows left to mount — not merely
+  // because the hook is busy shrinking the tab you just left.
+  const rowsStillRendering = !loading && visibleRows.length < displayedCount;
   // Remembers what the LAST real server fetch actually returned, and under
   // what limit + filters. Shrinking the row limit (e.g. All -> 20) never
   // needs another round-trip — the rows are already in memory; just show
@@ -1371,7 +1373,7 @@ export default function PODispatch() {
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                       <strong>{displayedCount}</strong> row{displayedCount !== 1 ? "s" : ""}
-                      {mountingRows && (
+                      {rowsStillRendering && (
                         <span style={{ marginLeft: 12, color: "#b45309", fontWeight: 600 }}>
                           still rendering rows…
                         </span>
