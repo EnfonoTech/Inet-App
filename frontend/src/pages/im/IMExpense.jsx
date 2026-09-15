@@ -462,7 +462,8 @@ export default function IMExpense({ isAdmin = false }) {
   const visibleRows = rows;
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const mountedRows = useProgressiveRows(visibleRows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const mountedRows = useProgressiveRows(visibleRows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
   const displayedCount = Math.min(visibleRows.length, displayLimit);
 
@@ -543,7 +544,7 @@ export default function IMExpense({ isAdmin = false }) {
       </div>
 
       <div className="page-content">
-        <DataTableWrapper
+        <DataTableWrapper scrollRef={tableScrollRef}
           loadedCount={loading ? null : rows.length}
           filteredCount={displayedCount}
           filterActive={hasFilters}

@@ -125,7 +125,8 @@ export default function PICClosed() {
   const [loading, setLoading] = useState(true);
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleRows = useProgressiveRows(rows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visibleRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`.
   const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
@@ -411,7 +412,7 @@ export default function PICClosed() {
       )}
 
       <div className="page-content">
-        <DataTableWrapper loading={loading && rows.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           <table className="data-table" data-excel-filter-all="1" data-table-key="pic-closed-v3">
             <thead>
               <tr>

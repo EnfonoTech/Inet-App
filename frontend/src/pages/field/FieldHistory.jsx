@@ -115,7 +115,8 @@ export default function FieldHistory() {
   const [loading, setLoading] = useState(true);
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleRecords = useProgressiveRows(records, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleRecords = useProgressiveRows(records, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visibleRecords` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `records`
   // (see the skip-fetch logic in the fetch effect: shrinking the limit after
@@ -270,7 +271,7 @@ export default function FieldHistory() {
 
       {/* ── Desktop table ─────────────────────────────────── */}
       <div className="page-content field-desktop-only">
-        <DataTableWrapper loading={loading && records.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && records.length > 0}>
           <table className="data-table" data-excel-filter-all="1" data-table-key="field-history-v1">
             <thead>
               <tr>

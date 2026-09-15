@@ -119,7 +119,8 @@ export default function PICInvoiceDetail() {
   const [rows, setRows] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleRows = useProgressiveRows(rows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
   const displayedCount = Math.min(rows.length, displayLimit);
   const [error, setError] = useState(null);
@@ -302,7 +303,7 @@ export default function PICInvoiceDetail() {
       )}
 
       <div className="page-content">
-        <DataTableWrapper loading={loading && rows.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           <table className="data-table" data-excel-filter-all="1" data-table-key="pic-invoice-detail-v1">
             <thead>
               <tr>

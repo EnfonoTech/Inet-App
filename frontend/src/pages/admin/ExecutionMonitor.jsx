@@ -463,8 +463,9 @@ export default function ExecutionMonitor() {
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleMainRows = useProgressiveRows(mainRows, { paused: loading });
-  const visibleInternalDone = useProgressiveRows(filteredInternalDone, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleMainRows = useProgressiveRows(mainRows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
+  const visibleInternalDone = useProgressiveRows(filteredInternalDone, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of each visible* array to actually show — anything beyond this
   // is hidden via CSS in the render below rather than removed from `rows`
   // (see the skip-fetch cache in the fetch effect above / PICTracker.jsx).
@@ -648,7 +649,7 @@ export default function ExecutionMonitor() {
             rule: DataTablePro observes this wrapper, and losing it loses the
             table's enhancement state. */}
         <div style={tab === "analytics" ? { display: "none" } : undefined}>
-        <DataTableWrapper loading={loading && rows.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           {tab === "internal_done" ? (
             <table key="execution-monitor-internal-done" className="data-table" data-excel-filter-all="1" data-table-key="execution-monitor-internal-done">
               <thead>

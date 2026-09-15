@@ -89,7 +89,8 @@ export default function Timesheet() {
   const [loading, setLoading] = useState(true);
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleLogs = useProgressiveRows(logs, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleLogs = useProgressiveRows(logs, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visibleLogs` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `logs`. See
   // the skip-fetch logic in the fetch effect below / PICTracker.jsx.
@@ -456,7 +457,7 @@ export default function Timesheet() {
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontSize: "0.82rem", color: "var(--text-muted)" }}>
             {loading ? "Loading…" : `${displayedCount} of ${total} log(s) · ${fmt.format(totalHours)} h total`}
           </div>
-          <DataTableWrapper className="data-table-wrapper--nested" loading={loading && logs.length > 0}>
+          <DataTableWrapper scrollRef={tableScrollRef} className="data-table-wrapper--nested" loading={loading && logs.length > 0}>
             <table className="data-table" data-excel-filter-all="1" data-table-key="field-timesheet-v1">
               <thead>
                 <tr>

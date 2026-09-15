@@ -299,7 +299,8 @@ export default function IMPlanning() {
   const visibleNames = useMemo(() => new Set(filteredPlans.map((p) => p.name)), [filteredPlans]);
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visiblePlans = useProgressiveRows(filteredPlans, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visiblePlans = useProgressiveRows(filteredPlans, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visiblePlans` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `plans`.
   // `plans` itself may hold MORE than this (see the skip-fetch logic above).
@@ -561,7 +562,7 @@ export default function IMPlanning() {
           </div>
         )}
 
-        <DataTableWrapper loading={loading && plans.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && plans.length > 0}>
           <>
             <table className="data-table" data-excel-filter-all="1" data-table-key="im-planning-rollout">
               <thead>

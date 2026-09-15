@@ -245,7 +245,8 @@ export default function IssuesRisks() {
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleRows = useProgressiveRows(filteredRows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleRows = useProgressiveRows(filteredRows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `filteredRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`
   // (see the skip-fetch logic above for why `rows` itself isn't trimmed).
@@ -436,7 +437,7 @@ export default function IssuesRisks() {
         </div>
       </div>
       <div className="page-content">
-        <DataTableWrapper loading={loading && rows.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           <table className="data-table" data-excel-filter-all="1" data-table-key="admin-issues-risks-v1">
               <thead>
                 <tr>

@@ -259,7 +259,8 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleProjects = useProgressiveRows(projects, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleProjects = useProgressiveRows(projects, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visibleProjects` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `projects`.
   // `projects` itself may hold MORE than this after a shrink (see
@@ -443,7 +444,7 @@ export default function Projects() {
 
       {/* Table — scrollable on narrow viewports (data-table-wrapper) */}
       <div className="page-content">
-        <DataTableWrapper loading={loading && projects.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && projects.length > 0}>
           <table className="data-table" data-excel-filter-all="1" data-table-key="admin-projects-v1">
             <thead>
               <tr>

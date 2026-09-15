@@ -728,7 +728,8 @@ export default function WorkDone() {
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleRows = useProgressiveRows(filteredRows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleRows = useProgressiveRows(filteredRows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `filteredRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`
   // (see the skip-fetch logic above for why `rows` itself isn't trimmed).
@@ -995,7 +996,7 @@ export default function WorkDone() {
           </div>
         )}
 
-        <DataTableWrapper loading={loading && filteredRows.length > 0}>
+        <DataTableWrapper loading={loading && filteredRows.length > 0} scrollRef={tableScrollRef}>
         {tab === "summary" ? (
           <div style={{ padding: "20px 20px 40px", background: "#f8fafc" }}>
             {summaryLoading ? (

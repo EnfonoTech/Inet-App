@@ -676,8 +676,9 @@ export default function IMPOIntake() {
     : transferHistoryRows;
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const mountedTransferRows = useProgressiveRows(transferVisibleRows, { paused: transferListLoading });
-  const mountedRows = useProgressiveRows(rows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const mountedTransferRows = useProgressiveRows(transferVisibleRows, { paused: transferListLoading, scrollRef: tableScrollRef, chunk: 400 });
+  const mountedRows = useProgressiveRows(rows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `mountedRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows` (see
   // the skip-fetch cache in the "Intake load" effect above / PICTracker.jsx).
@@ -1212,8 +1213,8 @@ export default function IMPOIntake() {
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const mountedOvRows = useProgressiveRows(ovFilteredRows, { paused: ovLoading });
-  const mountedDummyRows = useProgressiveRows(filteredDummyRows, { paused: dummyLoading });
+  const mountedOvRows = useProgressiveRows(ovFilteredRows, { paused: ovLoading, scrollRef: tableScrollRef, chunk: 400 });
+  const mountedDummyRows = useProgressiveRows(filteredDummyRows, { paused: dummyLoading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of each mounted* array to actually show — anything beyond this
   // is hidden via CSS in the render below rather than removed from
   // dummyRows/ovRows (see the skip-fetch caches above / PICTracker.jsx).
@@ -1472,7 +1473,7 @@ export default function IMPOIntake() {
 
       {/* ── ONE page-content always rendered (fixes tab-switch CSS) ────── */}
       <div className="page-content">
-        <DataTableWrapper
+        <DataTableWrapper scrollRef={tableScrollRef}
           loadedCount={tab === "intake" ? (loading ? null : intakeDisplayedCount) : tab === "dummy" ? (dummyLoading ? null : Math.min(dummyRows.length, dummyDisplayLimit)) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : (ovLoading ? null : Math.min(ovRows.length, ovDisplayLimit))}
           filteredCount={tab === "intake" ? intakeDisplayedCount : tab === "dummy" ? dummyDisplayedCount : tab === "transfers" ? transferVisibleRows.length : ovDisplayedCount}
           filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : tab === "transfers" ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}

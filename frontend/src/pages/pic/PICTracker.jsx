@@ -376,7 +376,8 @@ export default function PICTracker() {
   // and without this the loading overlay disappears looking "done" while
   // scrolling still reveals blank, not-yet-mounted rows underneath.
   const [mounting, setMounting] = useState(false);
-  const visibleRows = useProgressiveRows(rows, { paused: loading, onMountingChange: setMounting });
+  const tableScrollRef = useRef(null);
+  const visibleRows = useProgressiveRows(rows, { paused: loading, onMountingChange: setMounting, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visibleRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`.
   // `rows` itself may hold MORE than this (see the skip-fetch logic above:
@@ -763,7 +764,7 @@ export default function PICTracker() {
       )}
 
       <div className="page-content">
-        <DataTableWrapper loading={loading && rows.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           <table className="data-table" data-excel-filter-all="1" data-table-key="pic-tracker-v2">
               <thead>
                 <tr>

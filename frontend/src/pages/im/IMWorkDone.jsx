@@ -945,7 +945,8 @@ export default function IMWorkDone() {
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleRows = useProgressiveRows(filteredRows, { paused: tab === "legacy" ? legacyLoading : loading });
+  const tableScrollRef = useRef(null);
+  const visibleRows = useProgressiveRows(filteredRows, { paused: tab === "legacy" ? legacyLoading : loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visibleRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`/
   // `legacyRows` (see the skip-fetch caches above / PICTracker.jsx).
@@ -1168,7 +1169,7 @@ export default function IMWorkDone() {
         )}
       </div>
       <div className="page-content">
-        <DataTableWrapper loading={tab === "legacy" ? (legacyLoading && legacyRows.length > 0) : (loading && rows.length > 0)}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={tab === "legacy" ? (legacyLoading && legacyRows.length > 0) : (loading && rows.length > 0)}>
           {tab === "legacy" ? (
             <LegacyResubmitTable
               rows={visibleRows}

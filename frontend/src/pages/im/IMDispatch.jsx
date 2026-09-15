@@ -794,7 +794,8 @@ export default function IMDispatch() {
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const mountedRows = useProgressiveRows(visibleRows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const mountedRows = useProgressiveRows(visibleRows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `mountedRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows` (see
   // the skip-fetch cache in the fetch effect above / PICTracker.jsx).
@@ -2060,7 +2061,7 @@ export default function IMDispatch() {
             no filters and no column state. Same reason the row-limit shrink
             hides rows instead of dropping them. */}
         <div style={view === "table" ? undefined : { display: "none" }}>
-        <DataTableWrapper loading={loading && rows.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           <table key={`im-dispatch-${planScope}`} className="data-table" data-excel-filter-all="1" data-table-key={`im-dispatch-${planScope}`}>
               <thead>
                 <tr>

@@ -443,7 +443,8 @@ export default function SubconPO() {
   const [totals, setTotals] = useState({});
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleRows = useProgressiveRows(rows, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
   const displayedCount = Math.min(rows.length, displayLimit);
   const [error, setError] = useState(null);
@@ -1105,7 +1106,7 @@ export default function SubconPO() {
           full-height chain matches on :has(.page-content > .data-table-wrapper)
           and must resolve the same way on every tab. */}
       <div className="page-content">
-        <DataTableWrapper loading={loading && rows.length > 0}>
+        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           {/* v2: the column set changed (added Status) — a data-table-key must
               never be reused across different column sets or DataTablePro's
               saved widths/filters desync from the body cells. */}

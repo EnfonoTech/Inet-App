@@ -382,7 +382,8 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
-  const visibleRecords = useProgressiveRows(records || EMPTY_RECORDS, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleRecords = useProgressiveRows(records || EMPTY_RECORDS, { paused: loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visibleRecords` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `records`
   // (see the skip-fetch logic above: shrinking the limit after "All" already
@@ -443,7 +444,7 @@ function RecordsTable({ doctype, fields, displayCols, rowLimit }) {
         {hasFilters && loading && " · updating…"}
       </span>
     </div>
-    <DataTableWrapper style={{ marginTop: 0 }} loading={loading && records.length > 0}>
+    <DataTableWrapper scrollRef={tableScrollRef} style={{ marginTop: 0 }} loading={loading && records.length > 0}>
       <table className="data-table">
         <thead>
           <tr>
