@@ -316,7 +316,8 @@ export default function PODispatch() {
   // paused:loading skips growing/shrinking a tab's own render while a NEW
   // tab's fetch is already in flight, so we don't waste frames growing a
   // table we're about to switch away from anyway.
-  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  const [mountingRows, setMountingRows] = useState(false);
+  const visibleRows = useProgressiveRows(rows, { paused: loading, onMountingChange: setMountingRows });
   // How many of `visibleRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`. See
   // the skip-fetch logic in the fetch effect below / PICTracker.jsx. Doesn't
@@ -1370,6 +1371,11 @@ export default function PODispatch() {
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                       <strong>{displayedCount}</strong> row{displayedCount !== 1 ? "s" : ""}
+                      {mountingRows && (
+                        <span style={{ marginLeft: 12, color: "#b45309", fontWeight: 600 }}>
+                          still rendering rows…
+                        </span>
+                      )}
                       {activeTab === "Dispatched" && autoRows.length > 0 && (
                         <span style={{ marginLeft: 16, color: "#6366f1", fontWeight: 600 }}>
                           Auto: {autoRows.length} · Manual: {displayedCount - autoRows.length}
