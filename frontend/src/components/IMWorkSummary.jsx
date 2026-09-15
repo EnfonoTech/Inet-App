@@ -10,25 +10,25 @@ const fmtDec = new Intl.NumberFormat("en", { minimumFractionDigits: 0, maximumFr
  * page became a catalog: PO dispatch counts, project totals, mode breakdown,
  * rollout plans, month-to-date executions and work done.
  *
- * Kept, and moved here as one catalog entry, rather than dropped: it is the
- * only view of these particular figures the IM has, and the catalog's other
- * reports answer different questions. It is already IM-scoped server-side —
- * get_im_reports() resolves the IM from the session, same as every endpoint in
+ * Kept, and moved here rather than dropped: it is the only view of these
+ * particular figures the IM has, and the catalog's other reports answer
+ * different questions. It is already IM-scoped server-side — get_im_reports()
+ * resolves the IM from the session, same as every endpoint in
  * api/im_reports.py.
  *
- * The Commercial tab that used to sit alongside these is now its own catalog
+ * ONE SECTION PER RENDER, chosen by `section`. These four used to be a tab
+ * strip inside this component, which put a THIRD row of tabs under the
+ * catalog's own category tabs and report chips — three layers to read before
+ * reaching any data. Each section is now its own catalog entry, so the chips
+ * ARE this choice: two layers, the same as every other report, and each
+ * section gets its own ?tab= deep link.
+ *
+ * The Commercial tab that used to sit alongside these is likewise its own
  * entry (key "commercial"), which is what keeps Rollout Planning's
  * "View commercial report" deep link working.
  */
-const TABS = [
-  { key: "overview", label: "PO dispatches" },
-  { key: "rollouts", label: "Rollout plans" },
-  { key: "executions", label: "Executions (MTD)" },
-  { key: "work_done", label: "Work done (MTD)" },
-];
-
-export default function IMWorkSummary({ imName }) {
-  const [activeTab, setActiveTab] = useState("overview");
+export default function IMWorkSummary({ imName, section = "overview" }) {
+  const activeTab = section;
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -43,6 +43,10 @@ export default function IMWorkSummary({ imName }) {
     setLoading(true);
     setError(null);
     try {
+      // Cached: all four sections read ONE payload, and each is now a
+      // separate catalog entry, so moving between them remounts this
+      // component. Without the cache that is a fresh identical round trip
+      // per click, where the old in-component tab strip fetched once.
       setPayload(await pmApi.getIMReports());
     } catch (e) {
       setPayload(null);
@@ -53,6 +57,19 @@ export default function IMWorkSummary({ imName }) {
   }, [imName]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Each section's MiniTables mount fresh whenever the catalog switches to a
+  // different entry, so React swaps the whole .data-table-wrapper subtree in
+  // one go and DataTablePro's own tbody observer never sees it. The in-
+  // component tab strip used to nudge it on click; now that the sections are
+  // separate catalog entries, the nudge belongs here — once the rows this
+  // section renders actually exist. Same pattern as switchTab() in
+  // IMMaterialRequest.jsx.
+  useEffect(() => {
+    if (!payload) return undefined;
+    const t = setTimeout(() => document.dispatchEvent(new CustomEvent("tablepro:check")), 60);
+    return () => clearTimeout(t);
+  }, [payload, section]);
 
   const ds = payload?.dispatch_summary;
 
@@ -86,27 +103,6 @@ export default function IMWorkSummary({ imName }) {
 
   return (
     <div className="page-content">
-          <div className="tabs" style={{ marginBottom: 18 }}>
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                className={`tab ${activeTab === t.key ? "active" : ""}`}
-                onClick={() => {
-                  setActiveTab(t.key);
-                  // Each tab's MiniTable only exists while that tab is active
-                  // (the others aren't just hidden, they're unmounted), so
-                  // React swaps the whole .data-table-wrapper subtree in one
-                  // go — DataTablePro's own tbody observer never sees that.
-                  // Same pattern as switchTab() in IMMaterialRequest.jsx.
-                  setTimeout(() => document.dispatchEvent(new CustomEvent("tablepro:check")), 60);
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
           {activeTab === "overview" && (
             <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16, marginBottom: 22 }}>

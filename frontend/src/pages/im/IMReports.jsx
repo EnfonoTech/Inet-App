@@ -26,13 +26,43 @@ const IMWorkSummary           = lazy(() => import("../../components/IMWorkSummar
    inet_app/api/im_reports.py. Nothing in this file decides scope; an `im` sent
    from here would be ignored. */
 const REPORTS = [
+  /* The bundle this page used to be. One entry PER SECTION, not one entry
+     with its own tab strip inside it — that put a third row of tabs under the
+     category tabs and the chips, three layers to get through before any data.
+     As separate entries the chips do that job, so the page is two layers like
+     every other report, and each section gets its own ?tab= deep link.
+     All four read one cached payload, so switching between them costs nothing. */
   {
-    key: "my_work_summary",
+    key: "my_work_dispatches",
     category: "My Work",
-    title: "My Work Summary",
-    // The bundle this page used to be, kept as one catalog entry.
+    title: "PO Dispatches",
     component: IMWorkSummary,
-    description: "PO dispatch counts and value, rollout plans, and month-to-date executions and work done",
+    componentProps: { section: "overview" },
+    description: "PO lines, line amount and active teams — split by dispatch status, project and dispatch mode",
+  },
+  {
+    key: "my_work_rollouts",
+    category: "My Work",
+    title: "Rollout Plans",
+    component: IMWorkSummary,
+    componentProps: { section: "rollouts" },
+    description: "Your rollout plans by status, and the 80 most recent",
+  },
+  {
+    key: "my_work_executions",
+    category: "My Work",
+    title: "Executions (MTD)",
+    component: IMWorkSummary,
+    componentProps: { section: "executions" },
+    description: "Month-to-date executions by status, and the 60 most recent",
+  },
+  {
+    key: "my_work_done",
+    category: "My Work",
+    title: "Work Done (MTD)",
+    component: IMWorkSummary,
+    componentProps: { section: "work_done" },
+    description: "Month-to-date work done rows and revenue, by billing status",
   },
   {
     key: "team_utilization_report",
@@ -195,8 +225,9 @@ export default function IMReports() {
     if (r.key === "team_idle_domain") {
       return { ...r, componentProps: { fetchUtilization: imReportsApi.getTeamDomainUtilization } };
     }
-    if (r.key === "my_work_summary") {
-      return { ...r, componentProps: { imName } };
+    if (r.category === "My Work") {
+      // Keep the entry's own `section` and add the session's imName to it.
+      return { ...r, componentProps: { ...r.componentProps, imName } };
     }
     return r;
   }), [imName, commProject]);

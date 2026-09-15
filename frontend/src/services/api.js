@@ -231,7 +231,11 @@ export const pmApi = {
     etag:      args?.etag      || "",
   }),
   getIMDashboard:       (im, args = {}) => call("inet_app.api.command_center.get_im_dashboard", { im, ...args, etag: args?.etag || "" }),
-  getIMReports:         ()          => call("inet_app.api.command_center.get_im_reports"),
+  // Cached: the IM Reports catalog splits this one payload across four
+  // separate entries (PO dispatches / Rollout plans / Executions / Work done),
+  // so moving between them would otherwise refetch the identical bundle on
+  // every click. Short TTL — these are month-to-date figures, not live ones.
+  getIMReports:         ()          => callCached("inet_app.api.command_center.get_im_reports", {}, 60_000),
   listIMRolloutPlans:   (im, planStatus, limit, portalFilters) => {
     const args = {
       im: im || "",
