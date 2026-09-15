@@ -269,12 +269,12 @@ export default function PODispatch() {
   // clicked, or already the active tab when clicked); any OTHER tab falls
   // back to the normal default limit until the user explicitly picks "All"
   // again while on it. Switching back to the confirmed tab still honors it.
-  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? activeTab : null);
-  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== activeTab
+  const [confirmedAllTab, setConfirmedAllTab] = useState(rowLimit === TABLE_ROW_LIMIT_ALL ? activeTab : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTab !== activeTab
     ? TABLE_ROW_LIMIT_DEFAULT
     : rowLimit;
   const confirmRowLimit = useCallback((n) => {
-    confirmedAllTabRef.current = activeTab;
+    setConfirmedAllTab(activeTab);
     setRowLimit(n);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, setRowLimit]);

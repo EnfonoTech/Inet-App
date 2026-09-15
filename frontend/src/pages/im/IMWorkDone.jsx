@@ -422,12 +422,12 @@ export default function IMWorkDone() {
   // unlimited fetch+render for a tab the user never asked "All" for on this
   // occasion. Track which tab "All" was actually confirmed for; any OTHER
   // tab falls back to the normal default limit until explicitly re-picked.
-  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
-  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== tab
+  const [confirmedAllTab, setConfirmedAllTab] = useState(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTab !== tab
     ? TABLE_ROW_LIMIT_DEFAULT
     : rowLimit;
   const confirmRowLimit = useCallback((n) => {
-    confirmedAllTabRef.current = tab;
+    setConfirmedAllTab(tab);
     setRowLimit(n);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, setRowLimit]);

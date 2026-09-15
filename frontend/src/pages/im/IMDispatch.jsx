@@ -206,12 +206,12 @@ export default function IMDispatch() {
   // different, separately-limited fetch. Without this, picking "All" on one
   // scope and switching to the other would silently re-trigger an unlimited
   // fetch for a scope the user never asked "All" for on this occasion.
-  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? planScope : null);
-  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== planScope
+  const [confirmedAllTab, setConfirmedAllTab] = useState(rowLimit === TABLE_ROW_LIMIT_ALL ? planScope : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTab !== planScope
     ? TABLE_ROW_LIMIT_DEFAULT
     : rowLimit;
   const confirmRowLimit = useCallback((n) => {
-    confirmedAllTabRef.current = planScope;
+    setConfirmedAllTab(planScope);
     setRowLimit(n);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planScope, setRowLimit]);

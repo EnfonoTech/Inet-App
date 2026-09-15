@@ -176,12 +176,12 @@ export default function ExecutionMonitor() {
   // separately-limited fetch. Without this, picking "All" on one tab and
   // switching to the other would silently re-trigger an unlimited fetch for
   // a tab the user never asked "All" for on this occasion.
-  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
-  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== tab
+  const [confirmedAllTab, setConfirmedAllTab] = useState(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
+  const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTab !== tab
     ? TABLE_ROW_LIMIT_DEFAULT
     : rowLimit;
   const confirmRowLimit = useCallback((n) => {
-    confirmedAllTabRef.current = tab;
+    setConfirmedAllTab(tab);
     setRowLimit(n);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, setRowLimit]);

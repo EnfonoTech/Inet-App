@@ -187,16 +187,16 @@ export default function IMPOIntake() {
   // a tab the user never asked "All" for on this occasion. Track which tab
   // "All" was actually confirmed for; any other tab falls back to the
   // normal default limit until explicitly re-picked.
-  const confirmedAllTabRef = useRef(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
+  const [confirmedAllTab, setConfirmedAllTab] = useState(rowLimit === TABLE_ROW_LIMIT_ALL ? tab : null);
   const effectiveRowLimitForTab = useCallback((t) => (
-    rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTabRef.current !== t
+    rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTab !== t
       ? TABLE_ROW_LIMIT_DEFAULT
       : rowLimit
   ), [rowLimit]);
   const effectiveDummyRowLimit = effectiveRowLimitForTab("dummy");
   const effectiveOvRowLimit = effectiveRowLimitForTab("overview");
   const confirmRowLimit = useCallback((n) => {
-    confirmedAllTabRef.current = tab;
+    setConfirmedAllTab(tab);
     setRowLimit(n);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, setRowLimit]);
