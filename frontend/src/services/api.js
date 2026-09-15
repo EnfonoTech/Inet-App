@@ -935,6 +935,7 @@ export const pmApi = {
     milestone: milestone || "",
     huawei_im: overrides?.huawei_im || "",
     project_domain: overrides?.project_domain || "",
+    closed_on: overrides?.closed_on || "",
   }),
   listBackendTeamsForPicker: (search) => call("inet_app.api.command_center.list_backend_teams_for_picker", { search: search || "", limit: 200 }),
   assignBackend: (po_dispatches, backend_team, remark, overrides) => call("inet_app.api.command_center.assign_backend", {

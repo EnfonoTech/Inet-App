@@ -7,6 +7,8 @@ import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "
 import { useDebounced } from "../../hooks/useDebounced";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { pmApi } from "../../services/api";
+import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
+import { missingFields, missingFieldsMessage } from "../../utils/requiredFields";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -17,6 +19,18 @@ import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { money, qty } from "../../utils/numberFormat";
 import { weekOptionsForMonth, weekRangeLabel, weekBoundsOf } from "../../utils/weeks";
+
+
+// Local calendar date, not `toISOString().slice(0,10)` as the planning pages
+// use: that is UTC, so between midnight and 03:00 in Riyadh it returns
+// YESTERDAY. It is harmless as a plan-date default, but this one is the `max`
+// on the Closing Date input and is compared against the server's own
+// nowdate() — a day behind there would stop an IM picking today.
+function todayDate() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 
 // Full Select-field option lists — used as filter option sources instead of
@@ -357,6 +371,7 @@ export default function IMPOIntake() {
   const [dcError, setDcError] = useState(null);
   const [dcHuaweiIm, setDcHuaweiIm] = useState("");
   const [dcProjectDomain, setDcProjectDomain] = useState("");
+  const [dcClosedOn, setDcClosedOn] = useState(todayDate());
 
   // ── Huawei IM / Project Domain option lists — override pickers on
   // Assign to Backend and Direct Close, and also (mapped below) the
@@ -940,6 +955,11 @@ export default function IMPOIntake() {
       setBackendError(`Cannot assign: ${blocked.length} POID(s) have status ${[...new Set(blocked.map((r) => r.dispatch_status))].join(", ")}. Deselect to continue.`);
       return;
     }
+    const noIm = missingImRows(rows, selected);
+    if (noIm.length > 0) {
+      setBackendError(imRequiredMessage(noIm, "assign to a backend team"));
+      return;
+    }
     setBackendBusy(true);
     setBackendError(null);
     try {
@@ -1010,6 +1030,7 @@ export default function IMPOIntake() {
     setDcType("INET");
     setDcSubcontractor("");
     setDcMilestone("full");
+    setDcClosedOn(todayDate());
     const selRows = rows.filter((r) => selected.has(r.name));
     const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
     setDcHuaweiIm(huaweiVals.length === 1 ? huaweiVals[0] : "");
@@ -1020,7 +1041,20 @@ export default function IMPOIntake() {
   }
 
   async function submitDirectClose() {
-    if (!dcSubcontractor) return;
+    const noIm = missingImRows(rows, selected);
+    if (noIm.length > 0) {
+      setDcError(imRequiredMessage(noIm, "direct close"));
+      return;
+    }
+    const missing = missingFields({
+      "Close Type": dcType,
+      "Subcontractor": dcSubcontractor,
+      "Closing Date": dcClosedOn,
+    });
+    if (missing.length > 0) {
+      setDcError(missingFieldsMessage(missing, "direct close"));
+      return;
+    }
     setDcBusy(true);
     setDcError(null);
     try {
@@ -1029,6 +1063,7 @@ export default function IMPOIntake() {
       const res = await pmApi.directCloseDispatches(ids, dcType, dcSubcontractor, dcNote, milestone, {
         huawei_im: dcHuaweiIm || undefined,
         project_domain: dcProjectDomain || undefined,
+        closed_on: dcClosedOn,
       });
       const upd = res?.updated?.length || 0;
       const err = res?.errors?.length || 0;
@@ -2519,6 +2554,7 @@ export default function IMPOIntake() {
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Direct Close <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span></h3>
               <button type="button" onClick={() => setShowDcModal(false)} disabled={dcBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
             </div>
+            {dcError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {dcError}</div>}
             {selectedRows.length > 0 && (
               <div style={{ fontSize: "0.76rem", color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12, maxHeight: 140, overflowY: "auto" }}>
                 {selectedRows.map((r) => (
@@ -2639,13 +2675,26 @@ export default function IMPOIntake() {
               </div>
             </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Closing Date *</label>
+              <input
+                type="date"
+                value={dcClosedOn}
+                max={todayDate()}
+                onChange={(e) => setDcClosedOn(e.target.value)}
+                disabled={dcBusy}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>
               <textarea rows={2} value={dcNote} onChange={(e) => setDcNote(e.target.value)} disabled={dcBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
             </div>
-            {dcError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {dcError}</div>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <button type="button" className="btn-secondary" onClick={() => setShowDcModal(false)} disabled={dcBusy}>Cancel</button>
-              <button type="button" className="btn-primary" onClick={submitDirectClose} disabled={dcBusy || !dcSubcontractor} style={{ background: "#0369a1", borderColor: "#0369a1" }}>
+              {/* Not disabled on a missing field: submitDirectClose names what
+                  is missing at the top of this popup, and a dead button with no
+                  explanation is what sent the IM looking in the first place. */}
+              <button type="button" className="btn-primary" onClick={submitDirectClose} disabled={dcBusy} style={{ background: "#0369a1", borderColor: "#0369a1" }}>
                 {dcBusy ? "Closing…" : dcMilestone !== "full" ? `Close ${dcMilestone} · ${selected.size} POID${selected.size !== 1 ? "s" : ""}` : `Close ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
               </button>
             </div>

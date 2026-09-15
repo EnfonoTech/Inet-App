@@ -9,6 +9,8 @@ import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
+import { missingFields, missingFieldsMessage } from "../../utils/requiredFields";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
@@ -869,6 +871,11 @@ export default function IMDispatch() {
       setBackendError(`Cannot assign: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
       return;
     }
+    const noIm = missingImRows(rows, selected);
+    if (noIm.length > 0) {
+      setBackendError(imRequiredMessage(noIm, "assign to a backend team"));
+      return;
+    }
     setBackendBusy(true);
     setBackendError(null);
     try {
@@ -974,6 +981,25 @@ export default function IMDispatch() {
     if (blocked.length > 0) {
       const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
       setCreateError(`Cannot plan: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
+      return;
+    }
+    const noIm = missingImRows(rows, selected);
+    if (noIm.length > 0) {
+      setCreateError(imRequiredMessage(noIm, "plan"));
+      return;
+    }
+    const missing = missingFields({
+      "Plan Date": planDate,
+      "Planned End Date": planEndDate,
+      "Visit Type": visitType,
+      "Team": planTeam,
+      "Access Time": accessTime,
+      "Access Period": accessPeriod,
+      "Huawei IM": huaweiImOverride,
+      "Project Domain": projectDomainOverride,
+    });
+    if (missing.length > 0) {
+      setCreateError(missingFieldsMessage(missing, "plan"));
       return;
     }
     setCreating(true);

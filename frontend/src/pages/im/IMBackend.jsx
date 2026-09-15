@@ -5,6 +5,7 @@ import { usePublishedQuery } from "../../hooks/usePublishedQuery";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -215,6 +216,11 @@ export default function IMBackend() {
     if (blocked.length > 0) {
       const statuses = [...new Set(blocked.map((r) => r.dispatch_status))].join(", ");
       setDoneError(`Cannot mark done: ${blocked.length} POID${blocked.length !== 1 ? "s have" : " has"} status ${statuses}. Deselect to continue.`);
+      return;
+    }
+    const noIm = missingImRows(rows, selected, "po_dispatch");
+    if (noIm.length > 0) {
+      setDoneError(imRequiredMessage(noIm, "mark done"));
       return;
     }
     setDoneBusy(true);

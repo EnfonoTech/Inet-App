@@ -1,0 +1,1 @@
+function s(e){return Object.entries(e||{}).filter(([,i])=>!String(i??"").trim()).map(([i])=>i)}function t(e,i){const n=e||[];return`Cannot ${i}: ${n.join(", ")} ${n.length===1?"is":"are"} required.`}export{t as a,s as m};

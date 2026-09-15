@@ -5907,6 +5907,97 @@ def _sync_plan_teams(rollout_plan, teams_payload, primary_team, total_qty, targe
 
 
 @frappe.whitelist()
+def _require_dispatch_im(names, action):
+    """Refuse the action on any PO line that has no IM assigned.
+
+    A Rollout Plan copies its `im` from the dispatch once, at creation, and
+    nothing ever back-fills it — so a line planned before it was assigned
+    yields a plan permanently stamped with nobody: invisible to every
+    IM-scoped queue and report, and unattributable afterwards. A Direct Close
+    or a Backend assignment on an unassigned line records the work against no
+    one in the same way. The moment of action is the last point where the IM
+    is still cheap to set, so it is where this blocks.
+
+    Named POIDs rather than internal dispatch names, capped at five, because
+    the message has to tell whoever is blocked which lines to go and fix.
+    """
+    ids = [n for n in (names or []) if n]
+    if not ids:
+        return
+    ph = ", ".join(["%s"] * len(ids))
+    missing = frappe.db.sql(
+        f"""
+        SELECT IFNULL(NULLIF(poid, ''), name) AS label
+        FROM `tabPO Dispatch`
+        WHERE name IN ({ph}) AND IFNULL(im, '') = ''
+        ORDER BY label
+        """,
+        tuple(ids),
+    )
+    if not missing:
+        return
+    labels = [m[0] for m in missing]
+    shown = ", ".join(labels[:5])
+    more = f" and {len(labels) - 5} more" if len(labels) > 5 else ""
+    frappe.throw(
+        f"Assign an IM before {action}. "
+        f"{len(labels)} PO line{'s have' if len(labels) != 1 else ' has'} no IM: "
+        f"{shown}{more}."
+    )
+
+
+def _require_line_attributes(names, huawei_im, project_domain, action):
+    """Refuse the action unless every line ends up with a Huawei IM and a
+    Project Domain.
+
+    Both are *overrides* on these APIs, not the source of truth — the value
+    normally lives on the PO Dispatch, with Project Control Center behind it
+    for the domain. So the test is what the line WOULD carry after this call,
+    never whether the caller happened to pass one. Issues & Risks re-plans
+    send neither and are perfectly valid, because the line already has both;
+    requiring them in the payload would have broken both of those flows.
+    """
+    ids = [n for n in (names or []) if n]
+    if not ids:
+        return
+    hi = (huawei_im or "").strip()
+    dom = (project_domain or "").strip()
+    if hi and dom:
+        # Overrides cover every line in this call — nothing can be missing.
+        return
+    ph = ", ".join(["%s"] * len(ids))
+    rows = frappe.db.sql(
+        f"""
+        SELECT IFNULL(NULLIF(pd.poid, ''), pd.name) AS label,
+               IFNULL(pd.huawei_im, '') AS huawei_im,
+               COALESCE(NULLIF(pd.project_domain, ''), NULLIF(pcc.project_domain, ''), '') AS project_domain
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
+        WHERE pd.name IN ({ph})
+        ORDER BY label
+        """,
+        tuple(ids),
+        as_dict=True,
+    )
+    missing = []
+    for r in rows:
+        gaps = []
+        if not hi and not (r.huawei_im or "").strip():
+            gaps.append("Huawei IM")
+        if not dom and not (r.project_domain or "").strip():
+            gaps.append("Project Domain")
+        if gaps:
+            missing.append(f"{r.label} ({', '.join(gaps)})")
+    if not missing:
+        return
+    shown = "; ".join(missing[:5])
+    more = f" and {len(missing) - 5} more" if len(missing) > 5 else ""
+    frappe.throw(
+        f"Fill in the missing details before {action}. "
+        f"{len(missing)} PO line{'s are' if len(missing) != 1 else ' is'} incomplete: {shown}{more}."
+    )
+
+
 def create_rollout_plans(payload):
     """
     Create Rollout Plans for a list of PO Dispatch system IDs.
@@ -5933,6 +6024,7 @@ def create_rollout_plans(payload):
     payload = payload or {}
 
     dispatches = payload.get("dispatches") or []
+    _require_dispatch_im(dispatches, "planning these lines")
     plan_date = payload.get("plan_date") or nowdate()
     plan_end_date = payload.get("plan_end_date") or plan_date
     team_override = (payload.get("team") or "").strip()
@@ -5987,6 +6079,21 @@ def create_rollout_plans(payload):
 
     if not frappe.db.exists("INET Team", team_override):
         frappe.throw(frappe._("Invalid team selected"))
+
+    # Access window is per-plan and has no fallback anywhere, so it is checked
+    # on the payload. Huawei IM and Project Domain are checked on the line
+    # instead — see _require_line_attributes.
+    _blank = [lbl for lbl, val in (
+        ("Access Time", access_time),
+        ("Access Period", access_period),
+    ) if not (val or "").strip()]
+    if _blank:
+        frappe.throw(
+            frappe._("Fill in {0} before planning.").format(" and ".join(_blank))
+        )
+    _require_line_attributes(
+        dispatches, huawei_im_override, project_domain_override, "planning these lines"
+    )
 
     # Look up multiplier. "Execution" is the new label for what used to be
     # "Work Done"; fall back so renames don't require touching the master.
@@ -20859,7 +20966,7 @@ def get_subcontractors_by_type(close_type):
 
 @frappe.whitelist()
 def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None, milestone=None,
-                             huawei_im=None, project_domain=None):
+                             huawei_im=None, project_domain=None, closed_on=None):
     """Bulk direct-close PO Dispatch lines: create Work Done + move to Completed.
 
     Only available to IMs with `can_direct_close = 1` (or PM/admin).
@@ -20881,6 +20988,30 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
 
     if isinstance(po_dispatches, str):
         po_dispatches = frappe.parse_json(po_dispatches)
+    _require_dispatch_im(po_dispatches, "closing these lines")
+
+    # A Direct Close writes revenue with no execution chain behind it, so the
+    # form has to be complete before anything is recorded — there is no later
+    # step where a missing subcontractor or close date gets filled in. The
+    # note stays optional by design; everything else is blocking.
+    _blank = [lbl for lbl, val in (
+        ("Close Type", close_type),
+        ("Subcontractor", subcontractor),
+        ("Closing Date", closed_on),
+    ) if not str(val or "").strip()]
+    if _blank:
+        frappe.throw(
+            frappe._("Fill in {0} before closing.").format(", ".join(_blank))
+        )
+    try:
+        closed_dt = get_datetime(str(closed_on).strip())
+    except Exception:
+        frappe.throw(frappe._("Closing Date is not a valid date."))
+    if getdate(closed_dt) > getdate(nowdate()):
+        frappe.throw(frappe._("Closing Date cannot be in the future."))
+    _require_line_attributes(
+        po_dispatches, huawei_im, project_domain, "closing these lines"
+    )
 
     milestone = (milestone or "").strip().upper() or None
     if milestone and milestone not in ("MS1", "MS2"):
@@ -20901,7 +21032,8 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
     for name in (po_dispatches or []):
         ok, info = _direct_close_one(role, im_identifiers or [], im_doc, name,
                                      close_type, subcontractor, (note or "").strip(),
-                                     milestone=milestone, huawei_im=huawei_im, project_domain=project_domain)
+                                     milestone=milestone, huawei_im=huawei_im, project_domain=project_domain,
+                                     closed_dt=closed_dt)
         if ok:
             updated.append(info)
         else:
@@ -20911,7 +21043,7 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
 
 
 def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontractor, note, milestone=None,
-                       huawei_im=None, project_domain=None):
+                       huawei_im=None, project_domain=None, closed_dt=None):
     """Create Work Done + complete one PO Dispatch directly. Returns (ok, info).
 
     milestone: None = full close; "MS1"/"MS2" = partial milestone close on single WD.
@@ -20992,7 +21124,12 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
             margin_pct = frappe.db.get_value("Subcontract Master", subcontractor, "inet_margin_pct")
             inet_margin_pct = flt(margin_pct or 0)
 
-        now_dt = now_datetime()
+        # The IM's stated closing date, not the moment the button was pressed:
+        # ms1/ms2_closed_at is the business date the work closed, and every
+        # milestone/period report reads it. When the work actually happened is
+        # not the same as when someone got round to recording it. `creation`
+        # still carries the audit timestamp.
+        now_dt = closed_dt or now_datetime()
         existing_wd_name = frappe.db.get_value("Work Done", {"system_id": name}, "name")
 
         if existing_wd_name:
@@ -21304,6 +21441,7 @@ def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, rema
         candidates = []
     if not candidates:
         frappe.throw("po_dispatch is required")
+    _require_dispatch_im(candidates, "assigning these lines to a backend team")
 
     team = frappe.db.get_value(
         "INET Team", backend_team,
@@ -21491,6 +21629,7 @@ def mark_backend_work_done(po_dispatch=None, po_dispatches=None, completed_on=No
         candidates = []
     if not candidates:
         frappe.throw("po_dispatch is required")
+    _require_dispatch_im(candidates, "marking these lines done")
 
     completed = completed_on or nowdate()
     try:

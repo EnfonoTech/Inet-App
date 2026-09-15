@@ -7,6 +7,8 @@ import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLim
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
+import { missingFields, missingFieldsMessage } from "../../utils/requiredFields";
 import RemarksCell from "../../components/RemarksCell";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import SearchableSelect from "../../components/SearchableSelect";
@@ -347,6 +349,17 @@ export default function IMIssuesRisks() {
     setCreateError(null);
     try {
       const selectedRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
+      const noIm = missingImRows(selectedRows, selected, "rollout_plan");
+      if (noIm.length > 0) throw new Error(imRequiredMessage(noIm, "plan"));
+      const missing = missingFields({
+        "Plan Date": planDate,
+        "Planned End Date": planEndDate,
+        "Visit Type": visitType,
+        "Team": planTeam,
+        "Access Time": accessTime,
+        "Access Period": accessPeriod,
+      });
+      if (missing.length > 0) throw new Error(missingFieldsMessage(missing, "plan"));
       const dispatches = [...new Set(selectedRows.map((r) => r.po_dispatch).filter(Boolean))];
       if (dispatches.length === 0) throw new Error("No POIDs found in selected issue rows.");
       const validExtras = (planTeams || []).filter((r) => r.team);
@@ -589,6 +602,7 @@ export default function IMIssuesRisks() {
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowModal(false)}>
           <div style={{ width: "min(620px, 95vw)", maxHeight: "calc(100dvh - 40px)", overflowY: "auto", background: "#fff", borderRadius: 12, padding: 20, boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 12px" }}>Create Plans from Issues & Risks</h3>
+            {createError && <div className="notice error" style={{ marginBottom: 12 }}>{createError}</div>}
             <div className="form-grid two-col">
               <div className="form-group"><label>Plan Date</label><input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} /></div>
               <div className="form-group"><label>Plan End Date</label><input type="date" value={planEndDate} onChange={(e) => setPlanEndDate(e.target.value)} /></div>
@@ -774,7 +788,6 @@ export default function IMIssuesRisks() {
                 })}
               </div>
             )}
-            {createError && <div className="notice error" style={{ marginTop: 10 }}>{createError}</div>}
             <div style={{ marginTop: 14 }}>
               <button className="btn-primary" disabled={creating || !planDate || !planEndDate || !planTeam || !accessTime || !accessPeriod} onClick={createPlansFromIssues}>{creating ? "Creating..." : "Create"}</button>
               <button className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setShowModal(false)}>Cancel</button>

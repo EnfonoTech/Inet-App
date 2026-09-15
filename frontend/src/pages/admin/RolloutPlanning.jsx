@@ -5,6 +5,8 @@ import PageSummary from "../../components/PageSummary";
 import RolloutWeeklyPlan from "../../components/RolloutWeeklyPlan";
 import RolloutWeeklyForecast from "../../components/RolloutWeeklyForecast";
 import { pmApi } from "../../services/api";
+import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
+import { missingFields, missingFieldsMessage } from "../../utils/requiredFields";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -444,6 +446,25 @@ export default function RolloutPlanning() {
       setCreateError("Planned end date cannot be before start date.");
       return;
     }
+    const noIm = missingImRows(rows, selected);
+    if (noIm.length > 0) {
+      setCreateError(imRequiredMessage(noIm, "plan"));
+      return;
+    }
+    const missing = missingFields({
+      "Plan Date": planDate,
+      "Planned End Date": planEndDate,
+      "Visit Type": visitType,
+      "Team": planTeam,
+      "Access Time": accessTime,
+      "Access Period": accessPeriod,
+      "Huawei IM": huaweiImOverride,
+      "Project Domain": projectDomainOverride,
+    });
+    if (missing.length > 0) {
+      setCreateError(missingFieldsMessage(missing, "plan"));
+      return;
+    }
     setCreating(true);
     setCreateError(null);
     setSuccessMsg(null);
@@ -736,12 +757,6 @@ export default function RolloutPlanning() {
           <span>✅</span> {successMsg}
         </div>
       )}
-      {createError && (
-        <div className="notice error" style={{ margin: "0 28px 16px" }}>
-          <span>⚠</span> {createError}
-        </div>
-      )}
-
       {/* ── Table ───────────────────────────────────────────── */}
       <div className="page-content">
         {error && (
@@ -1002,6 +1017,11 @@ export default function RolloutPlanning() {
         }
       >
         <>
+              {createError && (
+                <div className="notice error" style={{ marginBottom: 14 }}>
+                  <span>⚠</span> {createError}
+                </div>
+              )}
               <div style={{ marginBottom: 18 }}>
                 <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 8 }}>SELECTED DUIDs</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 120, overflowY: "auto", padding: 4 }}>
@@ -1334,11 +1354,6 @@ export default function RolloutPlanning() {
               )}
         </>
 
-        {createError && (
-          <div className="notice error" style={{ marginBottom: 14 }}>
-            <span>⚠</span> {createError}
-          </div>
-        )}
       </Modal>
 
       <DuidBillMaterialsModal duid={viewBillsDuid} onClose={() => setViewBillsDuid("")} />
