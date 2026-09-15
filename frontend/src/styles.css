@@ -397,6 +397,31 @@ td, .data-table td {
 }
 tr:last-child td, .data-table tr:last-child td { border-bottom: none; }
 tbody tr:hover td, .data-table tbody tr:hover td { background: #f8f9fa; }
+
+/* Off-screen rows cost nothing to paint.
+ *
+ * At row limit "All" a PO table is ~17k rows x 14 columns — around 245,000
+ * cells. The DOM holds them fine; what the browser cannot do is lay out and
+ * paint that much on every scroll, which is why scrolling went white while it
+ * caught up. content-visibility lets it skip layout and paint for rows that
+ * are not near the viewport, without removing them from the DOM — so
+ * DataTablePro's observer, Manage Table, the Excel filters, select-all and
+ * Excel export all keep seeing every row.
+ *
+ * contain-intrinsic-size supplies a placeholder height for skipped rows so
+ * the scrollbar stays honest; `auto` makes the browser remember each row's
+ * real height once measured, so the track stops drifting after a first pass.
+ * 34px is the actual row height here (13px text + 8px padding top and bottom).
+ *
+ * Safe on these tables specifically because content-visibility implies paint
+ * containment, which CLIPS overflow: no cell in the data tables renders an
+ * absolutely-positioned popover (the column menus hang off <th>, and the
+ * remark editors are modals), so there is nothing to clip.
+ */
+.data-table tbody tr {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .empty-state {
   padding: 2rem 1rem;
