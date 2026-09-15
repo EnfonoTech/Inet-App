@@ -3,7 +3,7 @@ import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQueries } from "../../hooks/usePublishedQuery";
 import { useAuth } from "../../context/AuthContext";
-import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT, TABLE_ROW_RENDER_CAP } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { pmApi } from "../../services/api";
@@ -191,10 +191,8 @@ export default function IMPOIntake() {
   const effectiveRowLimitForTab = useCallback((t) => (
     rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTab !== t
       ? TABLE_ROW_LIMIT_DEFAULT
-      // "All" is capped rather than unbounded — see TABLE_ROW_RENDER_CAP.
-      // The intake tab is ~17k rows; rendering them all locks the tab.
-      : (rowLimit === TABLE_ROW_LIMIT_ALL ? TABLE_ROW_RENDER_CAP : rowLimit)
-  ), [rowLimit, confirmedAllTab]);
+      : rowLimit
+  ), [rowLimit]);
   const effectiveDummyRowLimit = effectiveRowLimitForTab("dummy");
   const effectiveOvRowLimit = effectiveRowLimitForTab("overview");
   const confirmRowLimit = useCallback((n) => {

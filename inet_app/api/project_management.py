@@ -641,22 +641,14 @@ def _report_totals(columns, data, ratios=None, skip=()):
 def report_team_utilization_report(filters=None):
     from inet_app.inet_app.report.team_utilization_report.team_utilization_report import execute
 
-    # A Frappe query report may return (columns, data, message, chart); this
-    # one adds a message when the row cap trimmed the oldest days off the
-    # requested range, so unpack by position rather than to a fixed pair.
-    result = execute(_as_dict(filters or {}))
-    columns, data = result[0], result[1]
-    message = result[2] if len(result) > 2 else None
+    columns, data = execute(_as_dict(filters or {}))
     # achievement_pct is completed/planned in the report's own SQL, so its
     # total is the ratio of those two totals.
     totals = _report_totals(
         columns, data,
         ratios={"achievement_pct": ("completed_activities", "planned_activities")},
     )
-    out = {"columns": columns, "data": data, "totals": totals}
-    if message:
-        out["message"] = message
-    return out
+    return {"columns": columns, "data": data, "totals": totals}
 
 
 @frappe.whitelist()

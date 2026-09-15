@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT, TABLE_ROW_RENDER_CAP } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import PageSummary from "../../components/PageSummary";
@@ -272,10 +272,7 @@ export default function PODispatch() {
   const [confirmedAllTab, setConfirmedAllTab] = useState(rowLimit === TABLE_ROW_LIMIT_ALL ? activeTab : null);
   const effectiveRowLimit = rowLimit === TABLE_ROW_LIMIT_ALL && confirmedAllTab !== activeTab
     ? TABLE_ROW_LIMIT_DEFAULT
-    // "All" is capped rather than unbounded — see TABLE_ROW_RENDER_CAP. The
-    // full set is still reachable through Export and through server-side
-    // search/column filters.
-    : (rowLimit === TABLE_ROW_LIMIT_ALL ? TABLE_ROW_RENDER_CAP : rowLimit);
+    : rowLimit;
   const confirmRowLimit = useCallback((n) => {
     setConfirmedAllTab(activeTab);
     setRowLimit(n);
@@ -325,8 +322,6 @@ export default function PODispatch() {
   // the skip-fetch logic in the fetch effect below / PICTracker.jsx. Doesn't
   // apply to integrity tabs — those never use the row-limit selector at all.
   const displayLimit = effectiveRowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : effectiveRowLimit;
-  // Hit the ceiling: there are almost certainly more rows than this.
-  const viewIsCapped = rowLimit === TABLE_ROW_LIMIT_ALL && rows.length >= TABLE_ROW_RENDER_CAP;
   const displayedCount = isIntegrityTab ? rows.length : Math.min(rows.length, displayLimit);
   // True only while THIS view still has rows left to mount — not merely
   // because the hook is busy shrinking the tab you just left.
@@ -1005,17 +1000,7 @@ export default function PODispatch() {
           />
         )}
         <div className="page-actions">
-          <ExportExcelButton
-            filename={`po-dispatch-${activeTab}`}
-            title="Download every matching row as Excel (.xlsx)"
-            getRows={async () => {
-              // Deliberately refetches unlimited instead of exporting what is
-              // on screen: the table only ever renders a capped window, and an
-              // export that silently stopped at 5,000 rows would be worse than
-              // a slow one.
-              return await pmApi.listPOIntakeLines(activeTab, TABLE_ROW_LIMIT_ALL, queryPortal);
-            }}
-          />
+          <ExportExcelButton filename={`po-dispatch-${activeTab}`} rows={rows.slice(0, displayedCount)} />
           <button className="btn-secondary" onClick={() => loadData(activeTab)} disabled={loading}>
             {loading ? "Loading..." : "Refresh"}
           </button>
@@ -1388,11 +1373,6 @@ export default function PODispatch() {
                     <td
                       style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem", color: "#64748b" }}>
                       <strong>{displayedCount}</strong> row{displayedCount !== 1 ? "s" : ""}
-                      {viewIsCapped && (
-                        <span style={{ marginLeft: 12, color: "#b45309", fontWeight: 600 }}>
-                          showing first {TABLE_ROW_RENDER_CAP.toLocaleString()} — filter to narrow, or Export for every row
-                        </span>
-                      )}
                       {rowsStillRendering && (
                         <span style={{ marginLeft: 12, color: "#b45309", fontWeight: 600 }}>
                           still rendering rows…

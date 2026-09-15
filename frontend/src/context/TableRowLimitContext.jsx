@@ -7,27 +7,6 @@ export const TABLE_ROW_LIMIT_PRESETS = [20, 100, 500, 2500, TABLE_ROW_LIMIT_ALL]
 export const TABLE_ROW_LIMIT_DEFAULT = 20;
 
 /**
- * Hard ceiling on how many rows a table will FETCH and MOUNT when the user
- * picks "All", on the pages big enough to need it.
- *
- * "All" used to mean literally every row: on PO Dispatch that is 17k rows x
- * 33 columns, around 575,000 cells, which blocks the main thread long enough
- * that the page cannot be scrolled or clicked at all (2 minutes on the
- * production dataset). Virtualisation is not the way out — it was tried and
- * reverted because it fights DataTablePro's MutationObserver (see
- * CLAUDE.md) — so the table simply stops agreeing to render the unbounded
- * case.
- *
- * Capping the FETCH as well as the render keeps the response small enough to
- * arrive intact; a 20 MB body was being truncated in transit.
- *
- * Nothing is hidden from the user: the footer says the view is capped, search
- * and column filters run server-side across the whole dataset, and Export
- * fetches every matching row straight to a file without rendering any of it.
- */
-export const TABLE_ROW_RENDER_CAP = 5000;
-
-/**
  * Row-limit is per-path and session-scoped. First visit to any path loads the
  * smallest preset (20) so the first paint is fast. If the user bumps the limit,
  * that choice is remembered for that path for the life of the tab. A full page

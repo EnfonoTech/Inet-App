@@ -1,10 +1,6 @@
 import frappe
 from frappe.utils import get_first_day, get_last_day, nowdate
 
-# Rows are team x day, so this is really a date-range ceiling: at a 31-team
-# roster it is ~1.7 years, where the previous 3000 was ~97 days.
-ROW_CAP = 20000
-
 
 def execute(filters=None):
     filters = filters or {}
@@ -65,21 +61,12 @@ def execute(filters=None):
             {im_col} AS im_name,
             rp.plan_date,
             COUNT(DISTINCT rp.name) AS planned_activities,
-            -- COUNT(DISTINCT ... rp.name) and not SUM(CASE ... THEN 1): the
-            -- LEFT JOIN to Daily Execution multiplies rows, so a team with two
-            -- execution rows against one Completed plan counted that plan
-            -- twice while planned_activities (already DISTINCT) stayed at one
-            -- — reproduced at planned=1, completed=2, achievement of 200.
-            -- Keep literal percent signs out of this SQL, comments included:
-            -- the string goes through pymysql parameter binding, which reads
-            -- one as a format placeholder and raises before the query runs.
-            COUNT(DISTINCT CASE WHEN rp.plan_status = 'Completed' THEN rp.name END)
-                AS completed_activities,
+            SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_activities,
             COALESCE(SUM(de.achieved_qty), 0) AS achieved_qty,
             ROUND(
                 CASE
                     WHEN COUNT(DISTINCT rp.name) > 0
-                    THEN COUNT(DISTINCT CASE WHEN rp.plan_status = 'Completed' THEN rp.name END)
+                    THEN SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END)
                          / COUNT(DISTINCT rp.name) * 100
                     ELSE 0
                 END, 1
@@ -98,10 +85,7 @@ def execute(filters=None):
         ) rpteam ON rpteam.plan = rp.name
         LEFT JOIN `tabINET Team` it ON it.name = rpteam.team
         LEFT JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
-            -- IFNULL, not `!=`: in SQL `NULL != 'Cancelled'` is NULL, not
-            -- true, so an execution row with no status set was dropped from
-            -- achieved qty/amount instead of counted.
-            AND IFNULL(de.execution_status, '') <> 'Cancelled'
+            AND de.execution_status != 'Cancelled'
             AND de.team = rpteam.team
         {pd_join}
         {rp_im_join}
@@ -109,32 +93,16 @@ def execute(filters=None):
         WHERE {wheres}
         GROUP BY rpteam.team, rp.plan_date
         ORDER BY rp.plan_date DESC, it.team_name
-        LIMIT {row_cap_plus_one}
+        LIMIT 3000
         """.format(
             im_col=im_col,
             pd_join=pd_join,
             rp_im_join=rp_im_join,
             pd_im_join=pd_im_join,
             wheres=" AND ".join(wheres),
-            row_cap_plus_one=ROW_CAP + 1,
         ),
         tuple(params),
         as_dict=True,
     )
 
-    # One row per team per day, so the cap is reached by widening the date
-    # range, not by anything the user can see. It used to be a bare LIMIT 3000
-    # — about 97 days across a 31-team roster — and because the ORDER BY is
-    # plan_date DESC, going over silently dropped the OLDEST days while the
-    # totals row still looked like a complete period. Fetch one row past the
-    # cap purely to detect that and say so.
-    message = None
-    if len(data) > ROW_CAP:
-        data = data[:ROW_CAP]
-        message = (
-            f"Showing the most recent {ROW_CAP:,} rows only — the date range is too "
-            "wide for this report and the earliest days have been left out. "
-            "Narrow the dates, or filter to fewer teams, for a complete picture."
-        )
-
-    return columns, data, message
+    return columns, data

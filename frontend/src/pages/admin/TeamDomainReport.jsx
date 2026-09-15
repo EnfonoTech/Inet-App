@@ -64,18 +64,7 @@ function monthOptions() {
   return out;
 }
 
-/**
- * `fetchUtilization` is how the IM's catalog reuses this grid rather than
- * cloning it: the PM passes nothing and gets the company-wide endpoint, the
- * IM's registry entry passes imReportsApi.getTeamDomainUtilization, which is
- * scoped to that IM's own team roster (every status — a team On Vacation this
- * week still worked last month) server-side. The grid itself renders whatever
- * rows it is handed and knows nothing about scope.
- */
-export default function TeamDomainReport({
-  onExportReady,
-  fetchUtilization = pmApi.getTeamDomainUtilization,
-}) {
+export default function TeamDomainReport({ onExportReady }) {
   const MONTHS = useMemo(monthOptions, []);
   const [month, setMonth] = useState(MONTHS[0].id);
   const [domains, setDomains] = useState([]);
@@ -89,7 +78,7 @@ export default function TeamDomainReport({
     setLoading(true);
     (async () => {
       try {
-        const res = await fetchUtilization({
+        const res = await pmApi.getTeamDomainUtilization({
           month, domains, include_fridays: includeFridays,
         });
         if (!cancelled) { setData(res); setErr(null); }
@@ -100,10 +89,7 @@ export default function TeamDomainReport({
       }
     })();
     return () => { cancelled = true; };
-    // fetchUtilization is a stable module-level reference on both sides
-    // (pmApi.* / imReportsApi.*), so listing it costs nothing and keeps the
-    // effect honest about what it actually reads.
-  }, [month, domains, includeFridays, fetchUtilization]);
+  }, [month, domains, includeFridays]);
 
   const filterActive = domains.length > 0;
   const days = data?.days || [];

@@ -1,235 +1,96 @@
-import { lazy, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import ReportCatalog from "../../components/ReportCatalog";
-import { imReportsApi } from "../../services/api";
+import RolloutCommercialReport from "../../components/RolloutCommercialReport";
+import { pmApi } from "../../services/api";
+import MiniTable from "../../components/MiniTable";
+import { money } from "../../utils/numberFormat";
 
-/* Reports that render their own grid rather than the shared {columns,data}
-   table. Lazily imported so a report's code only downloads when opened —
-   the same two the PM's catalog treats this way, reused rather than cloned. */
-const TeamIdleDomainReport    = lazy(() => import("../admin/TeamDomainReport"));
-const RolloutCommercialReport = lazy(() => import("../../components/RolloutCommercialReport"));
-const IMWorkSummary           = lazy(() => import("../../components/IMWorkSummary"));
+const fmtDec = new Intl.NumberFormat("en", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
-/* Same registry shape as the PM's Reports.jsx — adding a report stays one
-   entry here, and one there.
-
-   WHAT IS NOT HERE, and why:
-     IM Performance       ranks IMs against each other; an IM must not see it
-     Project Profitability / Revenue Forecast    finance and margin
-     Planning / Implementation / Utilization (daily)   not wanted on this side
-
-   Every report that IS here is scoped server-side from the session, off the
-   `im` STAMPED on the record (Rollout Plan.im, Daily Execution.im,
-   PO Dispatch.im) rather than off who owns the team today — so reassigning a
-   team does not move its back-catalogue between IMs. See
-   inet_app/api/im_reports.py. Nothing in this file decides scope; an `im` sent
-   from here would be ignored. */
-const REPORTS = [
-  {
-    key: "my_work_summary",
-    category: "My Work",
-    title: "My Work Summary",
-    // The bundle this page used to be, kept as one catalog entry.
-    component: IMWorkSummary,
-    description: "PO dispatch counts and value, rollout plans, and month-to-date executions and work done",
-  },
-  {
-    key: "team_utilization_report",
-    category: "Teams & Utilization",
-    title: "Team Utilization",
-    api: "reportTeamUtilization",
-    description: "Team activity and utilization on your own plans — Planned vs Actual",
-    hasFilters: true,
-  },
-  {
-    key: "monthly_team_details",
-    category: "Teams & Utilization",
-    title: "Monthly Team Details",
-    api: "reportMonthlyTeamDetails",
-    description: "Monthly team utilization — weekly breakdown per team",
-    hasFilters: true,
-    filterType: "month",
-  },
-  {
-    key: "team_pva",
-    category: "Teams & Utilization",
-    title: "Team PVA",
-    api: "reportTeamPVA",
-    description: "Planned vs Actual per team per day — daily utilization breakdown",
-    hasFilters: true,
-    filterType: "teamdate",
-  },
-  {
-    key: "weekly_performance",
-    category: "Performance",
-    title: "Weekly Performance",
-    api: "reportWeeklyPerformance",
-    description: "Your weeks aggregated — lines, revenue, re-visits",
-    hasFilters: true,
-    filterType: "dateonly",
-  },
-  {
-    key: "top_teams",
-    category: "Performance",
-    title: "Top Teams",
-    api: "reportTopTeams",
-    // Ranked within YOUR teams, not company-wide — the PM's copy of this
-    // report spans every IM, so the two will not agree, by design.
-    description: "Your teams ranked by revenue — completion % and achievement %",
-    hasFilters: true,
-    filterType: "dateonly",
-  },
-  {
-    key: "project_performance",
-    category: "Project Reports",
-    title: "Project Performance",
-    api: "reportProjectPerformance",
-    // No date filter: target is line value and achieved is line status, and
-    // neither has a usable date basis. Current-state, like the PM's.
-    description: "Achieved vs target on your projects — achievement %, line completion and KPI rating",
-    hasFilters: false,
-  },
-  {
-    key: "rollout_burn_down",
-    category: "Rollout & Delivery",
-    title: "Rollout Delivery Burn-Down",
-    api: "reportRolloutBurnDown",
-    // Default window is the last 8 weeks, not "this calendar month".
-    description: "Weekly burn-down of your own backlog vs an even-pace target — new closures and re-scheduled lines per week",
-    hasFilters: true,
-    filterType: "dateonly",
-  },
-  {
-    key: "po_dispatch_status",
-    category: "Rollout & Delivery",
-    title: "PO Dispatch Status",
-    api: "reportPoDispatchStatus",
-    // No date filter: a line's current status has no date attached to it.
-    description: "Where your order book sits across the dispatch pipeline — lines, value and share per status (current state)",
-    hasFilters: false,
-  },
-  {
-    key: "po_milestone_status",
-    category: "Rollout & Delivery",
-    title: "PO Milestone Status",
-    api: "reportPoMilestoneStatus",
-    description: "Your order book counted by milestone rather than by line — MS1/MS2 split per PIC status",
-    hasFilters: false,
-  },
-  {
-    key: "team_idle_domain",
-    category: "Client / Domain Reports",
-    title: "Team Idle by Domain",
-    // Renders its own grid + filters + export; not a {columns,data} table.
-    component: TeamIdleDomainReport,
-    description: "Daily idle / project-domain matrix for your teams — every team you manage, whatever its status",
-  },
-  {
-    key: "site_sign_status",
-    category: "CIAG Site Sign & Verify",
-    title: "Site Sign Status",
-    api: "reportSiteSignStatus",
-    description: "Bills at your sites received but not yet fully consumed — Normal/Warning/Overdue by days pending",
-    hasFilters: true,
-    filterType: "sitestatus",
-  },
-  {
-    key: "site_verify_status",
-    category: "CIAG Site Sign & Verify",
-    title: "Site Verify Status",
-    api: "reportSiteVerifyStatus",
-    description: "Your sites where work is done but client CIAG approval is still pending",
-    hasFilters: true,
-    filterType: "sitestatus",
-  },
-  {
-    key: "bill_wise_status",
-    category: "Material Reports",
-    title: "Bill Wise Material Status",
-    api: "reportBillWiseStatus",
-    description: "Per bill and item at your sites — received vs. used vs. remaining, with SLA status",
-    hasFilters: true,
-    filterType: "sitestatus",
-  },
-  {
-    key: "huawei_outbound_analytics",
-    category: "Material Reports",
-    title: "Huawei Outbound Analytics",
-    api: "reportHuaweiOutboundAnalytics",
-    description: "Shipment count and volume by subcontractor or domain across your projects",
-    hasFilters: true,
-    filterType: "subcondate",
-  },
-  {
-    key: "commercial",
-    category: "Commercial",
-    title: "Rollout Commercial",
-    // Key is "commercial" on purpose: Rollout Planning deep-links here as
-    // /im-reports?tab=commercial, and that link has to keep working.
-    component: RolloutCommercialReport,
-    description: "Planned vs invoiced vs collected on your planned rollout work, by project",
-  },
+const TABS = [
+  { key: "overview", label: "PO dispatches" },
+  { key: "rollouts", label: "Rollout plans" },
+  { key: "executions", label: "Executions (MTD)" },
+  { key: "work_done", label: "Work done (MTD)" },
+  { key: "commercial", label: "Commercial" },
 ];
 
 export default function IMReports() {
   const { imName } = useAuth();
+  // Rollout Planning's "View commercial report" deep-links here with the tab
+  // (and optionally the project) it was looking at.
   const [searchParams] = useSearchParams();
-  // Rollout Planning deep-links with ?tab=commercial&project=… — the tab half
-  // is the catalog's own param; the project half is this report's.
+  const [activeTab, setActiveTab] = useState(
+    () => (TABS.some((t) => t.key === searchParams.get("tab")) ? searchParams.get("tab") : "overview")
+  );
+  const [payload, setPayload] = useState(null);
   const commProject = searchParams.get("project") || "";
-  const [scope, setScope] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    if (!imName) return;
-    imReportsApi.getScope().then(setScope).catch(() => setScope(null));
+  const load = useCallback(async () => {
+    if (!imName) {
+      setPayload(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await pmApi.getIMReports();
+      setPayload(res);
+    } catch (e) {
+      setPayload(null);
+      setError(e.message || "Could not load reports");
+    } finally {
+      setLoading(false);
+    }
   }, [imName]);
 
-  /* componentProps are attached here rather than inside the registry so the
-     registry stays a plain data literal — the props depend on session and URL,
-     which the registry cannot see. */
-  const reports = useMemo(() => REPORTS.map((r) => {
-    if (r.key === "commercial") {
-      return { ...r, componentProps: { imName, initialProject: commProject } };
-    }
-    if (r.key === "team_idle_domain") {
-      return { ...r, componentProps: { fetchUtilization: imReportsApi.getTeamDomainUtilization } };
-    }
-    if (r.key === "my_work_summary") {
-      return { ...r, componentProps: { imName } };
-    }
-    return r;
-  }), [imName, commProject]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  /* Which teams the numbers below actually cover. Worth stating: the catalog
-     deliberately does NOT drop a team for being Inactive / On Vacation /
-     Disbanded — it did the work, so it keeps its rows — and without this line
-     a reader would have no way to tell that from the reports themselves. */
-  const headerExtra = scope ? (
-    <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 4 }}>
-      Scope: <strong>{scope.im_name || imName}</strong>
-      {scope.team_count > 0 && (
-        <>
-          {" · "}{scope.team_count} team{scope.team_count === 1 ? "" : "s"}
-          {scope.active_team_count !== scope.team_count && (
-            <span title="Reports include every team you manage, whatever its status — a team that is inactive today still did the work it did.">
-              {" "}({scope.active_team_count} active, {scope.team_count - scope.active_team_count} not)
-            </span>
-          )}
-        </>
-      )}
-    </div>
-  ) : null;
+  const ds = payload?.dispatch_summary;
+  const period = payload?.period;
 
-  if (!imName) {
-    return (
-      <div>
-        <div className="page-header">
-          <div>
-            <h1 className="page-title">Reports</h1>
-            <div className="page-subtitle">IM account not linked</div>
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Reports</h1>
+          <div className="page-subtitle">
+            {imName ? (
+              <>
+                Scope: <strong>{payload?.im || imName}</strong>
+                {period?.from && period?.to && (
+                  <span style={{ color: "#64748b", fontWeight: 400 }}>
+                    {" "}
+                    · MTD {period.from} → {period.to}
+                  </span>
+                )}
+              </>
+            ) : (
+              "IM account not linked"
+            )}
           </div>
         </div>
+        <div className="page-actions">
+          <button type="button" className="btn-secondary" onClick={load} disabled={loading || !imName}>
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error" style={{ margin: "0 28px 16px" }}>
+          <span>⚠</span> {error}
+        </div>
+      )}
+
+      {!imName ? (
         <div className="page-content">
           <div className="empty-state">
             <div className="empty-icon">📊</div>
@@ -239,23 +100,220 @@ export default function IMReports() {
             </p>
           </div>
         </div>
-      </div>
-    );
-  }
+      ) : payload ? (
+        <div className="page-content">
+          <div className="tabs" style={{ marginBottom: 18 }}>
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                className={`tab ${activeTab === t.key ? "active" : ""}`}
+                onClick={() => {
+                  setActiveTab(t.key);
+                  // Each tab's MiniTable only exists while that tab is active
+                  // (the others aren't just hidden, they're unmounted), so
+                  // React swaps the whole .data-table-wrapper subtree in one
+                  // go — DataTablePro's own tbody observer never sees that.
+                  // Same pattern as switchTab() in IMMaterialRequest.jsx.
+                  setTimeout(() => document.dispatchEvent(new CustomEvent("tablepro:check")), 60);
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-  return (
-    <ReportCatalog
-      reports={reports}
-      api={imReportsApi}
-      title="Reports"
-      // Namespaced away from "admin-report-…" so the PM's and the IM's copy of
-      // the same report keep their own saved column widths.
-      tableKeyPrefix="im-report"
-      // No IM filter: an IM has exactly one IM to look at, and the server
-      // would ignore the value anyway.
-      loadTeamOptions={() => imReportsApi.getTeamOptions()}
-      loadHuaweiOptions={() => imReportsApi.getHuaweiOptions()}
-      headerExtra={headerExtra}
-    />
+          {activeTab === "overview" && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16, marginBottom: 22 }}>
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #3b82f6" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>PO lines</div>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{ds?.total_lines ?? 0}</div>
+                </div>
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #22c55e" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Line amount (sum)</div>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>SAR {money.format(ds?.total_amount ?? 0)}</div>
+                </div>
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #6366f1" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Active teams</div>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{(payload.teams || []).length}</div>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, alignItems: "start" }}>
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
+                  <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By dispatch status</h3>
+                  {Object.keys(ds?.by_status || {}).length === 0 ? (
+                    <p style={{ color: "#94a3b8", fontSize: "0.82rem", margin: 0 }}>No rows.</p>
+                  ) : (
+                    Object.entries(ds.by_status).map(([k, v]) => (
+                      <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.84rem" }}>
+                        <span style={{ color: "#475569" }}>{k}</span>
+                        <span style={{ fontWeight: 700 }}>{v}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
+                  <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By project (amount)</h3>
+                  {Object.keys(ds?.by_project || {}).length === 0 ? (
+                    <p style={{ color: "#94a3b8", fontSize: "0.82rem", margin: 0 }}>No rows.</p>
+                  ) : (
+                    Object.entries(ds.by_project)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([k, v]) => (
+                        <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.84rem" }}>
+                          <span style={{ color: "#475569" }}>{k}</span>
+                          <span style={{ fontWeight: 700 }}>SAR {money.format(v)}</span>
+                        </div>
+                      ))
+                  )}
+                </div>
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
+                  <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By dispatch mode</h3>
+                  {Object.keys(ds?.by_dispatch_mode || {}).length === 0 ? (
+                    <p style={{ color: "#94a3b8", fontSize: "0.82rem", margin: 0 }}>No rows.</p>
+                  ) : (
+                    Object.entries(ds.by_dispatch_mode).map(([k, v]) => (
+                      <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.84rem" }}>
+                        <span style={{ color: "#475569" }}>{k}</span>
+                        <span style={{ fontWeight: 700 }}>{v}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {activeTab === "rollouts" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
+                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Plans by status (all dates)</h3>
+                <MiniTable
+                  resizable
+                  tableKey="im-reports-rollout-status"
+                  columns={[
+                    { label: "Status", key: "status_key" },
+                    { label: "Count", key: "cnt", align: "right" },
+                  ]}
+                  rows={payload.rollout_status_counts || []}
+                  emptyText="No rollout plans for your teams."
+                />
+              </div>
+              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
+                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Recent plans (latest 80)</h3>
+                <MiniTable
+                  resizable
+                  tableKey="im-reports-recent-plans"
+                  columns={[
+                    { label: "Plan", key: "name" },
+                    { label: "Date", key: "plan_date" },
+                    { label: "Status", key: "plan_status" },
+                    { label: "Team", key: "team_name" },
+                    { label: "POID", key: "po_dispatch" },
+                    { label: "Visit", key: "visit_type" },
+                    { label: "Target", key: "target_amount", align: "right", render: (v) => fmtDec.format(Number(v) || 0) },
+                  ]}
+                  rows={payload.rollouts_recent || []}
+                  emptyText="No rollout rows."
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === "executions" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
+                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Executions by status (MTD)</h3>
+                <MiniTable
+                  resizable
+                  tableKey="im-reports-execution-status"
+                  columns={[
+                    { label: "Status", key: "status_key" },
+                    { label: "Count", key: "cnt", align: "right" },
+                  ]}
+                  rows={payload.execution_status_counts || []}
+                  emptyText="No executions this month."
+                />
+              </div>
+              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
+                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Recent executions (MTD, latest 60)</h3>
+                <MiniTable
+                  resizable
+                  tableKey="im-reports-recent-executions"
+                  columns={[
+                    { label: "Execution", key: "name" },
+                    { label: "Date", key: "execution_date" },
+                    { label: "Status", key: "execution_status" },
+                    { label: "QC", key: "qc_status" },
+                    { label: "Plan", key: "rollout_plan" },
+                    { label: "POID", key: "po_dispatch" },
+                  ]}
+                  rows={payload.executions_recent || []}
+                  emptyText="No execution rows."
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === "work_done" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #0ea5e9" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Work done rows (MTD)</div>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{payload.work_done_mtd?.count ?? 0}</div>
+                </div>
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #22c55e" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Revenue SAR (MTD)</div>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{money.format(payload.work_done_mtd?.revenue_sar ?? 0)}</div>
+                </div>
+              </div>
+              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
+                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By billing status</h3>
+                <MiniTable
+                  resizable
+                  tableKey="im-reports-billing-status"
+                  columns={[
+                    { label: "Billing", key: "billing" },
+                    { label: "Rows", key: "count", align: "right" },
+                    { label: "Revenue SAR", key: "revenue_sar", align: "right", render: (v) => money.format(Number(v) || 0) },
+                  ]}
+                  rows={Object.entries(payload.work_done_mtd?.by_billing || {}).map(([billing, o]) => ({
+                    billing,
+                    count: o.count,
+                    revenue_sar: o.revenue_sar,
+                  }))}
+                  emptyText="No work done this month."
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === "commercial" && (
+            <RolloutCommercialReport imName={imName} initialProject={commProject} />
+          )}
+
+          {payload.last_updated && (
+            <p style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: 20 }}>
+              Last updated: {(() => {
+                const d = new Date(String(payload.last_updated).replace(" ", "T"));
+                return Number.isNaN(d.getTime())
+                  ? String(payload.last_updated)
+                  : d.toLocaleString();
+              })()}
+            </p>
+          )}
+        </div>
+      ) : loading ? (
+        <div style={{ padding: 48, textAlign: "center", color: "#94a3b8" }}>Loading reports…</div>
+      ) : (
+        <div className="page-content">
+          <div className="empty-state">
+            <div className="empty-icon">📊</div>
+            <h3>No data returned</h3>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
