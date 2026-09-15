@@ -5863,6 +5863,38 @@ def _sync_plan_teams(rollout_plan, teams_payload, primary_team, total_qty, targe
             "assigned_amount": flt(target_amount or 0) * share,
         })
 
+    # A team that has already executed against this plan is kept, at zero
+    # assigned qty, even when the new split leaves it out. Re-splitting wipes
+    # and re-inserts these rows, and every team report resolves a plan's teams
+    # through them — so dropping a team that had executions orphaned its
+    # Daily Execution rows and erased the day's work from Team Utilization and
+    # Monthly Team Details entirely, with no error and nothing in the UI to
+    # say it happened. Retaining the row at zero keeps the historical
+    # attribution without assigning the team any further work.
+    #
+    # Appended AFTER the remainder auto-distribution above on purpose: those
+    # rows are zero-qty, and that step shares the leftover across every
+    # zero-qty row, which would hand work back to a team the IM just removed.
+    assigned_now = {e["team"] for e in out}
+    executed_teams = frappe.db.sql(
+        """
+        SELECT DISTINCT de.team
+        FROM `tabDaily Execution` de
+        WHERE de.rollout_plan = %s
+          AND IFNULL(de.execution_status, '') <> 'Cancelled'
+          AND IFNULL(de.team, '') <> ''
+        """,
+        (rollout_plan,),
+    )
+    for (tid,) in executed_teams:
+        if tid not in assigned_now:
+            out.append({
+                "team": tid,
+                "assigned_qty": 0,
+                "assigned_pct": 0,
+                "assigned_amount": 0,
+            })
+
     frappe.db.sql(
         "DELETE FROM `tabRollout Plan Team` WHERE parent = %s",
         (rollout_plan,),
