@@ -5,7 +5,7 @@ import PageSummary from "../../components/PageSummary";
 import RolloutWeeklyPlan from "../../components/RolloutWeeklyPlan";
 import RolloutWeeklyForecast from "../../components/RolloutWeeklyForecast";
 import { pmApi } from "../../services/api";
-import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
+import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_RENDER_CAP } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -127,7 +127,10 @@ export default function RolloutPlanning() {
   const visibleRows = useProgressiveRows(rows, { paused: loading });
   // How many of `visibleRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`.
-  const displayLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? Infinity : rowLimit;
+  // "All" is capped rather than unbounded — see TABLE_ROW_RENDER_CAP. Search
+  // and column filters still run server-side over everything.
+  const fetchLimit = rowLimit === TABLE_ROW_LIMIT_ALL ? TABLE_ROW_RENDER_CAP : rowLimit;
+  const displayLimit = fetchLimit;
   const displayedCount = Math.min(rows.length, displayLimit);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
@@ -319,7 +322,7 @@ export default function RolloutPlanning() {
     const prev = lastFetchRef.current;
     const alreadyHaveEnough = prev.signature === signature && (
       prev.limit === TABLE_ROW_LIMIT_ALL
-      || (rowLimit !== TABLE_ROW_LIMIT_ALL && rowLimit <= prev.limit)
+      || (fetchLimit !== TABLE_ROW_LIMIT_ALL && fetchLimit <= prev.limit)
     );
     if (alreadyHaveEnough) {
       // Deliberately NOT calling setRows() here — leave `rows` exactly
@@ -333,11 +336,11 @@ export default function RolloutPlanning() {
     setError(null);
     (async () => {
       try {
-        const list = await pmApi.listPODispatches(filters, rowLimit, portal);
+        const list = await pmApi.listPODispatches(filters, fetchLimit, portal);
         if (!cancelled) {
           const nextRows = Array.isArray(list) ? list : [];
           setRows(nextRows);
-          lastFetchRef.current = { signature, limit: rowLimit, rows: nextRows };
+          lastFetchRef.current = { signature, limit: fetchLimit, rows: nextRows };
         }
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load dispatches");

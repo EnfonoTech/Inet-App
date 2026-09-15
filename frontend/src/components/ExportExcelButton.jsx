@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { exportToExcel } from "../utils/exportExcel";
 
 // Icon-only Excel export button. Designed to sit in the page-actions
@@ -6,7 +7,10 @@ import { exportToExcel } from "../utils/exportExcel";
 //
 // Props:
 //   rows       — array (preferred) OR
-//   getRows    — fn returning array (for deferred / lazy gathering)
+//   getRows    — fn returning an array, OR a PROMISE of one. Async matters
+//                on the big tables: they only ever render a capped window,
+//                so "export everything" has to go and fetch the full set
+//                rather than hand over whatever happens to be on screen.
 //   columns    — optional [{key,label,value?}] (auto if omitted)
 //   filename   — base name for the .xls file
 //   disabled   — manual override
@@ -19,15 +23,28 @@ export default function ExportExcelButton({
   disabled,
   title,
 }) {
+  const [busy, setBusy] = useState(false);
   const empty = !getRows && (!rows || rows.length === 0);
-  const isDisabled = disabled || empty;
-  const handleClick = () => {
+  const isDisabled = disabled || empty || busy;
+  const handleClick = async () => {
     if (isDisabled) return;
-    const data = typeof getRows === "function" ? getRows() : rows;
+    let data = typeof getRows === "function" ? getRows() : rows;
+    if (data && typeof data.then === "function") {
+      setBusy(true);
+      try {
+        data = await data;
+      } catch {
+        data = null;
+      } finally {
+        setBusy(false);
+      }
+    }
     if (!data || !data.length) return;
     exportToExcel({ filename, columns, rows: data });
   };
-  const tooltip = title || (empty ? "No rows to export" : "Download as Excel (.xlsx)");
+  const tooltip = busy
+    ? "Fetching every row…"
+    : title || (empty ? "No rows to export" : "Download as Excel (.xlsx)");
   return (
     <button
       type="button"
