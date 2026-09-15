@@ -6,6 +6,10 @@
  * Optional row-limit footer: pass loadedCount to attach TableRowsLimitFooter as
  * a DOM sibling so the CSS .data-table-wrapper + .table-rowlimit-footer rules apply.
  *
+ * Optional `scrollRef`: forwarded to the inner vertical scrollport, so a page
+ * can pass it to useProgressiveRows and have rows mount on scroll rather than
+ * all in one go.
+ *
  * Optional `loading` overlay: pass `loading={true}` while a refetch is in
  * flight (e.g. switching tabs, changing a filter) to dim the table and show a
  * spinner on top of whatever's currently rendered, instead of silently
@@ -14,11 +18,11 @@
  */
 import TableRowsLimitFooter from "./TableRowsLimitFooter";
 
-export default function DataTableWrapper({ children, className = "", style, loadedCount, filteredCount, filterActive, loading, rowLimitValue, onRowLimitChange }) {
+export default function DataTableWrapper({ children, className = "", style, loadedCount, filteredCount, filterActive, loading, rowLimitValue, onRowLimitChange, scrollRef }) {
   const outerClass = ["data-table-wrapper", className].filter(Boolean).join(" ");
   const wrapper = (
     <div className={outerClass} style={style}>
-      <div className="data-table-scroll">{children}</div>
+      <div className="data-table-scroll" ref={scrollRef}>{children}</div>
       {loading && (
         <div className="data-table-loading-overlay">
           <div className="data-table-loading-spinner" />

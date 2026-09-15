@@ -84,7 +84,25 @@ function nextView(view, rows, initial, chunk) {
   return view;
 }
 
-export function useProgressiveRows(rows, { initial = 300, chunk = 3000, paused = false, onMountingChange } = {}) {
+/**
+ * `scrollRef` (optional, opt-in): a ref to the element that scrolls the table.
+ *
+ * Without it the hook keeps its original behaviour — grow every frame until
+ * every row is mounted. That is right for a few hundred rows and wrong for
+ * tens of thousands: "All" on PO Dispatch is 33 columns x 17k rows, about
+ * 575,000 cells, and building all of them up front locks the tab for minutes.
+ *
+ * With it, growth stops once enough rows are mounted to fill the scrollport
+ * plus a buffer, and resumes when the user scrolls near the end of what is
+ * mounted. "All" still means all — every row was fetched, `rows` is complete,
+ * so totals, Export and select-all are unaffected, and scrolling to the bottom
+ * still reaches the last row. Only the DOM fills in as you go instead of all
+ * at once.
+ *
+ * Deliberately opt-in per page rather than a behaviour change for the ~24
+ * pages already using this hook.
+ */
+export function useProgressiveRows(rows, { initial = 300, chunk = 3000, paused = false, onMountingChange, scrollRef } = {}) {
   const [view, setView] = useState(() => ({ source: rows, count: Math.min(initial, rows.length) }));
   // Tracks whether WE currently hold window.__inetTableBulkLoading up, shared
   // between the render-time step below and the effect's step() loop — a ref
@@ -132,12 +150,33 @@ export function useProgressiveRows(rows, { initial = 300, chunk = 3000, paused =
   useEffect(() => {
     let cancelled = false;
     let handle = null;
+    let parked = false;
+
+    // Enough mounted to cover the viewport and a screenful beyond it. Growing
+    // past that buys nothing the user can see yet.
+    const BUFFER_PX = 1200;
+    const needsMoreForScroll = () => {
+      const el = scrollRef?.current;
+      // No scrollport yet (first paint) — keep growing so the table fills.
+      if (!el) return true;
+      return el.scrollHeight - el.scrollTop - el.clientHeight < BUFFER_PX;
+    };
+
     const step = () => {
       if (cancelled) return;
       setView((v) => {
         const next = nextView(v, rows, initial, chunk);
         const settled = next.source === rows && next.count === rows.length;
         if (!settled) {
+          // Shrinking (source still the OLD array) must always run to
+          // completion — parking mid-shrink would strand the old table.
+          const shrinking = next.source !== rows;
+          if (scrollRef && !shrinking && !needsMoreForScroll()) {
+            // Enough is on screen. Stop burning frames and wait for a scroll.
+            parked = true;
+            lower();
+            return next;
+          }
           raise();
           handle = requestAnimationFrame(step);
         } else {
@@ -148,6 +187,15 @@ export function useProgressiveRows(rows, { initial = 300, chunk = 3000, paused =
         return next;
       });
     };
+
+    const onScroll = () => {
+      if (cancelled || !parked || paused) return;
+      if (!needsMoreForScroll()) return;
+      parked = false;
+      handle = requestAnimationFrame(step);
+    };
+    const scrollEl = scrollRef?.current;
+    if (scrollEl) scrollEl.addEventListener("scroll", onScroll, { passive: true });
     // `paused` only skips scheduling the loop below — the cleanup still
     // always registers, so a flag raised by the render-time step above is
     // guaranteed to get released (here, or by whichever later effect run
@@ -155,6 +203,7 @@ export function useProgressiveRows(rows, { initial = 300, chunk = 3000, paused =
     if (!paused) handle = requestAnimationFrame(step);
     return () => {
       cancelled = true;
+      if (scrollEl) scrollEl.removeEventListener("scroll", onScroll);
       if (handle) cancelAnimationFrame(handle);
       // Switching `rows` again (or unmounting) mid-transition — release the
       // flag now rather than leaking it; if a new transition starts right
@@ -162,7 +211,7 @@ export function useProgressiveRows(rows, { initial = 300, chunk = 3000, paused =
       lower();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, initial, chunk, paused]);
+  }, [rows, initial, chunk, paused, scrollRef]);
 
   const { source, count } = view;
   return source.length > count ? source.slice(0, count) : source;

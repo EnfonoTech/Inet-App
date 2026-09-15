@@ -316,7 +316,12 @@ export default function PODispatch() {
   // paused:loading skips growing/shrinking a tab's own render while a NEW
   // tab's fetch is already in flight, so we don't waste frames growing a
   // table we're about to switch away from anyway.
-  const visibleRows = useProgressiveRows(rows, { paused: loading });
+  const tableScrollRef = useRef(null);
+  const visibleRows = useProgressiveRows(rows, {
+    paused: loading,
+    scrollRef: tableScrollRef,
+    chunk: 400,
+  });
   // How many of `visibleRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`. See
   // the skip-fetch logic in the fetch effect below / PICTracker.jsx. Doesn't
@@ -1142,7 +1147,7 @@ export default function PODispatch() {
       <div className="page-content">
         {error && <div className="notice error" style={{ marginBottom: 16 }}><span>!</span> {error}</div>}
 
-        <DataTableWrapper loading={loading && rows.length > 0}>
+        <DataTableWrapper loading={loading && rows.length > 0} scrollRef={tableScrollRef}>
           {isIntegrityTab ? (
             <IntegrityTable
               rows={integrityRowsFiltered}
