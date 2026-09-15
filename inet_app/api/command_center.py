@@ -180,6 +180,47 @@ def _ensure_list(raw):
     return out
 
 
+def _bulk_rows(doctype, column, values, fields, chunk=1000, order_by=None):
+    """Fetch rows whose `column` is in `values`, without going through get_all.
+
+    frappe.get_all runs validate_generated_query, which hands the finished SQL
+    to sqlparse. On a query carrying thousands of names in an IN (...) list
+    that parse dominates everything: profiling list_po_intake_lines over 17k
+    rows showed 17.8 s of 20.9 s inside sqlparse (41M generator calls) while
+    the database itself answered in 1.2 s.
+
+    The queries here are plain column reads on an internal admin endpoint that
+    already builds its own raw SQL a few lines above, so going direct costs
+    nothing in expressiveness and removes the parse entirely.
+
+    `fields` must be plain column names — they are quoted, not parsed.
+    """
+    if not values:
+        return []
+    cols = ", ".join(f"`{f}`" for f in fields)
+    ob = ""
+    if order_by:
+        # Column names and asc/desc only — never a caller-supplied expression.
+        safe = order_by.replace(",", " ").replace("_", "").replace(" ", "")
+        if not safe.isalnum():
+            frappe.throw("Invalid order_by")
+        ob = f" ORDER BY {order_by}"
+    out = []
+    # Each value falls in exactly one chunk, so ordering per chunk is
+    # equivalent to ordering the whole set for the "latest wins" readers.
+    for part in _chunked(list(values), chunk):
+        ph = ", ".join(["%s"] * len(part))
+        out.extend(
+            frappe.db.sql(
+                f"SELECT {cols} FROM `tab{doctype}` WHERE `{column}` IN ({ph}){ob}",
+                tuple(part),
+                as_dict=True,
+            )
+            or []
+        )
+    return out
+
+
 def _chunked(items, size=1000):
     """Split a list into fixed-size chunks. Use this for any `filters={"x":
     ["in", names]}` built from a potentially-large, unbounded name list (e.g.
@@ -3096,21 +3137,11 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
         else:
             order_index = {n: i for i, n in enumerate(line_ids)}
             try:
-                lines = frappe.get_all(
-                    "PO Intake Line",
-                    filters={"name": ["in", line_ids]},
-                    fields=line_fields_full,
-                    limit_page_length=len(line_ids) + 1,
-                )
+                lines = _bulk_rows("PO Intake Line", "name", line_ids, line_fields_full)
             except frappe.db.OperationalError as e:
                 if not frappe.db.is_missing_column(e):
                     raise
-                lines = frappe.get_all(
-                    "PO Intake Line",
-                    filters={"name": ["in", line_ids]},
-                    fields=line_fields_base,
-                    limit_page_length=len(line_ids) + 1,
-                )
+                lines = _bulk_rows("PO Intake Line", "name", line_ids, line_fields_base)
                 for row in lines:
                     row.setdefault("center_area", None)
                     row.setdefault("region_type", None)
@@ -3138,14 +3169,9 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
     parent_names = list({line.get("parent") for line in lines if line.get("parent")})
     parent_map = {}
     if parent_names:
-        for chunk in _chunked(parent_names):
-            for p in frappe.get_all(
-                "PO Intake",
-                filters={"name": ["in", chunk]},
-                fields=["name", "po_no", "customer", "center_area"],
-                limit_page_length=len(chunk) + 1,
-            ):
-                parent_map[p.name] = p
+        for p in _bulk_rows("PO Intake", "name", parent_names,
+                            ["name", "po_no", "customer", "center_area"]):
+            parent_map[p.name] = p
 
     dispatch_map = {}
     if parent_names:
@@ -3159,33 +3185,14 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             "name", "po_intake", "po_line_no", "system_id", "im",
             "dispatch_mode", "target_month", "center_area", "dispatch_status",
         ]
-        all_disp = []
-        use_base_fields = False
-        for chunk in _chunked(parent_names):
-            if not use_base_fields:
-                try:
-                    all_disp.extend(frappe.get_all(
-                        "PO Dispatch",
-                        filters={"po_intake": ["in", chunk]},
-                        fields=disp_fields_full,
-                        limit_page_length=len(chunk) * 100 + 1,
-                    ))
-                    continue
-                except frappe.db.OperationalError as e:
-                    if not frappe.db.is_missing_column(e):
-                        raise
-                    use_base_fields = True
-                    # Fall through to fetch this chunk (and every subsequent
-                    # one) with the reduced field set below.
-            chunk_disp = frappe.get_all(
-                "PO Dispatch",
-                filters={"po_intake": ["in", chunk]},
-                fields=disp_fields_base,
-                limit_page_length=len(chunk) * 100 + 1,
-            )
-            for d in chunk_disp:
+        try:
+            all_disp = _bulk_rows("PO Dispatch", "po_intake", parent_names, disp_fields_full)
+        except frappe.db.OperationalError as e:
+            if not frappe.db.is_missing_column(e):
+                raise
+            all_disp = _bulk_rows("PO Dispatch", "po_intake", parent_names, disp_fields_base)
+            for d in all_disp:
                 d["region_type"] = region_type_from_center_area(d.get("center_area"))
-            all_disp.extend(chunk_disp)
         for d in all_disp:
             dispatch_map[(d.po_intake, cint(d.po_line_no))] = d
 
@@ -3285,27 +3292,18 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
     latest_plan_status = {}
     latest_plan_date = {}
     if stage_dispatch_names:
-        wd_rows_for_stage = []
-        for chunk in _chunked(stage_dispatch_names):
-            wd_rows_for_stage.extend(frappe.get_all(
-                "Work Done",
-                filters={"system_id": ["in", chunk]},
-                fields=["system_id", "source", "modified"],
-                order_by="modified desc",
-            ))
+        wd_rows_for_stage = _bulk_rows(
+            "Work Done", "system_id", stage_dispatch_names,
+            ["system_id", "source", "modified"], order_by="modified desc")
         for r in wd_rows_for_stage:
             # Work type takes the most recently touched row, same "latest
             # wins" rule as plan status/date below.
             if r.system_id not in work_type:
                 work_type[r.system_id] = r.source
-        plan_rows_for_stage = []
-        for chunk in _chunked(stage_dispatch_names):
-            plan_rows_for_stage.extend(frappe.get_all(
-                "Rollout Plan",
-                filters={"po_dispatch": ["in", chunk]},
-                fields=["po_dispatch", "plan_status", "plan_date", "visit_number", "modified"],
-                order_by="visit_number desc, modified desc",
-            ))
+        plan_rows_for_stage = _bulk_rows(
+            "Rollout Plan", "po_dispatch", stage_dispatch_names,
+            ["po_dispatch", "plan_status", "plan_date", "visit_number", "modified"],
+            order_by="visit_number desc, modified desc")
         for r in plan_rows_for_stage:
             if r.po_dispatch not in latest_plan_status:
                 latest_plan_status[r.po_dispatch] = r.plan_status
