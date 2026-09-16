@@ -7823,7 +7823,7 @@ _ALLOWED_WD_ISSUE_FLAGS = frozenset((
 
 
 @frappe.whitelist()
-def generate_work_done(execution_name, issue_flag=None):
+def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     """
     Create a Work Done record from a completed Daily Execution.
 
@@ -7938,6 +7938,7 @@ def generate_work_done(execution_name, issue_flag=None):
     # visit. At or below the visit that already owns the record, it stays
     # the idempotent no-op it always was.
     existing_wd_name = None
+    adopted = None
     if dispatch_name:
         existing_wd_name = frappe.db.get_value(
             "Work Done", {"system_id": dispatch_name}, "name"
@@ -7967,13 +7968,36 @@ def generate_work_done(execution_name, issue_flag=None):
             ) or {}
             origin = wd_info.get("source") or "outside the rollout"
             by = wd_info.get("direct_close_by")
-            frappe.throw(
-                f"This PO line already has Work Done {existing_wd_name} "
-                f"({origin}{f' — {by}' if by else ''}). Its revenue is already counted."
-            )
-        if cint(frappe.db.get_value("Rollout Plan", rp_name, "visit_number")) <= cint(
-            owner_visit_row[0][0]
-        ):
+            # cint, not truthiness: over HTTP this arrives as a string, and
+            # "0" is a non-empty string — testing it directly would adopt on
+            # every call that explicitly said not to.
+            if not cint(adopt_existing):
+                frappe.throw(
+                    f"This PO line already has Work Done {existing_wd_name} "
+                    f"({origin}{f' — {by}' if by else ''}). Its revenue is already counted."
+                )
+            # Adopting: the shortcut close was the mistake and this rollout is
+            # the real record of the work. The Work Done row STAYS — deleting
+            # it and making a new one would throw away everything PIC has
+            # already done on it, and there is no way to void one anyway. What
+            # moves is its provenance: falling through re-points `execution`
+            # at this visit, re-derives the figures from it and stamps
+            # source = "Rollout Execution", and the block after the save puts
+            # back what PIC owns and clears the direct-close stamp.
+            #
+            # Revenue is safe either way: WorkDone.before_save reads it off the
+            # PO line through the ms1/ms2 flags, which this preserves, so the
+            # line is worth what the PO says before and after.
+            adopted = {
+                "from_source": origin,
+                "billing_status": wd_info.get("billing_status") or "Pending",
+            }
+        # Only meaningful when a visit already owns the record. An adoption has
+        # just come through the branch above with no owning visit at all, so
+        # there is nothing to compare against and it must not fall in here.
+        if owner_visit_row and cint(
+            frappe.db.get_value("Rollout Plan", rp_name, "visit_number")
+        ) <= cint(owner_visit_row[0][0]):
             return {"name": existing_wd_name, "already_exists": True}
 
     # Never allow Work Done while this plan carries an open Issue & Risk
@@ -8146,7 +8170,30 @@ def generate_work_done(execution_name, issue_flag=None):
                 frappe.db.set_value("PO Intake Line", intake_line, "po_line_status", "Completed")
         frappe.db.commit()
 
-    return {"name": wd.name, "superseded_earlier_visit": bool(existing_wd_name)}
+    if adopted:
+        # Put back what the rollout creation path would otherwise reset, and
+        # drop the direct-close stamp from both sides so the line no longer
+        # reads as closed by a shortcut. submission_status and the milestone
+        # flags are never written by that path, so they survive on their own;
+        # billing_status is set to "Pending" unconditionally and would undo
+        # PIC's progress on an already-invoiced line.
+        restore = {"billing_status": adopted["billing_status"]}
+        if frappe.db.has_column("Work Done", "direct_close_by"):
+            restore["direct_close_by"] = None
+        frappe.db.set_value("Work Done", wd.name, restore, update_modified=False)
+        if frappe.db.has_column("PO Dispatch", "direct_close_by"):
+            frappe.db.set_value(
+                "PO Dispatch", dispatch_name, "direct_close_by", None,
+                update_modified=False,
+            )
+        frappe.db.commit()
+
+    return {
+        "name": wd.name,
+        "superseded_earlier_visit": bool(existing_wd_name) and not adopted,
+        "adopted": bool(adopted),
+        "adopted_from": (adopted or {}).get("from_source"),
+    }
 
 
 def _ensure_work_done_for_execution(execution_name):
@@ -17296,6 +17343,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                  "cond": f"{_es} = 'Cancelled'", "tone": "bad", "hide_if_zero": True},
             ])
 
+    # `source` is an app-owned column; a site that has not migrated has no
+    # such column and would 500 on the subquery below.
+    src_col = "wd4.source" if frappe.db.has_column("Work Done", "source") else "''"
+
     rows = frappe.db.sql(
         f"""
         SELECT de.name, de.modified, rp.po_dispatch AS system_id, de.rollout_plan,
@@ -17337,6 +17388,14 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                    AND IFNULL(wd3.execution, '') = ''
                  LIMIT 1
                ) AS work_done_external,
+               -- Named so the page can say which route recorded it rather
+               -- than a vague "outside the rollout".
+               (
+                 SELECT {src_col} FROM `tabWork Done` wd4
+                 WHERE wd4.system_id = pd.name
+                   AND IFNULL(wd4.execution, '') = ''
+                 LIMIT 1
+               ) AS work_done_external_source,
                it.team_name AS team_name,
                {im_full_sql_ex}
                {im_ex_extra_sql}

@@ -399,7 +399,7 @@ export const pmApi = {
   createRolloutPlans:   (payload)   => call("inet_app.api.command_center.create_rollout_plans", { payload: JSON.stringify(payload) }),
   updateExecution:      (payload)   => call("inet_app.api.command_center.update_execution", { payload: JSON.stringify(payload) }),
   bulkUpdateExecutionField: (names, field, value) => call("inet_app.api.command_center.bulk_update_execution_field", { names: JSON.stringify(names), field, value }),
-  generateWorkDone:     (execution_name, issue_flag) => call("inet_app.api.command_center.generate_work_done", { execution_name, issue_flag: issue_flag || "" }),
+  generateWorkDone:     (execution_name, issue_flag, adopt_existing) => call("inet_app.api.command_center.generate_work_done", { execution_name, issue_flag: issue_flag || "", adopt_existing: adopt_existing ? 1 : 0 }),
   getFieldExecutionForRollout: (rollout_plan) =>
     call("inet_app.api.command_center.get_field_execution_for_rollout", { rollout_plan }),
   getRolloutPlanDetails: (rollout_plan) =>

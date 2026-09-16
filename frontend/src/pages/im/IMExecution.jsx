@@ -230,6 +230,10 @@ export default function IMExecution() {
   const [wdBusy, setWdBusy] = useState("");
   const [wdErr, setWdErr] = useState(null);
   const [wdIssueFlag, setWdIssueFlag] = useState("");
+  // Opt-in for a line whose Work Done came from a Direct Close or Backend:
+  // the rollout takes that record over rather than a second one being made.
+  // Off by default — it rewrites the line's history, so it is never implicit.
+  const [wdAdoptExisting, setWdAdoptExisting] = useState(false);
   const [selectedExecs, setSelectedExecs] = useState(new Set());
 
   // A row that leaves the list takes its selection with it. Creating Work Done
@@ -527,8 +531,9 @@ export default function IMExecution() {
       if (!(isNotRequired(e.qc_required) || ["Pass", "Not Applicable"].includes(e.qc_status))) continue;
       if (e.work_done) continue;
       // Closed outside the rollout (Direct Close / Backend): the backend
-      // refuses a second Work Done for the line, so don't offer it.
-      if (e.work_done_external) continue;
+      // refuses a second Work Done for the line, so don't offer it — unless
+      // the IM has explicitly chosen to adopt that record into this rollout.
+      if (e.work_done_external && !wdAdoptExisting) continue;
       const key = e.rollout_plan || e.name;
       if (seenPlans.has(key)) continue;
       seenPlans.add(key);
@@ -597,6 +602,13 @@ export default function IMExecution() {
     () => new Set(selectedEligible.map((e) => e.rollout_plan).filter(Boolean)),
     [selectedEligible],
   );
+  // What the existing record calls itself ("Direct Close", "Backend"), so the
+  // adopt prompt names the real route instead of a vague "outside the rollout".
+  const wdExternalSource = useMemo(() => {
+    const found = selectedRows.find((e) => e.work_done_external);
+    return (found?.work_done_external_source || "").trim() || "Direct Close";
+  }, [selectedRows]);
+
   const selectedNonEligibleBlocked = useMemo(
     () => selectedNonEligible.filter((e) => !e.rollout_plan || !coveredBySelectedEligible.has(e.rollout_plan)),
     [selectedNonEligible, coveredBySelectedEligible],
@@ -609,7 +621,7 @@ export default function IMExecution() {
   function workDoneBlockReason(e) {
     if (Number(e.is_internal_work || 0)) return "Internal work — set Execution Status to Completed instead, no Work Done needed";
     if (e.work_done_external)
-      return `Work Done ${e.work_done_external} already exists for this line, recorded outside the rollout (Direct Close or Backend) — its revenue is already counted`;
+      return `${(e.work_done_external_source || "Direct Close")} record ${e.work_done_external} already exists for this line`;
     if (e.is_dummy_po) return "Dummy PO — must be mapped to a real PO before Work Done can be created";
     if (e.work_done) {
       const pending = [];
@@ -688,7 +700,7 @@ export default function IMExecution() {
       for (const row of selectedEligible) {
         // Sequentially create to keep error attribution simple.
         // eslint-disable-next-line no-await-in-loop
-        const res = await pmApi.generateWorkDone(row.name, wdIssueFlag);
+        const res = await pmApi.generateWorkDone(row.name, wdIssueFlag, wdAdoptExisting && row.work_done_external ? 1 : 0);
         // The endpoint answers `already_exists` for a genuine no-op (a
         // multi-team companion row, or a visit at or below the one that
         // already owns the record). Nothing was created, so don't report
@@ -1209,6 +1221,25 @@ export default function IMExecution() {
                 </div>
               </div>
             )}
+            {selectedRows.some((e) => e.work_done_external) && (
+              <div style={{ marginBottom: 14, borderRadius: 8, background: "#fffbeb", border: "1px solid #fde68a", padding: "10px 12px" }}>
+                <label style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={wdAdoptExisting}
+                    onChange={(e) => setWdAdoptExisting(e.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <span style={{ fontSize: 12, color: "#78350f" }}>
+                    <strong>
+                      There is already a {wdExternalSource} record for this line.
+                    </strong>{" "}
+                    Tick and confirm to change the Work Done from {wdExternalSource} to
+                    Rollout. PIC status will not change.
+                  </span>
+                </label>
+              </div>
+            )}
             <div style={{ marginBottom: 14 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>Issue Flag (optional)</label>
               <select
@@ -1232,7 +1263,7 @@ export default function IMExecution() {
             >
               {wdBusy === "bulk" ? "Creating…" : `Confirm — Create ${selectedEligible.length} Work Done`}
             </button>
-            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => { setWdConfirmOpen(false); setWdIssueFlag(""); }}>Cancel</button>
+            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => { setWdConfirmOpen(false); setWdIssueFlag(""); setWdAdoptExisting(false); }}>Cancel</button>
           </div>
         </div>
       )}
