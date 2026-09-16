@@ -1,0 +1,1 @@
+const m=new Intl.NumberFormat("en",{minimumFractionDigits:2,maximumFractionDigits:4}),t=new Intl.NumberFormat("en",{maximumFractionDigits:0}),n=new Intl.NumberFormat("en",{maximumFractionDigits:6});export{t as c,m,n as q};

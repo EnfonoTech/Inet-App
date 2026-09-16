@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { pmApi } from "../services/api";
+// Same qty formatter the tables use, so a summary tile can never
+// disagree with the column it summarises.
+import { qty as fmtQty } from "../utils/numberFormat";
 
 /**
  * Headline figures for a list page, shown in the free space of `.page-header`.
@@ -22,7 +25,6 @@ import { pmApi } from "../services/api";
  */
 
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-const fmtQty = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 // Money is shown in full, never abbreviated: a header figure that reads "22K"
 // is the one number on the page nobody can reconcile against the table's own
 // total, which defeats the point of putting it there.

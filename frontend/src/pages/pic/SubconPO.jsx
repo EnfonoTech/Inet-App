@@ -13,11 +13,10 @@ import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import { PoStatusBadge, PicStatusBadge, SubPoStatusBadge } from "./picShared";
-import { money } from "../../utils/numberFormat";
+import { money, qty as fmtQty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
-const fmtQty = new Intl.NumberFormat("en", { maximumFractionDigits: 3 });
 
 // Tabs map 1:1 onto the `stage` arg of list_subcon_po_rows. They deliberately
 // OVERLAP — a line whose MS1 is paid while MS2 is still unordered appears on

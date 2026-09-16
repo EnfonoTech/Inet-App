@@ -24,6 +24,7 @@ def after_migrate():
     _ensure_poid_accounting_dimension()
     _ensure_project_accounting_dimension()
     _ensure_duid_accounting_dimension()
+    _ensure_qty_precision()
     _ensure_subcon_po_fields()
     _ensure_pic_sales_invoice_fields()
     _separate_duid_dimensions()
@@ -839,6 +840,45 @@ def _ensure_pickup_time_field():
         "insert_after": "schedule_date",
         "print_hide": 1,
     })
+    frappe.db.commit()
+
+
+def _ensure_qty_precision():
+    """Let invoice/PO lines hold the same qty precision PO Dispatch stores.
+
+    `PO Dispatch.qty` carries up to 4 decimals (205 rows do), but Sales Invoice
+    Item / Purchase Order Item / Purchase Invoice Item `qty` inherits System
+    Settings' Float Precision of 3. ERPNext recomputes `amount = qty * rate`
+    from the ROUNDED qty and ignores any amount passed in, so a line like
+    qty 0.1076 @ 599.00 was stored as 0.108 and billed 64.69 instead of 64.45 —
+    which then failed before_sales_invoice_submit's milestone check. 203 MS1
+    lines drift past the 0.01 tolerance at precision 3; none do at 6.
+
+    Set per field rather than by raising the global Float Precision, which
+    would change every quantity in every doctype across the site. The DB column
+    is decimal(21,9) either way, so this only changes where flt() rounds.
+    """
+    for dt in ("Sales Invoice Item", "Purchase Order Item", "Purchase Invoice Item"):
+        if not frappe.db.exists("DocType", dt):
+            continue
+        name = f"{dt}-qty-precision"
+        if frappe.db.exists("Property Setter", name):
+            if frappe.db.get_value("Property Setter", name, "value") != "6":
+                frappe.db.set_value("Property Setter", name, "value", "6")
+            continue
+        try:
+            frappe.get_doc({
+                "doctype": "Property Setter",
+                "doctype_or_field": "DocField",
+                "doc_type": dt,
+                "field_name": "qty",
+                "property": "precision",
+                "property_type": "Select",
+                "value": "6",
+            }).insert(ignore_permissions=True)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"qty precision setup failed for {dt}")
+    frappe.clear_cache()
     frappe.db.commit()
 
 

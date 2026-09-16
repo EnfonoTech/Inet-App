@@ -9,6 +9,7 @@ the Cash Flow Summary dashboard.
 import frappe
 from frappe.utils import cint, flt, getdate, nowdate
 from inet_app.api.notifications import _make_notification, _notify_role
+from frappe.model.meta import get_field_precision
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
 from inet_app.api.command_center import (
@@ -2875,6 +2876,10 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
         pluck="name",
     ))
 
+    qty_precision = get_field_precision(
+        frappe.get_meta("Sales Invoice Item").get_field("qty")
+    )
+
     total_amount = 0
     try:
         si = frappe.new_doc("Sales Invoice")
@@ -2894,10 +2899,15 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
             if not frappe.db.exists("Item", item_code):
                 item_code = "Service"
             # Scale qty proportionally so qty × rate = milestone amount.
+            # Rounded to the qty FIELD's own precision, never a hardcoded one:
+            # ERPNext recomputes amount from the stored (rounded) qty and drops
+            # any amount passed in, so rounding finer than the field can hold
+            # silently produces a different amount than the milestone figure.
+            # See _ensure_qty_precision in setup.py, which raises that to 6.
             ms_pct = flt(pd.get("ms1_pct" if row_milestone == "MS1" else "ms2_pct") or 0)
             full_qty = flt(pd.get("qty") or 1)
             full_rate = flt(pd.get("rate") or amount)
-            scaled_qty = round(full_qty * ms_pct / 100.0, 4) if ms_pct > 0 else full_qty
+            scaled_qty = flt(full_qty * ms_pct / 100.0, qty_precision) if ms_pct > 0 else full_qty
             duid = (pd.get("site_code") or "").strip()
             project = (pd.get("project_code") or "").strip()
             si.append("items", {
@@ -2981,16 +2991,24 @@ def before_sales_invoice_submit(doc, method):
             continue
         if not frappe.db.exists("PO Dispatch", pd_name):
             frappe.throw(
-                f"Item {item.item_code or item.idx}: POID '{pd_name}' does not exist in PO Dispatch."
+                f"Row {item.idx}, item {item.item_code or '-'}: "
+                f"PO Dispatch '{pd_name}' does not exist."
             )
 
         pd = frappe.db.get_value(
             "PO Dispatch", pd_name,
-            ["ms1_amount", "ms2_amount"],
+            ["ms1_amount", "ms2_amount", "poid"],
             as_dict=True,
         )
         if not pd:
             continue
+
+        # Report the real POID (e.g. 1011HG3692386-98-1-1), not the PO Dispatch
+        # document name (SYS-2026-75285) — the latter means nothing to PIC — and
+        # lead with the invoice row number so the offending line is findable in
+        # a multi-line invoice.
+        poid_label = (pd.get("poid") or "").strip() or pd_name
+        row_label = f"Row {item.idx}"
 
         item_amount = flt(item.amount or 0)
         milestone = (item.get("milestone") or "").strip().upper()
@@ -3010,13 +3028,15 @@ def before_sales_invoice_submit(doc, method):
         target_amt = ms1_amt if milestone == "MS1" else ms2_amt
         if target_amt <= 0:
             frappe.throw(
-                f"Item {item.item_code or item.idx}: POID '{pd_name}' has no {milestone} amount set."
+                f"{row_label}, item {item.item_code or '-'}: "
+                f"POID '{poid_label}' has no {milestone} amount set."
             )
 
         if abs(item_amount - target_amt) > 0.01:
             frappe.throw(
-                f"Item {item.item_code or item.idx} (POID {pd_name}, {milestone}): "
-                f"Invoice amount {item_amount:,.2f} does not match {milestone} amount {target_amt:,.2f} on PO Dispatch."
+                f"{row_label}, item {item.item_code or '-'} "
+                f"(POID {poid_label}, {milestone}): invoice amount {item_amount:,.2f} "
+                f"does not match {milestone} amount {target_amt:,.2f} on PO Dispatch."
             )
 
         # Cumulative check: already-submitted invoices + this invoice must not exceed milestone amount
@@ -3024,8 +3044,9 @@ def before_sales_invoice_submit(doc, method):
         already = ms1_already if milestone == "MS1" else ms2_already
         if already + item_amount > target_amt + 0.01:
             frappe.throw(
-                f"Item {item.item_code or item.idx} (POID {pd_name}, {milestone}): "
-                f"Cumulative invoiced amount ({already:,.2f} + {item_amount:,.2f} = {already + item_amount:,.2f}) "
+                f"{row_label}, item {item.item_code or '-'} "
+                f"(POID {poid_label}, {milestone}): cumulative invoiced amount "
+                f"({already:,.2f} + {item_amount:,.2f} = {already + item_amount:,.2f}) "
                 f"exceeds {milestone} amount {target_amt:,.2f} on PO Dispatch."
             )
 

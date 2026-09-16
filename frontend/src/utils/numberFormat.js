@@ -28,8 +28,16 @@ export const money = new Intl.NumberFormat("en", {
 export const count = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 /** Quantities, which are fractional but not money, so no forced decimals:
- *  a qty of 1 reads "1", a qty of 0.4195 reads "0.42". */
-export const qty = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
+ *  a qty of 1 reads "1", not "1.000000".
+ *
+ *  Six decimals, not two. PO Dispatch.qty carries up to 4dp (0.1076 on 205
+ *  lines) and a milestone split of one goes deeper still (0.1076 x 70% =
+ *  0.07532), so capping at 2 displayed a quantity that was not the stored
+ *  one — 0.1076 read as "0.11", which then did not reconcile against the
+ *  line amount beside it. Six matches the qty field precision set by
+ *  _ensure_qty_precision in setup.py. minimumFractionDigits stays unset, so
+ *  trailing zeros are still trimmed and a whole qty reads as a whole number. */
+export const qty = new Intl.NumberFormat("en", { maximumFractionDigits: 6 });
 
 /** Percentages — one decimal, matching how the reports already state them. */
 export const pct = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });

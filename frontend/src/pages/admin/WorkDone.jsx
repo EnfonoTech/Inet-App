@@ -18,7 +18,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge } from "../pic/picShared";
-import { money } from "../../utils/numberFormat";
+import { money, qty as qtyFmt } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 /* Money must not be rounded away. `fmt` above drops the decimals entirely,
@@ -32,7 +32,6 @@ const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 const sar = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 /* Quantities are fractional too (0.5 of a line) but are not money, so no
    forced decimals — a qty of 1 reads as "1", not "1.00". */
-const qtyFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 3 });
 
 // Full PO Dispatch.dispatch_status vocabulary (matches the doctype's actual
 // Select options exactly) — a Work Done row's underlying PO Dispatch can
