@@ -1850,6 +1850,10 @@
 }
 
 @media (max-width: 768px) {
+  /* .form-grid.two-col outranks the .form-grid rule below on specificity,
+     so without this it stays two columns on a phone while every other form
+     grid has already stacked. */
+  .form-grid.two-col { grid-template-columns: 1fr; }
   .page-summary {
     width: 100%;
     justify-content: flex-start;

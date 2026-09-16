@@ -6176,7 +6176,12 @@ def _require_line_attributes(names, huawei_im, project_domain, action):
     rows = frappe.db.sql(
         f"""
         SELECT IFNULL(NULLIF(pd.poid, ''), pd.name) AS label,
-               IFNULL(pd.huawei_im, '') AS huawei_im,
+               -- Both fields fall back to the project, which is where they
+               -- default from at dispatch and what _enrich_with_project_fields
+               -- shows on every list. Reading huawei_im off the line alone
+               -- refused 1,424 lines whose project carries one and whose row
+               -- displayed it — the guard disagreeing with the screen.
+               COALESCE(NULLIF(pd.huawei_im, ''), NULLIF(pcc.huawei_im, ''), '') AS huawei_im,
                COALESCE(NULLIF(pd.project_domain, ''), NULLIF(pcc.project_domain, ''), '') AS project_domain
         FROM `tabPO Dispatch` pd
         LEFT JOIN `tabProject Control Center` pcc ON pcc.name = pd.project_code
@@ -6243,6 +6248,21 @@ def create_rollout_plans(payload):
     huawei_im_override = (payload.get("huawei_im") or "").strip()
     if huawei_im_override and not frappe.db.exists("Huawei IM", huawei_im_override):
         frappe.throw(frappe._("Invalid Huawei IM selected"))
+    # Issues & Risks re-plans send this: the popup there offers the two
+    # fields only for lines that HAVE neither, so what the IM types is a
+    # gap-fill, not an override. Without it, a mixed batch — some lines
+    # correct, some blank — would stamp the typed value over the correct
+    # ones. The planning popups on IM Dispatch and Rollout Planning mean it
+    # as a real override and do not send this.
+    # Strict on purpose: the local _truthy() below reads a MISSING key as
+    # True (it serves the qc/ciag defaults), which for an opt-in flag would
+    # turn every caller into a gap-fill. Same shape as force_duplicate.
+    _fmo = payload.get("fill_missing_only")
+    fill_missing_only = (
+        _fmo is True
+        or (isinstance(_fmo, (int, float)) and _fmo != 0)
+        or (isinstance(_fmo, str) and _fmo.strip().lower() in ("1", "true", "yes", "on"))
+    )
     project_domain_override = (payload.get("project_domain") or "").strip()
     if project_domain_override and not frappe.db.exists("Project Domain", project_domain_override):
         frappe.throw(frappe._("Invalid Project Domain selected"))
@@ -6495,9 +6515,15 @@ def create_rollout_plans(payload):
 
         disp_updates = {"dispatch_status": "Planned"}
         disp_updates.update(remark_updates)
-        if huawei_im_override:
+        if huawei_im_override and not (
+            fill_missing_only
+            and (frappe.db.get_value("PO Dispatch", dispatch_name, "huawei_im") or "").strip()
+        ):
             disp_updates["huawei_im"] = huawei_im_override
-        if project_domain_override:
+        if project_domain_override and not (
+            fill_missing_only
+            and (frappe.db.get_value("PO Dispatch", dispatch_name, "project_domain") or "").strip()
+        ):
             disp_updates["project_domain"] = project_domain_override
         frappe.db.set_value(
             "PO Dispatch",

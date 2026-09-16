@@ -128,6 +128,15 @@ export default function IMIssuesRisks() {
   const [ciagRequired, setCiagRequired] = useState(true);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
+  // Huawei IM / Project Domain for the re-plan. These are NOT overrides here:
+  // the fields appear only when the selected lines carry no value at all, and
+  // what is typed fills that gap (fill_missing_only below). A line that
+  // already has one keeps it, and is shown read-only instead.
+  const [huaweiIms, setHuaweiIms] = useState([]);
+  const [projectDomains, setProjectDomains] = useState([]);
+  const [huaweiImFill, setHuaweiImFill] = useState("");
+  const [projectDomainFill, setProjectDomainFill] = useState("");
+
 
   // Optional materials dispatch, grouped per DUID — same feature as
   // IMDispatch.jsx's "Create Plan" modal.
@@ -150,6 +159,16 @@ export default function IMIssuesRisks() {
   // list_issue_risk_rows), not blended into the top search box's wide
   // multi-column search.
   const [columnFilters, setColumnFilters] = useState({});
+
+  // Option lists for the two gap-fill pickers above. Fetched once on mount,
+  // not on modal open, so the popup never waits on them.
+  useEffect(() => {
+    let cancelled = false;
+    pmApi.listHuaweiIMs().then((r) => { if (!cancelled) setHuaweiIms(r || []); }).catch(() => {});
+    pmApi.listProjectDomains().then((r) => { if (!cancelled) setProjectDomains(r || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     const onFiltersChanged = (e) => {
       if (e.detail?.tableKey !== "im-issues-risks-v1") return;
@@ -336,6 +355,17 @@ export default function IMIssuesRisks() {
     }
   }
 
+
+  // What the selected lines already carry. The row values are the EFFECTIVE
+  // ones (line, else project) that _enrich_with_project_fields resolves, and
+  // the backend guard now reads them the same way, so a line counted as
+  // present here is one the server will accept.
+  const replanRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
+  const replanNeedsHuaweiIm = replanRows.some((r) => !(r.huawei_im || "").trim());
+  const replanNeedsDomain = replanRows.some((r) => !(r.project_domain || "").trim());
+  const replanHuaweiIms = [...new Set(replanRows.map((r) => (r.huawei_im || "").trim()).filter(Boolean))];
+  const replanDomains = [...new Set(replanRows.map((r) => (r.project_domain || "").trim()).filter(Boolean))];
+
   async function createPlansFromIssues() {
     if (selected.size === 0 || !planTeam || !planDate || !planEndDate || !accessTime || !accessPeriod) return;
     const selectedRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
@@ -358,6 +388,11 @@ export default function IMIssuesRisks() {
         "Team": planTeam,
         "Access Time": accessTime,
         "Access Period": accessPeriod,
+        // Asked for only when a selected line has neither its own value nor
+        // one from its project — the case old lines fall into. Normal lines
+        // never reach this.
+        ...(replanNeedsHuaweiIm ? { "Huawei IM": huaweiImFill } : {}),
+        ...(replanNeedsDomain ? { "Project Domain": projectDomainFill } : {}),
       });
       if (missing.length > 0) throw new Error(missingFieldsMessage(missing, "plan"));
       const dispatches = [...new Set(selectedRows.map((r) => r.po_dispatch).filter(Boolean))];
@@ -382,6 +417,10 @@ export default function IMIssuesRisks() {
         qc_required: qcRequired ? 1 : 0,
         ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType || "Re-Visit",
+        huawei_im: replanNeedsHuaweiIm ? huaweiImFill || undefined : undefined,
+        project_domain: replanNeedsDomain ? projectDomainFill || undefined : undefined,
+        // Fill the blanks, never overwrite a line that already has a value.
+        fill_missing_only: 1,
         issue_remarks: issueRemarks || undefined,
         plan_documents: planDocUrls.length ? JSON.stringify(planDocUrls) : undefined,
       });
@@ -600,12 +639,10 @@ export default function IMIssuesRisks() {
       </div>
       {showModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowModal(false)}>
-          <div style={{ width: "min(620px, 95vw)", maxHeight: "calc(100dvh - 40px)", overflowY: "auto", background: "#fff", borderRadius: 12, padding: 20, boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ width: "min(760px, 96vw)", maxHeight: "calc(100dvh - 40px)", overflowY: "auto", background: "#fff", borderRadius: 12, padding: 22, boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 12px" }}>Create Plans from Issues & Risks</h3>
             {createError && <div className="notice error" style={{ marginBottom: 12 }}>{createError}</div>}
             <div className="form-grid two-col">
-              <div className="form-group"><label>Plan Date</label><input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} /></div>
-              <div className="form-group"><label>Plan End Date</label><input type="date" value={planEndDate} onChange={(e) => setPlanEndDate(e.target.value)} /></div>
               <div className="form-group">
                 <label>Team</label>
                 <select value={planTeam} onChange={(e) => setPlanTeam(e.target.value)}>
@@ -614,12 +651,58 @@ export default function IMIssuesRisks() {
                 </select>
               </div>
               <div className="form-group"><label>Visit Type</label><input value={visitType} readOnly disabled style={{ background: "#f1f5f9", cursor: "not-allowed" }} /></div>
+              <div className="form-group"><label>Plan Date</label><input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} /></div>
+              <div className="form-group"><label>Plan End Date</label><input type="date" value={planEndDate} onChange={(e) => setPlanEndDate(e.target.value)} /></div>
               <div className="form-group"><label>Access Time</label><input type="time" value={accessTime} onChange={(e) => setAccessTime(e.target.value)} /></div>
               <div className="form-group">
                 <label>Access Period</label>
                 <select value={accessPeriod} onChange={(e) => setAccessPeriod(e.target.value)}>
                   <option value="">--</option><option value="Day">Day</option><option value="Night">Night</option>
                 </select>
+              </div>
+              <div className="form-group">
+                <label>Huawei IM</label>
+                {replanNeedsHuaweiIm ? (
+                  <>
+                    <SearchableSelect
+                      value={huaweiImFill}
+                      onChange={setHuaweiImFill}
+                      options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+                      placeholder="Select — these lines have none"
+                      style={{ width: "100%" }}
+                      minWidth={0}
+                    />
+                    <div style={{ fontSize: "0.72rem", color: "#b45309", marginTop: 4 }}>
+                      {replanHuaweiIms.length > 0
+                        ? "Some selected lines have no Huawei IM. This fills only those; the rest keep theirs."
+                        : "These lines have no Huawei IM yet."}
+                    </div>
+                  </>
+                ) : (
+                  <input value={replanHuaweiIms.join(", ")} readOnly disabled style={{ background: "#f1f5f9", cursor: "not-allowed" }} />
+                )}
+              </div>
+              <div className="form-group">
+                <label>Project Domain</label>
+                {replanNeedsDomain ? (
+                  <>
+                    <SearchableSelect
+                      value={projectDomainFill}
+                      onChange={setProjectDomainFill}
+                      options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
+                      placeholder="Select — these lines have none"
+                      style={{ width: "100%" }}
+                      minWidth={0}
+                    />
+                    <div style={{ fontSize: "0.72rem", color: "#b45309", marginTop: 4 }}>
+                      {replanDomains.length > 0
+                        ? "Some selected lines have no Project Domain. This fills only those; the rest keep theirs."
+                        : "These lines have no Project Domain yet."}
+                    </div>
+                  </>
+                ) : (
+                  <input value={replanDomains.join(", ")} readOnly disabled style={{ background: "#f1f5f9", cursor: "not-allowed" }} />
+                )}
               </div>
             </div>
             {/* Additional Teams */}
