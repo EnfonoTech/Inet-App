@@ -14,6 +14,8 @@
   "access_time",
   "access_period",
   "visit_type",
+  "qc_required",
+  "ciag_required",
   "source_rollout_plan",
   "visit_number",
   "column_break_dtdy",
@@ -115,6 +117,18 @@
    "fieldtype": "Select",
    "label": "Visit Type",
    "options": "Execution\nRe-Visit\nExtra Visit\nWork Done"
+  },
+  {
+   "default": "1",
+   "fieldname": "qc_required",
+   "fieldtype": "Check",
+   "label": "QC Required"
+  },
+  {
+   "default": "1",
+   "fieldname": "ciag_required",
+   "fieldtype": "Check",
+   "label": "CIAG Required"
   },
   {
    "fieldname": "source_rollout_plan",

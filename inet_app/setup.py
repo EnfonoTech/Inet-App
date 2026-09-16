@@ -38,6 +38,11 @@ def after_migrate():
     _ensure_certificate_expiry_notifications()
     _ensure_hr_workspace_shortcut()
     _backfill_certificate_validity_months()
+    # Last: report any column that exists here but that the app does not ship,
+    # which is how three "Unknown column" outages on other sites started.
+    # Reports only — it must never fail a migrate.
+    from inet_app.schema_check import after_migrate as _schema_check
+    _schema_check()
 
 
 def _resync_pms_workspace():

@@ -7,6 +7,7 @@
  "field_order": [
   "duid",
   "site_name",
+  "site_id",
   "area",
   "center_area",
   "column_break_lcbh",
@@ -29,6 +30,11 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Site Name"
+  },
+  {
+   "fieldname": "site_id",
+   "fieldtype": "Data",
+   "label": "Site ID"
   },
   {
    "description": "Logical area / location grouping. Used as the 'Location' label across the dashboards.",

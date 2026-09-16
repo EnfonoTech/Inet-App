@@ -526,6 +526,9 @@ export default function IMExecution() {
       if (e.execution_status !== "Completed") continue;
       if (!(isNotRequired(e.qc_required) || ["Pass", "Not Applicable"].includes(e.qc_status))) continue;
       if (e.work_done) continue;
+      // Closed outside the rollout (Direct Close / Backend): the backend
+      // refuses a second Work Done for the line, so don't offer it.
+      if (e.work_done_external) continue;
       const key = e.rollout_plan || e.name;
       if (seenPlans.has(key)) continue;
       seenPlans.add(key);
@@ -605,6 +608,8 @@ export default function IMExecution() {
 
   function workDoneBlockReason(e) {
     if (Number(e.is_internal_work || 0)) return "Internal work — set Execution Status to Completed instead, no Work Done needed";
+    if (e.work_done_external)
+      return `Work Done ${e.work_done_external} already exists for this line, recorded outside the rollout (Direct Close or Backend) — its revenue is already counted`;
     if (e.is_dummy_po) return "Dummy PO — must be mapped to a real PO before Work Done can be created";
     if (e.work_done) {
       const pending = [];
@@ -663,14 +668,36 @@ export default function IMExecution() {
   }
 
   async function createWorkDoneBulk() {
-    if (selectedEligible.length === 0) return;
+    // Returning quietly here is how "the button does nothing" looked to the
+    // user: every selected row was blocked, so the loop never ran and no
+    // error was ever raised. Say which row is blocked and why.
+    if (selectedEligible.length === 0) {
+      const blocked = selectedNonEligibleBlocked.length
+        ? selectedNonEligibleBlocked
+        : selectedRows;
+      setWdErr(
+        blocked.length
+          ? `Cannot create Work Done for ${blocked.length === 1 ? "this line" : `${blocked.length} of these lines`}. ${workDoneBlockReason(blocked[0])}${blocked.length > 1 ? ` (${blocked[0].poid || blocked[0].name})` : ""}.`
+          : "Select a completed execution first.",
+      );
+      return;
+    }
     setWdBusy("bulk");
     setWdErr(null);
     try {
       for (const row of selectedEligible) {
         // Sequentially create to keep error attribution simple.
         // eslint-disable-next-line no-await-in-loop
-        await pmApi.generateWorkDone(row.name, wdIssueFlag);
+        const res = await pmApi.generateWorkDone(row.name, wdIssueFlag);
+        // The endpoint answers `already_exists` for a genuine no-op (a
+        // multi-team companion row, or a visit at or below the one that
+        // already owns the record). Nothing was created, so don't report
+        // a success the user cannot see anywhere.
+        if (res?.already_exists && !row.work_done) {
+          setWdErr(
+            `${row.poid || row.name}: Work Done ${res.name} already covers this line — nothing new was created.`,
+          );
+        }
       }
       await loadExecutions();
     } catch (err) {

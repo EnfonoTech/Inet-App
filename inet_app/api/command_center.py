@@ -1706,7 +1706,32 @@ def _upsert_po_dispatch_for_line(
     dispatch_mode="Manual",
 ):
     """Create or update PO Dispatch for a line while preserving immutable system_id."""
+    # The caller's key has to actually identify a line, because both things
+    # this function does with it are destructive when it does not.
+    #
+    # The existing-row lookup below passes po_intake straight into a filter,
+    # so a blank one becomes `po_intake IS NULL` and matches whichever
+    # dispatch happens to share the line number -- a live, unrelated row.
+    # That row is then overwritten wholesale from `payload`, POID included,
+    # with update_modified=False, so it leaves no trace of having changed.
+    # And _make_poid joins its parts with "-", so a line with no PO number
+    # yields "-1" rather than failing: a syntactically valid POID pointing at
+    # nothing, written over the real one.
+    #
+    # Every internal caller passes a PO Intake document name. Only
+    # dispatch_po_lines builds this from a request payload, which is the one
+    # path that can arrive without it.
     po_line_no = cint(line_dict.get("po_line_no") or 0)
+    if not str(po_intake_name or "").strip():
+        frappe.throw(
+            f"Cannot place PO line {po_line_no}: no PO Intake given, so the "
+            "line cannot be matched to the PO it belongs to."
+        )
+    if not str(po_no or "").strip() and not str(line_dict.get("poid") or "").strip():
+        frappe.throw(
+            f"Cannot place PO line {po_line_no}: it carries neither a PO "
+            "number nor a POID, so it cannot be identified."
+        )
     project_code = line_dict.get("project_code")
     center_area = line_dict.get("center_area") or line_dict.get("area")
     site_code = (line_dict.get("site_code") or "").strip()
@@ -1720,6 +1745,14 @@ def _upsert_po_dispatch_for_line(
         shipment_number=line_dict.get("shipment_number"),
         fallback=line_dict.get("poid"),
     )
+    # Last line of defence on the value itself, since _resolve_line_poid is
+    # shared with the upload and archive paths and cannot reject on its own:
+    # a leading "-" means _make_poid found no PO number and joined an empty
+    # first part. Writing that over a real POID is the damage this prevents.
+    if not poid or poid.startswith("-"):
+        frappe.throw(
+            f"Cannot place PO line {po_line_no}: could not build a POID for it."
+        )
     payload = {
         "poid": poid,
         "po_intake": po_intake_name,
@@ -5267,6 +5300,7 @@ def assign_im_target_month(payload=None):
         frappe.throw("dispatches (list of PO Dispatch names) is required")
 
     _im_resolved, im_identifiers = _require_inet_im_session()
+    _require_no_shortcut_close(dispatches, "set a forecast on these lines")
     target_month, target_week, target_date, target_team = _validate_forecast_input(
         payload.get("target_month"),
         payload.get("target_week"),
@@ -5555,6 +5589,45 @@ def dispatch_po_lines(payload):
         frappe.throw(
             frappe._("Implementation Manager (im) is required to dispatch PO lines.")
         )
+
+    # A line already closed by Direct Close or Backend must not be pushed back
+    # into the rollout track. These arrive as PO Intake Line rows, so resolve
+    # the PO Dispatch each one would land on (the same po_intake + po_line_no
+    # key _upsert_po_dispatch_for_line uses) and check those.
+    existing = []
+    for line in lines:
+        parent = line.get("po_intake") or line.get("parent")
+        found = None
+        if parent:
+            found = frappe.db.get_value(
+                "PO Dispatch",
+                {"po_intake": parent, "po_line_no": cint(line.get("po_line_no") or 0)},
+                "name",
+            )
+        if not found:
+            # Fall back to the business POID. _upsert_po_dispatch_for_line
+            # keys on po_intake + po_line_no, but a row whose po_intake was
+            # never stamped still matches there on a NULL parent, so keying
+            # only the same way would let exactly those lines through the
+            # guard and into the upsert.
+            try:
+                poid_guess = _resolve_line_poid(
+                    po_no=line.get("po_no"),
+                    po_line_no=cint(line.get("po_line_no") or 0),
+                    shipment_number=line.get("shipment_number"),
+                    fallback=line.get("poid"),
+                )
+            except Exception:
+                # _make_poid needs a po_no to rebuild a POID from parts. A line
+                # carrying neither a POID nor a PO number cannot be matched to
+                # an existing dispatch here; the upsert below will raise its
+                # own, clearer error about the missing data.
+                poid_guess = None
+            if poid_guess:
+                found = frappe.db.get_value("PO Dispatch", {"poid": poid_guess}, "name")
+        if found:
+            existing.append(found)
+    _require_no_shortcut_close(existing, "dispatch these lines")
 
     created = 0
     poids = []
@@ -5962,6 +6035,114 @@ def _require_dispatch_im(names, action):
     )
 
 
+def _labelled(rows, action, lead, tail):
+    """Shared shape for the two-path guards below: name the POIDs, cap at five.
+
+    Whoever is blocked needs to know which lines to go and look at, and a
+    bulk action can carry hundreds, so the message names the first five and
+    counts the rest.
+    """
+    if not rows:
+        return
+    labels = [r["label"] for r in rows]
+    shown = ", ".join(labels[:5])
+    more = f" and {len(labels) - 5} more" if len(labels) > 5 else ""
+    frappe.throw(
+        f"Cannot {action}. {lead} "
+        f"{len(labels)} PO line{'s' if len(labels) != 1 else ''}: {shown}{more}. {tail}"
+    )
+
+
+def _require_no_shortcut_close(names, action):
+    """Refuse a ROLLOUT-track action on a line already closed by a shortcut.
+
+    Direct Close and Backend both record the work immediately, creating a
+    Work Done with no execution behind it. The line is finished and, once
+    PIC has it, invoiced. Planning or forecasting it again starts a second
+    route to the same revenue that can never complete: Work Done.system_id
+    is unique, so the rollout side finds the shortcut record already sitting
+    there and gives up — silently, which is how this was reported. Blocking
+    at the point of planning says so while the IM can still act on it.
+
+    Only shortcut records block. A Work Done that came THROUGH an execution
+    does not: a later visit legitimately takes that record over, which is
+    what generate_work_done's visit rule is for.
+    """
+    ids = [n for n in (names or []) if n]
+    if not ids:
+        return
+    ph = ", ".join(["%s"] * len(ids))
+    src = "wd.source" if frappe.db.has_column("Work Done", "source") else "''"
+    rows = frappe.db.sql(
+        f"""
+        SELECT IFNULL(NULLIF(pd.poid, ''), pd.name) AS label,
+               IFNULL({src}, '') AS source
+        FROM `tabPO Dispatch` pd
+        INNER JOIN `tabWork Done` wd
+                ON wd.system_id = pd.name AND IFNULL(wd.execution, '') = ''
+        WHERE pd.name IN ({ph})
+        ORDER BY label
+        """,
+        tuple(ids), as_dict=True,
+    )
+    sources = sorted({(r["source"] or "a shortcut close") for r in rows})
+    _labelled(
+        rows, action,
+        f"Work Done already exists ({', '.join(sources)}) for",
+        "Reopen or cancel that Work Done first if the line really has to be re-run.",
+    )
+
+
+def _require_no_rollout_track(names, action):
+    """Refuse a SHORTCUT action on a line already committed to the rollout.
+
+    The mirror of the guard above. Once a line carries a live Rollout Plan,
+    or has been dispatched from PO Control with a forecast week, the work is
+    being run by a team and its Work Done will come from that execution.
+    Direct-closing or backend-assigning it behind that leaves the plan
+    orphaned and the line closed by two routes at once.
+
+    A cancelled plan does not count -- that line was pulled back out of the
+    rollout deliberately, and closing it directly afterwards is exactly what
+    should happen. The forecast test is target_week, not target_month:
+    dispatch_po_lines stamps a month on every line it touches, so a month
+    would block every line in the system, while the week is only ever set by
+    assign_im_target_month -- the PO Control action that promotes a line into
+    My Dispatches and commits it to being rolled out.
+    """
+    ids = [n for n in (names or []) if n]
+    if not ids:
+        return
+    ph = ", ".join(["%s"] * len(ids))
+    has_week = frappe.db.has_column("PO Dispatch", "target_week")
+    week_sel = "IFNULL(pd.target_week, '')" if has_week else "''"
+    rows = frappe.db.sql(
+        f"""
+        SELECT IFNULL(NULLIF(pd.poid, ''), pd.name) AS label,
+               (SELECT COUNT(*) FROM `tabRollout Plan` rp
+                 WHERE rp.po_dispatch = pd.name
+                   AND IFNULL(rp.plan_status, '') <> 'Cancelled') AS plans,
+               {week_sel} AS week
+        FROM `tabPO Dispatch` pd
+        WHERE pd.name IN ({ph})
+        HAVING plans > 0 OR week <> ''
+        ORDER BY label
+        """,
+        tuple(ids), as_dict=True,
+    )
+    planned = [r for r in rows if r["plans"]]
+    lead = (
+        "A rollout plan already covers"
+        if planned
+        else "PO Control has already dispatched"
+    )
+    _labelled(
+        rows, action, lead,
+        "Finish it through Rollout Execution, or cancel the plan / clear the "
+        "forecast week first.",
+    )
+
+
 def _require_line_attributes(names, huawei_im, project_domain, action):
     """Refuse the action unless every line ends up with a Huawei IM and a
     Project Domain.
@@ -6121,6 +6302,7 @@ def create_rollout_plans(payload):
     _require_line_attributes(
         dispatches, huawei_im_override, project_domain_override, "planning these lines"
     )
+    _require_no_shortcut_close(dispatches, "plan these lines")
 
     # Look up multiplier. "Execution" is the new label for what used to be
     # "Work Done"; fall back so renames don't require touching the master.
@@ -7748,10 +7930,21 @@ def generate_work_done(execution_name, issue_flag=None):
         # No execution chain behind the existing record (Direct Close,
         # Backend, or a PIC-rejection placeholder) leaves no visit to
         # compare against, and those carry milestone flags and PIC status
-        # that a rollout execution must not silently overwrite — left
-        # alone, exactly as before.
+        # that a rollout execution must not silently overwrite. The record
+        # is still left alone — but SAY SO. Returning quietly was reported
+        # as "the button does nothing": the page discards the return value,
+        # so a refusal dressed as a success reaches the user as silence.
         if not owner_visit_row:
-            return {"name": existing_wd_name, "already_exists": True}
+            wd_info = frappe.db.get_value(
+                "Work Done", existing_wd_name,
+                ["source", "direct_close_by", "billing_status"], as_dict=True,
+            ) or {}
+            origin = wd_info.get("source") or "outside the rollout"
+            by = wd_info.get("direct_close_by")
+            frappe.throw(
+                f"This PO line already has Work Done {existing_wd_name} "
+                f"({origin}{f' — {by}' if by else ''}). Its revenue is already counted."
+            )
         if cint(frappe.db.get_value("Rollout Plan", rp_name, "visit_number")) <= cint(
             owner_visit_row[0][0]
         ):
@@ -17106,6 +17299,18 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                  WHERE de_wd.rollout_plan = de.rollout_plan
                  LIMIT 1
                ) AS work_done,
+               -- Work Done that reached this LINE outside the rollout (Direct
+               -- Close, Backend, a PIC placeholder). `work_done` above only
+               -- sees records created through an execution, so a shortcut
+               -- close left the row looking eligible and the button live,
+               -- while the backend refused it. Surfaced separately so the
+               -- page can say why instead of the click doing nothing.
+               (
+                 SELECT wd3.name FROM `tabWork Done` wd3
+                 WHERE wd3.system_id = pd.name
+                   AND IFNULL(wd3.execution, '') = ''
+                 LIMIT 1
+               ) AS work_done_external,
                it.team_name AS team_name,
                {im_full_sql_ex}
                {im_ex_extra_sql}
@@ -21105,6 +21310,7 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
     _require_line_attributes(
         po_dispatches, huawei_im, project_domain, "closing these lines"
     )
+    _require_no_rollout_track(po_dispatches, "direct-close these lines")
 
     milestone = (milestone or "").strip().upper() or None
     if milestone and milestone not in ("MS1", "MS2"):
@@ -21535,6 +21741,7 @@ def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, rema
     if not candidates:
         frappe.throw("po_dispatch is required")
     _require_dispatch_im(candidates, "assigning these lines to a backend team")
+    _require_no_rollout_track(candidates, "assign these lines to a backend team")
 
     team = frappe.db.get_value(
         "INET Team", backend_team,
