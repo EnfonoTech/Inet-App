@@ -6661,6 +6661,22 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
                 pass
 
     updates = {}
+    # A cancelled plan is terminal and must not be revived by its own
+    # execution. Nothing un-cancels a plan -- respond_to_cancel_request only
+    # ever sets Cancelled, and a re-attempt gets a NEW plan -- so any write
+    # that moves the status off Cancelled here is wrong.
+    #
+    # This is what produced two plans both numbered visit 1 on the same POID.
+    # A plan was cancelled with PM approval ("access not approved"); its field
+    # execution then reached Completed and the branch below stamped the plan
+    # Completed again. Meanwhile the replacement plan had already been given
+    # visit 1, because the visit counter skipped cancelled plans at the time
+    # (cf13caa has since removed that exclusion). Two live visit-1 plans on
+    # one line leave generate_work_done's "at or below the owning visit"
+    # rule unable to tell them apart: the second execution is offered a Work
+    # Done it can never get.
+    if (frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status") or "") == "Cancelled":
+        return
     if effective in _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE:
         cur = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
         # "Extended" is the other valid starting point for this same flip —
@@ -7919,6 +7935,16 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     )
     if not rp:
         frappe.throw(f"Rollout Plan {rp_name} not found.")
+
+    # A cancelled plan is an abandoned attempt. Whatever its execution says,
+    # the line's real work belongs to the plan that replaced it, and that is
+    # where the Work Done goes. `plan_status` was already being read here and
+    # simply never tested.
+    if (rp.plan_status or "") == "Cancelled":
+        frappe.throw(
+            f"Plan {rp_name} was cancelled, so its execution cannot record Work Done. "
+            f"Use the plan that replaced it."
+        )
 
     dispatch_name = rp.po_dispatch
 

@@ -528,6 +528,9 @@ export default function IMExecution() {
       if (e.is_dummy_po) continue;
       if (Number(e.is_internal_work || 0)) continue;
       if (e.execution_status !== "Completed") continue;
+      // An execution on a cancelled plan belongs to an abandoned attempt —
+      // the replacement plan carries the line's Work Done.
+      if (e.plan_status === "Cancelled") continue;
       if (!(isNotRequired(e.qc_required) || ["Pass", "Not Applicable"].includes(e.qc_status))) continue;
       if (e.work_done) continue;
       // Closed outside the rollout (Direct Close / Backend): the backend
@@ -633,6 +636,8 @@ export default function IMExecution() {
       return `Work Done already exists${suffix}`;
     }
     if (e.execution_status !== "Completed") return `Not completed — ${e.execution_status || "—"}`;
+    if (e.plan_status === "Cancelled")
+      return "Plan was cancelled — the replacement plan carries this line's Work Done";
     if (!isNotRequired(e.qc_required) && !["Pass", "Not Applicable"].includes(e.qc_status)) return `QC not passed — ${e.qc_status || "Pending"}`;
     return "Duplicate plan (another execution covers this)";
   }
