@@ -4971,29 +4971,43 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
     return _shrink_rows(rows, "PO Dispatch", keep=PO_DISPATCH_LIST_COLS)
 
 
-def _next_visit_number_for_dispatch(po_dispatch_name):
+# Visit types that mean "another attempt at the line", as opposed to another
+# plan WITHIN the current attempt. Only these advance the visit number.
+_NEW_VISIT_TYPES = frozenset(("Re-Visit", "Extra Visit"))
+
+
+def _next_visit_number_for_dispatch(po_dispatch_name, visit_type=None):
     """Return the visit number for a NEW Rollout Plan on this POID.
 
-    The first plan is visit #1, the next (re-visit) is #2, and so on. Uses
-    MAX(visit_number) and COUNT(*) together so an already-filled column with
-    gaps still advances monotonically.
+    A visit is one attempt at the line, and it can take more than one plan.
+    Work that simply needs two dates -- or two teams on two dates -- is still
+    the FIRST visit: those plans are companions and share visit #1. Only a
+    Re-Visit or an Extra Visit is a further attempt, and only those advance
+    the number. The planning pages send visit_type "Execution"; Issues &
+    Risks sends "Re-Visit" and shows it read-only, so the two cases are
+    already distinguishable without a new field.
+
+    Advancing uses MAX + 1, never COUNT. COUNT was there to step over gaps in
+    a partly-filled column, but it cannot survive companions: two plans both
+    at visit 1 would make the next Re-Visit #3 and skip #2 entirely.
     """
     if not po_dispatch_name:
         return 1
     try:
         row = frappe.db.sql(
-            "SELECT COALESCE(MAX(visit_number), 0) AS max_v, COUNT(*) AS cnt "
+            "SELECT COALESCE(MAX(visit_number), 0) AS max_v "
             "FROM `tabRollout Plan` WHERE po_dispatch = %s",
             (po_dispatch_name,),
             as_dict=True,
         )
     except Exception:
         return 1
-    if not row:
-        return 1
-    max_v = cint(row[0].get("max_v") or 0)
-    cnt = cint(row[0].get("cnt") or 0)
-    return max(max_v, cnt) + 1
+    max_v = cint(row[0].get("max_v") or 0) if row else 0
+    if (visit_type or "") in _NEW_VISIT_TYPES:
+        return max_v + 1
+    # A companion plan joins the visit already in progress; the very first
+    # plan on a line starts at 1.
+    return max_v or 1
 
 
 def _batch_item_activity_types(rows, item_key="item_code"):
@@ -6440,7 +6454,7 @@ def create_rollout_plans(payload):
         if hasattr(doc, "ciag_required"):
             doc.ciag_required = row_ciag_required
         # Visit # advances per POID: 1st plan = 1, 2nd = 2 (Re-Visit), etc.
-        doc.visit_number = _next_visit_number_for_dispatch(dispatch_name)
+        doc.visit_number = _next_visit_number_for_dispatch(dispatch_name, visit_type)
         doc.visit_multiplier = visit_multiplier
         # target_amount is this plan's own completion target (achieved_amount /
         # target_amount = completion_pct, see _sync_execution_to_plan) — it must
@@ -7948,6 +7962,55 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
 
     dispatch_name = rp.po_dispatch
 
+    # A visit can take several plans -- two dates, or two teams on two dates.
+    # The line's work is finished only when EVERY one of them is, so the whole
+    # visit has to land before a Work Done can be recorded. A companion that
+    # nobody has executed yet blocks it too: an unstarted plan is precisely
+    # the case worth catching, and one Work Done carries the full line amount.
+    # Cancelled companions are ignored -- they were pulled out of the visit.
+    visit_no = cint(frappe.db.get_value("Rollout Plan", rp_name, "visit_number") or 0)
+    # "Finished" means what Rollout Work Done itself means by it: a completed
+    # execution AND QC settled, judged by each companion's own qc_required.
+    # Checking only execution_status would let a companion still waiting on QC
+    # count as done — and the anchor below would then be free to land the
+    # record on that very execution.
+    qc_req_expr = (
+        "IFNULL(rp2.qc_required, 1)"
+        if frappe.db.has_column("Rollout Plan", "qc_required")
+        else "1"
+    )
+    unfinished = frappe.db.sql(
+        f"""
+        SELECT rp2.name, rp2.plan_date, rp2.team, rp2.plan_status,
+               (SELECT COUNT(*) FROM `tabDaily Execution` d
+                 WHERE d.rollout_plan = rp2.name
+                   AND d.execution_status = 'Completed') AS done,
+               {qc_req_expr} AS qc_needed,
+               (SELECT COUNT(*) FROM `tabDaily Execution` d2
+                 WHERE d2.rollout_plan = rp2.name
+                   AND IFNULL(d2.qc_status, '') IN ('Pass', 'Not Applicable')) AS qc_ok
+        FROM `tabRollout Plan` rp2
+        WHERE rp2.po_dispatch = %s
+          AND IFNULL(rp2.visit_number, 0) = %s
+          AND IFNULL(rp2.plan_status, '') <> 'Cancelled'
+          AND rp2.name <> %s
+        HAVING done = 0 OR (qc_needed = 1 AND qc_ok = 0)
+        ORDER BY rp2.plan_date
+        """,
+        (dispatch_name, visit_no, rp_name), as_dict=True,
+    )
+    if unfinished:
+        def _why(u):
+            reason = "no completed execution" if not u["done"] else "QC not passed"
+            return f"{u['name']} ({u['plan_date']}, {u['team'] or 'no team'} — {reason})"
+        names = ", ".join(_why(u) for u in unfinished[:3])
+        more = f" and {len(unfinished) - 3} more" if len(unfinished) > 3 else ""
+        frappe.throw(
+            f"Visit {visit_no} of this line also covers "
+            f"{len(unfinished)} plan{'s' if len(unfinished) != 1 else ''} not finished yet: "
+            f"{names}{more}. Work Done can be recorded once the whole visit is done."
+        )
+
     # Hard guarantee: at most ONE Work Done can ever exist per PO Dispatch
     # (POID), no matter how many Rollout Plans/visits it has had. The
     # rollout_plan-scoped check above only catches a retry on the SAME
@@ -8067,6 +8130,15 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     revenue = flt(dispatch.line_amount) or (billing_rate * executed_qty)
 
     # Still aggregate DE rows for team-cost calculation (multi-team support).
+    #
+    # Deliberately scoped to THIS plan, not the whole visit, even though a
+    # visit's companion plans can carry other teams. team_cost_sar is a
+    # team-DAY cost charged whole to one POID, which is why the app already
+    # stopped showing anything built on it: ProjectDetail dropped its Cost and
+    # Margin columns for exactly that reason, and the Work Done detail modal
+    # hides total_cost_sar / margin_sar. Nothing in the frontend reads this
+    # field. Widening it would spread a figure that is already not a real
+    # per-line cost, so it stays as it was.
     plan_de_rows = frappe.db.sql(
         "SELECT name, team, IFNULL(achieved_qty, 0) AS achieved_qty "
         "FROM `tabDaily Execution` WHERE rollout_plan = %s",
@@ -8138,7 +8210,26 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
         if existing_wd_name
         else frappe.new_doc("Work Done")
     )
-    wd.execution = execution_name
+    # `execution` is a single link but a visit can have several. Anchor it to
+    # the LAST completed execution of the visit rather than whichever row was
+    # clicked, so the record is the same either way — and so it is dated when
+    # the line's work actually finished, which is what every report reads
+    # (COALESCE(de.execution_date, DATE(wd.creation))).
+    anchor = frappe.db.sql(
+        """
+        SELECT de.name
+        FROM `tabDaily Execution` de
+        JOIN `tabRollout Plan` rp2 ON rp2.name = de.rollout_plan
+        WHERE rp2.po_dispatch = %s
+          AND IFNULL(rp2.visit_number, 0) = %s
+          AND IFNULL(rp2.plan_status, '') <> 'Cancelled'
+          AND de.execution_status = 'Completed'
+        ORDER BY de.execution_date DESC, de.creation DESC
+        LIMIT 1
+        """,
+        (dispatch_name, visit_no),
+    )
+    wd.execution = anchor[0][0] if anchor else execution_name
     wd.system_id = exec_doc.system_id
     wd.region_type = dispatch.get("region_type") or region_type_from_center_area(center_area)
     wd.item_code = item_code
@@ -17149,9 +17240,17 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             portal_clause += " AND NOT (IFNULL(pd.is_internal_work,0) = 1 AND de.execution_status = 'Completed')"
 
     # Hide a DE once the IM has nothing left to do with it. Two rules (OR):
-    # 1. Lead-DE rule: this DE's own QC/CIAG is done AND a WD exists for the plan.
-    # 2. Companion-DE rule (multi-team): WD was created through a *different* DE in the
-    #    same plan — this DE is a secondary team row and the plan is already closed.
+    # 1. Lead-DE rule: this DE's own QC/CIAG is done AND a WD exists for the VISIT.
+    # 2. Companion-DE rule: the WD was created through a *different* DE of the
+    #    same visit — this DE is a secondary row and the line is already closed.
+    #
+    # Both rules are scoped to the VISIT, not to de.rollout_plan. They were
+    # written when a visit meant one plan, so they only ever saw a second team
+    # on that same plan. A visit can now run to several companion plans (two
+    # dates, two teams) and still yields exactly one Work Done, anchored to
+    # whichever execution finished last — so a plan-scoped test left every
+    # other companion sitting in Rollout Work Done forever, correctly told
+    # "Work Done already exists" and never going away.
     ciag_col_hide = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
     qc_req_col2 = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
     ciag_req_col2 = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
@@ -17166,7 +17265,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         "    AND EXISTS ("
         "      SELECT 1 FROM `tabWork Done` wd0"
         "      INNER JOIN `tabDaily Execution` de_wd0 ON de_wd0.name = wd0.execution"
-        "      WHERE de_wd0.rollout_plan = de.rollout_plan"
+        "      INNER JOIN `tabRollout Plan` rp_wd0 ON rp_wd0.name = de_wd0.rollout_plan"
+        "      WHERE rp_wd0.po_dispatch = rp.po_dispatch"
+        "      AND IFNULL(rp_wd0.visit_number, 0) = IFNULL(rp.visit_number, 0)"
+        "      AND IFNULL(rp_wd0.plan_status, '') <> 'Cancelled'"
         "    )"
         "   )"
         "   OR"
@@ -17174,7 +17276,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         "   EXISTS ("
         "     SELECT 1 FROM `tabWork Done` wd1"
         "     INNER JOIN `tabDaily Execution` de_wd1 ON de_wd1.name = wd1.execution"
-        "     WHERE de_wd1.rollout_plan = de.rollout_plan"
+        "     INNER JOIN `tabRollout Plan` rp_wd1 ON rp_wd1.name = de_wd1.rollout_plan"
+        "     WHERE rp_wd1.po_dispatch = rp.po_dispatch"
+        "     AND IFNULL(rp_wd1.visit_number, 0) = IFNULL(rp.visit_number, 0)"
+        "     AND IFNULL(rp_wd1.plan_status, '') <> 'Cancelled'"
         "     AND de_wd1.name != de.name"
         "   )"
         " )"
@@ -17406,10 +17511,19 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                pd.is_dummy_po,
                pd.customer AS customer,
                {_remark_select()},
+               -- The Work Done covering this row's VISIT, not just its own
+               -- plan. A visit can run to several companion plans and yields
+               -- one Work Done, anchored to whichever execution finished
+               -- last — so scoping this to de.rollout_plan left every other
+               -- companion row looking eligible forever, and clicking it
+               -- only ever answered "already covers this line".
                (
                  SELECT wd.name FROM `tabWork Done` wd
                  INNER JOIN `tabDaily Execution` de_wd ON de_wd.name = wd.execution
-                 WHERE de_wd.rollout_plan = de.rollout_plan
+                 INNER JOIN `tabRollout Plan` rp_wd ON rp_wd.name = de_wd.rollout_plan
+                 WHERE rp_wd.po_dispatch = pd.name
+                   AND IFNULL(rp_wd.visit_number, 0) = IFNULL(rp.visit_number, 0)
+                   AND IFNULL(rp_wd.plan_status, '') <> 'Cancelled'
                  LIMIT 1
                ) AS work_done,
                -- Work Done that reached this LINE outside the rollout (Direct
