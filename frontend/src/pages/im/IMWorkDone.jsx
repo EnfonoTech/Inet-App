@@ -862,6 +862,12 @@ export default function IMWorkDone() {
     (async () => {
       try {
         const filters = { im: imName || "", tab };
+        // "All" is the IM's complete picture — closed and invoiced rows
+        // included. Every other tab is a working queue where a finished row
+        // is noise. Sent as its own flag rather than inferred from the tab
+        // name, because the PM page also asks for tab="all" and must keep
+        // hiding finished rows.
+        if (tab === "all") filters.include_finished = 1;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) filters.column_filters = colFilters;

@@ -617,7 +617,11 @@ export default function WorkDone() {
       // so it was silently inheriting that exclusion (e.g. a summary tile
       // showing the true all-time total while this list quietly dropped
       // some of those same rows). "all" matches none of that function's
-      // tab branches, so no exclusion is applied.
+      // tab branches, so no submission-status exclusion is applied.
+      //
+      // Deliberately NOT sending include_finished: this page keeps hiding
+      // rows whose milestones have all reached a terminal PIC status, which
+      // is how it has always behaved. Only the IM's "All" tab asks for those.
       const filters = { tab: "all" };
       if (poStatusFilter.length) filters.dispatch_status = poStatusFilter;
       if (imFilter.length) filters.im = imFilter;

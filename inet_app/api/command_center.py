@@ -9291,12 +9291,22 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
     #     ms2_amount > 0) are both terminal. A two-milestone line with only
     #     one milestone submitted still needs to show — there's real work
     #     left to track on the other one.
-    # The "All" tab opts OUT of this: it is meant to be every work row for the
-    # IM's scope, closed and invoiced ones included, so it must not be scoped
-    # by commercial state at all. The other tabs keep the hide rule — they are
-    # working views, and a resolved row there is noise.
+    # Opting out is EXPLICIT (`include_finished`), not inferred from the tab
+    # name. The IM's "All" tab is meant to be every work row in that IM's
+    # scope, closed and invoiced included, and it used to say so by being the
+    # tab called "all" — but admin/WorkDone.jsx had already been sending
+    # tab="all" since 8857884 for an unrelated reason: it wants no
+    # submission-status slice, and it loads the whole set once to split into
+    # List and Summary client-side. So gating the hide rule on the tab name
+    # silently handed the PM page the opt-out too, and its Work Done list
+    # started carrying commercially finished rows it had never shown.
+    #
+    # `tab` now means only "which submission-status slice"; whether finished
+    # rows are included is its own flag. Default off, so any caller that does
+    # not ask for them keeps the working view it had.
     tab_scope_wd = (filters.get("tab") or "active").strip().lower()
-    if tab_scope_wd != "all" and (
+    include_finished = cint(filters.get("include_finished"))
+    if not include_finished and (
         frappe.db.has_column("PO Dispatch", "pic_status")
         and frappe.db.has_column("PO Dispatch", "pic_status_ms2")
         and frappe.db.has_column("Work Done", "ms1_closed")
