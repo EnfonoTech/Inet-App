@@ -18079,24 +18079,26 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         "action_items": action_items,
     }
 
+    # Having no team is a normal way to work, not a dead end. An IM who only
+    # Direct Closes or milestone-closes never needs one — and used to get a
+    # dashboard of zeros, because this returned a stub before anything was
+    # computed, including the Direct Close revenue immediately below it that
+    # is scoped by pd.im and needs no team at all. The advisory survives as a
+    # note; the bail-out does not.
+    no_teams_note = None
     if not team_ids:
-        return {
-            "im": im_resolved,
-            "teams": [],
-            "projects": projects,
-            "kpi": {"team_count": 0, "revenue": 0, "cost": 0, "profit": 0},
-            "action_items": action_items,
-            "message": (
-                f"No active INET Teams found for this IM "
-                f"(searched: {', '.join(im_identifiers)}). "
-                f"In INET Team master set 'Implementation Manager' to one of those values."
-            ),
-            "debug": debug_info,
-            "last_updated": _iso_now(),
-            "etag": current_etag,
-        }
+        no_teams_note = (
+            f"No active INET Teams for this IM "
+            f"(searched: {', '.join(im_identifiers)}). Plan-based figures are "
+            f"empty; Direct Close and Backend work is still counted. To see "
+            f"team figures, set 'Implementation Manager' on an INET Team."
+        )
 
-    placeholders = ", ".join(["%s"] * len(team_ids))
+    # `IN ()` is a syntax error in MariaDB, so a teamless IM gets a sentinel
+    # that matches no team. The team-scoped figures then come out zero, which
+    # is the right answer for them, while every IM-scoped figure still runs.
+    team_ids_sql = team_ids or [""]
+    placeholders = ", ".join(["%s"] * len(team_ids_sql))
 
     # Revenue this month
     revenue_rows = frappe.db.sql(
@@ -18109,7 +18111,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         WHERE rp.team IN ({placeholders})
         AND exe.execution_date BETWEEN %s AND %s
         """,
-        tuple(team_ids) + (first_day, last_day),
+        tuple(team_ids_sql) + (first_day, last_day),
         as_dict=True,
     )
     revenue = flt(revenue_rows[0].revenue if revenue_rows else 0)
@@ -18181,7 +18183,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         WHERE team IN ({placeholders})
         AND execution_date = %s
         """,
-        tuple(team_ids) + (today_str,),
+        tuple(team_ids_sql) + (today_str,),
         as_dict=True,
     )
     active_today = cint(active_today_rows[0].cnt if active_today_rows else 0)
@@ -18266,8 +18268,88 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         + tuple(im_identifiers) + tuple(rp_im_params),
         as_dict=True,
     )
+    # Lines this IM closed WITHOUT a plan — Direct Close and Backend. The
+    # query above is entirely FROM `tabRollout Plan`, so an IM who works this
+    # way scored zero on every tile even though the work and its revenue are
+    # theirs. Counted separately rather than folded into the plan counts:
+    # those tiles say "Plans", and a Direct Close is not one.
+    #
+    # Dated by wd.creation to agree with the Direct Close revenue figure
+    # above, which uses the same basis. ms1_closed_at / ms2_closed_at hold
+    # the business closing date and would be the truer basis for both — worth
+    # changing together, not one at a time, or the count and the money would
+    # describe different months.
+    _dc_src = "IFNULL(wd.source, '')" if frappe.db.has_column("Work Done", "source") else "''"
+    _dc_ms = frappe.db.has_column("Work Done", "ms1_closed")
+    direct_rows = frappe.db.sql(
+        f"""
+        SELECT wd.name,
+               IFNULL(NULLIF(pd.poid, ''), pd.name) AS poid,
+               IFNULL(pd.site_code, '')     AS site_code,
+               IFNULL(pd.project_code, '')  AS project_code,
+               {_dc_src}                    AS source,
+               IFNULL(wd.revenue_sar, 0)    AS revenue,
+               {"IFNULL(wd.ms1_closed, 0)" if _dc_ms else "0"} AS ms1_closed,
+               {"IFNULL(wd.ms2_closed, 0)" if _dc_ms else "0"} AS ms2_closed,
+               {"IFNULL(wd.subcontractor, '')" if frappe.db.has_column("Work Done", "subcontractor") else "''"} AS subcontractor,
+               DATE(wd.creation)            AS closed_on
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        WHERE IFNULL(wd.execution, '') = ''
+          AND DATE(wd.creation) BETWEEN %s AND %s
+          AND pd.im IN ({_direct_ph})
+        ORDER BY wd.creation DESC
+        """,
+        (first_day, last_day) + tuple(im_identifiers),
+        as_dict=True,
+    ) or []
+
+    # Rolled up in Python rather than five more aggregate queries: the set is
+    # one IM's closes for one month, so it is small, and every figure the
+    # section shows then comes from exactly the same rows as its list.
+    _by_source = {}
+    _by_subcon = {}
+    _ms1_only = _ms2_only = _full = 0
+    _today_cnt = 0
+    _dc_revenue = 0.0
+    for r in direct_rows:
+        label = r["source"] or "Direct Close"
+        b = _by_source.setdefault(label, {"source": label, "count": 0, "revenue": 0.0})
+        b["count"] += 1
+        b["revenue"] += flt(r["revenue"])
+        _dc_revenue += flt(r["revenue"])
+        sub = (r.get("subcontractor") or "").strip() or "Not recorded"
+        sb = _by_subcon.setdefault(sub, {"subcontractor": sub, "count": 0, "revenue": 0.0})
+        sb["count"] += 1
+        sb["revenue"] += flt(r["revenue"])
+        if str(r["closed_on"]) == str(today_str):
+            _today_cnt += 1
+        m1, m2 = cint(r["ms1_closed"]), cint(r["ms2_closed"])
+        if m1 and not m2:
+            _ms1_only += 1
+        elif m2 and not m1:
+            _ms2_only += 1
+        else:
+            _full += 1
+
+    direct_close = {
+        "count": len(direct_rows),
+        "today": _today_cnt,
+        "revenue": flt(_dc_revenue, 2),
+        "by_source": sorted(_by_source.values(), key=lambda x: -x["count"]),
+        "by_subcontractor": sorted(_by_subcon.values(), key=lambda x: -x["revenue"])[:5],
+        "avg_revenue": flt(_dc_revenue / len(direct_rows), 2) if direct_rows else 0.0,
+        "milestones": {"ms1_only": _ms1_only, "ms2_only": _ms2_only, "full_line": _full},
+        # No per-row list: the section shows the roll-ups, not the lines.
+        "range_from": str(first_day),
+        "range_to": str(last_day),
+    }
+    dr = {"closed_cnt": len(direct_rows), "today_cnt": _today_cnt}
+
     skr = (site_kpi_rows[0] if site_kpi_rows else {}) or {}
     site_kpi = {
+        "direct_closed": cint(dr.get("closed_cnt") or 0),
+        "today_direct_closed": cint(dr.get("today_cnt") or 0),
         "total_assigned": cint(skr.get("total_assigned") or 0),
         "distinct_sites": cint(skr.get("distinct_sites") or 0),
         "completed_total": cint(skr.get("completed_total") or 0),
@@ -18524,6 +18606,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         "projects": projects,
         "action_items": action_items,
         "site_kpi": site_kpi,
+        "direct_close": direct_close,
         "team_perf": team_perf,
         "project_progress": project_progress,
         "site_status": site_status,
@@ -18542,6 +18625,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
             "team_count": len(teams),
             "planned_activities": planned_activities,
         },
+        "message": no_teams_note,
         "debug": debug_info,
         "last_updated": _iso_now(),
         "etag": current_etag,

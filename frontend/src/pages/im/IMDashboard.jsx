@@ -88,6 +88,47 @@ function KpiTile({ icon, label, value, tone = "blue", suffix, sub }) {
   );
 }
 
+/* label · value list, used for the three breakdowns in the Direct & Backend
+   section. Long subcontractor names ellipsize rather than wrap, so the three
+   columns keep the same baseline. */
+function Breakdown({ title, rows }) {
+  return (
+    <div>
+      <div style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em", marginBottom: 6 }}>
+        {title}
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>—</div>
+      ) : rows.map((r) => (
+        <div key={r.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.8rem", color: "#334155", padding: "3px 0", borderBottom: "1px solid #f8fafc" }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.label}>{r.label}</span>
+          <span style={{ fontWeight: 700, flex: "0 0 auto", fontVariantNumeric: "tabular-nums" }}>{r.right}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Small figure block for the Direct & Backend section. Deliberately not a
+   KpiTile: those form the fixed six-across header row, and reusing one here
+   would make this section read as a seventh headline metric. */
+function MiniStat({ label, value, tone, wide }) {
+  return (
+    <div style={{
+      flex: wide ? "1 1 100%" : "1 1 0", minWidth: 0,
+      border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px",
+      background: "#fafbfd",
+    }}>
+      <div style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.02em" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: "1.05rem", fontWeight: 700, color: tone || "#0f172a", fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function Section({ title, icon, action, children, style, subtitle }) {
   return (
     <div style={{
@@ -221,12 +262,19 @@ export default function IMDashboard({ overrideIm }) {
   const action = data?.action_items || {};
   const site_locations = Array.isArray(data?.site_locations) ? data.site_locations : [];
   const material_shortage = Number(data?.material_shortage || 0);
+  const directClose = data?.direct_close || null;
 
+  // An IM who only Direct Closes has no plans at all, so a plan-only
+  // measure scored them at zero on work they had finished and billed. A
+  // directly-closed line is both assigned to them and done by them, so it
+  // belongs on BOTH sides of this — counting it only in the numerator would
+  // push a pure Direct Close IM past 100%.
+  const assignedTotal = (k.total_assigned || 0) + (k.direct_closed || 0);
+  const achievedTotal = (k.completed_total || 0) + (k.direct_closed || 0);
   const myPerformancePct = useMemo(() => {
-    const t = k.total_assigned || 0;
-    if (!t) return 0;
-    return Math.round(((k.completed_total || 0) / t) * 100);
-  }, [k.total_assigned, k.completed_total]);
+    if (!assignedTotal) return 0;
+    return Math.round((achievedTotal / assignedTotal) * 100);
+  }, [assignedTotal, achievedTotal]);
 
   return (
     <div className="dashboard" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
@@ -414,6 +462,41 @@ export default function IMDashboard({ overrideIm }) {
         </Section>
       </div>
 
+      {/* ── Direct / Backend closes — work that never had a plan, so none of
+             the plan-based rows above can show it. Rendered only when there
+             is some, which keeps the layout identical for an IM who plans
+             everything. Its own full-width row: dropping it into an existing
+             2fr/1fr row would have re-flowed that row's columns. ── */}
+      {directClose && directClose.count > 0 && (
+        <Section title="Direct & Backend Closes" icon="⚡"
+                 subtitle={`closed ${directClose.range_from} to ${directClose.range_to} — no rollout plan`}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            <MiniStat label="Lines closed"  value={fmt.format(directClose.count)} tone="#4338ca" />
+            <MiniStat label="Closed today"  value={fmt.format(directClose.today)} tone="#0d9488" />
+            <MiniStat label="Revenue (SAR)" value={money.format(directClose.revenue || 0)} tone="#15803d" />
+            <MiniStat label="Avg / line"    value={money.format(directClose.avg_revenue || 0)} tone="#334155" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 18 }}>
+            <Breakdown title="By route"
+                       rows={(directClose.by_source || []).map((b) => ({
+                         key: b.source, label: b.source,
+                         right: `${fmt.format(b.count)} · ${money.format(b.revenue || 0)}`,
+                       }))} />
+            <Breakdown title="By subcontractor"
+                       rows={(directClose.by_subcontractor || []).map((b) => ({
+                         key: b.subcontractor, label: b.subcontractor,
+                         right: `${fmt.format(b.count)} · ${money.format(b.revenue || 0)}`,
+                       }))} />
+            <Breakdown title="By milestone"
+                       rows={[
+                         { key: "ms1", label: "MS1 only",  right: fmt.format(directClose.milestones?.ms1_only || 0) },
+                         { key: "ms2", label: "MS2 only",  right: fmt.format(directClose.milestones?.ms2_only || 0) },
+                         { key: "full", label: "Full line", right: fmt.format(directClose.milestones?.full_line || 0) },
+                       ]} />
+          </div>
+        </Section>
+      )}
+
       {/* ── Row 4: Activity Timeline (1/3) + placeholder map (1/3) + My Performance (1/3) ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <Section title="Activity Timeline" icon="🕒">
@@ -471,11 +554,11 @@ export default function IMDashboard({ overrideIm }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
               <span style={{ fontSize: "0.82rem", color: "#475569" }}>Monthly Target</span>
-              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(k.total_assigned || 0)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>Sites</span></span>
+              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(assignedTotal)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>Sites</span></span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
               <span style={{ fontSize: "0.82rem", color: "#475569" }}>Achieved</span>
-              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(k.completed_total || 0)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>Sites</span></span>
+              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(achievedTotal)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>Sites</span></span>
             </div>
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
