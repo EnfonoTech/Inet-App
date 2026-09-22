@@ -588,6 +588,19 @@ def get_logged_user():
     # SPA uses this on every POST; Desk /app load also calls get_csrf_token() and rotates it —
     # the portal must refresh via GET get_logged_user (no CSRF) after switching tabs.
     out["csrf_token"] = frappe.sessions.get_csrf_token()
+
+    # The real upload ceiling, so the portal can refuse an oversized file in
+    # the browser and name the actual number. Read through Frappe's own
+    # get_max_file_size() rather than System Settings directly, so it honours
+    # the same precedence the server enforces (System Settings, then
+    # site_config, then its 25 MB fallback) — a portal constant would go stale
+    # the moment someone changes the setting, and did: the limit was raised to
+    # 50 MB while the message still said 25.
+    try:
+        from frappe.core.api.file import get_max_file_size
+        out["max_file_size"] = int(get_max_file_size())
+    except Exception:
+        out["max_file_size"] = 0
     return out
 
 

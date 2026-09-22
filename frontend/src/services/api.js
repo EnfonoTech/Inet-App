@@ -5,13 +5,89 @@
  */
 let portalCsrfToken = "";
 
+/**
+ * The server's real upload ceiling, in MB. Comes from get_logged_user, which
+ * reads Frappe's own get_max_file_size() — System Settings > max_file_size
+ * first, then site_config, then its 25 MB fallback. NOT a constant here: the
+ * limit was raised to 50 MB in System Settings while a hardcoded 25 was
+ * still being quoted at people, which is worse than saying nothing.
+ *
+ * Null until the session loads. An unknown limit means the browser check is
+ * skipped and the server's own 413 does the refusing — better than blocking
+ * a legitimate file against a number we are only guessing at.
+ */
+let maxUploadMb = null;
+
+export function getMaxUploadMb() {
+  return maxUploadMb;
+}
+
+/**
+ * Read a Frappe API response, which is not always JSON.
+ *
+ * A request that never reaches Frappe comes back as an HTML error page from
+ * whatever rejected it: nginx answers an oversized upload with a 413 whose
+ * body starts "<html>", and res.json() on that throws
+ *   Unexpected token '<', "<html> <h"... is not valid JSON
+ * which is what a 74 MB attachment showed the user — a parser error standing
+ * in for "the file is too big", with nothing to act on.
+ *
+ * So the body is read as text and only then parsed, and a non-JSON body is
+ * reported by what its status actually means.
+ */
+/**
+ * Throw a message naming the file, its size and the real limit, and point at
+ * the way through: every attachment field also takes a web link, which is
+ * what a large as-built PDF should use rather than being compressed. No
+ * service is named — which one a site uses is their business.
+ */
+export function assertUploadable(file) {
+  if (!maxUploadMb) return;
+  const mb = (file?.size || 0) / (1024 * 1024);
+  if (mb > maxUploadMb) {
+    throw new Error(
+      `"${file.name}" is ${mb.toFixed(1)} MB and the upload limit is ` +
+      `${Math.round(maxUploadMb)} MB. Use "Attach via web link" instead and ` +
+      `paste a shared link to the file.`,
+    );
+  }
+}
+
+async function readJson(res, fallback = "Request failed") {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const looksHtml = /^\s*<(!doctype|html)/i.test(text);
+    let msg;
+    if (res.status === 413) {
+      msg =
+        "That file is too large for the server to accept" +
+        (maxUploadMb ? ` (limit ${Math.round(maxUploadMb)} MB)` : "") +
+        '. Use "Attach via web link" instead.';
+    } else if (res.status === 401 || res.status === 403) {
+      msg = "Your session has expired — sign in again.";
+    } else if (res.status === 502 || res.status === 503 || res.status === 504) {
+      msg = "The server is not responding. Try again in a moment.";
+    } else if (looksHtml) {
+      msg = `The server returned a page instead of data (HTTP ${res.status}).`;
+    } else {
+      msg = `${fallback} (HTTP ${res.status}).`;
+    }
+    // Shaped like a Frappe error payload so every existing caller's
+    // `json.exc` / `json.message` handling keeps working unchanged.
+    return { exc: msg, message: msg, _nonJson: true };
+  }
+}
+
+
 export async function fetchPortalSession() {
   const res = await fetch("/api/method/inet_app.api.project_management.get_logged_user", {
     method: "GET",
     credentials: "include",
     cache: "no-store",
   });
-  const json = await res.json();
+  const json = await readJson(res, "Session check failed");
   if (!res.ok) {
     portalCsrfToken = "";
     throw new Error(json.message || "Session check failed");
@@ -21,6 +97,9 @@ export async function fetchPortalSession() {
     portalCsrfToken = msg.csrf_token;
   } else {
     portalCsrfToken = "";
+  }
+  if (msg && Number(msg.max_file_size) > 0) {
+    maxUploadMb = Number(msg.max_file_size) / (1024 * 1024);
   }
   return msg;
 }
@@ -33,7 +112,7 @@ export async function frappe_login(usr, pwd) {
     headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Frappe-CSRF-Token": "fetch" },
     body,
   });
-  const json = await res.json();
+  const json = await readJson(res, "Login failed");
   if (!res.ok) throw new Error(json.message || "Login failed");
   await fetchPortalSession().catch(() => {});
   return json;
@@ -140,12 +219,12 @@ async function call(method, args = {}) {
   });
 
   let res = await fetch(url, opts());
-  let json = await res.json();
+  let json = await readJson(res, `${method} failed`);
 
   if ((!res.ok || json.exc) && _isLikelyCsrfError(_parseApiError(json))) {
     await fetchPortalSession().catch(() => {});
     res = await fetch(url, opts());
-    json = await res.json();
+    json = await readJson(res, `${method} failed`);
   }
 
   if (!res.ok || json.exc) {
@@ -536,13 +615,17 @@ export const pmApi = {
     fd.append("docname", docname);
     fd.append("folder", "Home/Attachments");
     if (attachedToField) fd.append("fieldname", attachedToField);
+    // Refused here rather than by the server: an oversized file otherwise
+    // uploads in full before nginx rejects it with a 413, and the user waits
+    // for a failure that was knowable at the moment they picked the file.
+    assertUploadable(file);
     const res = await fetch("/api/method/upload_file", {
       method: "POST",
       credentials: "include",
       headers: { "X-Frappe-CSRF-Token": getCsrf() },
       body: fd,
     });
-    const json = await res.json();
+    const json = await readJson(res, "Upload failed");
     if (!res.ok || json.exc) throw new Error(json.message || "Upload failed");
     return json.message;
   },
@@ -563,13 +646,17 @@ export const pmApi = {
       headers: { "X-Frappe-CSRF-Token": getCsrf() },
       body: fd,
     });
-    const json = await res.json();
+    const json = await readJson(res, "Failed to attach link");
     if (!res.ok || json.exc) throw new Error(json.message || "Failed to attach link");
     return json.message;
   },
   attachImLink: (po_dispatch, url, name, slot = "im_attachment") =>
     pmApi.attachDocLink("PO Dispatch", po_dispatch, url, name, slot),
   uploadFileGeneric: async (file) => {
+    // Refused here rather than by the server: an oversized file otherwise
+    // uploads in full before nginx rejects it with a 413, and the user waits
+    // for a failure that was knowable at the moment they picked the file.
+    assertUploadable(file);
     const fd = new FormData();
     fd.append("file", file, file.name);
     fd.append("is_private", "0");
@@ -580,7 +667,7 @@ export const pmApi = {
       headers: { "X-Frappe-CSRF-Token": getCsrf() },
       body: fd,
     });
-    const json = await res.json();
+    const json = await readJson(res, "Upload failed");
     if (!res.ok || json.exc) throw new Error(json.message || "Upload failed");
     return json.message?.file_url || "";
   },
