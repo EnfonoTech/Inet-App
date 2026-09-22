@@ -347,15 +347,23 @@ def _pair_pm_users_with_admin():
 
 
 def _ensure_pic_permissions():
-    """Grant INET PIC role the permissions needed for invoice creation.
+    """Grant the invoicing/purchasing permissions PIC and admins both need.
 
     Frappe uses Custom DocPerm mode for a doctype the moment ANY Custom DocPerm
     row exists — it then ignores all standard DocPerm entries completely. To
     avoid wiping other roles' access we first migrate existing standard DocPerm
-    rows to Custom DocPerm, then add the INET PIC entry.
+    rows to Custom DocPerm, then add our own entries.
+
+    INET Admin gets the same set as INET PIC. The Subcon PO page is reachable
+    by admins and PMs (a PM holds INET Admin), and its own data endpoints
+    already admit them — `_pic_role_or_throw` accepts INET Admin — but the
+    ERPNext documents it raises did not: an admin could call
+    create_purchase_order_from_pic, which saves with ignore_permissions, and
+    then be unable to READ the Purchase Order it had just made. Granting the
+    same rows keeps the page coherent for whoever is allowed to open it.
     """
-    role = "INET PIC"
-    if not frappe.db.exists("Role", role):
+    roles = [r for r in ("INET PIC", "INET Admin") if frappe.db.exists("Role", r)]
+    if not roles:
         return
 
     # Every permission checkbox Custom DocPerm has, for the three documents PIC
@@ -428,13 +436,14 @@ def _ensure_pic_permissions():
                 except Exception:
                     pass
 
-        # Now add or update the INET PIC row
-        existing = frappe.db.get_value(
-            "Custom DocPerm", {"parent": dt_name, "role": role, "permlevel": 0}, "name"
-        )
-        if existing:
-            frappe.db.set_value("Custom DocPerm", existing, perm_map)
-        else:
+        # Now add or update our own row for each role
+        for role in roles:
+            existing = frappe.db.get_value(
+                "Custom DocPerm", {"parent": dt_name, "role": role, "permlevel": 0}, "name"
+            )
+            if existing:
+                frappe.db.set_value("Custom DocPerm", existing, perm_map)
+                continue
             try:
                 frappe.get_doc({
                     "doctype": "Custom DocPerm",

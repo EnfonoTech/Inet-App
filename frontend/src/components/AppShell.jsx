@@ -150,6 +150,13 @@ const adminNav = [
   { to: "/backend",    label: "Backend",       icon: "briefcase" },
   { to: "/reports",    label: "Reports",     icon: "barChart" },
   { to: "/pic-overview", label: "PIC Overview", icon: "layers" },
+  // Supplier side. The route was already admin-enabled in App.jsx, so the
+  // page has always been reachable by typing the URL — it just had no way in
+  // from the sidebar, which for most people means it does not exist.
+  // Subcon PO only. The payout summary is a PIC roll-up and PM reaches it
+  // through PIC Overview, so a second entry here would be a duplicate route
+  // to the same figures.
+  { to: "/pic-subcon-po", label: "Subcon PO", icon: "package" },
   { to: "/timesheets", label: "Time logs",   icon: "clock" },
   { to: "/approvals", label: "Approvals", icon: "shieldCheck" },
   { to: "/teams",     label: "Teams",     icon: "user" },

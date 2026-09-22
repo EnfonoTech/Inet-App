@@ -1359,6 +1359,31 @@ body.dashboard-fullscreen .content {
   }
 }
 
+/* Small screens — a small laptop, or a phone. The sidebar rows carry the
+   desktop metrics (9px of padding, 2px apart, 0.82rem), and on a smaller
+   screen that reads as one dense block: the labels run together and picking
+   an entry takes aim. Given more room here; the list scrolls, which is fine.
+
+   ONE rule set for both cases, on purpose — height catches the small laptop,
+   width catches the phone, and they get identical spacing rather than the
+   phone being treated as a special case needing bigger everything. */
+@media (max-height: 820px), (max-width: 900px) {
+  .sidebar-nav {
+    gap: 5px;
+    padding: 10px 10px 14px;
+  }
+
+  .sidebar-nav .nav-link,
+  .sidebar.collapsed .nav-link {
+    padding: 11px 12px;
+    font-size: 0.85rem;
+  }
+
+  .sidebar-nav .nav-section-label {
+    padding: 14px 12px 7px;
+  }
+}
+
 @media (min-width: 901px) {
   .mobile-menu-btn,
   .sidebar-backdrop {
