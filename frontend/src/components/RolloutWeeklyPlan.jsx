@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../services/api";
-import { isoLocal as iso, mondayOfLocal as mondayOf, parseLocal } from "../utils/weeks";
+import { isoLocal as iso, weekStartOfLocal as weekStartOf, parseLocal } from "../utils/weeks";
 
 /**
  * Rollout Planning — weekly dashboard.
@@ -143,7 +143,7 @@ export default function RolloutWeeklyPlan({ imName, portal, refreshKey, reportHr
     setColWidths(base);
     try { localStorage.removeItem(WIDTH_STORE); } catch { /* ignore */ }
   };
-  const [weekStart, setWeekStart] = useState(() => iso(mondayOf(new Date())));
+  const [weekStart, setWeekStart] = useState(() => iso(weekStartOf(new Date())));
   // The quarter containing the week ON SCREEN, and a FISCAL quarter, not a
   // calendar one: this bench's fiscal year runs Apr–Mar, so Jul–Sep is Q2, not
   // Q3. The backend reads the start month off the Fiscal Year record, so the

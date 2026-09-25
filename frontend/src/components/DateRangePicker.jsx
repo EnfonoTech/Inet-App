@@ -20,10 +20,11 @@ const ISO = (d) => {
 };
 
 function startOfWeek(d) {
-  // Week starts Monday (ISO). Change to 0 to start Sunday if ever needed.
+  // Saturday to Friday — the KSA working week, matching weeks.js and the
+  // server's _week_start. getDay() is Sunday 0 .. Saturday 6, so the distance
+  // back to Saturday is (getDay() + 1) % 7.
   const r = new Date(d);
-  const day = (r.getDay() + 6) % 7; // 0 = Monday
-  r.setDate(r.getDate() - day);
+  r.setDate(r.getDate() - ((r.getDay() + 1) % 7));
   r.setHours(0, 0, 0, 0);
   return r;
 }

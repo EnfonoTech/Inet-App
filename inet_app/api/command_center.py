@@ -3402,11 +3402,30 @@ def _pcc_im_allows_project(project_code, im_identifiers):
     return im_on in set(im_identifiers)
 
 
+# ── The working week ────────────────────────────────────────────────────
+# Saturday to Friday. The business runs in KSA, where the week starts on
+# Saturday and Friday is the holiday — the delivered team report already
+# drops Fridays on that basis. Everything that reasons about a week goes
+# through these two helpers so the anchor is stated once.
+#
+# Python and MariaDB both number weekdays Monday 0 .. Sunday 6, so Saturday
+# is 5 and the distance back to it is (weekday + 2) % 7.
+def _week_start(d):
+    """The Saturday that opens the working week containing `d`."""
+    day = getdate(d)
+    return add_days(day, -((day.weekday() + 2) % 7))
+
+
+def _week_start_sql(col):
+    """Same rule in SQL. `%%` because every caller binds parameters, and a
+    bare % in the statement is read as a format placeholder by pymysql."""
+    return f"DATE_SUB(DATE({col}), INTERVAL ((WEEKDAY({col}) + 2) %% 7) DAY)"
+
+
 def _forecast_week_bounds(target_week):
-    """Snap any date to (monday, sunday) of the week containing it."""
-    wk = getdate(target_week)
-    monday = add_days(wk, -wk.weekday())
-    return monday, add_days(monday, 6)
+    """Snap any date to (saturday, friday) of the working week containing it."""
+    start = _week_start(target_week)
+    return start, add_days(start, 6)
 
 
 def _validate_forecast_input(
@@ -15126,8 +15145,8 @@ def _weekly_performance_report(from_date=None, to_date=None, im_ids=None):
 
     plan_rows = frappe.db.sql(
         f"""
-        SELECT YEARWEEK(rp.plan_date, 1)        AS yw,
-               MIN(DATE(rp.plan_date))           AS week_start,
+        SELECT {_week_start_sql('rp.plan_date')} AS yw,
+               {_week_start_sql('rp.plan_date')} AS week_start,
                COUNT(DISTINCT rp.name)           AS assigned_lines,
                SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines,
                COUNT(CASE WHEN LOWER(IFNULL(rp.visit_type,'')) LIKE '%%re%%visit%%' THEN 1 END) AS revisits,
@@ -15136,7 +15155,7 @@ def _weekly_performance_report(from_date=None, to_date=None, im_ids=None):
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
           {_sc_rp}
-        GROUP BY YEARWEEK(rp.plan_date, 1)
+        GROUP BY yw
         ORDER BY yw
         """,
         (fd, td, *_sp_rp), as_dict=True,
@@ -15148,7 +15167,7 @@ def _weekly_performance_report(from_date=None, to_date=None, im_ids=None):
     # split row so a multi-team plan counts all of its teams.
     team_split_rows = frappe.db.sql(
         f"""
-        SELECT YEARWEEK(rp.plan_date, 1) AS yw, t.team
+        SELECT {_week_start_sql('rp.plan_date')} AS yw, t.team
         FROM `tabRollout Plan` rp
         JOIN (
             SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
@@ -15159,7 +15178,7 @@ def _weekly_performance_report(from_date=None, to_date=None, im_ids=None):
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
           AND t.team IS NOT NULL AND t.team != ''
           {_sc_rp}
-        GROUP BY YEARWEEK(rp.plan_date, 1), t.team
+        GROUP BY yw, t.team
         """,
         (fd, td, *_sp_rp), as_dict=True,
     )
@@ -15169,13 +15188,13 @@ def _weekly_performance_report(from_date=None, to_date=None, im_ids=None):
 
     rev_rows = frappe.db.sql(
         f"""
-        SELECT YEARWEEK(de.execution_date, 1) AS yw,
+        SELECT {_week_start_sql('de.execution_date')} AS yw,
                COALESCE(SUM(wd.revenue_sar), 0) AS revenue
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` de ON de.name = wd.execution
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
           {_sc_de}
-        GROUP BY YEARWEEK(de.execution_date, 1)
+        GROUP BY yw
         """,
         (fd, td, *_sp_de), as_dict=True,
     )
@@ -15471,10 +15490,9 @@ def _rollout_scope_clause(im, alias="pd"):
 
 
 def _rollout_week_bounds(week_start=None):
-    """Monday..Sunday containing `week_start` (today when unset)."""
-    anchor_day = getdate(week_start) if week_start else getdate(nowdate())
-    monday = add_days(anchor_day, -anchor_day.weekday())
-    return monday, add_days(monday, 6)
+    """Saturday..Friday containing `week_start` (today when unset)."""
+    start = _week_start(week_start or nowdate())
+    return start, add_days(start, 6)
 
 
 @frappe.whitelist()

@@ -30,16 +30,20 @@ function shortDt(v) {
   }
 }
 
-// This week, Monday–Sunday. A timesheet page opening on "all time" makes the
-// first paint both slow and meaningless; the week is what a manager checks.
+// This week, Saturday–Friday: the KSA working week, same anchor as weeks.js
+// and the server. A timesheet page opening on "all time" makes the first
+// paint both slow and meaningless; the week is what a manager checks.
 function thisWeek() {
   const now = new Date();
-  const mon = new Date(now);
-  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  const sun = new Date(mon);
-  sun.setDate(mon.getDate() + 6);
-  const iso = (d) => d.toISOString().slice(0, 10);
-  return { from: iso(mon), to: iso(sun) };
+  const sat = new Date(now);
+  sat.setDate(now.getDate() - ((now.getDay() + 1) % 7));
+  const fri = new Date(sat);
+  fri.setDate(sat.getDate() + 6);
+  // Local components, not toISOString() — that converts to UTC first and in
+  // Riyadh turns local midnight into the previous day.
+  const iso = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: iso(sat), to: iso(fri) };
 }
 
 export default function Timesheets() {
