@@ -9,6 +9,7 @@
   "bill_no",
   "request_no",
   "outbound_date",
+  "request_shipment_date",
   "project_name",
   "project",
   "subcon",
@@ -45,6 +46,11 @@
    "label": "Outbound Date"
   },
   {
+   "fieldname": "request_shipment_date",
+   "fieldtype": "Datetime",
+   "label": "Request Shipment Date"
+  },
+  {
    "fieldname": "project_name",
    "fieldtype": "Data",
    "label": "Project Name"
@@ -69,7 +75,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Outbound Status",
-   "options": "Wait to Pick\nPrepared\nPending\nReceived"
+   "options": "Wait to Pick\nPicking\nWait to Check\nPrepared\nHold\nPending\nReceived"
   },
   {
    "fieldname": "du_id",

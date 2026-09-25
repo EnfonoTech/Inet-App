@@ -21,6 +21,9 @@ frappe.listview_settings["Huawei Outbound Plan"] = {
         if (doc.outbound_status === "Prepared") return ["Prepared", "blue", "outbound_status,=,Prepared"];
         if (doc.outbound_status === "Pending") return ["Pending", "orange", "outbound_status,=,Pending"];
         if (doc.outbound_status === "Wait to Pick") return ["Wait to Pick", "yellow", "outbound_status,=,Wait to Pick"];
+        if (doc.outbound_status === "Picking") return ["Picking", "purple", "outbound_status,=,Picking"];
+        if (doc.outbound_status === "Wait to Check") return ["Wait to Check", "cyan", "outbound_status,=,Wait to Check"];
+        if (doc.outbound_status === "Hold") return ["Hold", "red", "outbound_status,=,Hold"];
         return ["Unknown", "gray", ""];
     },
 };

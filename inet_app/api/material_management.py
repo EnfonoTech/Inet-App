@@ -20,6 +20,60 @@ _MONTH_MAP = {
     "september": 9, "october": 10, "november": 11, "december": 12,
 }
 
+# Huawei's export "Status" column vocabulary drifts between shipments (case
+# varies, new states appear) — keys are lowercased for matching.
+_OUTBOUND_STATUS_ALIASES = {
+    "wait to pick": "Wait to Pick",
+    "picking": "Picking",
+    "wait to check": "Wait to Check",
+    "prepared": "Prepared",
+    "hold": "Hold",
+    "on hold": "Hold",
+    "pending": "Pending",
+    "received": "Received",
+}
+
+
+def _normalize_outbound_status(raw, unmapped):
+    """Map a raw Huawei 'Status' cell to a Huawei Outbound Plan outbound_status
+    Select option. An unrecognized value must never frappe.throw() out of
+    _validate_selects() partway through a several-thousand-row import (this
+    is exactly what happened with "Picking"/"HOLD" before they were added
+    here) — fall back to "Pending" and record it in `unmapped` so the import
+    summary surfaces it instead of the row silently mis-labeled forever.
+    """
+    key = (raw or "").strip()
+    if not key:
+        return "Prepared"
+    canonical = _OUTBOUND_STATUS_ALIASES.get(key.lower())
+    if canonical:
+        return canonical
+    unmapped[key] = unmapped.get(key, 0) + 1
+    return "Pending"
+
+
+def _parse_request_shipment_date(raw):
+    """Huawei's "Request Shipment Date" cell is a plain string, either
+    "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" (time is present on some rows, not
+    others) — normalize to a Frappe-storable datetime string, or None for a
+    blank/unparseable cell rather than failing the row over it."""
+    key = (raw or "").strip()
+    if not key:
+        return None
+    try:
+        return frappe.utils.get_datetime(key)
+    except Exception:
+        return None
+
+
+def _chunked(items, size=1000):
+    """frappe.get_all's filters=[...,"in", names] renders one SQL IN(...)
+    clause — sqlparse hard-fails past ~10k tokens, so any lookup built from
+    an unbounded Excel-derived name list must batch."""
+    items = list(items)
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
 
 def _parse_outbound_date(filename):
     """Extract outbound date from filename like '...For 10th_May_2026.xlsx'."""
@@ -51,53 +105,110 @@ def _resolve_file_path(file_url):
 
 @frappe.whitelist()
 def start_huawei_outbound_import(name):
-    """Start processing a Huawei Outbound Import record (called from form button)."""
+    """Start processing a Huawei Outbound Import record (called from form button).
+
+    Runs as a background job (queue="long") rather than inline: a real
+    Huawei export (~9-10k rows) takes several minutes end-to-end, well past
+    gunicorn's request timeout (`-t 120` in config/supervisor.conf). Running
+    it inline meant the worker got silently killed mid-import, leaving the
+    doc stuck at status "Processing" forever with no error ever recorded —
+    the form's poll of get_huawei_outbound_import_status is what replaces
+    the old blocking wait.
+    """
     frappe.only_for(["System Manager", "Stock Manager"])
     doc = frappe.get_doc("Huawei Outbound Import", name)
     if doc.status not in ("Draft", "Failed"):
         frappe.throw(f"Cannot start import in status '{doc.status}'.")
 
-    frappe.db.set_value("Huawei Outbound Import", name, "status", "Processing")
+    frappe.db.set_value("Huawei Outbound Import", name, {
+        "status": "Processing",
+        "processed_rows": 0,
+        "error_message": "",
+        "import_notes": "",
+    })
     frappe.db.commit()
 
+    frappe.enqueue(
+        "inet_app.api.material_management._run_huawei_outbound_import_job",
+        queue="long", timeout=3600,
+        name=name,
+    )
+    return {"queued": True}
+
+
+def _run_huawei_outbound_import_job(name):
+    doc = frappe.get_doc("Huawei Outbound Import", name)
     try:
         file_path = _resolve_file_path(doc.file)
-        result = import_huawei_outbound_from_doc(file_path, doc.outbound_date)
 
+        def _progress(done, total):
+            frappe.db.set_value("Huawei Outbound Import", name, "processed_rows", done)
+            frappe.db.commit()
+
+        result = import_huawei_outbound_from_doc(file_path, doc.outbound_date, progress_cb=_progress)
+
+        notes = [
+            f"Total: {result.get('total_rows', 0)} | New: {result.get('new_rows', 0)} | "
+            f"INET: {result.get('inet_count', 0)} | Dups: {result.get('duplicates_skipped', 0)}",
+            f"Projects: {result.get('project_matched', 0)} matched, {result.get('project_missing', 0)} not found",
+        ]
+        if result.get("header_rows_skipped"):
+            notes.append(
+                f"Skipped {result['header_rows_skipped']} embedded header row(s) "
+                f"(file looks like it has multiple exports pasted together)."
+            )
+        if result.get("unmapped_status"):
+            unmapped = ", ".join(f'"{k}" x{v}' for k, v in result["unmapped_status"].items())
+            notes.append(
+                f'Unrecognized Status value(s) set to "Pending" — add them to '
+                f"_OUTBOUND_STATUS_ALIASES in material_management.py if they're real "
+                f"statuses: {unmapped}"
+            )
         inet_bills = result.get("inet_bills", [])
+        if inet_bills:
+            lines = "\n".join(f"{b['bill_no']} | {b['du_id']} | Vol: {b['total_volume']}" for b in inet_bills[:50])
+            notes.append(f"INET Bills ({len(inet_bills)}):\n{lines}")
+
         frappe.db.set_value("Huawei Outbound Import", name, {
             "status": "Completed",
             "total_rows": result.get("total_rows", 0),
             "new_rows": result.get("new_rows", 0),
             "inet_count": result.get("inet_count", 0),
             "duplicates_skipped": result.get("duplicates_skipped", 0),
+            "processed_rows": result.get("total_rows", 0),
+            "import_notes": "\n\n".join(notes),
         })
         frappe.db.commit()
 
-        summary = f"Total: {result.get('total_rows', 0)} | New: {result.get('new_rows', 0)} | INET: {result.get('inet_count', 0)} | Dups: {result.get('duplicates_skipped', 0)}"
-        summary += f"\nProjects: {result.get('project_matched', 0)} matched, {result.get('project_missing', 0)} not found"
-        frappe.msgprint(summary, title="Import Summary", indicator="green")
-
-        if inet_bills:
-            lines = "\n".join(f"{b['bill_no']} | {b['du_id']} | Vol: {b['total_volume']}" for b in inet_bills[:50])
-            frappe.msgprint(f"<pre>INET Bills ({len(inet_bills)}):\n{lines}</pre>", title="INET Bills in This Import")
-
-        return {"status": "Completed", "inet_count": len(inet_bills)}
-
-    except Exception as e:
+    except Exception:
+        frappe.db.rollback()
         frappe.db.set_value("Huawei Outbound Import", name, {
             "status": "Failed",
-            "error_message": str(e)[:5000],
+            "error_message": frappe.get_traceback()[:5000],
         })
         frappe.db.commit()
         frappe.log_error(frappe.get_traceback(), "Huawei Outbound Import failed")
-        raise
 
 
-def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
+@frappe.whitelist()
+def get_huawei_outbound_import_status(name):
+    """Lightweight status snapshot for the form's background-job poller."""
+    row = frappe.db.get_value(
+        "Huawei Outbound Import", name,
+        ["status", "total_rows", "new_rows", "inet_count", "duplicates_skipped",
+         "processed_rows", "import_notes", "error_message"],
+        as_dict=True,
+    ) or {}
+    row["name"] = name
+    return row
+
+
+def import_huawei_outbound_from_doc(file_path=None, outbound_date=None, progress_cb=None):
     """Import from a local file path (called from Huawei Outbound Import doctype).
 
     Returns dict with counts — does NOT throw on duplicate rows, just skips them.
+    `progress_cb(done, total)`, if given, is called periodically so a caller
+    (the background job) can persist progress for a live UI poll.
     """
     # Resolve file path: Frappe stores file_url like "/private/files/x.xlsx"
     if file_path and (file_path.startswith("/private/files/") or file_path.startswith("/files/")):
@@ -138,7 +249,7 @@ def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
             raise ValueError(f"Required column '{req}' not found in Excel. Found: {list(header.keys())}")
 
     # Warn if optional columns are missing
-    optional = ["Project Name", "DU ID", "Customer Site ID", "Delivery Purpose", "Status"]
+    optional = ["Project Name", "DU ID", "Customer Site ID", "Delivery Purpose", "Status", "Request Shipment Date"]
     missing_optional = [c for c in optional if c not in header]
     if missing_optional:
         frappe.msgprint(f"Optional columns not found in Excel: {', '.join(missing_optional)}. These fields will be empty.", title="Missing Columns", indicator="blue")
@@ -151,85 +262,143 @@ def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
         return str(v).strip() if v is not None else ""
 
     import_batch = f"{filename} ({frappe.utils.nowdate()})"
-    total_rows = 0
+
+    # Pass 1: pull real data rows only. Huawei exports get pasted together
+    # across date ranges (this exact file has an Aug export and a Sep export
+    # concatenated), and the second file's header row lands mid-sheet as a
+    # bogus data row — e.g. bill_no == "Bill No." — so skip anything whose
+    # "Bill No." cell is actually one of the column header labels.
+    rows_data = []
+    header_rows_skipped = 0
+    for row in range(2, ws.max_row + 1):
+        bill_no = _cell(row, "Bill No.")
+        if not bill_no:
+            continue
+        if bill_no in header:
+            header_rows_skipped += 1
+            continue
+        rows_data.append({
+            "bill_no": bill_no,
+            "request_no": _cell(row, "Request No."),
+            "subcon": _cell(row, "Subcon"),
+            "du_id": _cell(row, "DU ID"),
+            "project": _cell(row, "Project Name"),
+            "status": _cell(row, "Status"),
+            "customer_site_id": _cell(row, "Customer Site ID"),
+            "delivery_purpose": _cell(row, "Delivery Purpose"),
+            "total_volume": _cell(row, "Total Volume"),
+            "shipment_date": _cell(row, "Request Shipment Date"),
+        })
+    total_rows = len(rows_data)
+
+    # Bulk-preload existence checks so a 9000+ row file costs a handful of
+    # queries instead of up to 4 DB round-trips per row (this alone was a
+    # large share of why a big import took minutes).
+    existing_bill_nos = set()
+    for chunk in _chunked({r["bill_no"] for r in rows_data}):
+        existing_bill_nos.update(frappe.db.get_all(
+            "Huawei Outbound Plan", filters={"bill_no": ["in", list(chunk)]}, pluck="bill_no"))
+
+    existing_subcons = set()
+    for chunk in _chunked({r["subcon"] for r in rows_data if r["subcon"]}):
+        existing_subcons.update(frappe.db.get_all(
+            "Huawei Subcon Master", filters={"name": ["in", list(chunk)]}, pluck="name"))
+
+    existing_duids = set()
+    for chunk in _chunked({r["du_id"] for r in rows_data if r["du_id"]}):
+        existing_duids.update(frappe.db.get_all(
+            "DUID Master", filters={"name": ["in", list(chunk)]}, pluck="name"))
+
+    # Project Control Center: resolve by name (project_code) first, then by
+    # project_name field — same two-tier lookup the row loop used to do live.
+    project_by_name = {}
+    project_by_project_name = {}
+    project_texts = {r["project"] for r in rows_data if r["project"]}
+    for chunk in _chunked(project_texts):
+        chunk = list(chunk)
+        for d in frappe.db.get_all("Project Control Center", filters={"name": ["in", chunk]}, fields=["name"]):
+            project_by_name[d.name] = d.name
+        for d in frappe.db.get_all(
+            "Project Control Center", filters={"project_name": ["in", chunk]}, fields=["name", "project_name"],
+        ):
+            project_by_project_name.setdefault(d.project_name, d.name)
+
     new_rows = 0
     duplicates = 0
     inet_count = 0
     inet_bills = []
     project_matched = 0
     project_missing = 0
+    unmapped_status = {}
+    seen_bill_nos = set()  # same bill_no can repeat within one file (6742 unique bills out of 9557 rows in this file)
 
-    for row in range(2, ws.max_row + 1):
-        bill_no = _cell(row, "Bill No.")
-        if not bill_no:
-            continue
-        total_rows += 1
-
-        if frappe.db.exists("Huawei Outbound Plan", bill_no):
+    for i, r in enumerate(rows_data):
+        bill_no = r["bill_no"]
+        if bill_no in existing_bill_nos or bill_no in seen_bill_nos:
             duplicates += 1
             continue
+        seen_bill_nos.add(bill_no)
 
-        subcon_name = _cell(row, "Subcon")
-        du_id = _cell(row, "DU ID")
-        project = _cell(row, "Project Name")
-        row_status = _cell(row, "Status") or "Prepared"
+        subcon_name = r["subcon"]
+        du_id = r["du_id"]
+        project = r["project"]
+        row_status = _normalize_outbound_status(r["status"], unmapped_status)
 
         # Ensure Subcon Master
-        if subcon_name and not frappe.db.exists("Huawei Subcon Master", subcon_name):
+        if subcon_name and subcon_name not in existing_subcons:
             try:
                 frappe.get_doc({
                     "doctype": "Huawei Subcon Master",
                     "subcon_name": subcon_name,
                     "status": "Active",
                 }).insert(ignore_permissions=True)
+                existing_subcons.add(subcon_name)
             except Exception:
                 pass
 
         # Ensure DUID Master
-        if du_id and not frappe.db.exists("DUID Master", du_id):
+        if du_id and du_id not in existing_duids:
             try:
                 frappe.get_doc({
                     "doctype": "DUID Master",
                     "duid": du_id,
                 }).insert(ignore_permissions=True)
+                existing_duids.add(du_id)
             except Exception:
                 pass
 
         # Look up Project Control Center — first by name (project_code), then by project_name field
         project_link = None
         if project:
-            if frappe.db.exists("Project Control Center", project):
+            if project in project_by_name:
                 project_link = project
                 project_matched += 1
-            elif frappe.db.exists("Project Control Center", {"project_name": project}):
-                project_link = frappe.db.get_value("Project Control Center", {"project_name": project}, "name")
+            elif project in project_by_project_name:
+                project_link = project_by_project_name[project]
                 project_matched += 1
             else:
                 project_missing += 1
         else:
             project_missing += 1
 
-        # Look up DUID Master
-        duid_link = None
-        if du_id and frappe.db.exists("DUID Master", du_id):
-            duid_link = du_id
-
+        duid_link = du_id if du_id in existing_duids else None
         is_inet = subcon_name.strip().upper() == "INET"
 
         frappe.get_doc({
             "doctype": "Huawei Outbound Plan",
             "bill_no": bill_no,
-            "request_no": _cell(row, "Request No."),
+            "request_no": r["request_no"],
             "outbound_date": outbound_date,
+            "request_shipment_date": _parse_request_shipment_date(r["shipment_date"]),
             "project_name": project or "",
             "project": project_link or None,
             "subcon": subcon_name if subcon_name else None,
             "outbound_status": row_status,
             "du_id": du_id or "",
             "duid_master": duid_link or None,
-            "customer_site_id": _cell(row, "Customer Site ID"),
-            "delivery_purpose": _cell(row, "Delivery Purpose"),
-            "total_volume": flt(_cell(row, "Total Volume")),
+            "customer_site_id": r["customer_site_id"],
+            "delivery_purpose": r["delivery_purpose"],
+            "total_volume": flt(r["total_volume"]),
             "import_batch": import_batch,
         }).insert(ignore_permissions=True)
         new_rows += 1
@@ -237,12 +406,20 @@ def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
             inet_count += 1
             inet_bills.append({
                 "bill_no": bill_no,
-                "request_no": _cell(row, "Request No."),
+                "request_no": r["request_no"],
                 "du_id": du_id,
-                "total_volume": _cell(row, "Total Volume"),
+                "total_volume": r["total_volume"],
             })
 
+        if (i + 1) % 500 == 0:
+            frappe.db.commit()
+            if progress_cb:
+                progress_cb(i + 1, total_rows)
+
     frappe.db.commit()
+    if progress_cb:
+        progress_cb(total_rows, total_rows)
+
     return {
         "total_rows": total_rows,
         "new_rows": new_rows,
@@ -253,6 +430,8 @@ def import_huawei_outbound_from_doc(file_path=None, outbound_date=None):
         "project_missing": project_missing,
         "outbound_date": str(outbound_date),
         "filename": filename,
+        "header_rows_skipped": header_rows_skipped,
+        "unmapped_status": unmapped_status,
     }
 
 
