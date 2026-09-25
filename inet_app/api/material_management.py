@@ -138,6 +138,14 @@ def start_huawei_outbound_import(name):
 
 def _run_huawei_outbound_import_job(name):
     doc = frappe.get_doc("Huawei Outbound Import", name)
+    # Huawei Outbound Plan has an after_insert hook that notifies every INET
+    # IM and every INET Admin. That is right for one plan and ruinous for an
+    # import: it writes a Notification Log document per row PER RECIPIENT,
+    # inside this job's own transaction. A 5,500-row file was spending the
+    # whole 3600s timeout on it. The flag mutes the per-row hook; one summary
+    # notification goes out below instead.
+    from inet_app.api.notifications import BULK_IMPORT_FLAG, notify_huawei_import_done
+    frappe.flags[BULK_IMPORT_FLAG] = True
     try:
         file_path = _resolve_file_path(doc.file)
 
@@ -180,6 +188,16 @@ def _run_huawei_outbound_import_job(name):
         })
         frappe.db.commit()
 
+        # After the import is safely recorded, so a notification failure can
+        # never roll back a completed import.
+        try:
+            notify_huawei_import_done(
+                name, result.get("new_rows", 0), result.get("total_rows", 0)
+            )
+            frappe.db.commit()
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "Huawei import notify failed")
+
     except Exception:
         frappe.db.rollback()
         frappe.db.set_value("Huawei Outbound Import", name, {
@@ -188,6 +206,8 @@ def _run_huawei_outbound_import_job(name):
         })
         frappe.db.commit()
         frappe.log_error(frappe.get_traceback(), "Huawei Outbound Import failed")
+    finally:
+        frappe.flags[BULK_IMPORT_FLAG] = False
 
 
 @frappe.whitelist()

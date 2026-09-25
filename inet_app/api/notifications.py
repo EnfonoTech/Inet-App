@@ -345,7 +345,28 @@ def on_stock_entry_submit_notification(doc, method=None):
 	)
 
 
+# Set by the Huawei outbound import while it inserts plan rows. The only
+# thing that creates a Huawei Outbound Plan is that import, and it creates
+# thousands in one run — see notify_huawei_import_done for what is sent
+# instead.
+BULK_IMPORT_FLAG = "inet_bulk_import"
+
+
 def on_huawei_plan_insert(doc, method=None):
+	"""Announce a newly imported plan — unless a bulk import is running.
+
+	This is an after_insert hook, so it fires once per ROW, and each call
+	writes one Notification Log document per INET IM and per INET Admin. A
+	5,500-row import therefore inserts thousands of notification documents
+	inside the import's own transaction, which is what pushed the job past
+	its one-hour limit and, had it finished, would have buried the
+	notification bell under one alert per row.
+
+	The import raises the flag and calls notify_huawei_import_done() at the
+	end, so the same people hear about the import once, with its totals.
+	"""
+	if frappe.flags.get(BULK_IMPORT_FLAG):
+		return
 	_notify_role("INET IM",
 		f"[INFO] Huawei plan imported — review warehouse",
 		"Huawei Outbound Plan", doc.name,
@@ -354,6 +375,18 @@ def on_huawei_plan_insert(doc, method=None):
 		f"[INFO] Huawei plan imported — review warehouse",
 		"Huawei Outbound Plan", doc.name,
 		link="/pms/dashboard")
+
+
+def notify_huawei_import_done(import_name, new_rows, total_rows):
+	"""One notification for a finished outbound import, not one per row."""
+	subject = (
+		f"[INFO] Huawei outbound import finished — {new_rows} new of "
+		f"{total_rows} rows, review warehouse"
+	)
+	_notify_role("INET IM", subject, "Huawei Outbound Import", import_name,
+		link="/pms/im-material-request")
+	_notify_role("INET Admin", subject, "Huawei Outbound Import", import_name,
+		link="/pms/im-material-request")
 
 
 # ---------------------------------------------------------------------------
