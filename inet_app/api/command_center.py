@@ -25466,6 +25466,68 @@ def _cancel_dispatch_now(dispatch_name, *, reason=None, responded_by=None, remar
 
 
 @frappe.whitelist()
+def preview_dispatch_cancel(po_dispatches):
+    """Which of these POIDs can be cancelled, and why the rest cannot.
+
+    Called before the confirm dialog rather than after the click. Most lines on
+    a PO list are already invoiced or closed, so a selection made by eye is
+    routinely one the cancel will refuse in full — and finding that out only
+    from the result reads as "nothing happened".
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    names, seen = [], set()
+    for entry in _ensure_list(po_dispatches or []):
+        resolved = _resolve_dispatch_for_remarks(entry)
+        if resolved and resolved not in seen:
+            seen.add(resolved)
+            names.append(resolved)
+
+    im_identifiers = None
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session()
+
+    out = []
+    for name in names:
+        pd = frappe.db.get_value(
+            "PO Dispatch", name,
+            ["name", "im", "poid", "item_code", "site_code", "qty", "line_amount",
+             "dispatch_status", "cancel_request_status"],
+            as_dict=True,
+        ) or {}
+        poid = pd.get("poid") or name
+        row = {
+            "po_dispatch": name, "poid": poid,
+            "item_code": pd.get("item_code"), "site_code": pd.get("site_code"),
+            "qty": flt(pd.get("qty") or 0), "line_amount": flt(pd.get("line_amount") or 0),
+            "dispatch_status": pd.get("dispatch_status"),
+        }
+        if not pd.get("name"):
+            out.append(dict(row, ok=False, error="PO Dispatch not found."))
+            continue
+        if role == "im" and not _can_assign_backend_dispatch(role, im_identifiers, pd):
+            out.append(dict(row, ok=False, error="Not assigned to you."))
+            continue
+        pending = (pd.get("cancel_request_status") or "").strip()
+        if pending == "Pending PM Approval":
+            out.append(dict(row, ok=False, error="Already waiting for PM approval."))
+            continue
+        if pending == "Approved":
+            out.append(dict(row, ok=False, error="Already cancelled."))
+            continue
+        problems = _dispatch_cancel_blockers(name)
+        out.append(dict(row, ok=not problems, error=" ".join(problems) if problems else None))
+    return {
+        "lines": out,
+        "ok_count": sum(1 for r in out if r["ok"]),
+        "blocked_count": sum(1 for r in out if not r["ok"]),
+        "direct": role == "pm",
+    }
+
+
+@frappe.whitelist()
 def request_cancel_dispatch(po_dispatches, reason=None, po_dispatch=None):
     """Cancel one or many POIDs.
 

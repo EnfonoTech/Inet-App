@@ -241,6 +241,8 @@ export default function IMPOIntake() {
   const [cancelPoidBusy, setCancelPoidBusy] = useState(false);
   const [cancelPoidError, setCancelPoidError] = useState(null);
   const [cancelPoidResult, setCancelPoidResult] = useState(null);
+  const [cancelPreview, setCancelPreview] = useState(null);
+  const [cancelPreviewLoading, setCancelPreviewLoading] = useState(false);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
 
@@ -1096,7 +1098,15 @@ export default function IMPOIntake() {
     setCancelPoidError(null);
     setCancelPoidReason("");
     setCancelPoidResult(null);
+    setCancelPreview(null);
     setCancelPoidOpen(true);
+    // Ask the server which of these it would actually accept, so the dialog
+    // names the problem lines instead of warning about them in the abstract.
+    setCancelPreviewLoading(true);
+    pmApi.previewDispatchCancel(Array.from(ovSelected))
+      .then((res) => setCancelPreview(res))
+      .catch((e) => setCancelPoidError(e?.message || "Could not check the selection"))
+      .finally(() => setCancelPreviewLoading(false));
   }
 
   async function submitCancelPoid() {
@@ -2346,7 +2356,7 @@ export default function IMPOIntake() {
                onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 4px", fontSize: "1rem" }}>Cancel POID</h3>
             <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: 14 }}>
-              {ovSelected.size} POID(s) selected. A PM cancels immediately; an IM sends one request for PM approval.
+              {ovSelected.size} POID(s) selected.
             </div>
 
             {cancelPoidError && <div className="notice error" style={{ marginBottom: 12 }}>{cancelPoidError}</div>}
@@ -2381,9 +2391,34 @@ export default function IMPOIntake() {
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: 14, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, fontSize: "0.8rem", color: "#b91c1c" }}>
-                  Already invoiced, or still has a live plan? It will be refused.
-                </div>
+                {cancelPreviewLoading && (
+                  <div style={{ marginBottom: 14, fontSize: "0.8rem", color: "#94a3b8" }}>Checking the selection…</div>
+                )}
+                {cancelPreview && cancelPreview.blocked_count > 0 && (
+                  <div style={{ marginBottom: 14, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8 }}>
+                    <div style={{ fontWeight: 700, color: "#b91c1c", fontSize: "0.82rem", marginBottom: 6 }}>
+                      {cancelPreview.blocked_count} of {cancelPreview.lines.length} cannot be cancelled
+                    </div>
+                    <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                      {cancelPreview.lines.filter((l) => !l.ok).map((l) => (
+                        <div key={l.po_dispatch} style={{ fontSize: "0.76rem", color: "#7f1d1d", marginBottom: 3 }}>
+                          <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>{l.poid}</span>
+                          {" — "}{l.error}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {cancelPreview && cancelPreview.ok_count > 0 && cancelPreview.blocked_count > 0 && (
+                  <div style={{ marginBottom: 14, fontSize: "0.8rem", color: "#047857" }}>
+                    The other {cancelPreview.ok_count} will be cancelled.
+                  </div>
+                )}
+                {cancelPreview && cancelPreview.ok_count === 0 && (
+                  <div style={{ marginBottom: 14, fontSize: "0.8rem", color: "#b91c1c", fontWeight: 600 }}>
+                    None of the selected lines can be cancelled.
+                  </div>
+                )}
                 <div className="form-group" style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Reason</label>
                   <textarea value={cancelPoidReason} onChange={(e) => setCancelPoidReason(e.target.value)} rows={3}
@@ -2400,9 +2435,12 @@ export default function IMPOIntake() {
                 {cancelPoidResult ? "Close" : "Cancel"}
               </button>
               {!cancelPoidResult && (
-                <button type="button" className="btn-primary" disabled={cancelPoidBusy || ovSelected.size < 1}
+                <button type="button" className="btn-primary"
+                        disabled={cancelPoidBusy || cancelPreviewLoading || ovSelected.size < 1
+                                  || (cancelPreview && cancelPreview.ok_count === 0)}
                         onClick={submitCancelPoid} style={{ background: "#b91c1c", borderColor: "#b91c1c" }}>
-                  {cancelPoidBusy ? "Working…" : `Cancel ${ovSelected.size} POID(s)`}
+                  {cancelPoidBusy ? "Working…"
+                    : `Cancel ${cancelPreview ? cancelPreview.ok_count : ovSelected.size} POID(s)`}
                 </button>
               )}
             </div>

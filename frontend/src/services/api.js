@@ -798,6 +798,9 @@ export const pmApi = {
   // (result.direct === true); an IM raises a request for PM approval.
   // One call covers the whole selection. A PM cancels outright (result.direct);
   // an IM gets a single PO Cancel Request the PM decides as one batch.
+  // Pre-flight: which of the selection can actually be cancelled. Run when the
+  // dialog opens so a refusal is visible before the click, not after it.
+  previewDispatchCancel:   (poDispatches) => call("inet_app.api.command_center.preview_dispatch_cancel", { po_dispatches: poDispatches }),
   requestCancelDispatch:   (poDispatches, reason) => call("inet_app.api.command_center.request_cancel_dispatch", { po_dispatches: poDispatches, reason: reason || "" }),
   pmDecideCancelRequest:   (request, action, remark) => call("inet_app.api.command_center.pm_decide_cancel_request", { request, action, remark: remark || "" }),
   listPoCancelRequests:    (status) => call("inet_app.api.command_center.list_po_cancel_requests", { status: status || "" }),
