@@ -9638,6 +9638,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         ms2_status_expr = "IFNULL(COALESCE(pd.pic_status_ms2, pd_sys.pic_status_ms2), '')"
         ms2_amount_expr = "COALESCE(pd.ms2_amount, pd_sys.ms2_amount, 0)"
         wheres.append(
+            "("
             "NOT ("
             f"  (IFNULL(wd.ms1_closed,0) = 1 AND IFNULL(wd.ms2_closed,0) = 0 AND {ms1_status_expr} IN ({ph_ms}))"
             "  OR"
@@ -9676,6 +9677,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
                 "     ))"
                 if frappe.db.has_column("PO Dispatch", "remaining_qty") else ""
             )
+            + ")"
         )
         params.extend(terminal_ms)
         params.extend(terminal_ms)
