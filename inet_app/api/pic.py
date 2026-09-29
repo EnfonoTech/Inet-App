@@ -3097,7 +3097,7 @@ def before_sales_invoice_submit(doc, method):
 
         pd = frappe.db.get_value(
             "PO Dispatch", pd_name,
-            ["ms1_amount", "ms2_amount", "poid"],
+            ["ms1_amount", "ms2_amount", "ms1_invoiced", "ms2_invoiced", "poid"],
             as_dict=True,
         )
         if not pd:
@@ -3132,16 +3132,31 @@ def before_sales_invoice_submit(doc, method):
                 f"POID '{poid_label}' has no {milestone} amount set."
             )
 
-        if abs(item_amount - target_amt) > 0.01:
+        # Already-submitted invoices for this POID and milestone. Needed before
+        # the amount check, because what a line may legitimately be invoiced for
+        # depends on what has already gone out.
+        ms1_already, ms2_already = _calc_invoiced_from_submitted(pd_name, excluding_invoice=doc.name)
+        already = ms1_already if milestone == "MS1" else ms2_already
+        outstanding = round(target_amt - already, 2)
+
+        # The amount must be the whole milestone, or exactly what is left of it.
+        # It used to have to equal the milestone outright, which was the same
+        # rule while a milestone could only be invoiced once — but a line
+        # confirmed short and later topped up is billed in two parts, and the
+        # second part is the balance, not the total. Anything else is still
+        # refused: a typo cannot slip through as "some amount under the cap",
+        # and the cumulative check below still holds the ceiling.
+        if abs(item_amount - target_amt) > 0.01 and abs(item_amount - outstanding) > 0.01:
+            expected = (
+                f"{target_amt:,.2f}" if already <= 0.01
+                else f"{outstanding:,.2f} (the balance of {target_amt:,.2f}, "
+                     f"{already:,.2f} already invoiced)"
+            )
             frappe.throw(
                 f"{row_label}, item {item.item_code or '-'} "
                 f"(POID {poid_label}, {milestone}): invoice amount {item_amount:,.2f} "
-                f"does not match {milestone} amount {target_amt:,.2f} on PO Dispatch."
+                f"should be {expected}."
             )
-
-        # Cumulative check: already-submitted invoices + this invoice must not exceed milestone amount
-        ms1_already, ms2_already = _calc_invoiced_from_submitted(pd_name, excluding_invoice=doc.name)
-        already = ms1_already if milestone == "MS1" else ms2_already
         if already + item_amount > target_amt + 0.01:
             frappe.throw(
                 f"{row_label}, item {item.item_code or '-'} "
