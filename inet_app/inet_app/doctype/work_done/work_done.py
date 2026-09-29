@@ -22,6 +22,10 @@ class WorkDone(Document):
         its visibility rule — both flags equal (0/0 normal, or 1/1 whole-line
         close) means the row stands for the entire line.
 
+        Only for rows with NO closure ledger — every legacy row, and any close
+        that predates the ledger. Once closures exist, _closure_totals() is
+        authoritative and this is not consulted.
+
         Where the IM has confirmed a REDUCED quantity, the line is worth the
         confirmed amount, not the ordered one — a POID bought for 3 where only
         2 were delivered is worth 2. ms1_amount / ms2_amount are already
@@ -64,12 +68,38 @@ class WorkDone(Document):
             return flt(pd.line_amount) or confirmed
         return confirmed
 
-    def before_save(self):
-        line_revenue = self._line_revenue()
-        self.revenue_sar = (
-            line_revenue if line_revenue is not None
-            else flt(self.billing_rate_sar) * flt(self.executed_qty)
+    def _closure_totals(self):
+        """(qty, amount) summed from the closure ledger, or None when empty.
+
+        Once a line has closures they ARE the record: each row carries what was
+        closed, when, by which route and against which milestone, so the sum is
+        the line's worth by construction. This outranks the milestone branch in
+        _line_revenue() — with milestone recorded per closure, "MS1 is closed"
+        no longer implies the row is worth the whole of ms1_amount, because two
+        closures can both be MS1 for different parts of the quantity.
+        """
+        rows = self.get("closures") or []
+        if not rows:
+            return None
+        return (
+            round(sum(flt(r.closed_qty) for r in rows), 4),
+            round(sum(flt(r.closed_amount) for r in rows), 4),
         )
+
+    def before_save(self):
+        totals = self._closure_totals()
+        if totals is not None:
+            # A cancelled line is worth nothing however it was closed.
+            cancelled = self.system_id and frappe.db.get_value(
+                "PO Dispatch", self.system_id, "dispatch_status") == "Cancelled"
+            self.executed_qty = totals[0]
+            self.revenue_sar = 0.0 if cancelled else totals[1]
+        else:
+            line_revenue = self._line_revenue()
+            self.revenue_sar = (
+                line_revenue if line_revenue is not None
+                else flt(self.billing_rate_sar) * flt(self.executed_qty)
+            )
         self.total_cost_sar = (
             flt(self.team_cost_sar)
             + flt(self.subcontract_cost_sar)

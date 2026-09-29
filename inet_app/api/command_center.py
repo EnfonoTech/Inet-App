@@ -4039,7 +4039,6 @@ def _po_dispatch_portal_pf_active(pf):
         "domain",
         "dispatch_status",
         "direct_close_only",
-        "pending_rework",
     ):
         v = pf.get(k)
         if v is None or v == "":
@@ -4170,22 +4169,6 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             wheres.append("IFNULL(`is_internal_work`, 0) = 1")
         elif internal_preset != "include":
             wheres.append("IFNULL(`is_internal_work`, 0) = 0")
-
-    # pending_rework: the IM's planning pool is normally dispatch_status =
-    # 'Dispatched', which a line that has already produced a Work Done has long
-    # left. A line confirmed short whose leftover was marked "still to be done"
-    # has real work outstanding and has to be plannable again, or the decision
-    # is unreachable — so this widens the pool to include exactly those,
-    # without moving any line's status back.
-    if (pf.get("pending_rework") or "").strip().lower() == "yes" and "dispatch_status" in fields:
-        if frappe.db.has_column("PO Dispatch", "remaining_qty"):
-            wheres.append(
-                "(IFNULL(`dispatch_status`, '') = 'Dispatched'"
-                " OR (IFNULL(`remaining_qty`, 0) > 0"
-                " AND RIGHT(IFNULL(`remaining_qty_action`, ''), 6) = 'worked'))"
-            )
-        else:
-            wheres.append("IFNULL(`dispatch_status`, '') = 'Dispatched'")
 
     # has_target_month: "yes" (target_month set), "no" (null/empty), "any" / "" (no filter)
     htm = (pf.get("has_target_month") or "").strip().lower()
@@ -5021,47 +5004,6 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
 _NEW_VISIT_TYPES = frozenset(("Re-Visit", "Extra Visit"))
 
 
-def _is_new_rework_attempt(po_dispatch_name, max_v):
-    """True when a plan being created is the FIRST attempt at a leftover.
-
-    A line confirmed short whose remainder was marked "still to be done" has
-    real work outstanding, but the planning pages send visit_type "Execution",
-    so without this the new plan joins the visit that already produced the
-    line's Work Done — and generate_work_done, seeing a visit at or below the
-    one that owns the record, no-ops. The Work Done button then does nothing
-    and the rework can never be recorded.
-
-    Only the FIRST plan of the rework advances. The test is whether the highest
-    visit is still the one owning the Work Done: once the rework has started,
-    max_v has already moved past it and further plans join as companions the
-    normal way.
-    """
-    if not po_dispatch_name or not max_v:
-        return False
-    if not frappe.db.has_column("PO Dispatch", "remaining_qty"):
-        return False
-    pd = frappe.db.get_value(
-        "PO Dispatch", po_dispatch_name,
-        ["remaining_qty", "remaining_qty_action"], as_dict=True,
-    ) or {}
-    if flt(pd.get("remaining_qty") or 0) <= 0:
-        return False
-    if not str(pd.get("remaining_qty_action") or "").strip().endswith("worked"):
-        return False
-    owner = frappe.db.sql(
-        """
-        SELECT IFNULL(rp.visit_number, 0)
-        FROM `tabWork Done` wd
-        JOIN `tabDaily Execution` de ON de.name = wd.execution
-        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-        WHERE wd.system_id = %s
-        LIMIT 1
-        """,
-        (po_dispatch_name,),
-    )
-    return bool(owner) and cint(owner[0][0]) == cint(max_v)
-
-
 def _next_visit_number_for_dispatch(po_dispatch_name, visit_type=None):
     """Return the visit number for a NEW Rollout Plan on this POID.
 
@@ -5090,8 +5032,6 @@ def _next_visit_number_for_dispatch(po_dispatch_name, visit_type=None):
         return 1
     max_v = cint(row[0].get("max_v") or 0) if row else 0
     if (visit_type or "") in _NEW_VISIT_TYPES:
-        return max_v + 1
-    if _is_new_rework_attempt(po_dispatch_name, max_v):
         return max_v + 1
     # A companion plan joins the visit already in progress; the very first
     # plan on a line starts at 1.
@@ -10858,6 +10798,88 @@ def _sync_work_done_closures(dispatch_name, confirmed_qty, confirmed_amount,
     )
     wd.save(ignore_permissions=True)
     return wd_name
+
+
+def _remainder_close(dispatch_name, *, route, qty=None, milestone=None, remark=None,
+                     user=None):
+    """Close a line's OUTSTANDING quantity onto the Work Done it already has.
+
+    A POID has one Work Done for its whole life — the comment on
+    generate_work_done has always said so — and the closure ledger is what lets
+    a second closing event exist without a second row. Every route ends here:
+    the route only decides what goes in the closure's ``source``.
+
+    Same route only. In practice a line that was direct-closed has its
+    remainder direct-closed too, and one that came through rollout is planned
+    again; mixing them is not a real case, and allowing it would leave the
+    parent's single ``source`` field lying about half its own history.
+
+    Returns (ok, info).
+    """
+    wd = frappe.db.get_value(
+        "Work Done", {"system_id": dispatch_name},
+        ["name", "source"], as_dict=True,
+    )
+    if not wd:
+        return False, {"error": "no existing Work Done to add to"}
+
+    pd = frappe.db.get_value(
+        "PO Dispatch", dispatch_name,
+        ["poid", "qty", "confirmed_qty", "remaining_qty", "remaining_qty_action"],
+        as_dict=True,
+    ) or {}
+    poid = pd.get("poid") or dispatch_name
+    outstanding = flt(pd.get("remaining_qty") or 0)
+    if outstanding <= 0:
+        return False, {"error": f"{poid}: nothing outstanding on this line."}
+
+    existing_source = (wd.get("source") or "").strip()
+    if existing_source and existing_source != route:
+        return False, {"error": (
+            f"{poid}: this line was closed by {existing_source}. Close the "
+            f"remaining {outstanding:g} the same way, not by {route}."
+        )}
+
+    add = flt(qty) if qty not in (None, "") else outstanding
+    if add <= 0:
+        return False, {"error": f"{poid}: quantity to close must be more than zero."}
+    if add > outstanding + 0.00005:
+        return False, {"error": (
+            f"{poid}: only {outstanding:g} is outstanding, cannot close {add:g}."
+        )}
+
+    # Routed through _apply_confirmed_qty so the confirmed quantity, the
+    # milestone amounts and the closure row all move together — the same path
+    # the IM's own confirmation takes.
+    new_total = flt(pd.get("confirmed_qty") or 0) + add
+    result = _apply_confirmed_qty(
+        dispatch_name, new_total,
+        remark=remark, milestone=milestone, source=route, user=user,
+    )
+    return True, {
+        "po_dispatch": dispatch_name, "poid": poid, "work_done": wd["name"],
+        "closed_qty": add, "confirmed_qty": new_total,
+        "remaining_qty": result.get("remaining_qty"),
+    }
+
+
+def _outstanding_remainder(dispatch_name):
+    """How much of this line is still to be closed, and by which route.
+
+    ``(qty, source)``; qty is 0 when there is nothing outstanding. Used by the
+    guards to tell "this line is finished, refuse" from "this line has a
+    confirmed remainder, let the same route close it".
+    """
+    if not frappe.db.has_column("PO Dispatch", "remaining_qty"):
+        return 0.0, None
+    row = frappe.db.get_value(
+        "PO Dispatch", dispatch_name, ["remaining_qty", "remaining_qty_action"], as_dict=True
+    ) or {}
+    qty = flt(row.get("remaining_qty") or 0)
+    if qty <= 0:
+        return 0.0, None
+    src = frappe.db.get_value("Work Done", {"system_id": dispatch_name}, "source")
+    return qty, (src or None)
 
 
 def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
@@ -22590,6 +22612,20 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
         return False, {"po_dispatch": name, "poid": poid, "error": "Already Completed"}
 
     if frappe.db.exists("Work Done", {"system_id": name}):
+        # Not a refusal when the line has a confirmed remainder: a POID has one
+        # Work Done for its whole life, and a second direct close of the rest
+        # is another closure on it. Refused only when nothing is outstanding,
+        # or when the line was first closed some other way.
+        outstanding, _src = _outstanding_remainder(name)
+        if outstanding > 0:
+            ok, info = _remainder_close(
+                name, route="Direct Close", milestone=milestone, remark=note,
+                user=im_doc or frappe.session.user,
+            )
+            if ok:
+                frappe.db.commit()
+                return True, dict(info, poid=poid, milestone=milestone, remainder=True)
+            return False, {"po_dispatch": name, "poid": poid, "error": info.get("error")}
         return False, {"po_dispatch": name, "poid": poid, "error": "Work Done already exists for this POID"}
 
     # Resolve subcontract cost and margin (only for SUB type teams)
@@ -22891,9 +22927,17 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
                         update_modified=True)
     frappe.db.commit()
 
-    # Create a real Work Done record (skip if one already exists for this POID)
+    # Create a real Work Done record, or add a closure to the one already
+    # there when the line has a confirmed remainder still to close.
     wd_name = None
-    if not frappe.db.exists("Work Done", {"system_id": name}):
+    _existing_wd = frappe.db.get_value("Work Done", {"system_id": name}, "name")
+    if _existing_wd:
+        outstanding, _src = _outstanding_remainder(name)
+        if outstanding > 0:
+            ok, info = _remainder_close(name, route="Backend", remark=remark)
+            if ok:
+                wd_name = info.get("work_done")
+    if not _existing_wd:
         try:
             revenue = flt(pd.get("line_amount") or 0)
             billing_rate = flt(pd.get("rate") or 0)
