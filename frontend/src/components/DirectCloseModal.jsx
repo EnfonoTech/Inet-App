@@ -3,6 +3,7 @@ import SearchableSelect from "./SearchableSelect";
 import { pmApi } from "../services/api";
 import { missingImRows, imRequiredMessage } from "../utils/requireIm";
 import { missingFields, missingFieldsMessage } from "../utils/requiredFields";
+import { money } from "../utils/numberFormat";
 
 /**
  * Close lines directly, with or without a milestone scope.
@@ -31,6 +32,18 @@ export default function DirectCloseModal({
   const [dcSubconLoading, setDcSubconLoading] = useState(false);
   const [dcBusy, setDcBusy] = useState(false);
   const [dcError, setDcError] = useState(null);
+  // Whether this user may close a single milestone rather than the whole line.
+  // Asked for here rather than passed in, so every caller gets the same answer
+  // without having to know the capability exists.
+  const [canMilestoneClose, setCanMilestoneClose] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    pmApi.getMyDirectCloseCapability()
+      .then((res) => { if (!cancelled) setCanMilestoneClose(!!res?.can_milestone_close); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
 
   async function loadDcSubcontractors(type) {
     setDcSubconLoading(true);

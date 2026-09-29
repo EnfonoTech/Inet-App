@@ -59,6 +59,31 @@ export default function RolloutPlanModal({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
 
+  // Teams: use the caller's list when it has one, otherwise fetch. A caller
+  // that forgets to pass them would otherwise show an empty dropdown with no
+  // hint that anything is wrong.
+  const [ownTeams, setOwnTeams] = useState([]);
+  const [ownTeamsLoading, setOwnTeamsLoading] = useState(false);
+  useEffect(() => {
+    if (!open || teamsList.length || !imName) return;
+    let cancelled = false;
+    setOwnTeamsLoading(true);
+    pmApi.listINETTeams({ im: imName, status: "Active" })
+      .then((list) => {
+        if (cancelled) return;
+        // Same filter IMDispatch applies: backend teams do not plan rollouts.
+        const arr = Array.isArray(list) ? list : [];
+        setOwnTeams(arr.filter((t) => (t.team_category || "Field Team") !== "Backend Team"));
+      })
+      .catch(() => { if (!cancelled) setOwnTeams([]); })
+      .finally(() => { if (!cancelled) setOwnTeamsLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, imName, teamsList.length]);
+
+  const teams = teamsList.length ? teamsList : ownTeams;
+  const loadingTeams = teamsList.length ? teamsLoading : ownTeamsLoading;
+
   // Seed on open. Pre-fill only where every selected row already agrees,
   // otherwise leave blank — submitting must not silently unify a mixed batch
   // under one row's value.
@@ -236,18 +261,18 @@ export default function RolloutPlanModal({
             <select
               value={planTeam}
               onChange={(e) => setPlanTeam(e.target.value)}
-              disabled={teamsLoading || !imName}
+              disabled={loadingTeams || !imName}
               style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
             >
-              <option value="">{teamsLoading ? "Loading teams…" : !imName ? "Link IM to load teams" : "Select team"}</option>
-              {teamsList.map((t) => (
+              <option value="">{loadingTeams ? "Loading teams…" : !imName ? "Link IM to load teams" : "Select team"}</option>
+              {teams.map((t) => (
                 <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
               ))}
               {/* The team list loads AFTER planTeam is seeded from the
                   forecast, and a <select> whose value isn't among its options
                   renders blank — so a forecast team outside the IM's active
                   field teams would look unset while actually being set. */}
-              {planTeam && !teamsList.some((t) => t.team_id === planTeam) && (
+              {planTeam && !teams.some((t) => t.team_id === planTeam) && (
                 <option value={planTeam}>{planTeam} — forecast team</option>
               )}
             </select>
@@ -309,7 +334,7 @@ export default function RolloutPlanModal({
                     style={{ flex: 2, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
                   >
                     <option value="">Select team</option>
-                    {teamsList.filter((t) => t.team_id !== planTeam || row.team === t.team_id).map((t) => (
+                    {teams.filter((t) => t.team_id !== planTeam || row.team === t.team_id).map((t) => (
                       <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
                     ))}
                   </select>
