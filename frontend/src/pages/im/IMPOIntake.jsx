@@ -11,6 +11,8 @@ import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
 import { missingFields, missingFieldsMessage } from "../../utils/requiredFields";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import DirectCloseModal from "../../components/DirectCloseModal";
+import BackendAssignModal from "../../components/BackendAssignModal";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import DateRangePicker from "../../components/DateRangePicker";
 import RecordDetailView from "../../components/RecordDetailView";
@@ -361,12 +363,8 @@ export default function IMPOIntake() {
   // ── Backend-team assignment (intake tab) ─────────────────────────────
   const [canBackend, setCanBackend] = useState(false);
   const [showBackendModal, setShowBackendModal] = useState(false);
-  const [backendTeams, setBackendTeams] = useState([]);
-  const [backendTeamsLoading, setBackendTeamsLoading] = useState(false);
   const [backendTeamId, setBackendTeamId] = useState("");
   const [backendRemark, setBackendRemark] = useState("");
-  const [backendBusy, setBackendBusy] = useState(false);
-  const [backendError, setBackendError] = useState(null);
   const [backendHuaweiIm, setBackendHuaweiIm] = useState("");
   const [backendProjectDomain, setBackendProjectDomain] = useState("");
 
@@ -376,12 +374,9 @@ export default function IMPOIntake() {
   const [showDcModal, setShowDcModal] = useState(false);
   const [dcType, setDcType] = useState("INET");
   const [dcSubcontractor, setDcSubcontractor] = useState("");
-  const [dcSubconOptions, setDcSubconOptions] = useState([]);
   const [dcSubconLoading, setDcSubconLoading] = useState(false);
   const [dcNote, setDcNote] = useState("");
   const [dcMilestone, setDcMilestone] = useState("full"); // "full" | "MS1" | "MS2"
-  const [dcBusy, setDcBusy] = useState(false);
-  const [dcError, setDcError] = useState(null);
   const [dcHuaweiIm, setDcHuaweiIm] = useState("");
   const [dcProjectDomain, setDcProjectDomain] = useState("");
   const [dcClosedOn, setDcClosedOn] = useState(todayDate());
@@ -980,27 +975,9 @@ export default function IMPOIntake() {
   }
 
   // ── Intake helpers ────────────────────────────────────────────────────
-  async function openBackendModal() {
+  function openBackendModal() {
     if (selected.size < 1) return;
-    setBackendError(null);
-    setBackendTeamId("");
-    setBackendRemark("");
-    const selRows = rows.filter((r) => selected.has(r.name));
-    const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
-    setBackendHuaweiIm(huaweiVals.length === 1 ? huaweiVals[0] : "");
-    const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
-    setBackendProjectDomain(domainVals.length === 1 ? domainVals[0] : "");
     setShowBackendModal(true);
-    setBackendTeamsLoading(true);
-    try {
-      const list = await pmApi.listBackendTeamsForPicker();
-      setBackendTeams(Array.isArray(list) ? list : []);
-    } catch (err) {
-      setBackendError(err.message || "Failed to load backend teams");
-      setBackendTeams([]);
-    } finally {
-      setBackendTeamsLoading(false);
-    }
   }
 
   async function submitBackend() {
@@ -1139,21 +1116,9 @@ export default function IMPOIntake() {
     }
   }
 
-  async function openDcModal() {
+  function openDcModal() {
     if (selected.size < 1) return;
-    setDcError(null);
-    setDcNote("");
-    setDcType("INET");
-    setDcSubcontractor("");
-    setDcMilestone("full");
-    setDcClosedOn(todayDate());
-    const selRows = rows.filter((r) => selected.has(r.name));
-    const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
-    setDcHuaweiIm(huaweiVals.length === 1 ? huaweiVals[0] : "");
-    const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
-    setDcProjectDomain(domainVals.length === 1 ? domainVals[0] : "");
     setShowDcModal(true);
-    await loadDcSubcontractors("INET");
   }
 
   async function submitDirectClose() {
@@ -2843,230 +2808,36 @@ export default function IMPOIntake() {
       )}
 
       {/* ── INTAKE MODALS ─────────────────────────────────────────────────── */}
-      {showBackendModal && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-             onClick={backendBusy ? undefined : () => setShowBackendModal(false)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
-               onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: "1rem" }}>Assign to Backend <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span></h3>
-              <button type="button" onClick={() => setShowBackendModal(false)} disabled={backendBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
-            </div>
-            {selectedRows.length > 0 && (
-              <div style={{ fontSize: "0.76rem", color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12, maxHeight: 140, overflowY: "auto" }}>
-                {selectedRows.map((r) => (
-                  <div key={r.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
-                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#0f172a" }}>{r.poid || r.name}</span>
-                    <span style={{ color: "#64748b" }}>{r.po_no || "—"} · {r.item_code || "—"} · {r.site_code || "—"}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Backend Team *</label>
-              <select value={backendTeamId} onChange={(e) => setBackendTeamId(e.target.value)} disabled={backendBusy || backendTeamsLoading} required>
-                <option value="">{backendTeamsLoading ? "Loading teams…" : "— Select a backend team —"}</option>
-                {backendTeams.map((t) => <option key={t.name} value={t.name}>{t.team_name || t.team_id}{t.team_id && t.team_name ? ` (${t.team_id})` : ""}</option>)}
-              </select>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
-              <div className="form-group" style={{ marginBottom: 10 }}>
-                <label>Huawei IM</label>
-                <SearchableSelect
-                  value={backendHuaweiIm}
-                  onChange={setBackendHuaweiIm}
-                  options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
-                  placeholder="Defaults from project — set to override"
-                  disabled={backendBusy}
-                  style={{ width: "100%" }}
-                  minWidth={0}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: 10 }}>
-                <label>Project Domain</label>
-                <SearchableSelect
-                  value={backendProjectDomain}
-                  onChange={setBackendProjectDomain}
-                  options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
-                  placeholder="Defaults from project — set to override"
-                  disabled={backendBusy}
-                  style={{ width: "100%" }}
-                  minWidth={0}
-                />
-              </div>
-            </div>
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Note (optional)</label>
-              <textarea rows={3} value={backendRemark} onChange={(e) => setBackendRemark(e.target.value)} disabled={backendBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
-            </div>
-            {backendError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {backendError}</div>}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button type="button" className="btn-secondary" onClick={() => setShowBackendModal(false)} disabled={backendBusy}>Cancel</button>
-              <button type="button" className="btn-primary" onClick={submitBackend} disabled={backendBusy || !backendTeamId} style={{ background: "#7c3aed", borderColor: "#7c3aed" }}>
-                {backendBusy ? "Assigning…" : `Assign ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <BackendAssignModal
+        open={showBackendModal}
+        rows={selectedRows}
+        huaweiIms={huaweiIms}
+        projectDomains={projectDomains}
+        onClose={() => setShowBackendModal(false)}
+        onDone={async (msg) => {
+          if (msg) {
+            setSelected(new Set());
+            setToastMsg(msg);
+            setTimeout(() => setToastMsg(null), 4500);
+          }
+          await load();
+        }}
+      />
 
       {/* ── DIRECT CLOSE MODAL ───────────────────────────────────────────── */}
-      {showDcModal && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-             onClick={dcBusy ? undefined : () => setShowDcModal(false)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
-               onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: "1rem" }}>Direct Close <span style={{ color: "#64748b", fontWeight: 500 }}>· {selected.size} POID{selected.size !== 1 ? "s" : ""}</span></h3>
-              <button type="button" onClick={() => setShowDcModal(false)} disabled={dcBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
-            </div>
-            {dcError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {dcError}</div>}
-            {selectedRows.length > 0 && (
-              <div style={{ fontSize: "0.76rem", color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12, maxHeight: 140, overflowY: "auto" }}>
-                {selectedRows.map((r) => (
-                  <div key={r.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
-                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#0f172a" }}>{r.poid || r.name}</span>
-                    <span style={{ color: "#64748b" }}>{r.po_no || "—"} · {r.item_code || "—"} · {r.site_code || "—"}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Type *</label>
-              <div style={{ display: "inline-flex", gap: 0, background: "#f1f5f9", borderRadius: 8, padding: 3, border: "1px solid #e2e8f0" }}>
-                {["INET", "SUB"].map((t) => (
-                  <button key={t} type="button" disabled={dcBusy}
-                    onClick={() => { setDcType(t); loadDcSubcontractors(t); }}
-                    style={{ padding: "5px 18px", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: dcType === t ? 700 : 400, background: dcType === t ? "#0369a1" : "transparent", color: dcType === t ? "#fff" : "#64748b", transition: "all 0.15s" }}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {(() => {
-              const singleRow = selected.size === 1 ? selectedRows[0] : null;
-              const subLocked = dcMilestone !== "full" && singleRow?.wd_subcontractor &&
-                (dcMilestone === "MS1" ? singleRow?.ms2_closed : singleRow?.ms1_closed);
-              return (
-                <div className="form-group" style={{ marginBottom: 10 }}>
-                  <label>Subcontract *</label>
-                  <SearchableSelect
-                    value={dcSubcontractor}
-                    onChange={setDcSubcontractor}
-                    options={dcSubconOptions}
-                    placeholder={dcSubconLoading ? "Loading…" : "— Select subcontractor —"}
-                    disabled={dcBusy || dcSubconLoading || !!subLocked}
-                  />
-                </div>
-              );
-            })()}
-            {canMilestoneClose && (() => {
-              const singleRow = selected.size === 1 ? selectedRows[0] : null;
-              const msOpts = [
-                { id: "full",  label: "Full Close",  color: "#0369a1" },
-                { id: "MS1",   label: "MS1 Only",    color: "#7c3aed" },
-                { id: "MS2",   label: "MS2 Only",    color: "#0891b2" },
-              ];
-              return (
-                <div className="form-group" style={{ marginBottom: 10 }}>
-                  <label>Milestone</label>
-                  <div style={{ display: "inline-flex", gap: 0, background: "#f1f5f9", borderRadius: 8, padding: 3, border: "1px solid #e2e8f0" }}>
-                    {msOpts.map((opt) => {
-                      const alreadyClosed = singleRow && (
-                        (opt.id === "MS1" && singleRow.ms1_closed) ||
-                        (opt.id === "MS2" && singleRow.ms2_closed)
-                      );
-                      const noAmount = singleRow && (
-                        (opt.id === "MS1" && !singleRow.ms1_amount) ||
-                        (opt.id === "MS2" && !singleRow.ms2_amount)
-                      );
-                      const isDisabled = dcBusy || alreadyClosed || noAmount;
-                      const active = dcMilestone === opt.id;
-                      const tip = alreadyClosed ? `${opt.id} already closed`
-                                : noAmount ? `${opt.id} amount not set on this POID`
-                                : "";
-                      return (
-                        <button key={opt.id} type="button" disabled={isDisabled}
-                          onClick={() => setDcMilestone(opt.id)}
-                          title={tip}
-                          style={{ padding: "5px 14px", border: "none", borderRadius: 6,
-                            cursor: isDisabled ? "not-allowed" : "pointer",
-                            fontWeight: active ? 700 : 400,
-                            background: active ? opt.color : "transparent",
-                            color: active ? "#fff" : isDisabled ? "#cbd5e1" : "#64748b",
-                            opacity: isDisabled ? 0.45 : 1,
-                            transition: "all 0.15s" }}>
-                          {opt.label}{alreadyClosed ? " ✓" : ""}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {dcMilestone !== "full" && singleRow && (() => {
-                    const amt = dcMilestone === "MS1" ? (singleRow.ms1_amount || 0) : (singleRow.ms2_amount || 0);
-                    const total = (singleRow.ms1_amount || 0) + (singleRow.ms2_amount || 0) || singleRow.line_amount || 0;
-                    const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
-                    return (
-                      <div style={{ marginTop: 5, fontSize: "0.76rem", color: "#64748b" }}>
-                        Revenue: <strong>SAR {money.format(amt)}</strong> · {pct}% of total
-                      </div>
-                    );
-                  })()}
-                </div>
-              );
-            })()}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
-              <div className="form-group" style={{ marginBottom: 10 }}>
-                <label>Huawei IM</label>
-                <SearchableSelect
-                  value={dcHuaweiIm}
-                  onChange={setDcHuaweiIm}
-                  options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
-                  placeholder="Defaults from project — set to override"
-                  disabled={dcBusy}
-                  style={{ width: "100%" }}
-                  minWidth={0}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: 10 }}>
-                <label>Project Domain</label>
-                <SearchableSelect
-                  value={dcProjectDomain}
-                  onChange={setDcProjectDomain}
-                  options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
-                  placeholder="Defaults from project — set to override"
-                  disabled={dcBusy}
-                  style={{ width: "100%" }}
-                  minWidth={0}
-                />
-              </div>
-            </div>
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Closing Date *</label>
-              <input
-                type="date"
-                value={dcClosedOn}
-                max={todayDate()}
-                onChange={(e) => setDcClosedOn(e.target.value)}
-                disabled={dcBusy}
-                style={{ width: "100%" }}
-              />
-            </div>
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Note (optional)</label>
-              <textarea rows={2} value={dcNote} onChange={(e) => setDcNote(e.target.value)} disabled={dcBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button type="button" className="btn-secondary" onClick={() => setShowDcModal(false)} disabled={dcBusy}>Cancel</button>
-              {/* Not disabled on a missing field: submitDirectClose names what
-                  is missing at the top of this popup, and a dead button with no
-                  explanation is what sent the IM looking in the first place. */}
-              <button type="button" className="btn-primary" onClick={submitDirectClose} disabled={dcBusy} style={{ background: "#0369a1", borderColor: "#0369a1" }}>
-                {dcBusy ? "Closing…" : dcMilestone !== "full" ? `Close ${dcMilestone} · ${selected.size} POID${selected.size !== 1 ? "s" : ""}` : `Close ${selected.size} POID${selected.size !== 1 ? "s" : ""}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DirectCloseModal
+        open={showDcModal}
+        rows={selectedRows}
+        huaweiIms={huaweiIms}
+        projectDomains={projectDomains}
+        onClose={() => setShowDcModal(false)}
+        onDone={async (msg) => {
+          setSelected(new Set());
+          setToastMsg(msg);
+          setTimeout(() => setToastMsg(null), 4500);
+          await load();
+        }}
+      />
 
       {showAssignModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}

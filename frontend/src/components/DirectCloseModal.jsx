@@ -1,0 +1,260 @@
+import { useEffect, useState } from "react";
+import SearchableSelect from "./SearchableSelect";
+import { pmApi } from "../services/api";
+import { missingImRows, imRequiredMessage } from "../utils/requireIm";
+import { missingFields, missingFieldsMessage } from "../utils/requiredFields";
+
+/**
+ * Close lines directly, with or without a milestone scope.
+ *
+ * Lifted out of IMPOIntake so Work Done can direct-close a line's OUTSTANDING
+ * quantity through the same dialog — including the milestone choice, which is
+ * what decides whether the closure counts against MS1 or MS2.
+ */
+function todayDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export default function DirectCloseModal({
+  open, rows = [], huaweiIms = [], projectDomains = [],
+  onClose, onDone,
+}) {
+  const [dcNote, setDcNote] = useState("");
+  const [dcType, setDcType] = useState("INET");
+  const [dcSubcontractor, setDcSubcontractor] = useState("");
+  const [dcMilestone, setDcMilestone] = useState("full");
+  const [dcClosedOn, setDcClosedOn] = useState(todayDate());
+  const [dcHuaweiIm, setDcHuaweiIm] = useState("");
+  const [dcProjectDomain, setDcProjectDomain] = useState("");
+  const [dcSubconOptions, setDcSubconOptions] = useState([]);
+  const [dcSubconLoading, setDcSubconLoading] = useState(false);
+  const [dcBusy, setDcBusy] = useState(false);
+  const [dcError, setDcError] = useState(null);
+
+  async function loadDcSubcontractors(type) {
+    setDcSubconLoading(true);
+    setDcSubcontractor("");
+    try {
+      const opts = await pmApi.getSubcontractorsByType(type);
+      setDcSubconOptions(Array.isArray(opts) ? opts.map((o) => ({ id: o.name, label: o.label })) : []);
+    } catch {
+      setDcSubconOptions([]);
+    } finally {
+      setDcSubconLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    setDcError(null);
+    setDcNote("");
+    setDcType("INET");
+    setDcSubcontractor("");
+    setDcMilestone("full");
+    setDcClosedOn(todayDate());
+    // Pre-fill only where every row agrees, so a mixed batch is not silently
+    // unified under one row's value.
+    const hv = [...new Set(rows.map((r) => r.huawei_im).filter(Boolean))];
+    setDcHuaweiIm(hv.length === 1 ? hv[0] : "");
+    const dv = [...new Set(rows.map((r) => r.project_domain).filter(Boolean))];
+    setDcProjectDomain(dv.length === 1 ? dv[0] : "");
+    loadDcSubcontractors("INET");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  async function submitDirectClose() {
+    const sel = new Set(rows.map((r) => r.name));
+    const noIm = missingImRows(rows, sel);
+    if (noIm.length > 0) {
+      setDcError(imRequiredMessage(noIm, "direct close"));
+      return;
+    }
+    const missing = missingFields({
+      "Close Type": dcType,
+      "Subcontractor": dcSubcontractor,
+      "Closing Date": dcClosedOn,
+    });
+    if (missing.length > 0) {
+      setDcError(missingFieldsMessage(missing, "direct close"));
+      return;
+    }
+    setDcBusy(true);
+    setDcError(null);
+    try {
+      const milestone = dcMilestone !== "full" ? dcMilestone : null;
+      const res = await pmApi.directCloseDispatches(
+        rows.map((r) => r.name), dcType, dcSubcontractor, dcNote, milestone, {
+          huawei_im: dcHuaweiIm || undefined,
+          project_domain: dcProjectDomain || undefined,
+          closed_on: dcClosedOn,
+        });
+      const upd = res?.updated?.length || 0;
+      const err = res?.errors?.length || 0;
+      await onDone?.(`Direct Close: ${upd} POID${upd !== 1 ? "s" : ""} closed${err ? `, ${err} failed` : ""}.`, res);
+      onClose?.();
+    } catch (e) {
+      setDcError(e.message || "Failed to direct-close");
+    } finally {
+      setDcBusy(false);
+    }
+  }
+
+  if (!open) return null;
+  return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={dcBusy ? undefined : () => onClose?.()}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(520px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Direct Close <span style={{ color: "#64748b", fontWeight: 500 }}>· {rows.length} POID{rows.length !== 1 ? "s" : ""}</span></h3>
+              <button type="button" onClick={() => onClose?.()} disabled={dcBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            {dcError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {dcError}</div>}
+            {rows.length > 0 && (
+              <div style={{ fontSize: "0.76rem", color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12, maxHeight: 140, overflowY: "auto" }}>
+                {rows.map((r) => (
+                  <div key={r.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#0f172a" }}>{r.poid || r.name}</span>
+                    <span style={{ color: "#64748b" }}>{r.po_no || "—"} · {r.item_code || "—"} · {r.site_code || "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Type *</label>
+              <div style={{ display: "inline-flex", gap: 0, background: "#f1f5f9", borderRadius: 8, padding: 3, border: "1px solid #e2e8f0" }}>
+                {["INET", "SUB"].map((t) => (
+                  <button key={t} type="button" disabled={dcBusy}
+                    onClick={() => { setDcType(t); loadDcSubcontractors(t); }}
+                    style={{ padding: "5px 18px", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: dcType === t ? 700 : 400, background: dcType === t ? "#0369a1" : "transparent", color: dcType === t ? "#fff" : "#64748b", transition: "all 0.15s" }}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {(() => {
+              const singleRow = rows.length === 1 ? rows[0] : null;
+              const subLocked = dcMilestone !== "full" && singleRow?.wd_subcontractor &&
+                (dcMilestone === "MS1" ? singleRow?.ms2_closed : singleRow?.ms1_closed);
+              return (
+                <div className="form-group" style={{ marginBottom: 10 }}>
+                  <label>Subcontract *</label>
+                  <SearchableSelect
+                    value={dcSubcontractor}
+                    onChange={setDcSubcontractor}
+                    options={dcSubconOptions}
+                    placeholder={dcSubconLoading ? "Loading…" : "— Select subcontractor —"}
+                    disabled={dcBusy || dcSubconLoading || !!subLocked}
+                  />
+                </div>
+              );
+            })()}
+            {canMilestoneClose && (() => {
+              const singleRow = rows.length === 1 ? rows[0] : null;
+              const msOpts = [
+                { id: "full",  label: "Full Close",  color: "#0369a1" },
+                { id: "MS1",   label: "MS1 Only",    color: "#7c3aed" },
+                { id: "MS2",   label: "MS2 Only",    color: "#0891b2" },
+              ];
+              return (
+                <div className="form-group" style={{ marginBottom: 10 }}>
+                  <label>Milestone</label>
+                  <div style={{ display: "inline-flex", gap: 0, background: "#f1f5f9", borderRadius: 8, padding: 3, border: "1px solid #e2e8f0" }}>
+                    {msOpts.map((opt) => {
+                      const alreadyClosed = singleRow && (
+                        (opt.id === "MS1" && singleRow.ms1_closed) ||
+                        (opt.id === "MS2" && singleRow.ms2_closed)
+                      );
+                      const noAmount = singleRow && (
+                        (opt.id === "MS1" && !singleRow.ms1_amount) ||
+                        (opt.id === "MS2" && !singleRow.ms2_amount)
+                      );
+                      const isDisabled = dcBusy || alreadyClosed || noAmount;
+                      const active = dcMilestone === opt.id;
+                      const tip = alreadyClosed ? `${opt.id} already closed`
+                                : noAmount ? `${opt.id} amount not set on this POID`
+                                : "";
+                      return (
+                        <button key={opt.id} type="button" disabled={isDisabled}
+                          onClick={() => setDcMilestone(opt.id)}
+                          title={tip}
+                          style={{ padding: "5px 14px", border: "none", borderRadius: 6,
+                            cursor: isDisabled ? "not-allowed" : "pointer",
+                            fontWeight: active ? 700 : 400,
+                            background: active ? opt.color : "transparent",
+                            color: active ? "#fff" : isDisabled ? "#cbd5e1" : "#64748b",
+                            opacity: isDisabled ? 0.45 : 1,
+                            transition: "all 0.15s" }}>
+                          {opt.label}{alreadyClosed ? " ✓" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {dcMilestone !== "full" && singleRow && (() => {
+                    const amt = dcMilestone === "MS1" ? (singleRow.ms1_amount || 0) : (singleRow.ms2_amount || 0);
+                    const total = (singleRow.ms1_amount || 0) + (singleRow.ms2_amount || 0) || singleRow.line_amount || 0;
+                    const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+                    return (
+                      <div style={{ marginTop: 5, fontSize: "0.76rem", color: "#64748b" }}>
+                        Revenue: <strong>SAR {money.format(amt)}</strong> · {pct}% of total
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })()}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Huawei IM</label>
+                <SearchableSelect
+                  value={dcHuaweiIm}
+                  onChange={setDcHuaweiIm}
+                  options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
+                  placeholder="Defaults from project — set to override"
+                  disabled={dcBusy}
+                  style={{ width: "100%" }}
+                  minWidth={0}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Project Domain</label>
+                <SearchableSelect
+                  value={dcProjectDomain}
+                  onChange={setDcProjectDomain}
+                  options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
+                  placeholder="Defaults from project — set to override"
+                  disabled={dcBusy}
+                  style={{ width: "100%" }}
+                  minWidth={0}
+                />
+              </div>
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Closing Date *</label>
+              <input
+                type="date"
+                value={dcClosedOn}
+                max={todayDate()}
+                onChange={(e) => setDcClosedOn(e.target.value)}
+                disabled={dcBusy}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label>Note (optional)</label>
+              <textarea rows={2} value={dcNote} onChange={(e) => setDcNote(e.target.value)} disabled={dcBusy} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="btn-secondary" onClick={() => onClose?.()} disabled={dcBusy}>Cancel</button>
+              {/* Not disabled on a missing field: submitDirectClose names what
+                  is missing at the top of this popup, and a dead button with no
+                  explanation is what sent the IM looking in the first place. */}
+              <button type="button" className="btn-primary" onClick={submitDirectClose} disabled={dcBusy} style={{ background: "#0369a1", borderColor: "#0369a1" }}>
+                {dcBusy ? "Closing…" : dcMilestone !== "full" ? `Close ${dcMilestone} · ${rows.length} POID${rows.length !== 1 ? "s" : ""}` : `Close ${rows.length} POID${rows.length !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
+  );
+}
