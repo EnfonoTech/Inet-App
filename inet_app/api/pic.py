@@ -2845,8 +2845,19 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
         dname = pd["name"]
         ms1_s = (pd.get("pic_status") or "").strip()
         ms2_s = (pd.get("pic_status_ms2") or "").strip()
+        # What is still to be billed, not the milestone total. They were the
+        # same figure while a milestone was only ever invoiced once — but a
+        # line confirmed short and later topped up ("add to confirmation")
+        # raises ms1_amount above what has already gone out, and billing the
+        # total again double-bills the part already invoiced. ms1_unbilled is
+        # kept by PO Dispatch.validate() as amount minus invoiced, so it is the
+        # figure that stays right through every top-up.
         ms1_amt = flt(pd.get("ms1_amount") or 0)
         ms2_amt = flt(pd.get("ms2_amount") or 0)
+        if flt(pd.get("ms1_invoiced") or 0) > 0:
+            ms1_amt = max(flt(pd.get("ms1_unbilled") or 0), 0)
+        if flt(pd.get("ms2_invoiced") or 0) > 0:
+            ms2_amt = max(flt(pd.get("ms2_unbilled") or 0), 0)
 
         row_entries = []  # [(milestone, amount), ...] — usually 1, can be 2
 

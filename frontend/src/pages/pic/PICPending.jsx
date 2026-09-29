@@ -441,7 +441,15 @@ export default function PICPending() {
                   <td><IMStatusBadge value={r.im_submission_status} /></td>
                   <td><PicStatusBadge value={r.pic_status_effective} /></td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmt.format(r.ms1_pct)}%` : "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms1_amount || 0)}</td>
+                  {/* What is still to bill. On a line topped up after part of
+                      it was invoiced, the milestone total is no longer the
+                      amount an invoice would be for. */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                      title={Number(r.ms1_invoiced) > 0 ? `${money.format(r.ms1_amount || 0)} total, ${money.format(r.ms1_invoiced || 0)} already invoiced` : undefined}>
+                    {Number(r.ms1_invoiced) > 0
+                      ? money.format(Math.max(Number(r.ms1_unbilled) || 0, 0))
+                      : money.format(r.ms1_amount || 0)}
+                  </td>
                   <td><PicStatusBadge value={r.pic_status_ms2} /></td>
                   <td style={{ fontSize: "0.78rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#64748b" }} title={r.pic_detail_remark || r.pic_detail_remark_ms2 || ""}>
                     {r.pic_detail_remark || r.pic_detail_remark_ms2 || "—"}

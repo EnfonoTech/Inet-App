@@ -9652,6 +9652,14 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
             f"    AND ({ms2_amount_expr} = 0 OR {ms2_status_expr} IN ({ph_ms}))"
             "  )"
             ")"
+            # A line with a confirmed remainder still to settle is NOT finished,
+            # whatever PIC has done with the part already handed over. Hiding it
+            # the moment PIC submitted took it off the IM's Confirmation Done tab
+            # while they still had the rest to account for.
+            + (
+                " OR IFNULL(COALESCE(pd.remaining_qty, pd_sys.remaining_qty), 0) > 0"
+                if frappe.db.has_column("PO Dispatch", "remaining_qty") else ""
+            )
         )
         params.extend(terminal_ms)
         params.extend(terminal_ms)
