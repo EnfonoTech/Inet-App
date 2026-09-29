@@ -9652,12 +9652,28 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
             f"    AND ({ms2_amount_expr} = 0 OR {ms2_status_expr} IN ({ph_ms}))"
             "  )"
             ")"
-            # A line with a confirmed remainder still to settle is NOT finished,
-            # whatever PIC has done with the part already handed over. Hiding it
-            # the moment PIC submitted took it off the IM's Confirmation Done tab
-            # while they still had the rest to account for.
+            # A confirmed line with anything still to settle is NOT finished,
+            # whatever PIC has done with the part already handed over. Two
+            # shapes of that, and the tab lost the line on both:
+            #
+            #   remaining_qty > 0      quantity still to deliver
+            #   part-billed            quantity all confirmed, but a top-up
+            #                          ("add to confirmation") raised the
+            #                          milestone above what has been invoiced,
+            #                          so value is still to bill
+            #
+            # Gated on confirmed_qty so it only ever re-opens lines this
+            # feature touched. Legacy rows that happen to be part-invoiced —
+            # four on this site, all long since closed by PIC — stay hidden.
             + (
-                " OR IFNULL(COALESCE(pd.remaining_qty, pd_sys.remaining_qty), 0) > 0"
+                " OR (IFNULL(COALESCE(pd.confirmed_qty, pd_sys.confirmed_qty), 0) > 0"
+                "     AND ("
+                "       IFNULL(COALESCE(pd.remaining_qty, pd_sys.remaining_qty), 0) > 0"
+                "       OR (IFNULL(COALESCE(pd.ms1_invoiced, pd_sys.ms1_invoiced), 0) > 0"
+                "           AND IFNULL(COALESCE(pd.ms1_unbilled, pd_sys.ms1_unbilled), 0) > 0.005)"
+                "       OR (IFNULL(COALESCE(pd.ms2_invoiced, pd_sys.ms2_invoiced), 0) > 0"
+                "           AND IFNULL(COALESCE(pd.ms2_unbilled, pd_sys.ms2_unbilled), 0) > 0.005)"
+                "     ))"
                 if frappe.db.has_column("PO Dispatch", "remaining_qty") else ""
             )
         )
