@@ -699,7 +699,9 @@ export default function IMPOIntake() {
 
   // ── Cancels load ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (!imName || tab !== "cancels") return;
+    // Deliberately NOT gated on the active tab: the count badge has to be
+    // right before anyone opens Cancels, same as the transfers badge.
+    if (!imName) return;
     let cancelled = false;
     setCancelListLoading(true);
     setCancelListError(null);
@@ -714,7 +716,7 @@ export default function IMPOIntake() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, tab, cancelRefreshKey]);
+  }, [imName, cancelRefreshKey]);
 
   const transferOutgoingPending = useMemo(
     () => transferListRows.filter((r) => r._direction === "outgoing" && r.request_status === "Pending PM Approval"),

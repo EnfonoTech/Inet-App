@@ -344,6 +344,24 @@ export default function PODispatch() {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelResult, setCancelResult] = useState(null);
   const [cancelErr, setCancelErr] = useState(null);
+  const [cancelPreview, setCancelPreview] = useState(null);
+  const [cancelPreviewLoading, setCancelPreviewLoading] = useState(false);
+
+  function openCancelModal() {
+    if (selected.size === 0) return;
+    setCancelErr(null);
+    setCancelReason("");
+    setCancelResult(null);
+    setCancelPreview(null);
+    setCancelOpen(true);
+    // Most lines on this page are already invoiced or closed, so a selection
+    // made by eye is routinely one the cancel refuses in full. Ask first.
+    setCancelPreviewLoading(true);
+    pmApi.previewDispatchCancel(Array.from(selected))
+      .then((res) => setCancelPreview(res))
+      .catch((e) => setCancelErr(e?.message || "Could not check the selection"))
+      .finally(() => setCancelPreviewLoading(false));
+  }
   const [tableSearch, setTableSearch] = useState("");
   const tableSearchDebounced = useDebounced(tableSearch, 300);
   const [integritySearch, setIntegritySearch] = useState("");
@@ -1172,7 +1190,7 @@ export default function PODispatch() {
             <button
               className="btn-secondary"
               disabled={selected.size === 0}
-              onClick={() => { setCancelErr(null); setCancelReason(""); setCancelResult(null); setCancelOpen(true); }}
+              onClick={openCancelModal}
               style={{ borderColor: "#fca5a5", color: "#b91c1c" }}
             >
               Cancel POID ({selected.size})
@@ -1212,9 +1230,34 @@ export default function PODispatch() {
           </div>
         ) : (
           <div>
-            <div style={{ marginBottom: 12, fontSize: "0.82rem", color: "#b91c1c" }}>
-              Cancelled immediately, no approval. Already invoiced, or still has a live plan? It will be refused.
-            </div>
+            {cancelPreviewLoading && (
+              <div style={{ marginBottom: 12, fontSize: "0.8rem", color: "#94a3b8" }}>Checking the selection…</div>
+            )}
+            {cancelPreview && cancelPreview.blocked_count > 0 && (
+              <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8 }}>
+                <div style={{ fontWeight: 700, color: "#b91c1c", fontSize: "0.82rem", marginBottom: 6 }}>
+                  {cancelPreview.blocked_count} of {cancelPreview.lines.length} cannot be cancelled
+                </div>
+                <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                  {cancelPreview.lines.filter((l) => !l.ok).map((l) => (
+                    <div key={l.po_dispatch} style={{ fontSize: "0.76rem", color: "#7f1d1d", marginBottom: 3 }}>
+                      <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>{l.poid}</span>
+                      {" — "}{l.error}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {cancelPreview && cancelPreview.ok_count > 0 && cancelPreview.blocked_count > 0 && (
+              <div style={{ marginBottom: 12, fontSize: "0.8rem", color: "#047857" }}>
+                The other {cancelPreview.ok_count} will be cancelled.
+              </div>
+            )}
+            {cancelPreview && cancelPreview.ok_count === 0 && (
+              <div style={{ marginBottom: 12, fontSize: "0.8rem", color: "#b91c1c", fontWeight: 600 }}>
+                None of the selected lines can be cancelled.
+              </div>
+            )}
             <div className="form-group" style={{ marginBottom: 16 }}>
               <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Reason</label>
               <textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={3}
@@ -1223,9 +1266,12 @@ export default function PODispatch() {
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button className="btn-secondary" disabled={cancelBusy} onClick={() => setCancelOpen(false)}>Cancel</button>
-              <button className="btn-primary" disabled={cancelBusy || selected.size === 0}
+              <button className="btn-primary"
+                      disabled={cancelBusy || cancelPreviewLoading || selected.size === 0
+                                || (cancelPreview && cancelPreview.ok_count === 0)}
                       onClick={submitCancelPoids} style={{ background: "#b91c1c", borderColor: "#b91c1c" }}>
-                {cancelBusy ? "Working…" : `Cancel ${selected.size} POID(s)`}
+                {cancelBusy ? "Working…"
+                  : `Cancel ${cancelPreview ? cancelPreview.ok_count : selected.size} POID(s)`}
               </button>
             </div>
           </div>

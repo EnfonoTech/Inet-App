@@ -400,11 +400,6 @@ export default function TeamAllocationApprovals() {
                       <div style={{ padding: 12, color: "#94a3b8", fontSize: "0.78rem" }}>No lines on this request.</div>
                     )}
                   </div>
-                  {decideAction === "approve" && (
-                    <div style={{ marginTop: 8, padding: "6px 10px", background: "#fef2f2", borderRadius: 6, fontSize: "0.78rem", color: "#b91c1c" }}>
-                      Cancels every line above. Any that has since been invoiced or picked up a plan is refused and listed back.
-                    </div>
-                  )}
                 </>
               ) : decideTarget._type === "transfer" ? (
                 <>
