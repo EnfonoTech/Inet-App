@@ -9575,6 +9575,14 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
 
     wheres = ["1=1"]
     params = []
+    # A cancelled line's Work Done is worth nothing and is not work anyone can
+    # act on, so it is not listed at all — its revenue is already zeroed by
+    # WorkDone._line_revenue(). The record itself stays for the audit trail;
+    # this only stops it appearing as live work.
+    if frappe.db.has_column("PO Dispatch", "dispatch_status"):
+        wheres.append(
+            "COALESCE(NULLIF(pd.dispatch_status, ''), pd_sys.dispatch_status, '') <> 'Cancelled'"
+        )
     # Billing status filter uses the same PIC roll-up that the response shows
     # — picking "Closed" returns rows where the PIC has marked
     # "Commercial Invoice Closed" / "PO Line Canceled". Falls back to the
@@ -25480,6 +25488,17 @@ def _cancel_dispatch_now(dispatch_name, *, reason=None, responded_by=None, remar
         frappe.db.set_value("PO Dispatch", dispatch_name, pic_updates, update_modified=False)
 
     _reset_linked_intake_line_status(dispatch_name, "Cancelled")
+
+    # Re-save the line's Work Done so its revenue zeroes now rather than at
+    # some later unrelated save: WorkDone._line_revenue() returns 0 for a
+    # cancelled line, and every revenue report reads that column.
+    wd_name = frappe.db.get_value("Work Done", {"system_id": dispatch_name}, "name")
+    if wd_name:
+        try:
+            frappe.get_doc("Work Done", wd_name).save(ignore_permissions=True)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(),
+                             f"cancel: could not re-cost Work Done {wd_name}")
 
     # Any plan that is not already finished goes with the line. Live plans are
     # refused up front by _dispatch_cancel_blockers, so anything left here is

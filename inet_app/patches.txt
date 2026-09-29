@@ -28,3 +28,4 @@ inet_app.patches.backfill_po_line_upload_date
 inet_app.patches.reanchor_target_week_to_saturday
 inet_app.patches.v1_0.add_po_status_event_indexes
 inet_app.patches.backfill_po_status_event_from_pic_log
+inet_app.patches.recost_work_done_on_cancelled_lines

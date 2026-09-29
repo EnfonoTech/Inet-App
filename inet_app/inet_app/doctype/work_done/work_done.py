@@ -36,10 +36,18 @@ class WorkDone(Document):
         pd = frappe.db.get_value(
             "PO Dispatch", self.system_id,
             ["line_amount", "confirmed_amount", "remaining_qty_action",
-             "ms1_amount", "ms2_amount"], as_dict=True,
+             "ms1_amount", "ms2_amount", "dispatch_status"], as_dict=True,
         )
         if not pd:
             return None
+        # A cancelled line is worth nothing: it will never be invoiced, so its
+        # Work Done must stop contributing revenue. Zeroing the figure here
+        # rather than filtering 28 separate aggregates is what makes every
+        # report agree at once — and the record itself stays, because the work
+        # did happen and the closure ledger and status log still say so. Undo a
+        # cancel and the next save restores the value from the line.
+        if (pd.dispatch_status or "").strip() == "Cancelled":
+            return 0.0
         ms1, ms2 = cint(getattr(self, "ms1_closed", 0)), cint(getattr(self, "ms2_closed", 0))
         if ms1 and not ms2:
             return flt(pd.ms1_amount)
