@@ -1187,11 +1187,25 @@ export default function PICTracker() {
                 <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 12 }}>
                   <strong>{selectedRows.length} line(s)</strong> selected
                   <div style={{ maxHeight: 120, overflow: "auto", marginTop: 6 }}>
-                    {selectedRows.map((r) => (
-                      <div key={r.po_dispatch} style={{ fontSize: "0.76rem", padding: "3px 0" }}>
-                        {r.poid || r.po_dispatch} · {r.customer || "—"} · MS1: SAR {money.format(r.ms1_amount || 0)} · MS2: SAR {money.format(r.ms2_amount || 0)}
-                      </div>
-                    ))}
+                    {/* What the invoice will actually be for. On a line topped
+                        up after part of it was billed, the milestone total is
+                        no longer that figure — the unbilled remainder is. */}
+                    {selectedRows.map((r) => {
+                      const partMs1 = Number(r.ms1_invoiced) > 0;
+                      const partMs2 = Number(r.ms2_invoiced) > 0;
+                      const ms1 = partMs1 ? Math.max(Number(r.ms1_unbilled) || 0, 0) : Number(r.ms1_amount) || 0;
+                      const ms2 = partMs2 ? Math.max(Number(r.ms2_unbilled) || 0, 0) : Number(r.ms2_amount) || 0;
+                      return (
+                        <div key={r.po_dispatch} style={{ fontSize: "0.76rem", padding: "3px 0" }}>
+                          {r.poid || r.po_dispatch} · {r.customer || "—"} · MS1: SAR {money.format(ms1)} · MS2: SAR {money.format(ms2)}
+                          {(partMs1 || partMs2) && (
+                            <span style={{ marginLeft: 6, color: "#b45309", fontWeight: 600 }}>
+                              (already invoiced SAR {money.format((Number(r.ms1_invoiced) || 0) + (Number(r.ms2_invoiced) || 0))})
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
