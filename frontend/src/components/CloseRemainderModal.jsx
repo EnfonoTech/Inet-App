@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { pmApi } from "../services/api";
+import RolloutPlanModal from "./RolloutPlanModal";
 import { money, qty as qtyFmt } from "../utils/numberFormat";
 
 /**
@@ -54,12 +55,18 @@ export default function CloseRemainderModal({ row, onClose, onDone }) {
   const [closeType, setCloseType] = useState("INET");
   const [subcontractor, setSubcontractor] = useState("");
   const [subcons, setSubcons] = useState([]);
+  const [huaweiIms, setHuaweiIms] = useState([]);
+  const [projectDomains, setProjectDomains] = useState([]);
 
   useEffect(() => {
     if (!row) return;
     setErr(null);
     if (source === "Rollout Execution" || source === "Backend") {
       pmApi.getTeamOptions?.().then((r) => setTeams(r || [])).catch(() => setTeams([]));
+    }
+    if (source === "Rollout Execution") {
+      pmApi.listHuaweiIMs?.().then((r) => setHuaweiIms(r || [])).catch(() => setHuaweiIms([]));
+      pmApi.listProjectDomains?.().then((r) => setProjectDomains(r || [])).catch(() => setProjectDomains([]));
     }
     if (source === "Direct Close") {
       pmApi.listSubcontractors?.().then((r) => setSubcons(r || [])).catch(() => setSubcons([]));
@@ -72,6 +79,38 @@ export default function CloseRemainderModal({ row, onClose, onDone }) {
   );
 
   if (!row) return null;
+
+  // Rollout lines get the real planning dialog — the same component IMDispatch
+  // renders, not a reduced copy — with the quantity read from what is still
+  // outstanding rather than from the whole line.
+  if (source === "Rollout Execution") {
+    return (
+      <RolloutPlanModal
+        open
+        rows={[{
+          name: row.po_dispatch || row.system_id,
+          poid: row.poid,
+          site_code: row.site_code,
+          qty: outstanding,
+          remaining_qty: outstanding,
+          line_amount: value ?? row.line_amount,
+          huawei_im: row.huawei_im,
+          project_domain: row.project_domain,
+          is_internal_work: row.is_internal_work,
+        }]}
+        imName={row.im}
+        teamsList={teams}
+        huaweiIms={huaweiIms}
+        projectDomains={projectDomains}
+        qtyOf={(r) => Number(r.remaining_qty ?? r.qty ?? 0)}
+        defaultVisitType="Re-Visit"
+        title={`Plan the remaining ${qtyFmt.format(outstanding)} of ${row.poid || ""}`}
+        submitLabel="Create plan"
+        onClose={onClose}
+        onCreated={() => onDone?.()}
+      />
+    );
+  }
 
   async function submit() {
     setBusy(true);
