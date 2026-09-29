@@ -8248,6 +8248,19 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
         if owner_visit_row and cint(
             frappe.db.get_value("Rollout Plan", rp_name, "visit_number")
         ) <= cint(owner_visit_row[0][0]):
+            # Silent on a genuine retry, but NOT when the line still has a
+            # confirmed remainder: there the IM planned the rest expecting to
+            # record it, and a quiet no-op reads as "the button does nothing".
+            # An Execution plan joins the visit that already owns the Work
+            # Done, so it takes a Re-Visit or an Extra Visit to record more.
+            outstanding, _src = _outstanding_remainder(dispatch_name)
+            if outstanding > 0:
+                frappe.throw(
+                    f"This plan is visit {cint(frappe.db.get_value('Rollout Plan', rp_name, 'visit_number'))}, "
+                    f"which already produced Work Done {existing_wd_name}. "
+                    f"The remaining {outstanding:g} needs its own visit — plan it "
+                    "as a Re-Visit or an Extra Visit, then record the Work Done."
+                )
             return {"name": existing_wd_name, "already_exists": True}
 
     # Never allow Work Done while this plan carries an open Issue & Risk

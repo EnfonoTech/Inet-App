@@ -64,7 +64,7 @@ export default function CloseRemainderModal({ row, onClose, onDone }) {
         {...shared}
         imName={row.im}
         qtyOf={(r) => Number(r.remaining_qty ?? r.qty ?? 0)}
-        defaultVisitType="Re-Visit"
+        defaultVisitType="Execution"
         title={`Plan the remaining ${qtyFmt.format(outstanding)} of ${row.poid || ""}`}
         submitLabel="Create plan"
         onCreated={() => onDone?.()}
