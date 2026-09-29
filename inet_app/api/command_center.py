@@ -25372,10 +25372,14 @@ def _dispatch_cancel_issues(dispatch_name):
     """Everything wrong with cancelling this POID, worst first.
 
     Each entry is ``{"severity", "short", "detail"}``. Severity "hard" is
-    genuinely impossible and is refused everywhere; "warn" is a judgement the
-    PM is allowed to make — an invoiced line or one still carrying a live plan
-    CAN be cancelled if that is really the decision, so the IM may raise the
-    request and the PM sees what they are approving.
+    refused everywhere; "warn" is a judgement the PM is allowed to make.
+
+    Money already invoiced is hard: cancelling would leave an invoice pointing
+    at a cancelled line, and the route for that is a credit note with the
+    customer, not a cancel. Operational state — a live plan, an existing Work
+    Done — is a warning: the line can be cancelled if that is genuinely the
+    decision, so the IM may raise the request and the PM sees what they are
+    approving.
 
     Ordered by how fundamental the problem is, because only the first one is
     shown: a line that is both invoiced and mid-plan is an invoicing problem
@@ -25398,11 +25402,10 @@ def _dispatch_cancel_issues(dispatch_name):
     invoiced = flt(pd.get("ms1_invoiced") or 0) + flt(pd.get("ms2_invoiced") or 0)
     if invoiced > 0:
         issues.append({
-            "severity": "warn",
+            "severity": "hard",
             "short": f"Already invoiced — SAR {invoiced:,.2f}",
             "detail": (f"SAR {invoiced:,.2f} has already been invoiced on this line. "
-                       "Cancelling leaves an invoice against a cancelled line — a credit "
-                       "note is normally the right route."),
+                       "Raise a credit note with the customer instead of cancelling."),
         })
 
     live = frappe.db.sql(
@@ -25419,6 +25422,17 @@ def _dispatch_cancel_issues(dispatch_name):
             "severity": "warn",
             "short": f"{len(live)} live plan{'s' if len(live) != 1 else ''}",
             "detail": f"Still planned: {names}. Approving cancels the plan(s) too.",
+        })
+
+    # Work Done means the work was recorded and its revenue counted, even
+    # though nothing has been invoiced yet. Cancellable, but the IM should
+    # know they are cancelling a line someone has already reported as done.
+    wd = frappe.db.get_value("Work Done", {"system_id": dispatch_name}, "name")
+    if wd:
+        issues.append({
+            "severity": "warn",
+            "short": "Work Done recorded",
+            "detail": f"{wd} already records this line as done. Cancelling drops its revenue.",
         })
     return issues
 
@@ -25810,6 +25824,25 @@ def list_po_cancel_requests(status=None, limit=200):
         r["poid_list"] = ", ".join(l["poid"] for l in r["lines"][:5])
         if len(r["lines"]) > 5:
             r["poid_list"] += f" +{len(r['lines']) - 5} more"
+
+        # A still-pending request carries its issues LIVE, not as they stood
+        # when it was raised: a line can pick up an invoice, a plan or a Work
+        # Done while the request waits, and the PM has to decide against the
+        # position now. Decided requests keep what actually happened instead.
+        if r.get("request_status") == "Pending PM Approval":
+            warn_n = hard_n = 0
+            for ln in r["lines"]:
+                issues = _dispatch_cancel_issues(ln["po_dispatch"])
+                top = issues[0] if issues else None
+                ln["issue"] = top["short"] if top else None
+                ln["issue_detail"] = top["detail"] if top else None
+                ln["issue_severity"] = top["severity"] if top else None
+                if top and top["severity"] == "hard":
+                    hard_n += 1
+                elif top:
+                    warn_n += 1
+            r["warn_count"] = warn_n
+            r["blocked_count"] = hard_n
     return rows
 
 

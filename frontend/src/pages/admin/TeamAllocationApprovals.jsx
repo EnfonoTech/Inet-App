@@ -353,6 +353,21 @@ export default function TeamAllocationApprovals() {
                   <strong>{decideTarget.poid_count ?? decideTarget.lines?.length ?? 0} POID(s)</strong>
                   , SAR {money.format(decideTarget.total_amount || 0)}
                   {decideTarget.im && <> · IM: <strong>{decideTarget.im}</strong></>}
+                  {/* Live, not as they stood when the request was raised. */}
+                  {(decideTarget.blocked_count > 0 || decideTarget.warn_count > 0) && (
+                    <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {decideTarget.blocked_count > 0 && (
+                        <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" }}>
+                          ⛔ {decideTarget.blocked_count} will be refused
+                        </span>
+                      )}
+                      {decideTarget.warn_count > 0 && (
+                        <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#fffbeb", color: "#92400e", border: "1px solid #fde68a" }}>
+                          ⚠ {decideTarget.warn_count} need a second look
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div style={{ marginTop: 8, maxHeight: 220, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 6 }}>
                     {(decideTarget.lines || []).length > 0 ? (
                       <table className="data-table" style={{ margin: 0, fontSize: "0.76rem" }}>
@@ -389,7 +404,16 @@ export default function TeamAllocationApprovals() {
                               <td style={{ textAlign: "right" }}>{l.qty ?? "—"}</td>
                               <td style={{ textAlign: "right" }}>{money.format(l.line_amount || 0)}</td>
                               <td>
-                                <span title={l.line_note || ""} style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700, background: t.bg, color: t.fg, border: `1px solid ${t.bd}` }}>{ls}</span>
+                                {l.issue ? (
+                                  <span title={l.issue_detail || ""} style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700,
+                                    background: l.issue_severity === "hard" ? "#fef2f2" : "#fffbeb",
+                                    color: l.issue_severity === "hard" ? "#b91c1c" : "#92400e",
+                                    border: `1px solid ${l.issue_severity === "hard" ? "#fecaca" : "#fde68a"}` }}>
+                                    {l.issue_severity === "hard" ? "⛔" : "⚠"} {l.issue}
+                                  </span>
+                                ) : (
+                                  <span title={l.line_note || ""} style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700, background: t.bg, color: t.fg, border: `1px solid ${t.bd}` }}>{ls}</span>
+                                )}
                               </td>
                             </tr>
                             );

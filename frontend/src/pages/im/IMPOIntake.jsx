@@ -3274,8 +3274,19 @@ export default function IMPOIntake() {
                         <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{l.qty ?? "—"}</td>
                         <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(l.line_amount || 0)}</td>
                         <td>
-                          <span title={l.line_note || ""} style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700, background: t.bg, color: t.fg, border: `1px solid ${t.bd}` }}>{ls}</span>
-                          {l.line_note && <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginTop: 2, maxWidth: 220 }}>{l.line_note}</div>}
+                          {l.issue ? (
+                            <span title={l.issue_detail || ""} style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700,
+                              background: l.issue_severity === "hard" ? "#fef2f2" : "#fffbeb",
+                              color: l.issue_severity === "hard" ? "#b91c1c" : "#92400e",
+                              border: `1px solid ${l.issue_severity === "hard" ? "#fecaca" : "#fde68a"}` }}>
+                              {l.issue_severity === "hard" ? "⛔" : "⚠"} {l.issue}
+                            </span>
+                          ) : (
+                            <>
+                              <span title={l.line_note || ""} style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700, background: t.bg, color: t.fg, border: `1px solid ${t.bd}` }}>{ls}</span>
+                              {l.line_note && <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginTop: 2, maxWidth: 220 }}>{l.line_note}</div>}
+                            </>
+                          )}
                         </td>
                       </tr>
                     );
