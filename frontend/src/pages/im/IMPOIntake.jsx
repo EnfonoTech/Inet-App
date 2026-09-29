@@ -230,6 +230,17 @@ export default function IMPOIntake() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(new Set());
+  // Selection on the All POIDs tab. Kept separate from `selected` (PO Intake),
+  // because the two tabs list different rows and switching between them must
+  // not carry a selection across.
+  const [ovSelected, setOvSelected] = useState(new Set());
+  // POID cancellation. An IM raises one request covering the whole selection
+  // for PM sign-off; a PM cancels outright and the result says which happened.
+  const [cancelPoidOpen, setCancelPoidOpen] = useState(false);
+  const [cancelPoidReason, setCancelPoidReason] = useState("");
+  const [cancelPoidBusy, setCancelPoidBusy] = useState(false);
+  const [cancelPoidError, setCancelPoidError] = useState(null);
+  const [cancelPoidResult, setCancelPoidResult] = useState(null);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
 
@@ -1023,6 +1034,57 @@ export default function IMPOIntake() {
     }
   }, [dcMilestone, showDcModal, dcSubconLoading]);
 
+  function toggleOvRow(name) {
+    setOvSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }
+
+  function toggleAllOv() {
+    setOvSelected((prev) =>
+      ovSelectableRows.length > 0 && ovSelectableRows.every((r) => prev.has(r.name))
+        ? new Set()
+        : new Set(ovSelectableRows.map((r) => r.name)),
+    );
+  }
+
+  function openCancelPoidModal() {
+    if (ovSelected.size < 1) return;
+    setCancelPoidError(null);
+    setCancelPoidReason("");
+    setCancelPoidResult(null);
+    setCancelPoidOpen(true);
+  }
+
+  async function submitCancelPoid() {
+    const names = Array.from(ovSelected);
+    if (names.length === 0) return;
+    if (!cancelPoidReason.trim()) {
+      setCancelPoidError("A reason is required — the PM sees it when deciding.");
+      return;
+    }
+    setCancelPoidBusy(true);
+    setCancelPoidError(null);
+    // One call for the whole selection: an IM gets a single request the PM
+    // decides as one batch, a PM cancels the lot outright. Per-line refusals
+    // (already invoiced, live plan) come back in `blocked` rather than
+    // stopping the rest.
+    try {
+      const res = await pmApi.requestCancelDispatch(names, cancelPoidReason.trim());
+      setCancelPoidResult(res);
+      setOvSelected(new Set());
+      window.dispatchEvent(new Event("inet:approvals-changed"));
+      window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
+      loadOv();
+    } catch (e) {
+      setCancelPoidError(e?.message || "Failed to cancel");
+    } finally {
+      setCancelPoidBusy(false);
+    }
+  }
+
   async function openDcModal() {
     if (selected.size < 1) return;
     setDcError(null);
@@ -1234,6 +1296,13 @@ export default function IMPOIntake() {
     if (ovDirectCloseOnly) r = r.filter((x) => !!x.direct_close_by);
     return r;
   }, [ovRows, ovDomainFilter, ovStatusFilter, ovTeamFilter, ovPlanStatusFilter, ovPlanSummaries, ovDirectCloseOnly]);
+
+  // A cancelled line is already where a cancel would take it, so it is not
+  // offered for selection and select-all skips it.
+  const ovSelectableRows = useMemo(
+    () => ovFilteredRows.filter((r) => (r.dispatch_status || "") !== "Cancelled"),
+    [ovFilteredRows],
+  );
 
   const hasOvFilters = !!(ovSearch || ovProjectFilter.length || ovDomainFilter.length || ovStatusFilter.length || ovDuidFilter.length || ovTeamFilter.length || ovPlanStatusFilter.length || ovFromDate || ovToDate || ovDirectCloseOnly);
   const filteredDummyRows = useMemo(() => {
@@ -1466,6 +1535,15 @@ export default function IMPOIntake() {
               Clear filters
             </button>
           )}
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={ovSelected.size < 1}
+            onClick={openCancelPoidModal}
+            style={{ marginLeft: "auto", borderColor: "#fca5a5", color: "#b91c1c", fontSize: "0.78rem", padding: "5px 12px" }}
+          >
+            Cancel POID ({ovSelected.size})
+          </button>
         </div>
       )}
 
@@ -1625,6 +1703,13 @@ export default function IMPOIntake() {
               <table key="im-po-overview-v2" className="data-table" data-excel-filter-all="1" data-table-key="im-po-overview-v2" data-tablepro-no-dynamic="true">
                 <thead>
                   <tr>
+                    <th style={{ width: 36 }} data-tablepro-skip="1">
+                      <input
+                        type="checkbox"
+                        checked={ovSelectableRows.length > 0 && ovSelectableRows.every((r) => ovSelected.has(r.name))}
+                        onChange={toggleAllOv}
+                      />
+                    </th>
                     <th>POID</th>
                     <th>Dispatch Status</th>
                     <th>Closed Via</th>
@@ -1659,7 +1744,7 @@ export default function IMPOIntake() {
                 <tbody>
                   {ovFilteredRows.length === 0 ? (
                     <tr>
-                      <td colSpan={25} style={{ padding: 0 }}>
+                      <td colSpan={26} style={{ padding: 0 }}>
                         {ovLoading ? (
                           <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                         ) : (
@@ -1680,6 +1765,14 @@ export default function IMPOIntake() {
                     const ifsc = iflag ? issueFlagColor(iflag) : null;
                     return (
                       <tr key={row.name} data-doc-name={row.name} style={idx >= ovDisplayedCount ? { display: "none" } : { opacity: isClosed ? 0.65 : 1, background: isDummy ? "#fffbeb" : undefined }}>
+                        <td data-tablepro-skip="1">
+                          <input
+                            type="checkbox"
+                            checked={ovSelected.has(row.name)}
+                            disabled={(row.dispatch_status || "") === "Cancelled"}
+                            onChange={() => toggleOvRow(row.name)}
+                          />
+                        </td>
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>
                           {row.poid || row.name}
                           {isDummy && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#fed7aa", color: "#92400e" }}>Dummy</span>}
@@ -1737,6 +1830,7 @@ export default function IMPOIntake() {
                         Center Area·Region·Item Code·Description·Activity Type = 13 columns, then Qty·Line Amount (SAR),
                         then Target Month..Actions = 10 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                      <td />{/* select */}
                       <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                         {ovDisplayedCount} row{ovDisplayedCount !== 1 ? "s" : ""}
                       </td>
@@ -2096,6 +2190,78 @@ export default function IMPOIntake() {
           </div>
         </div>
       </Modal>
+
+      {/* ── CANCEL POID MODAL ────────────────────────────────────────────── */}
+      {cancelPoidOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={() => !cancelPoidBusy && setCancelPoidOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(560px, 96vw)", maxHeight: "90dvh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 4px", fontSize: "1rem" }}>Cancel POID</h3>
+            <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: 14 }}>
+              {ovSelected.size} POID(s) selected. A PM cancels immediately; an IM sends one request for PM approval.
+            </div>
+
+            {cancelPoidError && <div className="notice error" style={{ marginBottom: 12 }}>{cancelPoidError}</div>}
+
+            {cancelPoidResult ? (
+              <div style={{ marginBottom: 14 }}>
+                {cancelPoidResult.direct ? (
+                  cancelPoidResult.cancelled > 0 && (
+                    <div className="notice success" style={{ marginBottom: 8 }}>
+                      {cancelPoidResult.cancelled} POID(s) cancelled.
+                      {cancelPoidResult.cancelled_plans?.length > 0 &&
+                        ` ${cancelPoidResult.cancelled_plans.length} dormant plan(s) cancelled with them.`}
+                    </div>
+                  )
+                ) : (
+                  cancelPoidResult.created > 0 && (
+                    <div className="notice success" style={{ marginBottom: 8 }}>
+                      Request {cancelPoidResult.request} sent for PM approval — {cancelPoidResult.poid_count} POID(s).
+                    </div>
+                  )
+                )}
+                {cancelPoidResult.blocked?.length > 0 && (
+                  <div className="notice error">
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>{cancelPoidResult.blocked.length} could not be cancelled:</div>
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: "0.8rem" }}>
+                      {cancelPoidResult.blocked.map((f) => (
+                        <li key={f.poid}><strong>{f.poid}</strong> — {f.error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 14, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, fontSize: "0.8rem", color: "#b91c1c" }}>
+                  Already invoiced, or still has a live plan? It will be refused.
+                </div>
+                <div className="form-group" style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Reason</label>
+                  <textarea value={cancelPoidReason} onChange={(e) => setCancelPoidReason(e.target.value)} rows={3}
+                            disabled={cancelPoidBusy}
+                            placeholder="Why is this line being cancelled?"
+                            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontFamily: "inherit", fontSize: "0.84rem", resize: "vertical" }} />
+                </div>
+              </>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" className="btn-secondary" disabled={cancelPoidBusy}
+                      onClick={() => setCancelPoidOpen(false)}>
+                {cancelPoidResult ? "Close" : "Cancel"}
+              </button>
+              {!cancelPoidResult && (
+                <button type="button" className="btn-primary" disabled={cancelPoidBusy || ovSelected.size < 1}
+                        onClick={submitCancelPoid} style={{ background: "#b91c1c", borderColor: "#b91c1c" }}>
+                  {cancelPoidBusy ? "Working…" : `Cancel ${ovSelected.size} POID(s)`}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── MAP DUMMY PO MODAL ───────────────────────────────────────────── */}
       {mapForRow && (

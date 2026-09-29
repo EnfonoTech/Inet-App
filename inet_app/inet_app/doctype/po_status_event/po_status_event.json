@@ -1,0 +1,194 @@
+{
+ "actions": [],
+ "autoname": "format:PSE-{YYYY}-{######}",
+ "creation": "2026-09-28 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "po_dispatch",
+  "entity",
+  "entity_name",
+  "field_changed",
+  "old_value",
+  "new_value",
+  "milestone",
+  "column_break_main",
+  "changed_by",
+  "changed_by_full_name",
+  "changed_at",
+  "days_in_previous",
+  "batch_id",
+  "row_count",
+  "section_detail",
+  "remark"
+ ],
+ "fields": [
+  {
+   "fieldname": "po_dispatch",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "PO Dispatch",
+   "options": "PO Dispatch",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "PO Dispatch",
+   "fieldname": "entity",
+   "fieldtype": "Select",
+   "label": "Entity",
+   "options": "PO Dispatch\nWork Done\nRollout Plan\nDaily Execution",
+   "reqd": 1
+  },
+  {
+   "fieldname": "entity_name",
+   "fieldtype": "Data",
+   "label": "Entity Name"
+  },
+  {
+   "fieldname": "field_changed",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Field Changed",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "old_value",
+   "fieldtype": "Data",
+   "label": "Old Value"
+  },
+  {
+   "fieldname": "new_value",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "New Value",
+   "search_index": 1
+  },
+  {
+   "fieldname": "milestone",
+   "fieldtype": "Select",
+   "label": "Milestone",
+   "options": "\nMS1\nMS2\nAcceptance"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "changed_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Changed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "changed_by_full_name",
+   "fieldtype": "Data",
+   "label": "Changed By (Name)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "changed_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Changed At",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "days_in_previous",
+   "fieldtype": "Float",
+   "label": "Days in Previous",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "batch_id",
+   "fieldtype": "Data",
+   "label": "Batch ID"
+  },
+  {
+   "default": "1",
+   "fieldname": "row_count",
+   "fieldtype": "Int",
+   "label": "Row Count"
+  },
+  {
+   "fieldname": "section_detail",
+   "fieldtype": "Section Break",
+   "label": "Detail"
+  },
+  {
+   "fieldname": "remark",
+   "fieldtype": "Small Text",
+   "label": "Remark"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-28 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PO Status Event",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET Admin",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET PIC",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "INET IM",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "share": 1,
+   "role": "INET PM"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "changed_at",
+ "sort_order": "DESC",
+ "title_field": "field_changed",
+ "track_changes": 0,
+ "states": []
+}

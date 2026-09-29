@@ -28,6 +28,7 @@
   "planning_mode",
   "dispatch_status",
   "dispatch_mode",
+  "stage_entered_at",
   "is_dummy_po",
   "original_dummy_poid",
   "was_dummy_po",
@@ -59,6 +60,15 @@
   "column_break_subcon",
   "subcon_completed_on",
   "subcon_remark",
+  "section_confirmation",
+  "confirmed_qty",
+  "confirmed_amount",
+  "remaining_qty",
+  "column_break_confirmation",
+  "confirmation_date",
+  "confirmed_by",
+  "remaining_qty_action",
+  "remaining_qty_remark",
   "section_pic",
   "contract",
   "sqc_status",
@@ -118,7 +128,16 @@
   "sub_po_amount_ms2",
   "sub_po_date_ms2",
   "sub_paid_date_ms2",
-  "sub_po_remark_ms2"
+  "sub_po_remark_ms2",
+  "section_cancel",
+  "cancel_request_status",
+  "cancel_reason",
+  "column_break_cancel",
+  "cancel_requested_by",
+  "cancel_requested_at",
+  "cancel_responded_by",
+  "cancel_responded_at",
+  "cancel_pm_remark"
  ],
  "fields": [
   {
@@ -249,6 +268,13 @@
    "label": "Dispatch Mode",
    "options": "Auto\nManual",
    "read_only": 1
+  },
+  {
+   "fieldname": "stage_entered_at",
+   "fieldtype": "Datetime",
+   "label": "Stage Entered At",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "default": "0",
@@ -447,6 +473,59 @@
   {
    "fieldname": "column_break_subcon",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_confirmation",
+   "fieldtype": "Section Break",
+   "label": "Confirmation (IM \u2192 PIC)"
+  },
+  {
+   "fieldname": "confirmed_qty",
+   "fieldtype": "Float",
+   "label": "Confirmed Qty",
+   "precision": "4"
+  },
+  {
+   "fieldname": "confirmed_amount",
+   "fieldtype": "Currency",
+   "label": "Confirmed Amount (SAR)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remaining_qty",
+   "fieldtype": "Float",
+   "label": "Remaining Qty",
+   "precision": "4",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_confirmation",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "confirmation_date",
+   "fieldtype": "Datetime",
+   "label": "Confirmation Date",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "confirmed_by",
+   "fieldtype": "Link",
+   "label": "Confirmed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remaining_qty_action",
+   "fieldtype": "Select",
+   "label": "Remaining Qty Action",
+   "options": "\nCancelled\nPending \u2013 to be worked\nPending \u2013 to be invoiced"
+  },
+  {
+   "fieldname": "remaining_qty_remark",
+   "fieldtype": "Small Text",
+   "label": "Remaining Qty Remark"
   },
   {
    "collapsible": 1,
@@ -798,6 +877,58 @@
    "label": "Subcon PO Status",
    "options": "\nNot Ordered\nPartially Ready\nReady to Order\nPartially Created\nPO Created\nPartially Ordered\nPO Submitted\nPartially Invoiced\nInvoice Received\nPurchase Invoice Submitted\nPartially Closed\nClosed",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_cancel",
+   "fieldtype": "Section Break",
+   "label": "Cancel Request"
+  },
+  {
+   "fieldname": "cancel_request_status",
+   "fieldtype": "Select",
+   "label": "Cancel Request Status",
+   "options": "\nPending PM Approval\nApproved\nRejected",
+   "search_index": 1
+  },
+  {
+   "fieldname": "cancel_reason",
+   "fieldtype": "Small Text",
+   "label": "Cancel Reason"
+  },
+  {
+   "fieldname": "column_break_cancel",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cancel_requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_requested_at",
+   "fieldtype": "Datetime",
+   "label": "Requested At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_responded_by",
+   "fieldtype": "Link",
+   "label": "Responded By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_responded_at",
+   "fieldtype": "Datetime",
+   "label": "Responded At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancel_pm_remark",
+   "fieldtype": "Small Text",
+   "label": "PM Remark"
   }
  ],
  "index_web_pages_for_search": 1,

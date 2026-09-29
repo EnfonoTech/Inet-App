@@ -579,7 +579,9 @@ export const pmApi = {
   getTablePreferences:  (table_id) => call("inet_app.api.command_center.get_table_preferences", { table_id }),
   getAllTablePreferences: () => call("inet_app.api.command_center.get_all_table_preferences"),
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
-  updateWorkDoneSubmission: (name, submission_status, note) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status, note }),
+  // confirmed_qty / remaining_action carry the quantity actually delivered.
+  // Omitted (undefined) means "no change" — only a short delivery needs them.
+  updateWorkDoneSubmission: (name, submission_status, note, confirmed_qty, remaining_action) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status, note, confirmed_qty, remaining_action }),
   submitMilestoneToPic: (work_done, milestone) => call("inet_app.api.command_center.submit_milestone_to_pic", { work_done, milestone }),
   // "Resubmit to PIC" tab — legacy lines whose work (and often original PIC
   // submission) already happened historically outside this system, so
@@ -596,7 +598,12 @@ export const pmApi = {
   resubmitLegacyMilestoneToPic: (po_dispatch, milestone, note) => call("inet_app.api.command_center.resubmit_legacy_milestone_to_pic", { po_dispatch, milestone, note }),
   bulkResubmitLegacyMilestonesToPic: (payload) => call("inet_app.api.command_center.bulk_resubmit_legacy_milestones_to_pic", { payload: JSON.stringify(payload) }),
   updateWorkDoneIssue: (name, issue_flag) => call("inet_app.api.command_center.update_work_done_issue", { name, issue_flag }),
-  updateSubconSubmission: (po_dispatch, submission_status, note) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status, note }),
+  updateSubconSubmission: (po_dispatch, submission_status, note, confirmed_qty, remaining_action) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status, note, confirmed_qty, remaining_action }),
+  confirmLineQty: (po_dispatch, confirmed_qty, remaining_action, remark) => call("inet_app.api.command_center.confirm_line_qty", { po_dispatch, confirmed_qty, remaining_action, remark }),
+  // What becomes of a short-confirmed line's leftover, answered whenever the
+  // IM finds out — deliberately not asked at confirmation time.
+  setRemainingQtyAction: (po_dispatch, action, remark) => call("inet_app.api.command_center.set_remaining_qty_action", { po_dispatch, action, remark }),
+  listUndecidedRemainders: () => call("inet_app.api.command_center.list_undecided_remainders", {}),
   getWorkDoneAttachments: (name) => call("inet_app.api.command_center.get_work_done_attachments", { name }),
   getWorkDoneAttachmentsByDispatch: (po_dispatch) => call("inet_app.api.pic.get_work_done_attachments_for_dispatch", { po_dispatch }),
   getDocAttachments: (doctype, docname) => call("frappe.client.get_list", {
@@ -787,6 +794,13 @@ export const pmApi = {
   // Plan Cancel Request — IM requests PM approval to cancel a Rollout Plan.
   requestCancelPlan:  (rolloutPlan, reason) => call("inet_app.api.command_center.request_cancel_plan", { rollout_plan: rolloutPlan, reason: reason || "" }),
   pmDecideCancelPlan: (rolloutPlan, action, remark) => call("inet_app.api.command_center.pm_decide_cancel_plan", { rollout_plan: rolloutPlan, action, remark: remark || "" }),
+  // POID cancellation. A PM calling requestCancelDispatch cancels outright
+  // (result.direct === true); an IM raises a request for PM approval.
+  // One call covers the whole selection. A PM cancels outright (result.direct);
+  // an IM gets a single PO Cancel Request the PM decides as one batch.
+  requestCancelDispatch:   (poDispatches, reason) => call("inet_app.api.command_center.request_cancel_dispatch", { po_dispatches: poDispatches, reason: reason || "" }),
+  pmDecideCancelRequest:   (request, action, remark) => call("inet_app.api.command_center.pm_decide_cancel_request", { request, action, remark: remark || "" }),
+  listPoCancelRequests:    (status) => call("inet_app.api.command_center.list_po_cancel_requests", { status: status || "" }),
   listPendingCancelRequests: (status) => call("inet_app.api.command_center.list_pending_cancel_requests", { status: status || "" }),
   listAllCancelRequests: () => call("inet_app.api.command_center.list_pending_cancel_requests", {}),
   updateIMTeam:      (name, payload) => call("inet_app.api.command_center.update_im_team", { name, payload: JSON.stringify(payload || {}) }),

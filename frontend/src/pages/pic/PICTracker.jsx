@@ -12,6 +12,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { useAuth } from "../../context/AuthContext";
 import DateRangePicker from "../../components/DateRangePicker";
+import { RemainderBadge } from "../../components/ConfirmedQtyFields";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
@@ -94,8 +95,15 @@ const CSV_COLUMNS = [
   ["site_code", "DUID"],
   ["site_name", "Site Name"],
   ["qty", "Qty"],
+  // Ordered and confirmed stay separate columns so a short delivery reads as
+  // "3 ordered / 2 confirmed" to whoever raises the invoice, rather than the
+  // reduction being invisible.
+  ["confirmed_qty", "Confirmed Qty"],
+  ["remaining_qty", "Remaining Qty"],
+  ["remaining_qty_action", "Remaining Qty Decision"],
   ["rate", "Unit Price"],
   ["line_amount", "Line Amount"],
+  ["confirmed_amount", "Confirmed Amount"],
   ["tax_rate", "Tax Rate"],
   ["payment_terms", "Payment Terms"],
   ["sqc_status", "SQC Status"],
@@ -406,7 +414,10 @@ export default function PICTracker() {
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
     return {
       qty: sum("qty"),
+      confirmed_qty: sum("confirmed_qty"),
+      remaining_qty: sum("remaining_qty"),
       line_amount: sum("line_amount"),
+      confirmed_amount: sum("confirmed_amount"),
       ms1_amount: sum("ms1_amount"),
       ms1_invoiced: sum("ms1_invoiced"),
       ms1_vat: sum("ms1_vat"),
@@ -784,8 +795,11 @@ export default function PICTracker() {
                   <th>Description</th>
                   <th>DUID</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
+                  <th style={{ textAlign: "right" }}>Confirmed Qty</th>
+                  <th style={{ textAlign: "right" }}>Remaining</th>
                   <th style={{ textAlign: "right" }}>Unit Price</th>
                   <th style={{ textAlign: "right" }}>Line Amount</th>
+                  <th style={{ textAlign: "right" }}>Confirmed Amount</th>
                   <th>Tax Rate</th>
                   <th>Payment Terms</th>
                   <th>IM Status</th>
@@ -814,7 +828,7 @@ export default function PICTracker() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={39} style={{ padding: 0 }}>
+                    <td colSpan={42} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                       ) : (
@@ -848,8 +862,15 @@ export default function PICTracker() {
                     <td style={{ fontSize: "0.82rem", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.site_name || ""}>{r.site_code || "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? qty.format(r.qty) : "—"}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: Number(r.confirmed_qty) > 0 && Number(r.confirmed_qty) < Number(r.qty) ? "#b45309" : undefined, fontWeight: Number(r.confirmed_qty) > 0 && Number(r.confirmed_qty) < Number(r.qty) ? 700 : undefined }}>{Number(r.confirmed_qty) > 0 ? qty.format(r.confirmed_qty) : "—"}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {Number(r.remaining_qty) > 0
+                        ? <RemainderBadge remainingQty={r.remaining_qty} action={r.remaining_qty_action} fmt={qty} />
+                        : "—"}
+                    </td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? money.format(r.rate) : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.line_amount || 0)}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: Number(r.confirmed_amount) > 0 && Number(r.confirmed_amount) < Number(r.line_amount) ? "#b45309" : undefined, fontWeight: 600 }}>{Number(r.confirmed_amount) > 0 ? money.format(r.confirmed_amount) : "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.tax_rate || "—"}</td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.payment_terms || ""}>{r.payment_terms || "—"}</td>
                     <td><IMStatusBadge value={r.im_submission_status} /></td>
@@ -912,9 +933,10 @@ export default function PICTracker() {
               </tbody>
               {rows.length > 0 && (
               <tfoot>
-                {/* 39 columns: checkbox · Subcontract · Contract Model · POID · PO No · Customer · IM ·
+                {/* 42 columns: checkbox · Subcontract · Contract Model · POID · PO No · Customer · IM ·
                     PO Status · Project Domain · Project · Item · Description · DUID ·
-                    Qty · Unit Price · Line Amount · Tax Rate · Payment Terms · IM Status ·
+                    Qty · Confirmed Qty · Remaining · Unit Price · Line Amount · Confirmed Amount ·
+                    Tax Rate · Payment Terms · IM Status ·
                     PIC Status MS1 · PIC Rejection Reason · ISDP Owner · iBuy Owner ·
                     Applied MS1 · Invoicing Month MS1 · MS1% · MS1 Amt · MS1 Inv · MS1 VAT · MS1 Unb ·
                     PIC Status MS2 · Applied MS2 · Invoicing Month MS2 · MS2% · MS2 Amt · MS2 Inv · MS2 VAT ·
@@ -936,8 +958,11 @@ export default function PICTracker() {
                   <td></td>{/* Description */}
                   <td></td>{/* DUID */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{qty.format(totals.qty)}</td>{/* Qty */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{totals.confirmed_qty ? qty.format(totals.confirmed_qty) : "—"}</td>{/* Confirmed Qty */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: totals.remaining_qty ? "#b45309" : undefined }}>{totals.remaining_qty ? qty.format(totals.remaining_qty) : "—"}</td>{/* Remaining */}
                   <td></td>{/* Unit Price */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.line_amount)}</td>{/* Line Amount */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{totals.confirmed_amount ? money.format(totals.confirmed_amount) : "—"}</td>{/* Confirmed Amount */}
                   <td></td>{/* Tax Rate */}
                   <td></td>{/* Payment Terms */}
                   <td></td>{/* IM Status */}

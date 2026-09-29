@@ -381,12 +381,14 @@ export default function IMDispatch() {
         // fixed-size batch of any status and hiding the "Planned" ones
         // client-side afterward - that silently drops rows once the batch
         // (row limit) contains more already-planned rows than fit.
-        const listFilters = planScope === "unplanned"
-          ? [...filters, ["dispatch_status", "=", "Dispatched"]]
-          : filters;
+        // The Dispatched condition moves to the backend as `pending_rework`,
+        // because a line confirmed short with work still outstanding also
+        // belongs in this pool and an ANDed filter array cannot express the OR.
+        const listFilters = filters;
         // Only rows the IM has scheduled (target_month set) — un-scheduled
         // dispatches appear in the new PO Intake page instead.
         const portal = { has_target_month: "yes" };
+        if (planScope === "unplanned") portal.pending_rework = "yes";
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
         const colFilters = JSON.parse(columnFiltersDebounced);
         if (Object.keys(colFilters).length) portal.column_filters = colFilters;
@@ -770,9 +772,20 @@ export default function IMDispatch() {
   }
 
   // In "all" scope, planned rows are also planable (re-plan creates next visit).
+  // A line confirmed short whose leftover was marked "still to be done" has
+  // real work outstanding, even though its status reads Completed from the
+  // part that WAS delivered. It belongs in the unplanned pool, and the server
+  // returns it (portal flag `pending_rework`) — these two client-side gates
+  // are the twins of that filter and must agree with it, or the row arrives
+  // and is then hidden.
+  const hasPendingRework = (r) =>
+    Number(r.remaining_qty) > 0
+    && String(r.remaining_qty_action || "").trim().endsWith("worked");
+
   const planable = (r) => {
     const s = (r.dispatch_status || "");
     if (s === "Dispatched") return true;
+    if (hasPendingRework(r)) return true;
     if (planScope === "all" && s === "Planned") return true;
     return false;
   };
@@ -791,7 +804,9 @@ export default function IMDispatch() {
   // error #301, "too many re-renders") on every mount of this page.
   const visibleRows = useMemo(() => rows.filter((r) => {
     if (planScope === "all") return true;
-    return (r.dispatch_status || "") === "Dispatched";
+    if ((r.dispatch_status || "") === "Dispatched") return true;
+    return Number(r.remaining_qty) > 0
+      && String(r.remaining_qty_action || "").trim().endsWith("worked");
   }), [rows, planScope]);
 
   // See useProgressiveRows — mounts large row sets in chunks so the browser
@@ -2159,6 +2174,10 @@ export default function IMDispatch() {
                   </tr>
                 ) : mountedRows.map((row, idx) => {
                   const canPlan = planable(row);
+                  // Confirmed short with the leftover still to be done: the
+                  // status reads Completed from the part that WAS delivered,
+                  // so without a marker the row looks like it does not belong.
+                  const isRework = hasPendingRework(row);
                   const wasDf = row.was_dummy_po == 1 || row.was_dummy_po === true || String(row.was_dummy_po || "") === "1";
                   const origCell = (row.original_dummy_poid || "").trim();
                   // Compare against the business POID, not the SYS- doc name.
@@ -2168,7 +2187,8 @@ export default function IMDispatch() {
                       key={row.name}
                       data-doc-name={row.name}
                       style={idx >= displayedCount ? { display: "none" } : {
-                        background: !!Number(row.is_dummy_po) ? "#fffbeb" : !!Number(row.is_internal_work) ? "#f0fdfa" : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
+                        background: isRework ? "#fffbeb" : !!Number(row.is_dummy_po) ? "#fffbeb" : !!Number(row.is_internal_work) ? "#f0fdfa" : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined,
+                        boxShadow: isRework ? "inset 3px 0 0 #f59e0b" : undefined,
                         opacity: canPlan ? 1 : 0.85,
                       }}
                     >
@@ -2178,11 +2198,21 @@ export default function IMDispatch() {
                           checked={selected.has(row.name)}
                           disabled={!canPlan}
                           onChange={() => toggleRow(row.name)}
-                          title={canPlan ? "" : "Only Dispatched lines can be planned"}
+                          title={canPlan
+                            ? (isRework ? `${row.remaining_qty} still to be done on this line` : "")
+                            : "Only Dispatched lines, or lines with work still outstanding, can be planned"}
                         />
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>
                         <span>{row.poid || row.name}</span>
+                        {isRework && (
+                          <span
+                            title={`Confirmed ${row.confirmed_qty} of ${row.qty} — ${row.remaining_qty} still to be done`}
+                            style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 999, background: "#fef3c7", border: "1px solid #fcd34d", color: "#92400e", fontSize: "0.65rem", fontWeight: 700, whiteSpace: "nowrap" }}
+                          >
+                            {row.remaining_qty} to do
+                          </span>
+                        )}
                         {(row.dispatch_status || "").toLowerCase() === "planned" && (
                           <span
                             title="A rollout plan already exists. Selecting will create a new visit (visit_number auto-increments)."

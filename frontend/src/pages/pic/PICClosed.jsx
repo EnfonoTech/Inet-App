@@ -87,7 +87,7 @@ function DetailModal({ row, onClose }) {
           }
           hiddenFields={[
             "po_dispatch", "poid", "project_code", "site_code", "dispatch_status",
-            "qty", "rate", "line_amount",
+            "qty", "confirmed_qty", "rate", "line_amount", "confirmed_amount",
           ]}
           keyOrder={[
             "po_no", "customer", "subcontractor", "contract_model", "im_full_name",

@@ -16,6 +16,7 @@ import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import RemarksCell from "../../components/RemarksCell";
 import IMNoteCallout from "../../components/IMNoteCallout";
+import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } from "../../components/ConfirmedQtyFields";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge, PicStatusBadge } from "../pic/picShared";
@@ -28,6 +29,7 @@ import { PoStatusBadge, PicStatusBadge } from "../pic/picShared";
    3,250.00. Counts use the shared `count`/plain numbers — a row count
    must never read "29.00". */
 const money = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const qtyFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 4 });
 
 // Required documents per activity type.
 // doc2: null → Not applicable (only DOC1 needed)
@@ -418,6 +420,27 @@ export default function IMWorkDone() {
   const [bulkResult, setBulkResult] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
   const [submissionPick, setSubmissionPick] = useState("");
+  // Confirmed quantity, captured at the IM -> PIC handoff. What becomes of any
+  // leftover is decided separately, later — from the row itself or the banner.
+  const [confirmQty, setConfirmQty] = useState("");
+  const [decideFor, setDecideFor] = useState(null);
+  const [decideBusy, setDecideBusy] = useState(false);
+  const [decideErr, setDecideErr] = useState(null);
+
+  async function decideRemaining(action) {
+    if (!decideFor) return;
+    setDecideBusy(true);
+    setDecideErr(null);
+    try {
+      await pmApi.setRemainingQtyAction(decideFor.po_dispatch || decideFor.system_id, action);
+      setDecideFor(null);
+      loadData();
+    } catch (e) {
+      setDecideErr(e?.message || "Failed to save");
+    } finally {
+      setDecideBusy(false);
+    }
+  }
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const [submissionErr, setSubmissionErr] = useState(null);
   const [submissionWarn, setSubmissionWarn] = useState(null);
@@ -724,6 +747,8 @@ export default function IMWorkDone() {
     setDoc2Links([]);
     setDoc2PartLinks([]);
     setImNote("");
+    const already = Number(r.confirmed_qty) || 0;
+    setConfirmQty(already > 0 ? String(already) : (r.ordered_qty != null ? String(r.ordered_qty) : ""));
     setExistingAttachments([]);
     setSubmissionFor(r);
     const po_dispatch = r.po_dispatch || r.poid;
@@ -756,6 +781,22 @@ export default function IMWorkDone() {
         }
       }
     }
+    // Quantity is only sent on Confirmation Done — that is the handoff, and
+    // the backend refuses a short confirmation with no destination for the
+    // remainder, so catch it here rather than after the uploads have run.
+    const orderedQty = Number(submissionFor.ordered_qty) || 0;
+    const enteredQty = confirmQty === "" ? null : Number(confirmQty);
+    const sendQty = needsAttach && !submissionFor.is_legacy && enteredQty != null && !Number.isNaN(enteredQty);
+    if (sendQty) {
+      if (enteredQty <= 0) {
+        setSubmissionErr("Confirmed quantity must be greater than zero.");
+        return;
+      }
+      if (orderedQty > 0 && enteredQty > orderedQty + 0.00005) {
+        setSubmissionErr(`Confirmed quantity cannot exceed the ordered ${orderedQty}.`);
+        return;
+      }
+    }
     setSubmissionBusy(true);
     setSubmissionErr(null);
     try {
@@ -783,9 +824,15 @@ export default function IMWorkDone() {
       if (submissionFor.is_legacy) {
         res = await pmApi.resubmitLegacyMilestoneToPic(po_dispatch, submissionFor.milestone, imNote || undefined);
       } else if (submissionFor.is_subcon) {
-        res = await pmApi.updateSubconSubmission(docname, submissionPick, imNote || undefined);
+        res = await pmApi.updateSubconSubmission(
+          docname, submissionPick, imNote || undefined,
+          sendQty ? enteredQty : undefined,
+        );
       } else {
-        res = await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick, imNote || undefined);
+        res = await pmApi.updateWorkDoneSubmission(
+          submissionFor.name, submissionPick, imNote || undefined,
+          sendQty ? enteredQty : undefined,
+        );
       }
       window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
       setSubmissionFor(null);
@@ -1246,6 +1293,8 @@ export default function IMWorkDone() {
                   <th>Item Code</th>
                   <th>Item Description</th>
                   <th>Activity Type</th>
+                  <th style={{ textAlign: "right" }}>Qty</th>
+                  <th style={{ textAlign: "right" }}>Confirmed Qty</th>
                   <th style={{ textAlign: "right" }}>Line Amount</th>
                   <th>Region</th>
                   <th>INET IM</th>
@@ -1281,6 +1330,13 @@ export default function IMWorkDone() {
                     data-doc-name={r.name}
                     data-modified={r.modified}
                     className={selectedRows.has(r.name) ? "row-selected" : ""}
+                    // A confirmed-short line with no decision on its leftover
+                    // stands out until someone answers it. Tint only; the row
+                    // click still toggles selection, and the Confirmed Qty cell
+                    // is the thing that opens the chooser.
+                    style={Number(r.remaining_qty) > 0 && !r.remaining_qty_action
+                      ? { background: "#fffbeb", boxShadow: "inset 3px 0 0 #f59e0b" }
+                      : undefined}
                     onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(r.name) ? next.delete(r.name) : next.add(r.name); return next; })}
                     style={idx >= displayedCount ? { display: "none" } : { cursor: "pointer", ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}
                   >
@@ -1300,6 +1356,25 @@ export default function IMWorkDone() {
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{r.item_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
                     <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{r.activity_type || "—"}</td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ordered_qty != null ? qtyFmt.format(r.ordered_qty) : "—"}</td>
+                    <td
+                      style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", cursor: Number(r.remaining_qty) > 0 ? "pointer" : undefined }}
+                      onClick={Number(r.remaining_qty) > 0
+                        ? (e) => { e.stopPropagation(); setDecideFor(r); }
+                        : undefined}
+                    >
+                      {Number(r.confirmed_qty) > 0 ? (
+                        <>
+                          {qtyFmt.format(r.confirmed_qty)}
+                          <RemainderBadge
+                            remainingQty={r.remaining_qty}
+                            action={r.remaining_qty_action}
+                            fmt={qtyFmt}
+                            onClick={(e) => { e.stopPropagation(); setDecideFor(r); }}
+                          />
+                        </>
+                      ) : "—"}
+                    </td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.line_amount != null ? money.format(r.line_amount) : "—"}</td>
                     <td><StatusPill value={r.region_type} /></td>
                     <td style={{ fontSize: "0.82rem" }}>{r.im_full_name || r.im || "—"}</td>
@@ -1377,6 +1452,7 @@ export default function IMWorkDone() {
                       {displayedCount} rows
                     </td>
                     <td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td />{/* Qty · Confirmed Qty */}
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
                       {money.format(totals.lineAmount)}
                     </td>
@@ -1796,6 +1872,39 @@ export default function IMWorkDone() {
         </div>
       )}
 
+      {decideFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={() => !decideBusy && setDecideFor(null)}>
+          <div style={{ width: "min(460px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }}
+               onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 4px", fontSize: "0.95rem" }}>
+              {qtyFmt.format(decideFor.remaining_qty)} of {qtyFmt.format(decideFor.ordered_qty)} not delivered
+            </h4>
+            <div style={{ fontSize: "0.82rem", color: "#475569", marginBottom: 14 }}>
+              <strong>{decideFor.poid || decideFor.po_dispatch}</strong> — {qtyFmt.format(decideFor.confirmed_qty)} confirmed,
+              currently invoicing <strong>{money.format(decideFor.confirmed_amount || 0)}</strong> of {money.format(decideFor.line_amount || 0)}.
+            </div>
+            {decideErr && <div className="notice error" style={{ marginBottom: 10 }}>{decideErr}</div>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {REMAINING_ACTIONS.map((a) => (
+                <button key={a.value} type="button" disabled={decideBusy}
+                        onClick={() => decideRemaining(a.value)}
+                        style={{ textAlign: "left", padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", cursor: decideBusy ? "default" : "pointer", width: "100%" }}>
+                  <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#0f172a" }}>{a.label}</div>
+                  <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 2, lineHeight: 1.4 }}>{a.effect}</div>
+                  <div style={{ fontSize: "0.76rem", marginTop: 4, fontWeight: 600, color: a.billsFull ? "#047857" : "#475569" }}>
+                    Invoice value: {money.format(a.billsFull ? (decideFor.line_amount || 0) : (decideFor.confirmed_amount || 0))}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+              <button type="button" className="btn-secondary" disabled={decideBusy} onClick={() => setDecideFor(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {submissionFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSubmissionFor(null)}>
           <div style={{ width: "min(560px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, maxHeight: "90dvh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
@@ -1833,6 +1942,17 @@ export default function IMWorkDone() {
                 <option value="Confirmation Done">Confirmation Done</option>
               </select>
             </div>
+
+            {submissionPick === "Confirmation Done" && !submissionFor.is_legacy && (
+              <ConfirmedQtyFields
+                orderedQty={submissionFor.ordered_qty}
+                qty={confirmQty}
+                onQtyChange={setConfirmQty}
+                rate={submissionFor.rate}
+                disabled={submissionBusy}
+                lockedReason={qtyLockReason(submissionFor.pic_status, submissionFor.pic_status_ms2, submissionFor.confirmed_qty)}
+              />
+            )}
 
             {submissionFor && (() => {
               const docReq = DOC_REQUIREMENTS[submissionFor.activity_type];

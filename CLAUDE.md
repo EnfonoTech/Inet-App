@@ -12,9 +12,62 @@ cd /home/ramees/frappe-bench && bench --site inet clear-cache && bench --site in
 
 Tell the user to **hard-refresh (Ctrl+Shift+R)** after every build. Use `yarn dev` only for live local iteration.
 
+## Running a big change and small fixes at the same time
+
+Both belong in one session, done one after the other — not two sessions in this
+tree. Two agents editing `apps/inet_app` at once has already cost real work: an
+in-flight Team Utilization change was wiped by the other session's reset, and
+every commit afterwards needed its diff hunks inspected to avoid taking someone
+else's code. If parallel really is needed, give the second agent its own git
+worktree so it cannot touch this one.
+
+Interleaving safely:
+
+- **Commit the small fix on its own**, before resuming the big one. Separate
+  commits mean reverting the big change never takes the small fixes with it.
+- **Check what the big change has open first.** If the small fix touches a file
+  the big work has half-edited, finish or park that file before starting.
+- **Frontend is the sharp edge.** `yarn build` bundles the whole tree, and the
+  built assets are committed — so building for a small fix while big frontend
+  work sits unfinished ships that work as compiled output. Either the big work
+  is committed first, or the small fix is backend-only, or commit the small fix
+  without assets and rebuild once the tree is clean.
+- **Backend-only small fixes are always safe to slot in**, since nothing is
+  bundled.
+
 ## Backend changes
 After editing doctypes / custom fields / patches / hooks:
 `bench --site inet migrate` (or at least `bench --site inet clear-cache`).
+
+## A feature is not finished when the feature works
+
+**Reports, dashboards and table columns do not follow a change on their own.**
+They read the same data through their own queries and their own constants, so a
+new field, a new status value or a changed derivation is invisible to them until
+each one is edited. This has been missed repeatedly — the feature ships, and the
+numbers on the dashboards quietly keep meaning the old thing.
+
+After any change that adds a field, adds a status value, or changes how a figure
+is derived, sweep these before calling it done:
+
+- **The report and dashboard endpoints** — 18 of them in `command_center.py`
+  alone (`get_*_report` / `get_*_dashboard`: commercial, command, IM
+  performance, project profitability/performance, rollout burn-down, top teams,
+  PO dispatch status, PO milestone status, weekly performance, revenue tracking,
+  revenue forecast, rollout week, rollout forecast, IM dashboard, field team,
+  team report), plus PIC's own in `pic.py`.
+- **Shared status constants**, which silently exclude anything new:
+  `LINE_DONE_STATUSES` in `command_center.py`, the status lists and
+  `pic_status_order()` in `pic.py`. A new status value that is not added here
+  simply drops out of every report that uses them.
+- **Explicit column lists.** List endpoints and export builders name their
+  columns one by one — a new field will not appear in a table, a detail modal or
+  an Excel export until it is named there too.
+- **Frontend filter option lists**, which are often hard-coded copies of a
+  Select's options.
+
+Then say in the handover **which reports were updated and which were
+deliberately left alone**. "Not updated yet" is a fine answer; silence is not.
 
 ---
 
@@ -258,6 +311,118 @@ rather than inventing a new one:
 
 ### CSS — `.toolbar` layout
 `.toolbar` is a flex row. Direct children auto-join the row. Put action buttons inside `<div className="toolbar-actions">` to right-align them. The `.toolbar` + `.page-content` CSS chain manages full-height layout automatically.
+
+---
+
+## Traps that have cost real time
+
+Each of these produced a wrong answer or a broken deploy. None is obvious from
+reading the code around it.
+
+**Some endpoints commit internally — a rolled-back test did not roll back.**
+`generate_work_done`, `dispatch_po_lines` and `create_rollout_plans` call
+`frappe.db.commit()` inside their own loops. A test that wraps them and calls
+`frappe.db.rollback()` at the end reports success while the data stays changed.
+This has silently corrupted dev data twice (a POID rewritten to `-1`, a Work
+Done adopted). **After exercising any of these, re-read the rows and check —
+never trust the rollback.** Repair explicitly, and snapshot before you start.
+
+**A literal `%` in SQL is a format placeholder whenever params are bound.**
+pymysql reads it before MariaDB does, so `LIKE '%foo%'`, `DATE_FORMAT(x,'%Y')`
+and `(WEEKDAY(x) + 2) % 7` all need `%%` — *including inside SQL comments*. A
+comment warning about `%` broke the query it was warning about. Better still,
+pass the pattern as a parameter (`LIKE %s` with `'%foo%'` in the tuple) and the
+problem disappears.
+
+**`@frappe.whitelist()` must sit immediately above its function.** Inserting a
+helper between the decorator and the `def` rebinds the decorator to the helper:
+the endpoint stops being callable and a private helper becomes a public API.
+It fails **only over HTTP** — calling the function directly in a console or
+test works perfectly, so in-process verification will not catch it. After
+touching anything near a decorator, check `frappe.whitelisted` or hit the
+endpoint.
+
+**Code that reads a field the app never ships.** Three outages so far
+(`Sales Invoice Item.milestone`, `Rollout Plan.qc_required` / `ciag_required`,
+`DUID Master.site_id`): a field created by hand on one site, code written
+against it, every other site 500s on "Unknown column". `inet_app/schema_check.py`
+reports this at the end of every `after_migrate`; run it directly with
+`bench --site <site> execute inet_app.schema_check.run`. **A field belongs in
+the doctype JSON, or in `setup.py` when it lives on another app's doctype.**
+
+**Frappe stamps child rows with the PARENT's `creation`.** Every row of a child
+table shares the parent document's timestamp — verified across all 9,956 PO
+Intakes. So a child row's `creation` is *not* when that row arrived, and a line
+appended to an existing parent months later is indistinguishable from the
+original ones. If you need a per-row arrival time, store it (see
+`PO Intake Line.po_upload_date`).
+
+**Single-column indexes added by `ALTER TABLE` are dropped by the next
+migrate.** Frappe's schema sync removes any single-column index whose doctype
+field lacks `search_index`. Declare them in the doctype JSON instead; only
+compound indexes survive as a patch.
+
+**Frappe's `like` does not honour the backslash escape.** `["like", "inet\_%"]`
+matches nothing, and unescaped `inet_%` leans on `_` being a wildcard. Filter on
+`dt` + `module` and match the prefix in Python.
+
+**`yarn build` bundles the whole working tree.** The built portal assets are
+committed, so building while unfinished work sits in the tree commits that work
+as compiled output. Before building, either commit or make sure the tree holds
+only what you intend to ship.
+
+---
+
+## Domain rules that are easy to get wrong
+
+**The working week is Saturday to Friday.** KSA; Friday is the holiday. One
+anchor per language, and they must not drift apart: `_week_start()` /
+`_week_start_sql()` in `command_center.py`, `weekStartOfLocal()` in
+`frontend/src/utils/weeks.js`. MariaDB has no Saturday `YEARWEEK` mode, so weekly
+grouping is date arithmetic, not `YEARWEEK`.
+
+**Never `toISOString()` a locally-built Date.** It converts to UTC first, so in
+Riyadh local midnight serialises as the previous day. Format from local parts —
+`isoLocal()` in `weeks.js`.
+
+**A visit can take several plans; a line has one Work Done.** Work that needs two
+dates, or two teams on two dates, is still one visit: those plans are companions
+and share the visit number. Only `Re-Visit` and `Extra Visit` advance it. Work
+Done cannot be recorded until *every* non-cancelled plan of that visit has a
+completed execution with QC settled, and it anchors to the visit's last completed
+execution.
+
+**A line is closed by the rollout OR by a shortcut, never both.** Direct Close and
+Backend record the Work Done immediately. A line with a shortcut Work Done cannot
+be planned, forecast or dispatched; a line with a live plan or a forecast week
+cannot be direct-closed or sent to backend. Adoption (`adopt_existing`) is the one
+supported crossing, and it moves the existing record rather than creating a second.
+
+**Cancelled is terminal for a plan.** Nothing un-cancels one; a re-attempt gets a
+new plan. `_sync_rollout_plan_from_daily_execution` must never write a status onto
+a cancelled plan — it used to, which resurrected plans a PM had cancelled.
+
+**Billing status is derived from PIC, not stored.** `list_work_done_rows` reads
+`PO Dispatch.pic_status`: Closed/Canceled -> Closed; Submitted / Ready for Invoice
+/ Under I-BUY / Under ISDP -> Invoiced; anything else PIC touched -> Pending.
+
+**Cost and margin on Work Done are not real per-line figures.** `team_cost_sar` is
+a team's whole DAILY cost charged to each POID it touched that day, so
+`total_cost_sar` and `margin_sar` built on it are meaningless per line. The app
+already hides them (ProjectDetail dropped its Cost/Margin columns; the Work Done
+detail modal hides both). **Do not build reporting on them and do not "fix" them
+by spreading them wider.**
+
+**IM scoping reads the `im` stamped on the record** (`Rollout Plan.im`,
+`Daily Execution.im`, `PO Dispatch.im`), which is historical — never
+`INET Team.im`, which is the team's *current* manager and would move a team's
+whole back-catalogue the moment it is reassigned. Team reports must not filter
+teams by status: a team on leave this week still did last month's work.
+
+**Bulk jobs and per-row hooks.** A doctype hook that notifies a role fires once
+per row and writes one document per recipient. On a 5,500-row import that was 45
+minutes of a 60-minute job (measured: 494ms/row vs 3ms with the hook muted).
+Before adding an import loop, check what its inserts trigger.
 
 ---
 

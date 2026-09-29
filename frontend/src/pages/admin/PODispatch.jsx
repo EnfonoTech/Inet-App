@@ -337,6 +337,13 @@ export default function PODispatch() {
   const [error, setError] = useState(null);
   const [imList, setImList] = useState([]);
   const [selected, setSelected] = useState(new Set());
+  // PM-side POID cancellation. A PM cancels outright — no approval round trip,
+  // which is the whole point of having it here rather than only on PO Control.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelResult, setCancelResult] = useState(null);
+  const [cancelErr, setCancelErr] = useState(null);
   const [tableSearch, setTableSearch] = useState("");
   const tableSearchDebounced = useDebounced(tableSearch, 300);
   const [integritySearch, setIntegritySearch] = useState("");
@@ -729,6 +736,30 @@ export default function PODispatch() {
       showNotice("err", err.message || "Assign IM failed");
     } finally {
       setAssigningBulkIm(false);
+    }
+  }
+
+  async function submitCancelPoids() {
+    const names = Array.from(selected);
+    if (names.length === 0) return;
+    if (!cancelReason.trim()) {
+      setCancelErr("A reason is required.");
+      return;
+    }
+    setCancelBusy(true);
+    setCancelErr(null);
+    try {
+      // Per-line refusals (already invoiced, live plan) come back in `blocked`
+      // rather than taking the rest of the batch with them.
+      const res = await pmApi.requestCancelDispatch(names, cancelReason.trim());
+      setCancelResult(res);
+      setSelected(new Set());
+      loadData(activeTab);
+      window.dispatchEvent(new Event("inet:approvals-changed"));
+    } catch (err) {
+      setCancelErr(err.message || "Cancel failed");
+    } finally {
+      setCancelBusy(false);
     }
   }
 
@@ -1137,8 +1168,69 @@ export default function PODispatch() {
               </button>
             </>
           )}
+          {!isIntegrityTab && (
+            <button
+              className="btn-secondary"
+              disabled={selected.size === 0}
+              onClick={() => { setCancelErr(null); setCancelReason(""); setCancelResult(null); setCancelOpen(true); }}
+              style={{ borderColor: "#fca5a5", color: "#b91c1c" }}
+            >
+              Cancel POID ({selected.size})
+            </button>
+          )}
         </div>
       </div>
+
+      <Modal
+        open={cancelOpen}
+        onClose={() => !cancelBusy && setCancelOpen(false)}
+        title={`Cancel ${selected.size || cancelResult?.cancelled || 0} POID(s)`}
+      >
+        {cancelErr && <div className="notice error" style={{ marginBottom: 12 }}>{cancelErr}</div>}
+        {cancelResult ? (
+          <div>
+            {cancelResult.cancelled > 0 && (
+              <div className="notice success" style={{ marginBottom: 8 }}>
+                {cancelResult.cancelled} POID(s) cancelled.
+                {cancelResult.cancelled_plans?.length > 0 &&
+                  ` ${cancelResult.cancelled_plans.length} dormant plan(s) cancelled with them.`}
+              </div>
+            )}
+            {cancelResult.blocked?.length > 0 && (
+              <div className="notice error">
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>{cancelResult.blocked.length} refused:</div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: "0.8rem" }}>
+                  {cancelResult.blocked.map((f) => (
+                    <li key={f.poid}><strong>{f.poid}</strong> — {f.error}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+              <button className="btn-secondary" onClick={() => setCancelOpen(false)}>Close</button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ marginBottom: 12, fontSize: "0.82rem", color: "#b91c1c" }}>
+              Cancelled immediately, no approval. Already invoiced, or still has a live plan? It will be refused.
+            </div>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>Reason</label>
+              <textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={3}
+                        disabled={cancelBusy}
+                        style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box", fontFamily: "inherit", fontSize: "0.84rem", resize: "vertical" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn-secondary" disabled={cancelBusy} onClick={() => setCancelOpen(false)}>Cancel</button>
+              <button className="btn-primary" disabled={cancelBusy || selected.size === 0}
+                      onClick={submitCancelPoids} style={{ background: "#b91c1c", borderColor: "#b91c1c" }}>
+                {cancelBusy ? "Working…" : `Cancel ${selected.size} POID(s)`}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Table */}
       <div className="page-content">

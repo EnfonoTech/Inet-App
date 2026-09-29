@@ -28,7 +28,9 @@
   "ms1_closed",
   "ms1_closed_at",
   "ms2_closed",
-  "ms2_closed_at"
+  "ms2_closed_at",
+  "section_closures",
+  "closures"
  ],
  "fields": [
   {
@@ -183,6 +185,17 @@
    "fieldtype": "Datetime",
    "label": "MS2 Closed At",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_closures",
+   "fieldtype": "Section Break",
+   "label": "Closure Events"
+  },
+  {
+   "fieldname": "closures",
+   "fieldtype": "Table",
+   "label": "Closures",
+   "options": "Work Done Closure"
   }
  ],
  "index_web_pages_for_search": 1,

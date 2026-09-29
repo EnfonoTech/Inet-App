@@ -21,6 +21,7 @@ from inet_app.api.command_center import (
     _REPORTING_SCOPE_SQL,
     _batch_item_activity_types,
     _dashboard_etag,
+    billable_amount_sql,
     _ensure_list,
     _iso_now,
     _po_dispatch_col_expr,
@@ -368,8 +369,10 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         "description": "IFNULL(pd.item_description,'')",
         "duid": "IFNULL(pd.site_code,'')",
         "qty": "CAST(pd.qty AS CHAR)",
+        "confirmed_qty": "CAST(pd.confirmed_qty AS CHAR)",
         "unit_price": "CAST(pd.rate AS CHAR)",
         "line_amount": "CAST(pd.line_amount AS CHAR)",
+        "confirmed_amount": "CAST(pd.confirmed_amount AS CHAR)",
         "tax_rate": "IFNULL(pd.tax_rate,'')",
         "payment_terms": "IFNULL(pd.payment_terms,'')",
         "im_status": "IFNULL(wd_sub.im_submission_status,'')",
@@ -493,6 +496,11 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       pd.item_code,
       pd.item_description,
       pd.qty,
+      pd.confirmed_qty,
+      pd.confirmed_amount,
+      pd.remaining_qty,
+      pd.remaining_qty_action,
+      pd.confirmation_date,
       pd.rate,
       pd.line_amount,
       pd.tax_rate,
@@ -553,7 +561,7 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
                 {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
                  "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
                 {"key": "value", "label": "Value", "agg": "sum",
-                 "expr": "IFNULL(pd.line_amount, 0)", "format": "money"},
+                 "expr": billable_amount_sql("pd"), "format": "money"},
                 {"key": "ms1_unbilled", "label": "MS1", "agg": "sum", "group": "Unbilled",
                  "expr": "IFNULL(pd.ms1_unbilled, 0)", "format": "money", "tone": "warn",
                  "hint": "MS1 value not yet invoiced"},
@@ -833,6 +841,8 @@ def _invoice_detail_milestone_sql(ms, where_extra):
       pd.item_code,
       pd.item_description,
       pd.qty,
+      pd.confirmed_qty,
+      pd.confirmed_amount,
       pd.rate,
       {invoiced_col} AS invoiced_amount,
       pd.project_code,
@@ -1734,17 +1744,58 @@ def update_pic_row(po_dispatch, fields):
     }
 
 
+def billable_amount_for(pd_row, name=None):
+    """What a PO line can be invoiced for — the Python twin of
+    ``billable_amount_sql`` and ``PO Dispatch.billable_amount()``.
+
+    All three must agree, or a percentage computed here will disagree with the
+    milestone amounts the document itself derived. ``pd_row`` may be any dict
+    or doc; the confirmation fields are read from the database when it does not
+    already carry them, since most callers here select a narrow field list.
+    """
+    from inet_app.inet_app.doctype.po_dispatch.po_dispatch import PODispatch
+
+    get = pd_row.get if hasattr(pd_row, "get") else (lambda k, d=None: getattr(pd_row, k, d))
+    line = flt(get("line_amount") or 0)
+    if "confirmed_amount" in (pd_row if isinstance(pd_row, dict) else getattr(pd_row, "__dict__", {})):
+        confirmed = flt(get("confirmed_amount") or 0)
+        action = (get("remaining_qty_action") or "").strip()
+    else:
+        ref = name or get("name")
+        if not ref or not frappe.db.has_column("PO Dispatch", "confirmed_amount"):
+            return line
+        row = frappe.db.get_value(
+            "PO Dispatch", ref, ["confirmed_amount", "remaining_qty_action"], as_dict=True
+        ) or {}
+        confirmed = flt(row.get("confirmed_amount") or 0)
+        action = (row.get("remaining_qty_action") or "").strip()
+    if not confirmed:
+        return line
+    if action == PODispatch.BILL_FULL_ON_ACTION:
+        return line or confirmed
+    return confirmed
+
+
 def _write_pic_activity_log(action, milestone, field_changed, new_value, updated, old_values, remark=None):
     """Persist one PIC Activity Log row per touched PO Dispatch.
 
     The whole batch shares a single ``batch_id`` and ``row_count`` so a
     reviewer can group/sort by batch and see "this user flipped 47 rows in
     one click at HH:MM."
+
+    Also writes the same transitions to PO Status Event, which is the table the
+    ageing reports read — it carries ``days_in_previous`` and covers every
+    status field in the app, not just PIC's two. Both tables are kept: this one
+    records every *action* (including a re-stamp of a value the row already
+    held), the event log records every *transition*. The shared batch_id ties a
+    row in one to its counterpart in the other.
     """
     if not updated:
         return
+    # Hoisted out of the try so the event-log write below still has it if the
+    # PIC Activity Log branch raises.
+    batch_id = frappe.generate_hash(length=10)
     try:
-        batch_id = frappe.generate_hash(length=10)
         performed_at = frappe.utils.now_datetime()
         user = frappe.session.user
         full_name = (
@@ -1773,6 +1824,29 @@ def _write_pic_activity_log(action, milestone, field_changed, new_value, updated
         # Audit-trail writes must never block the user's primary action.
         # Surfaced in error log; the bulk update itself already committed.
         frappe.log_error(frappe.get_traceback(), "PIC Activity Log write failed")
+
+    # Same transitions into the event log. log_status_events is itself
+    # best-effort per row, so a failure here cannot reach the caller either.
+    from inet_app.api.status_log import log_status_events
+
+    log_status_events(
+        [
+            {
+                "po_dispatch": entry.get("po_dispatch"),
+                "field_changed": field_changed,
+                "old_value": old_values.get(entry.get("po_dispatch"), "") or "",
+                "new_value": new_value or "",
+            }
+            for entry in updated
+            if entry.get("po_dispatch")
+        ],
+        batch_id=batch_id,
+        milestone=milestone,
+        remark=remark,
+        # dispatch_status has its own transitions logged where it is written;
+        # a PIC status move must not claim the line changed stage.
+        stamp_stage=False,
+    )
 
 
 @frappe.whitelist()
@@ -2907,7 +2981,22 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
             ms_pct = flt(pd.get("ms1_pct" if row_milestone == "MS1" else "ms2_pct") or 0)
             full_qty = flt(pd.get("qty") or 1)
             full_rate = flt(pd.get("rate") or amount)
-            scaled_qty = flt(full_qty * ms_pct / 100.0, qty_precision) if ms_pct > 0 else full_qty
+            # Derived from the milestone amount, not from the ORDERED qty.
+            # Scaling the ordered qty by the milestone percentage was right
+            # only while every line was worth its full PO value: on a line
+            # where the IM confirmed a reduced quantity, ms1_amount is already
+            # re-based on the confirmed amount, so ordered-qty x pct x rate
+            # invoiced the full PO value instead of the confirmed one
+            # (a 1-qty line confirmed at 0.5 billed 70.00 rather than 35.00).
+            # amount / rate makes qty x rate equal the milestone amount by
+            # construction, which is what ERPNext recomputes from anyway, and
+            # is identical to the old result whenever nothing was confirmed short.
+            if full_rate:
+                scaled_qty = flt(amount / full_rate, qty_precision)
+            elif ms_pct > 0:
+                scaled_qty = flt(full_qty * ms_pct / 100.0, qty_precision)
+            else:
+                scaled_qty = full_qty
             duid = (pd.get("site_code") or "").strip()
             project = (pd.get("project_code") or "").strip()
             si.append("items", {
@@ -3123,7 +3212,7 @@ def on_sales_invoice_submit(doc, method):
         # Recompute remaining_milestone_pct from the updated invoiced values
         m1_inv = flt(updates.get("ms1_invoiced", flt(pd.ms1_invoiced or 0)))
         m2_inv = flt(updates.get("ms2_invoiced", flt(pd.ms2_invoiced or 0)))
-        line = flt(pd.line_amount or 0)
+        line = billable_amount_for(pd)
         remaining = (ms1_amt - m1_inv) + (ms2_amt - m2_inv)
         updates["remaining_milestone_pct"] = round(remaining / line * 100.0, 2) if line else 0.0
 
@@ -3216,7 +3305,7 @@ def on_sales_invoice_cancel(doc, method):
 
         m1_inv = flt(updates.get("ms1_invoiced", 0))
         m2_inv = flt(updates.get("ms2_invoiced", 0))
-        line = flt(pd.line_amount or 0) or (ms1_amt + ms2_amt)
+        line = billable_amount_for(pd) or (ms1_amt + ms2_amt)
         remaining = (ms1_amt - m1_inv) + (ms2_amt - m2_inv)
         updates["remaining_milestone_pct"] = round(remaining / line * 100.0, 2) if line else 0.0
 

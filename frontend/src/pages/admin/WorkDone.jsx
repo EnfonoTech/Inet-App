@@ -10,6 +10,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import IMNoteCallout from "../../components/IMNoteCallout";
+import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } from "../../components/ConfirmedQtyFields";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import RemarksCell from "../../components/RemarksCell";
@@ -376,6 +377,27 @@ export default function WorkDone() {
   const [bulkResult, setBulkResult] = useState(null);
   const [submissionFor, setSubmissionFor] = useState(null);
   const [submissionPick, setSubmissionPick] = useState("");
+  // Confirmed quantity, captured at the IM -> PIC handoff. What becomes of any
+  // leftover is decided separately, later — from the highlighted row itself.
+  const [confirmQty, setConfirmQty] = useState("");
+  const [decideFor, setDecideFor] = useState(null);
+  const [decideBusy, setDecideBusy] = useState(false);
+  const [decideErr, setDecideErr] = useState(null);
+
+  async function decideRemaining(action) {
+    if (!decideFor) return;
+    setDecideBusy(true);
+    setDecideErr(null);
+    try {
+      await pmApi.setRemainingQtyAction(decideFor.po_dispatch || decideFor.system_id, action);
+      setDecideFor(null);
+      loadData();
+    } catch (e) {
+      setDecideErr(e?.message || "Failed to save");
+    } finally {
+      setDecideBusy(false);
+    }
+  }
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const [submissionErr, setSubmissionErr] = useState(null);
   const [submissionWarn, setSubmissionWarn] = useState(null);
@@ -452,6 +474,8 @@ export default function WorkDone() {
     setDoc2Links([]);
     setDoc2PartLinks([]);
     setImNote("");
+    const already = Number(r.confirmed_qty) || 0;
+    setConfirmQty(already > 0 ? String(already) : (r.ordered_qty != null ? String(r.ordered_qty) : ""));
     setExistingAttachments([]);
     setSubmissionFor(r);
     const po_dispatch = r.po_dispatch || r.poid;
@@ -483,6 +507,21 @@ export default function WorkDone() {
         }
       }
     }
+    // Quantity only goes with Confirmation Done. Checked before the uploads
+    // run so a missing remainder destination fails fast rather than after.
+    const orderedQty = Number(submissionFor.ordered_qty) || 0;
+    const enteredQty = confirmQty === "" ? null : Number(confirmQty);
+    const sendQty = submissionPick === "Confirmation Done" && enteredQty != null && !Number.isNaN(enteredQty);
+    if (sendQty) {
+      if (enteredQty <= 0) {
+        setSubmissionErr("Confirmed quantity must be greater than zero.");
+        return;
+      }
+      if (orderedQty > 0 && enteredQty > orderedQty + 0.00005) {
+        setSubmissionErr(`Confirmed quantity cannot exceed the ordered ${orderedQty}.`);
+        return;
+      }
+    }
     setSubmissionBusy(true);
     setSubmissionErr(null);
     try {
@@ -506,10 +545,16 @@ export default function WorkDone() {
       }
       let res;
       if (submissionFor.is_subcon) {
-        res = await pmApi.updateSubconSubmission(po_dispatch, submissionPick, imNote || undefined);
+        res = await pmApi.updateSubconSubmission(
+          po_dispatch, submissionPick, imNote || undefined,
+          sendQty ? enteredQty : undefined,
+        );
       } else {
         if (!submissionFor.name) throw new Error("Missing Work Done name");
-        res = await pmApi.updateWorkDoneSubmission(submissionFor.name, submissionPick, imNote || undefined);
+        res = await pmApi.updateWorkDoneSubmission(
+          submissionFor.name, submissionPick, imNote || undefined,
+          sendQty ? enteredQty : undefined,
+        );
       }
       setSubmissionFor(null);
       if (res?.pic_warning) setSubmissionWarn(res.pic_warning);
@@ -1267,6 +1312,8 @@ export default function WorkDone() {
                   <th>Exec Date</th>
                   <th style={{ textAlign: "right" }} title="Which visit this work-done is (1, 2, 3…)">Visit #</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
+                  <th style={{ textAlign: "right" }}>Ordered</th>
+                  <th style={{ textAlign: "right" }}>Confirmed</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
                   <th>Submission Status</th>
                   <th>PIC Rejection Reason</th>
@@ -1287,7 +1334,15 @@ export default function WorkDone() {
                       data-doc-name={row.name}
                       data-modified={row.modified}
                       className={selectedRows.has(row.name) ? "row-selected" : ""}
-                      style={idx >= displayLimit ? { display: "none" } : { ...(row.is_dummy_po ? { background: "#fffbeb" } : {}), cursor: "pointer" }}
+                      style={idx >= displayLimit ? { display: "none" } : {
+                        ...(row.is_dummy_po ? { background: "#fffbeb" } : {}),
+                        // Confirmed short with no decision on the leftover —
+                        // stands out until someone answers it.
+                        ...(Number(row.remaining_qty) > 0 && !row.remaining_qty_action
+                          ? { background: "#fffbeb", boxShadow: "inset 3px 0 0 #f59e0b" }
+                          : {}),
+                        cursor: "pointer",
+                      }}
                       onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(row.name) ? next.delete(row.name) : next.add(row.name); return next; })}
                     >
                       <td onClick={(e) => e.stopPropagation()}>
@@ -1321,6 +1376,25 @@ export default function WorkDone() {
                       <td>{row.execution_date || "—"}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.executed_qty != null ? qtyFmt.format(row.executed_qty) : "—"}</td>
+                      <td style={{ textAlign: "right" }}>{row.ordered_qty != null ? qtyFmt.format(row.ordered_qty) : "—"}</td>
+                      <td
+                        style={{ textAlign: "right", color: Number(row.remaining_qty) > 0 ? "#b45309" : undefined, fontWeight: Number(row.remaining_qty) > 0 ? 700 : undefined }}
+                        onClick={Number(row.remaining_qty) > 0
+                          ? (e) => { e.stopPropagation(); setDecideFor(row); }
+                          : undefined}
+                      >
+                        {Number(row.confirmed_qty) > 0 ? (
+                          <>
+                            {qtyFmt.format(row.confirmed_qty)}
+                            <RemainderBadge
+                              remainingQty={row.remaining_qty}
+                              action={row.remaining_qty_action}
+                              fmt={qtyFmt}
+                              onClick={(e) => { e.stopPropagation(); setDecideFor(row); }}
+                            />
+                          </>
+                        ) : "—"}
+                      </td>
                       <td style={{ textAlign: "right", color: "var(--green)" }}>{sar.format(revenue)}</td>
                       <td><StatusPill value={row.submission_status} /></td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: row.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={row.pic_rejection_remark || ""}>{row.pic_rejection_remark || "—"}</td>
@@ -1383,6 +1457,7 @@ export default function WorkDone() {
                     </td>
                     <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{qtyFmt.format(totals.qty)}</td>
+                    <td /><td />{/* Ordered · Confirmed */}
                     <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                       {sar.format(totals.revenue)}
                     </td>
@@ -1580,6 +1655,39 @@ export default function WorkDone() {
         </div>
       )}
 
+      {decideFor && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={() => !decideBusy && setDecideFor(null)}>
+          <div style={{ width: "min(460px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }}
+               onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 4px", fontSize: "0.95rem" }}>
+              {qtyFmt.format(decideFor.remaining_qty)} of {qtyFmt.format(decideFor.ordered_qty)} not delivered
+            </h4>
+            <div style={{ fontSize: "0.82rem", color: "#475569", marginBottom: 14 }}>
+              <strong>{decideFor.poid || decideFor.po_dispatch}</strong> — {qtyFmt.format(decideFor.confirmed_qty)} confirmed,
+              currently invoicing <strong>{money.format(decideFor.confirmed_amount || 0)}</strong> of {money.format(decideFor.line_amount || 0)}.
+            </div>
+            {decideErr && <div className="notice error" style={{ marginBottom: 10 }}>{decideErr}</div>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {REMAINING_ACTIONS.map((a) => (
+                <button key={a.value} type="button" disabled={decideBusy}
+                        onClick={() => decideRemaining(a.value)}
+                        style={{ textAlign: "left", padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", cursor: decideBusy ? "default" : "pointer", width: "100%" }}>
+                  <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#0f172a" }}>{a.label}</div>
+                  <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: 2, lineHeight: 1.4 }}>{a.effect}</div>
+                  <div style={{ fontSize: "0.76rem", marginTop: 4, fontWeight: 600, color: a.billsFull ? "#047857" : "#475569" }}>
+                    Invoice value: {money.format(a.billsFull ? (decideFor.line_amount || 0) : (decideFor.confirmed_amount || 0))}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+              <button type="button" className="btn-secondary" disabled={decideBusy} onClick={() => setDecideFor(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {submissionFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSubmissionFor(null)}>
           <div style={{ width: "min(560px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, maxHeight: "90dvh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
@@ -1612,6 +1720,17 @@ export default function WorkDone() {
                 <option value="Confirmation Done">Confirmation Done</option>
               </select>
             </div>
+
+            {submissionPick === "Confirmation Done" && (
+              <ConfirmedQtyFields
+                orderedQty={submissionFor.ordered_qty}
+                qty={confirmQty}
+                onQtyChange={setConfirmQty}
+                rate={submissionFor.rate}
+                disabled={submissionBusy}
+                lockedReason={qtyLockReason(submissionFor.pic_status, submissionFor.pic_status_ms2, submissionFor.confirmed_qty)}
+              />
+            )}
 
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>

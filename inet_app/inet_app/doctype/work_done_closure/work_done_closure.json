@@ -1,0 +1,81 @@
+{
+ "actions": [],
+ "creation": "2026-09-28 00:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "closed_qty",
+  "closed_amount",
+  "closed_on",
+  "milestone",
+  "source",
+  "closed_by",
+  "remark"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "closed_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty",
+   "precision": "4"
+  },
+  {
+   "columns": 2,
+   "fieldname": "closed_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount (SAR)"
+  },
+  {
+   "columns": 2,
+   "fieldname": "closed_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Closed On"
+  },
+  {
+   "columns": 1,
+   "fieldname": "milestone",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Milestone",
+   "options": "\nMS1\nMS2"
+  },
+  {
+   "columns": 2,
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Source",
+   "options": "\nRollout Execution\nBackend\nDirect Close"
+  },
+  {
+   "columns": 2,
+   "fieldname": "closed_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Closed By",
+   "options": "User"
+  },
+  {
+   "fieldname": "remark",
+   "fieldtype": "Small Text",
+   "label": "Remark"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-28 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Work Done Closure",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "closed_on",
+ "sort_order": "ASC",
+ "states": []
+}

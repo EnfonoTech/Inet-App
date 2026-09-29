@@ -12,6 +12,11 @@ import os
 import re
 
 import frappe
+from inet_app.api.status_log import (
+    log_status_event,
+    log_status_events,
+    set_dispatch_status,
+)
 from inet_app.inet_app.doctype.po_intake.po_intake import normalize_po_intake_status as _normalize_po_intake_status
 from inet_app.region_type import is_hard_region, region_type_from_center_area
 from frappe.utils import (
@@ -347,6 +352,10 @@ PO_DISPATCH_LIST_COLS = frozenset((
     "is_internal_work", "internal_work_type", "internal_domain",
     "general_remark", "manager_remark", "team_lead_remark",
     "ms1_amount", "ms2_amount",
+    # The confirmed-quantity block. Rollout Planning needs it to tell a line
+    # with work still outstanding from a finished one, and the grids show
+    # ordered vs confirmed side by side.
+    "confirmed_qty", "confirmed_amount", "remaining_qty", "remaining_qty_action",
     "creation", "modified",
     # enrichment added after the query
     "im_full_name", "target_team_name", "activity_type",
@@ -4030,6 +4039,7 @@ def _po_dispatch_portal_pf_active(pf):
         "domain",
         "dispatch_status",
         "direct_close_only",
+        "pending_rework",
     ):
         v = pf.get(k)
         if v is None or v == "":
@@ -4160,6 +4170,22 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
             wheres.append("IFNULL(`is_internal_work`, 0) = 1")
         elif internal_preset != "include":
             wheres.append("IFNULL(`is_internal_work`, 0) = 0")
+
+    # pending_rework: the IM's planning pool is normally dispatch_status =
+    # 'Dispatched', which a line that has already produced a Work Done has long
+    # left. A line confirmed short whose leftover was marked "still to be done"
+    # has real work outstanding and has to be plannable again, or the decision
+    # is unreachable — so this widens the pool to include exactly those,
+    # without moving any line's status back.
+    if (pf.get("pending_rework") or "").strip().lower() == "yes" and "dispatch_status" in fields:
+        if frappe.db.has_column("PO Dispatch", "remaining_qty"):
+            wheres.append(
+                "(IFNULL(`dispatch_status`, '') = 'Dispatched'"
+                " OR (IFNULL(`remaining_qty`, 0) > 0"
+                " AND RIGHT(IFNULL(`remaining_qty_action`, ''), 6) = 'worked'))"
+            )
+        else:
+            wheres.append("IFNULL(`dispatch_status`, '') = 'Dispatched'")
 
     # has_target_month: "yes" (target_month set), "no" (null/empty), "any" / "" (no filter)
     htm = (pf.get("has_target_month") or "").strip().lower()
@@ -4995,6 +5021,47 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
 _NEW_VISIT_TYPES = frozenset(("Re-Visit", "Extra Visit"))
 
 
+def _is_new_rework_attempt(po_dispatch_name, max_v):
+    """True when a plan being created is the FIRST attempt at a leftover.
+
+    A line confirmed short whose remainder was marked "still to be done" has
+    real work outstanding, but the planning pages send visit_type "Execution",
+    so without this the new plan joins the visit that already produced the
+    line's Work Done — and generate_work_done, seeing a visit at or below the
+    one that owns the record, no-ops. The Work Done button then does nothing
+    and the rework can never be recorded.
+
+    Only the FIRST plan of the rework advances. The test is whether the highest
+    visit is still the one owning the Work Done: once the rework has started,
+    max_v has already moved past it and further plans join as companions the
+    normal way.
+    """
+    if not po_dispatch_name or not max_v:
+        return False
+    if not frappe.db.has_column("PO Dispatch", "remaining_qty"):
+        return False
+    pd = frappe.db.get_value(
+        "PO Dispatch", po_dispatch_name,
+        ["remaining_qty", "remaining_qty_action"], as_dict=True,
+    ) or {}
+    if flt(pd.get("remaining_qty") or 0) <= 0:
+        return False
+    if not str(pd.get("remaining_qty_action") or "").strip().endswith("worked"):
+        return False
+    owner = frappe.db.sql(
+        """
+        SELECT IFNULL(rp.visit_number, 0)
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        WHERE wd.system_id = %s
+        LIMIT 1
+        """,
+        (po_dispatch_name,),
+    )
+    return bool(owner) and cint(owner[0][0]) == cint(max_v)
+
+
 def _next_visit_number_for_dispatch(po_dispatch_name, visit_type=None):
     """Return the visit number for a NEW Rollout Plan on this POID.
 
@@ -5023,6 +5090,8 @@ def _next_visit_number_for_dispatch(po_dispatch_name, visit_type=None):
         return 1
     max_v = cint(row[0].get("max_v") or 0) if row else 0
     if (visit_type or "") in _NEW_VISIT_TYPES:
+        return max_v + 1
+    if _is_new_rework_attempt(po_dispatch_name, max_v):
         return max_v + 1
     # A companion plan joins the visit already in progress; the very first
     # plan on a line starts at 1.
@@ -5628,6 +5697,8 @@ def dispatch_po_lines(payload):
     # the PO Dispatch each one would land on (the same po_intake + po_line_no
     # key _upsert_po_dispatch_for_line uses) and check those.
     existing = []
+    prior_status_by_line = {}
+    dispatch_batch_id = frappe.generate_hash(length=10)
     for line in lines:
         parent = line.get("po_intake") or line.get("parent")
         found = None
@@ -5660,6 +5731,11 @@ def dispatch_po_lines(payload):
                 found = frappe.db.get_value("PO Dispatch", {"poid": poid_guess}, "name")
         if found:
             existing.append(found)
+        # Keyed the same way the dispatch loop below keys its own rows, so the
+        # status logged is the one this line actually had beforehand.
+        prior_status_by_line[(parent or "", cint(line.get("po_line_no") or 0))] = (
+            (frappe.db.get_value("PO Dispatch", found, "dispatch_status") or "") if found else ""
+        )
     _require_no_shortcut_close(existing, "dispatch these lines")
 
     created = 0
@@ -5668,6 +5744,8 @@ def dispatch_po_lines(payload):
     for line in lines:
         po_intake_name = line.get("po_intake") or line.get("parent")
         po_line_no = cint(line.get("po_line_no") or 0)
+        # Same key the guard loop above used to record prior_status_by_line.
+        line_key = (po_intake_name or "", po_line_no)
         item_code = line.get("item_code")
         item_description = line.get("item_description")
         qty = flt(line.get("qty", 0))
@@ -5717,6 +5795,19 @@ def dispatch_po_lines(payload):
             dispatch_status="Dispatched",
             dispatch_mode="Manual",
         )
+
+        # The upsert has already written dispatch_status, so the transition is
+        # logged rather than re-applied. prior_status is read before the upsert
+        # (above) because it is overwritten by it.
+        if final_dispatch_name:
+            log_status_event(
+                final_dispatch_name,
+                "dispatch_status",
+                prior_status_by_line.get(line_key, ""),
+                "Dispatched",
+                batch_id=dispatch_batch_id,
+                row_count=len(lines),
+            )
 
         # Mark the PO Intake Line as "Dispatched"
         if line_child_name:
@@ -6546,8 +6637,7 @@ def create_rollout_plans(payload):
         except Exception:
             frappe.log_error(frappe.get_traceback(), "create_rollout_plans: _sync_plan_teams (new) failed")
 
-        disp_updates = {"dispatch_status": "Planned"}
-        disp_updates.update(remark_updates)
+        disp_updates = dict(remark_updates)
         if huawei_im_override and not (
             fill_missing_only
             and (frappe.db.get_value("PO Dispatch", dispatch_name, "huawei_im") or "").strip()
@@ -6558,12 +6648,7 @@ def create_rollout_plans(payload):
             and (frappe.db.get_value("PO Dispatch", dispatch_name, "project_domain") or "").strip()
         ):
             disp_updates["project_domain"] = project_domain_override
-        frappe.db.set_value(
-            "PO Dispatch",
-            dispatch_name,
-            disp_updates,
-            update_modified=False,
-        )
+        set_dispatch_status(dispatch_name, "Planned", extra=disp_updates)
 
         created += 1
         names.append(doc.name)
@@ -6584,6 +6669,23 @@ _EXEC_STATUSES_ROLLOUT_IN_PROGRESS_LIKE = frozenset(
         "Travel",
     )
 )
+
+
+def _log_plan_status(rollout_plan, old_value, new_value, *, remark=None):
+    """Record a Rollout Plan status move on the line's status log.
+
+    Anchored to the PO Dispatch like every other event, with the plan's own
+    name in entity_name, so "how long did this line sit Planned" is answerable
+    across the several plans a line can carry.
+    """
+    pd_name = frappe.db.get_value("Rollout Plan", rollout_plan, "po_dispatch")
+    if not pd_name:
+        return
+    log_status_event(
+        pd_name, "plan_status", old_value, new_value,
+        entity="Rollout Plan", entity_name=rollout_plan,
+        remark=remark, stamp_stage=False,
+    )
 
 
 def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
@@ -6739,7 +6841,13 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         updates["plan_status"] = "Not Attended"
 
     if updates:
+        prev_plan_status = (
+            frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status") or ""
+            if "plan_status" in updates else None
+        )
         frappe.db.set_value("Rollout Plan", rollout_plan, updates)
+        if "plan_status" in updates:
+            _log_plan_status(rollout_plan, prev_plan_status, updates["plan_status"])
 
     # When a Re-Visit plan's DE starts or completes, advance the source plan's
     # issue_status from 'Re-Planned' → 'In Execution'.
@@ -7318,6 +7426,67 @@ def get_poid_detail_extras(po_dispatch):
     }
 
 
+# Execution-chain statuses worth a status-log entry. These are the four the
+# ageing questions are asked about: how long a line waited for QC, how long
+# CIAG took, and how long between the TL finishing and the IM confirming.
+_LOGGED_EXECUTION_FIELDS = ("execution_status", "tl_status", "qc_status", "ciag_status")
+
+
+def _dispatch_for_execution(exec_doc):
+    """The PO Dispatch a Daily Execution belongs to.
+
+    ``system_id`` is stamped on insert, but older rows predate it, so fall back
+    through the rollout plan the same way the rest of the file does.
+    """
+    pd_name = (exec_doc.get("system_id") or "").strip()
+    if pd_name:
+        return pd_name
+    rp = (exec_doc.get("rollout_plan") or "").strip()
+    if not rp:
+        return None
+    return frappe.db.get_value("Rollout Plan", rp, "po_dispatch")
+
+
+def _log_execution_status_changes(exec_doc, previous, *, is_new=False):
+    """Record QC / CIAG / TL / execution status transitions on the line's log.
+
+    Anchored to the PO Dispatch rather than the Daily Execution, because every
+    ageing query groups by line — the execution's own name travels in
+    entity_name. Batched under one id so a single save that moves two of them
+    (the usual QC-plus-CIAG update) reads as one action.
+
+    A brand-new execution logs only the statuses it arrives carrying, with a
+    blank previous value; log_status_event drops the no-ops on its own.
+    """
+    pd_name = _dispatch_for_execution(exec_doc)
+    if not pd_name:
+        return
+    entries = []
+    for field in _LOGGED_EXECUTION_FIELDS:
+        if not hasattr(exec_doc, field):
+            continue
+        new_value = exec_doc.get(field) or ""
+        old_value = "" if is_new else (previous.get(field) or "")
+        if not new_value and not old_value:
+            continue
+        entries.append({
+            "po_dispatch": pd_name,
+            "field_changed": field,
+            "old_value": old_value,
+            "new_value": new_value,
+        })
+    if not entries:
+        return
+    log_status_events(
+        entries,
+        entity="Daily Execution",
+        entity_name=exec_doc.name,
+        # The line's stage is dispatch_status; an execution moving on does not
+        # change it, so the stage clock must not be reset here.
+        stamp_stage=False,
+    )
+
+
 @frappe.whitelist()
 def update_execution(payload):
     """
@@ -7459,6 +7628,13 @@ def update_execution(payload):
     # Captured before the update loop overwrites it, so ciag_status_date
     # only stamps on an actual change, not every unrelated save.
     old_ciag_status = doc.get("ciag_status")
+
+    # Same snapshot, for the status log. These four are the execution chain the
+    # ageing reports care about — how long a line sat waiting for QC, how long
+    # CIAG took, how long between the TL finishing and the IM confirming.
+    _prev_exec_statuses = {
+        f: (doc.get(f) or "") for f in _LOGGED_EXECUTION_FIELDS if hasattr(doc, f)
+    }
 
     # Apply updatable fields
     for field in [
@@ -7634,10 +7810,13 @@ def update_execution(payload):
     if hasattr(doc, "ciag_status_date") and doc.get("ciag_status") != old_ciag_status:
         doc.ciag_status_date = frappe.utils.now_datetime()
 
-    if doc.is_new():
+    _was_new = doc.is_new()
+    if _was_new:
         doc.insert(ignore_permissions=True)
     else:
         doc.save(ignore_permissions=True)
+
+    _log_execution_status_changes(doc, _prev_exec_statuses, is_new=_was_new)
 
     # Propagate the field team's "Team Lead Remark" up to PO Dispatch so
     # IM and PM views (which read pd.team_lead_remark via RemarksCell)
@@ -7740,7 +7919,7 @@ def update_execution(payload):
                        AND IFNULL(issue_status,'') NOT IN ('','Resolved')""",
                     (_int_dispatch,),
                 )
-            frappe.db.set_value("PO Dispatch", _int_dispatch, "dispatch_status", "Completed")
+            set_dispatch_status(_int_dispatch, "Completed")
 
     qc = str(getattr(doc, "qc_status", None) or "")
 
@@ -7859,7 +8038,7 @@ def mark_internal_work_done(execution_name):
                AND IFNULL(issue_status,'') NOT IN ('','Resolved')""",
             (dispatch_name,),
         )
-    frappe.db.set_value("PO Dispatch", dispatch_name, "dispatch_status", "Completed")
+    set_dispatch_status(dispatch_name, "Completed")
 
     frappe.db.commit()
     return {"name": execution_name, "dispatch": dispatch_name, "status": "Completed"}
@@ -8130,7 +8309,8 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     dispatch = frappe.db.get_value(
         "PO Dispatch",
         dispatch_name,
-        ["item_code", "center_area", "region_type", "project_code", "customer", "rate", "qty", "line_amount"],
+        ["item_code", "center_area", "region_type", "project_code", "customer",
+         "rate", "qty", "line_amount", "confirmed_qty", "confirmed_amount"],
         as_dict=True,
     )
     if not dispatch:
@@ -8145,8 +8325,21 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     # Work Done = fully executed: use the contracted qty and line_amount directly.
     # This ensures revenue_sar always equals line_amount regardless of what
     # achieved_qty the TL entered on the Daily Execution.
-    executed_qty = flt(dispatch.qty) or 1.0
-    revenue = flt(dispatch.line_amount) or (billing_rate * executed_qty)
+    #
+    # UNLESS the IM has confirmed a reduced quantity. Then the quantity is a
+    # settled figure owned by the confirmation step and its closure ledger, and
+    # re-deriving it from the PO here would undo it — a line confirmed at 0.4
+    # of 1 would silently go back to 1 the moment a rework visit took the
+    # record over, which is exactly when that must not happen. The rework's job
+    # is to make the extra work executable; the IM then confirms the higher
+    # quantity and the closure ledger records the delta with its own date.
+    confirmed_qty_pd = flt(dispatch.get("confirmed_qty") or 0)
+    if confirmed_qty_pd > 0:
+        executed_qty = confirmed_qty_pd
+        revenue = flt(dispatch.get("confirmed_amount") or 0) or (billing_rate * executed_qty)
+    else:
+        executed_qty = flt(dispatch.qty) or 1.0
+        revenue = flt(dispatch.line_amount) or (billing_rate * executed_qty)
 
     # Still aggregate DE rows for team-cost calculation (multi-team support).
     #
@@ -8296,7 +8489,7 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
 
     # Mark PO Dispatch and PO Intake Line as Completed
     if dispatch_name and frappe.db.exists("PO Dispatch", dispatch_name):
-        frappe.db.set_value("PO Dispatch", dispatch_name, "dispatch_status", "Completed")
+        set_dispatch_status(dispatch_name, "Completed")
         intake_parent = frappe.db.get_value("PO Dispatch", dispatch_name, "po_intake")
         line_no = frappe.db.get_value("PO Dispatch", dispatch_name, "po_line_no")
         if intake_parent and line_no:
@@ -9199,10 +9392,11 @@ def get_work_done_summary():
         # mostly fixed going forward but legacy dupes still exist on this
         # site — it sometimes does. MAX() picks one consistent value rather
         # than double-counting revenue too.
+        billable_sql = billable_amount_sql("pd")
         return frappe.db.sql(f"""
             SELECT IFNULL({group_expr}, '') AS grp,
                    COUNT(*) AS cnt,
-                   SUM(COALESCE(wd.revenue_sar, pd.line_amount, 0)) AS revenue
+                   SUM(COALESCE(wd.revenue_sar, {billable_sql}, 0)) AS revenue
             FROM `tabPO Dispatch` pd
             LEFT JOIN (
                 SELECT system_id, MAX(revenue_sar) AS revenue_sar, MAX(issue_flag) AS issue_flag
@@ -9954,6 +10148,13 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
             pd_fields_wd.append("subcon_submission_status")
         if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
             pd_fields_wd.append("pic_rejection_remark")
+        # Ordered vs confirmed quantity. The IM's submission modal needs the
+        # ordered figure to validate against, and the row shows both so a
+        # short-delivered line reads as "2 of 3" rather than just "2".
+        for opt in ("qty", "confirmed_qty", "confirmed_amount", "remaining_qty",
+                    "remaining_qty_action", "confirmation_date", "cancel_request_status"):
+            if frappe.db.has_column("PO Dispatch", opt):
+                pd_fields_wd.append(opt)
         pd_rows = frappe.get_all(
             "PO Dispatch",
             filters={"name": ["in", all_dispatch_names]},
@@ -10059,6 +10260,13 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
                 "dispatch_seq": pd.get("po_line_no") if pd else None,
                 "dispatch_status": pd.get("dispatch_status") if pd else None,
                 "line_amount": pd.get("line_amount") if pd else None,
+                "ordered_qty": pd.get("qty") if pd else None,
+                "confirmed_qty": pd.get("confirmed_qty") if pd else None,
+                "confirmed_amount": pd.get("confirmed_amount") if pd else None,
+                "remaining_qty": pd.get("remaining_qty") if pd else None,
+                "remaining_qty_action": pd.get("remaining_qty_action") if pd else None,
+                "confirmation_date": pd.get("confirmation_date") if pd else None,
+                "cancel_request_status": pd.get("cancel_request_status") if pd else None,
                 "project_name": project_name_map.get(project_code) if project_code else None,
                 "general_remark": pd.get("general_remark") if pd else None,
                 "manager_remark": pd.get("manager_remark") if pd else None,
@@ -10341,6 +10549,9 @@ def _synthesize_subcon_workdone_rows(filters, _summary=None):
         "SELECT pd.name AS po_dispatch, pd.poid AS poid, pd.po_no, pd.po_line_no, "
         "pd.project_code, pd.site_code, pd.site_name, pd.center_area, pd.region_type, "
         "pd.item_code, pd.item_description, pd.customer, pd.line_amount, "
+        # Needed by _billable_amount_of: a sub-contracted line confirmed short
+        # is worth the confirmed amount, not the ordered one.
+        "pd.confirmed_qty, pd.confirmed_amount, pd.remaining_qty, pd.remaining_qty_action, "
         "pd.dispatch_status, pd.im, "
         "pd.backend_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark, "
         f"{sub_sub_col}, "
@@ -10432,7 +10643,7 @@ def _synthesize_subcon_workdone_rows(filters, _summary=None):
             "activity_type": act_map.get(r.get("item_code") or ""),
             "executed_qty": None,
             "billing_rate_sar": None,
-            "revenue_sar": r.get("line_amount"),
+            "revenue_sar": _billable_amount_of(r),
             "team_cost_sar": None,
             "subcontract_cost_sar": None,
             "total_cost_sar": None,
@@ -10562,10 +10773,362 @@ def bulk_submit_work_done(payload=None):
     return {"updated": updated, "errors": errors}
 
 
+# ── Confirmed quantity (IM → PIC) ────────────────────────────────────────
+#
+# A POID ordered for 3 where only 2 turn out to be executable. The confirmed
+# quantity is captured at the IM→PIC handoff, which is the last gate before
+# money and the first point at which anyone actually knows the delivered
+# quantity — the confirmation mail is already mandatory there.
+#
+# line_amount is never touched: it stays what Huawei ordered, so
+# "ordered 3 / confirmed 2" remains visible instead of the shortfall
+# disappearing. PO Dispatch.validate() derives confirmed_amount and re-bases
+# ms1_amount / ms2_amount on it, so the payment-term percentages follow with no
+# change anywhere in the PIC flow.
+
+# Editable only while PIC has not started working the line. Past that, a
+# reduction would drive ms1_unbilled negative and leave the invoiced amount
+# disagreeing with the line, so it takes a PIC reject back instead.
+_QTY_EDITABLE_PIC_STATUSES = frozenset(("", "Work Not Done", "Under Process to Apply"))
+
+_REMAINING_ACTIONS = frozenset((
+    "Cancelled", "Pending – to be worked", "Pending – to be invoiced",
+))
+
+# Deliberately NOT required at confirmation time. The IM confirms what was
+# delivered the moment they know it; what becomes of the shortfall is usually
+# decided days or weeks later, once the customer has said whether the rest is
+# coming. Forcing the choice up front would only produce guesses. The remainder
+# sits undecided (remaining_qty > 0, remaining_qty_action empty) until
+# set_remaining_qty_action is called, and list_undecided_remainders is the
+# queue of lines still waiting on that call.
+
+
+def _sync_work_done_closures(dispatch_name, confirmed_qty, confirmed_amount,
+                             *, source=None, milestone=None, remark=None, user=None):
+    """Record this confirmation as a closure event on the line's Work Done.
+
+    Work Done stays ONE row per POID — 60 queries join it and 28 of those
+    aggregate SUM(wd.…), so a second row per closing event would double-count
+    revenue in all of them. The per-event detail lives in the `closures` child
+    table instead: executed_qty and revenue_sar are the sum of its rows, which
+    keeps every existing aggregate correct, while a report that needs revenue
+    dated to the month the work was actually done can join the child table.
+
+    A later confirmation that raises the quantity appends a second closure for
+    the difference, carrying its own date — that is how the "remaining qty
+    worked later" case closes without a second Work Done.
+    """
+    wd_name = frappe.db.get_value("Work Done", {"system_id": dispatch_name}, "name")
+    if not wd_name:
+        return None
+    if not frappe.db.has_column("Work Done Closure", "closed_qty"):
+        return None
+
+    wd = frappe.get_doc("Work Done", wd_name)
+    prior_qty = sum(flt(r.closed_qty) for r in (wd.get("closures") or []))
+    delta_qty = round(flt(confirmed_qty) - prior_qty, 4)
+    if abs(delta_qty) < 0.00005:
+        return wd_name
+
+    prior_amt = sum(flt(r.closed_amount) for r in (wd.get("closures") or []))
+    delta_amt = round(flt(confirmed_amount) - prior_amt, 4)
+
+    wd.append("closures", {
+        "closed_qty": delta_qty,
+        "closed_amount": delta_amt,
+        "closed_on": now_datetime(),
+        "milestone": milestone or None,
+        "source": source or wd.get("source"),
+        "closed_by": user or frappe.session.user,
+        "remark": (str(remark)[:1000] if remark else None),
+    })
+    wd.executed_qty = round(prior_qty + delta_qty, 4)
+    wd.revenue_sar = round(prior_amt + delta_amt, 4)
+    wd.billing_rate_sar = flt(wd.billing_rate_sar) or (
+        round(wd.revenue_sar / wd.executed_qty, 4) if wd.executed_qty else 0
+    )
+    wd.save(ignore_permissions=True)
+    return wd_name
+
+
+def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
+                         remark=None, milestone=None, source=None, user=None):
+    """Validate and store a confirmed quantity. Returns a summary dict.
+
+    Raises rather than silently clamping: a wrong quantity here becomes a wrong
+    invoice, so every rejection says what the caller must do instead.
+    """
+    pd = frappe.db.get_value(
+        "PO Dispatch", dispatch_name,
+        ["name", "poid", "qty", "rate", "line_amount", "pic_status", "pic_status_ms2",
+         "ms1_invoiced", "ms2_invoiced", "confirmed_qty"],
+        as_dict=True,
+    )
+    if not pd:
+        frappe.throw(f"PO Dispatch not found: {dispatch_name}")
+
+    ordered = flt(pd.get("qty") or 0)
+    confirmed = flt(confirmed_qty or 0)
+    poid = pd.get("poid") or dispatch_name
+
+    if confirmed <= 0:
+        frappe.throw(f"{poid}: confirmed quantity must be greater than zero.")
+    if ordered > 0 and confirmed > ordered + 0.00005:
+        frappe.throw(
+            f"{poid}: cannot confirm {confirmed:g} against an ordered quantity "
+            f"of {ordered:g}. Confirm at most what the PO carries."
+        )
+
+    # Lock once PIC has started — but only against a REDUCTION. Raising the
+    # confirmed quantity is how a "still to be done" leftover is eventually
+    # closed out, and that happens after the rest is delivered, by which time
+    # PIC has normally moved past the editable statuses. An increase can only
+    # add value, never strand an invoice, so it stays allowed; the
+    # already-invoiced guard below still protects the floor either way.
+    previously_confirmed = flt(pd.get("confirmed_qty") or 0)
+    is_reduction = previously_confirmed > 0 and confirmed < previously_confirmed - 0.00005
+    if is_reduction or not previously_confirmed:
+        for field, label in (("pic_status", "MS1"), ("pic_status_ms2", "MS2")):
+            cur = (pd.get(field) or "").strip()
+            if cur and cur not in _QTY_EDITABLE_PIC_STATUSES:
+                frappe.throw(
+                    f"{poid}: {label} is already at '{cur}', so the confirmed "
+                    "quantity can no longer be reduced here. Ask PIC to reject "
+                    "the line back (PIC Rejected) first."
+                )
+
+    # A reduction below what has already been invoiced is a credit note with
+    # the customer, not an edit — refuse it rather than leave ms*_unbilled
+    # negative and the line disagreeing with the invoice.
+    invoiced = flt(pd.get("ms1_invoiced") or 0) + flt(pd.get("ms2_invoiced") or 0)
+    rate = flt(pd.get("rate") or 0)
+    new_amount = (
+        round(rate * confirmed, 4) if rate
+        else (round(flt(pd.get("line_amount") or 0) * confirmed / ordered, 4) if ordered else 0)
+    )
+    if invoiced and new_amount < invoiced - 0.005:
+        frappe.throw(
+            f"{poid}: SAR {invoiced:,.2f} has already been invoiced, which is "
+            f"more than the SAR {new_amount:,.2f} this quantity is worth. "
+            "Raise a credit note with the customer instead of reducing the line."
+        )
+
+    action = (remaining_action or "").strip()
+    if action and action not in _REMAINING_ACTIONS:
+        frappe.throw(f"{poid}: '{action}' is not a valid remaining-quantity action.")
+    short = ordered > 0 and confirmed < ordered - 0.00005
+    if not short:
+        action = ""
+
+    prev_qty = previously_confirmed
+    user = user or frappe.session.user
+
+    # Saved through the document layer, not db.set_value, so validate() runs and
+    # confirmed_amount / ms1_amount / ms2_amount are all recomputed together.
+    doc = frappe.get_doc("PO Dispatch", dispatch_name)
+    doc.confirmed_qty = confirmed
+    doc.confirmation_date = now_datetime()
+    doc.confirmed_by = user
+    doc.remaining_qty_action = action or None
+    doc.remaining_qty_remark = (str(remark)[:1000] if remark else None)
+    doc.save(ignore_permissions=True)
+
+    log_status_event(
+        dispatch_name, "confirmed_qty",
+        f"{prev_qty:g}" if prev_qty else "",
+        f"{confirmed:g}",
+        remark=remark, stamp_stage=False,
+    )
+
+    wd_name = _sync_work_done_closures(
+        dispatch_name, confirmed, flt(doc.confirmed_amount),
+        source=source, milestone=milestone, remark=remark, user=user,
+    )
+
+    return {
+        "po_dispatch": dispatch_name,
+        "poid": poid,
+        "ordered_qty": ordered,
+        "confirmed_qty": confirmed,
+        "confirmed_amount": flt(doc.confirmed_amount),
+        "remaining_qty": flt(doc.remaining_qty),
+        "remaining_qty_action": action or None,
+        "remainder_undecided": bool(short and not action),
+        "ms1_amount": flt(doc.ms1_amount),
+        "ms2_amount": flt(doc.ms2_amount),
+        "work_done": wd_name,
+    }
+
+
 @frappe.whitelist()
-def update_work_done_submission(name, submission_status, note=None):
+def set_remaining_qty_action(po_dispatch, action, remark=None):
+    """IM decides, later, what becomes of a confirmed line's leftover quantity.
+
+    Separate from confirmation on purpose: the delivered quantity is known at
+    handover, the fate of the shortfall usually is not. Callable any time after
+    the line has been confirmed short, and re-callable if the answer changes
+    (a "pending" remainder that is eventually dropped becomes "Cancelled").
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    name = _resolve_dispatch_for_remarks(po_dispatch)
+    pd = frappe.db.get_value(
+        "PO Dispatch", name,
+        ["name", "im", "poid", "qty", "remaining_qty", "remaining_qty_action",
+         "confirmed_qty", "backend_team"],
+        as_dict=True,
+    ) or {}
+    if not pd.get("name"):
+        frappe.throw("PO Dispatch not found")
+    poid = pd.get("poid") or name
+
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session()
+        if not _can_assign_backend_dispatch(role, im_identifiers, pd):
+            frappe.throw("Not permitted", frappe.PermissionError)
+
+    if flt(pd.get("confirmed_qty") or 0) <= 0:
+        frappe.throw(f"{poid}: confirm the delivered quantity first.")
+    if flt(pd.get("remaining_qty") or 0) <= 0:
+        frappe.throw(f"{poid}: nothing left over — the full quantity was confirmed.")
+
+    chosen = (action or "").strip()
+    if chosen and chosen not in _REMAINING_ACTIONS:
+        frappe.throw(f"{poid}: '{chosen}' is not a valid remaining-quantity action.")
+
+    prev = (pd.get("remaining_qty_action") or "").strip()
+
+    # "Add to confirmation" means exactly that: the leftover joins what is
+    # being confirmed, so the confirmed quantity becomes the full ordered one.
+    # Recording it as "0.5 confirmed plus 0.5 billed separately" was the same
+    # fact split across two columns that then disagreed — the row read 0.5 /
+    # 400 while the line actually invoiced 800.
+    from inet_app.inet_app.doctype.po_dispatch.po_dispatch import PODispatch
+
+    if chosen == PODispatch.BILL_FULL_ON_ACTION:
+        ordered = flt(pd.get("qty") or 0)
+        if ordered > flt(pd.get("confirmed_qty") or 0):
+            _apply_confirmed_qty(
+                name, ordered, remaining_action=chosen, remark=remark,
+                source="Backend" if frappe.db.get_value("PO Dispatch", name, "backend_team") else None,
+            )
+            out = frappe.db.get_value(
+                "PO Dispatch", name,
+                ["poid", "remaining_qty", "remaining_qty_action", "ms1_amount", "ms2_amount"],
+                as_dict=True,
+            ) or {}
+            log_status_event(name, "remaining_qty_action", prev, chosen,
+                             remark=remark, stamp_stage=False)
+            frappe.db.commit()
+            return {
+                "po_dispatch": name, "poid": out.get("poid") or name,
+                "remaining_qty": flt(out.get("remaining_qty")),
+                "remaining_qty_action": chosen,
+                "billable_amount": flt(out.get("ms1_amount")) + flt(out.get("ms2_amount")),
+                "ms1_amount": flt(out.get("ms1_amount")),
+                "ms2_amount": flt(out.get("ms2_amount")),
+            }
+
+    # Saved through the document layer, not db.set_value: only validate()
+    # recomputes ms1_amount / ms2_amount from the new base.
+    doc = frappe.get_doc("PO Dispatch", name)
+    doc.remaining_qty_action = chosen or None
+    if remark is not None:
+        doc.remaining_qty_remark = (str(remark)[:1000] or None)
+    doc.save(ignore_permissions=True)
+
+    log_status_event(
+        name, "remaining_qty_action", prev, chosen,
+        remark=remark, stamp_stage=False,
+    )
+    frappe.db.commit()
+    return {
+        "po_dispatch": name, "poid": poid,
+        "remaining_qty": flt(pd.get("remaining_qty")),
+        "remaining_qty_action": chosen or None,
+        "billable_amount": flt(doc.ms1_amount) + flt(doc.ms2_amount),
+        "ms1_amount": flt(doc.ms1_amount),
+        "ms2_amount": flt(doc.ms2_amount),
+    }
+
+
+@frappe.whitelist()
+def list_undecided_remainders(limit=500):
+    """Confirmed-short lines whose leftover quantity still has no decision.
+
+    The IM's follow-up queue: everything confirmed partially where nobody has
+    yet said whether the rest is coming, being dropped, or billed anyway.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    where = [
+        "IFNULL(pd.confirmed_qty, 0) > 0",
+        "IFNULL(pd.remaining_qty, 0) > 0",
+        "IFNULL(pd.remaining_qty_action, '') = ''",
+        "IFNULL(pd.dispatch_status, '') <> 'Cancelled'",
+    ]
+    params = []
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session()
+        ids = [i for i in (im_identifiers or []) if i]
+        if not ids:
+            return []
+        where.append(f"pd.im IN ({', '.join(['%s'] * len(ids))})")
+        params.extend(ids)
+    return frappe.db.sql(
+        f"""
+        SELECT pd.name AS po_dispatch, pd.poid, pd.item_code, pd.item_description,
+               pd.site_code, pd.site_name, pd.project_code, pd.im,
+               pd.qty AS ordered_qty, pd.confirmed_qty, pd.remaining_qty,
+               pd.rate, pd.line_amount, pd.confirmed_amount,
+               pd.confirmation_date, pd.remaining_qty_remark
+        FROM `tabPO Dispatch` pd
+        WHERE {' AND '.join(where)}
+        ORDER BY pd.confirmation_date DESC
+        LIMIT {cint(limit)}
+        """,
+        tuple(params), as_dict=True,
+    ) or []
+
+
+@frappe.whitelist()
+def confirm_line_qty(po_dispatch, confirmed_qty, remaining_action=None, remark=None,
+                     milestone=None):
+    """IM confirms the quantity actually delivered on a PO line.
+
+    Permission: PM / admin, or the IM the line is assigned to.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    name = _resolve_dispatch_for_remarks(po_dispatch)
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session()
+        pd = frappe.db.get_value("PO Dispatch", name, ["name", "im"], as_dict=True) or {}
+        if not _can_assign_backend_dispatch(role, im_identifiers, pd):
+            frappe.throw("Not permitted", frappe.PermissionError)
+    result = _apply_confirmed_qty(
+        name, confirmed_qty, remaining_action=remaining_action,
+        remark=remark, milestone=milestone,
+    )
+    frappe.db.commit()
+    return result
+
+
+@frappe.whitelist()
+def update_work_done_submission(name, submission_status, note=None,
+                                confirmed_qty=None, remaining_action=None):
     """IM sets Work Done submission status: 'Ready for Confirmation' or
-    'Confirmation Done'. Optional note saved to PO Dispatch.im_confirmation_note."""
+    'Confirmation Done'. Optional note saved to PO Dispatch.im_confirmation_note.
+
+    ``confirmed_qty`` is the quantity actually delivered. Passing it here is the
+    normal route — confirmation is the moment the IM knows, and it is the last
+    gate before the line reaches PIC. ``remaining_action`` says what happens to
+    the shortfall and is required whenever the confirmed quantity is short.
+    """
     name = (name or "").strip()
     status = (submission_status or "").strip()
     if not name:
@@ -10574,6 +11137,7 @@ def update_work_done_submission(name, submission_status, note=None):
         frappe.throw("Invalid submission_status")
     if not frappe.db.exists("Work Done", name):
         frappe.throw(f"Work Done not found: {name}")
+    prev_submission = frappe.db.get_value("Work Done", name, "submission_status") or ""
     frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
 
     # Notify PIC when IM confirms (db.set_value doesn't fire on_update hooks)
@@ -10600,6 +11164,32 @@ def update_work_done_submission(name, submission_status, note=None):
         (chain_row[0].get("po_dispatch") if chain_row else None)
         or frappe.db.get_value("Work Done", name, "system_id")
     )
+
+    # Anchored to the PO Dispatch, because that is what every ageing query
+    # groups by — the Work Done name is carried in entity_name.
+    if po_dispatch:
+        log_status_event(
+            po_dispatch,
+            "submission_status",
+            prev_submission,
+            status,
+            entity="Work Done",
+            entity_name=name,
+            remark=note,
+            stamp_stage=False,
+        )
+
+    # Confirmed quantity before the line is handed to PIC, so the amount PIC
+    # invoices against is already the corrected one. Raises on a bad quantity,
+    # which deliberately aborts the whole call rather than letting a confirmed
+    # line reach PIC at the wrong value.
+    confirmation = None
+    if po_dispatch and confirmed_qty not in (None, ""):
+        confirmation = _apply_confirmed_qty(
+            po_dispatch, confirmed_qty,
+            remaining_action=remaining_action, remark=note,
+            source=frappe.db.get_value("Work Done", name, "source") or None,
+        )
 
     pic_warning = None
     if po_dispatch:
@@ -10679,6 +11269,8 @@ def update_work_done_submission(name, submission_status, note=None):
     result = {"name": name, "submission_status": status}
     if pic_warning:
         result["pic_warning"] = pic_warning
+    if confirmation:
+        result["confirmation"] = confirmation
     return result
 
 
@@ -11021,7 +11613,8 @@ def get_work_done_attachments(name):
 
 
 @frappe.whitelist()
-def update_subcon_submission(po_dispatch, submission_status, note=None):
+def update_subcon_submission(po_dispatch, submission_status, note=None,
+                             confirmed_qty=None, remaining_action=None):
     """Set submission_status on a sub-contracted PO Dispatch (no Work Done row exists).
 
     Stored on PO Dispatch.subcon_submission_status so synthetic Work Done rows can
@@ -11037,7 +11630,7 @@ def update_subcon_submission(po_dispatch, submission_status, note=None):
     name = _resolve_dispatch_for_remarks(po_dispatch)
     pd = frappe.db.get_value(
         "PO Dispatch", name,
-        ["name", "im", "subcon_status", "poid"],
+        ["name", "im", "subcon_status", "poid", "subcon_submission_status"],
         as_dict=True,
     ) or {}
     if not pd.get("name"):
@@ -11054,6 +11647,24 @@ def update_subcon_submission(po_dispatch, submission_status, note=None):
         update_modified=True,
     )
 
+    log_status_event(
+        name,
+        "subcon_submission_status",
+        pd.get("subcon_submission_status") or "",
+        status,
+        remark=note,
+        stamp_stage=False,
+    )
+
+    # Sub-contracted lines have no Work Done row, so the confirmed quantity
+    # lands on the PO Dispatch alone — which is where PIC reads it from anyway.
+    confirmation = None
+    if confirmed_qty not in (None, ""):
+        confirmation = _apply_confirmed_qty(
+            name, confirmed_qty, remaining_action=remaining_action,
+            remark=note, source="Backend",
+        )
+
     if note is not None and status == "Confirmation Done" and frappe.db.has_column("PO Dispatch", "im_confirmation_note"):
         frappe.db.set_value("PO Dispatch", name, "im_confirmation_note", (note or "").strip(), update_modified=False)
 
@@ -11065,6 +11676,8 @@ def update_subcon_submission(po_dispatch, submission_status, note=None):
     result = {"po_dispatch": name, "poid": pd.get("poid") or name, "submission_status": status}
     if pic_warning:
         result["pic_warning"] = pic_warning
+    if confirmation:
+        result["confirmation"] = confirmation
     return result
 
 
@@ -11659,6 +12272,56 @@ LINE_DONE_STATUSES = ('Completed', 'Partially Submitted', 'Submitted',
                       'Partially Closed', 'Closed')
 
 
+def billable_amount_sql(pd="pd", pd2=None):
+    """SQL for what a PO line can be INVOICED for — the revenue figure.
+
+    The SQL twin of ``PO Dispatch.billable_amount()``; the two must agree or a
+    report will disagree with the document it reports on. Ordered line_amount
+    normally, the confirmed amount once the IM has confirmed a reduced
+    quantity, and back to line_amount when the leftover was added to the
+    confirmation (the customer pays for the undelivered part too).
+
+    NOT for order-book / PO-value figures: those are what Huawei ORDERED and
+    must stay on line_amount, or the shortfall disappears from the very charts
+    built to show it.
+
+    ``RIGHT(..., 8) = 'invoiced'`` rather than comparing the option text
+    outright: the stored value contains an en dash, and a literal ``%`` in a
+    LIKE would be read as a format placeholder wherever the caller binds
+    parameters into the same string.
+    """
+    def col(field):
+        if pd2:
+            return f"COALESCE({pd}.{field}, {pd2}.{field}, 0)"
+        return f"COALESCE({pd}.{field}, 0)"
+
+    if not frappe.db.has_column("PO Dispatch", "confirmed_amount"):
+        return col("line_amount")
+    action = (
+        f"COALESCE({pd}.remaining_qty_action, {pd2}.remaining_qty_action, '')"
+        if pd2 else f"IFNULL({pd}.remaining_qty_action, '')"
+    )
+    return (
+        f"CASE WHEN {col('confirmed_amount')} > 0"
+        f" AND RIGHT({action}, 8) <> 'invoiced'"
+        f" THEN {col('confirmed_amount')}"
+        f" ELSE {col('line_amount')} END"
+    )
+
+
+def _billable_amount_of(row):
+    """Python twin of ``billable_amount_sql`` for a row dict already in hand."""
+    from inet_app.inet_app.doctype.po_dispatch.po_dispatch import PODispatch
+
+    line = flt(row.get("line_amount") or 0)
+    confirmed = flt(row.get("confirmed_amount") or 0)
+    if not confirmed:
+        return line
+    if (row.get("remaining_qty_action") or "").strip() == PODispatch.BILL_FULL_ON_ACTION:
+        return line or confirmed
+    return confirmed
+
+
 def wd_revenue_sql(wd="wd", pd="pd", pd2=None):
     """A Work Done row's revenue, taken from the PO LINE rather than from
     Work Done's own ``revenue_sar`` column. Use this for every reported
@@ -11700,15 +12363,16 @@ def wd_revenue_sql(wd="wd", pd="pd", pd2=None):
             return f"COALESCE({pd}.{field}, {pd2}.{field}, 0)"
         return f"COALESCE({pd}.{field}, 0)"
 
+    whole_line = billable_amount_sql(pd, pd2)
     if not frappe.db.has_column("Work Done", "ms1_closed"):
-        return amt("line_amount")
+        return whole_line
     return (
         f"CASE"
         f" WHEN IFNULL({wd}.ms1_closed, 0) = 1 AND IFNULL({wd}.ms2_closed, 0) = 0"
         f" THEN {amt('ms1_amount')}"
         f" WHEN IFNULL({wd}.ms2_closed, 0) = 1 AND IFNULL({wd}.ms1_closed, 0) = 0"
         f" THEN {amt('ms2_amount')}"
-        f" ELSE {amt('line_amount')} END"
+        f" ELSE {whole_line} END"
     )
 
 
@@ -19932,6 +20596,7 @@ def start_execution_timer(rollout_plan):
 
     if plan_status in ("Planned", "Planning with Issue", "Extended"):
         frappe.db.set_value("Rollout Plan", rollout_plan, "plan_status", "In Execution", update_modified=False)
+        _log_plan_status(rollout_plan, plan_status, "In Execution")
 
     # Auto-create a Daily Execution so IM/PM monitors can track progress immediately.
     # If the IM already created one for this team, leave it alone.
@@ -21857,11 +22522,14 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
         # Only set Completed when both milestones are now closed
         wd_check = frappe.db.get_value("Work Done", wd_name, ["ms1_closed", "ms2_closed"], as_dict=True) or {}
         both_closed = cint(wd_check.get("ms1_closed")) and cint(wd_check.get("ms2_closed"))
-        if both_closed:
-            pd_updates["dispatch_status"] = "Completed"
-
         if pd_updates:
             frappe.db.set_value("PO Dispatch", name, pd_updates, update_modified=False)
+
+        # Status goes through set_dispatch_status so the transition reaches the
+        # event log and stage_entered_at with it. Kept after the bulk update
+        # above so a failure there cannot leave the status logged but unwritten.
+        if both_closed:
+            set_dispatch_status(name, "Completed", remark=note)
 
         # Mark PO Intake Line Completed only when both milestones closed
         if both_closed:
@@ -21930,7 +22598,7 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
     frappe.db.commit()
 
     # Update PO Dispatch
-    pd_updates = {"dispatch_status": "Completed"}
+    pd_updates = {}
     if frappe.db.has_column("PO Dispatch", "direct_close_by"):
         pd_updates["direct_close_by"] = im_doc or frappe.session.user
     existing_contract = pd.get("contract") or ""
@@ -21940,7 +22608,7 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
         pd_updates["huawei_im"] = huawei_im
     if project_domain:
         pd_updates["project_domain"] = project_domain
-    frappe.db.set_value("PO Dispatch", name, pd_updates, update_modified=False)
+    set_dispatch_status(name, "Completed", remark=note, extra=pd_updates)
 
     # Mark PO Intake Line as Completed
     intake_parent = pd.get("po_intake")
@@ -22008,7 +22676,6 @@ def _assign_backend_one(role, im_identifiers, name, team, remark, huawei_im=None
         "backend_team": team["name"],
         "subcon_status": "Pending",
         "subcon_completed_on": None,
-        "dispatch_status": "Backend Assigned",
     }
     if remark is not None and str(remark or "").strip():
         updates["subcon_remark"] = str(remark or "")[:8000]
@@ -22016,7 +22683,8 @@ def _assign_backend_one(role, im_identifiers, name, team, remark, huawei_im=None
         updates["huawei_im"] = huawei_im
     if project_domain:
         updates["project_domain"] = project_domain
-    frappe.db.set_value("PO Dispatch", name, updates, update_modified=True)
+    set_dispatch_status(name, "Backend Assigned", remark=remark, extra=updates,
+                        update_modified=True)
     return True, {
         "po_dispatch": name,
         "poid": pd.get("poid") or name,
@@ -22163,7 +22831,6 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
     updates = {
         "subcon_status": "Work Done",
         "subcon_completed_on": completed,
-        "dispatch_status": "Completed",
     }
     # Snapshot the backend team's subcontractor onto pd.contract (only if not already set).
     backend_team = pd.get("backend_team")
@@ -22180,7 +22847,8 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
         else:
             combined = addition
         updates["subcon_remark"] = combined[:8000]
-    frappe.db.set_value("PO Dispatch", name, updates, update_modified=True)
+    set_dispatch_status(name, "Completed", remark=remark, extra=updates,
+                        update_modified=True)
     frappe.db.commit()
 
     # Create a real Work Done record (skip if one already exists for this POID)
@@ -23941,7 +24609,8 @@ def fix_data_integrity_reopen_closed(po_dispatches):
             continue
         if frappe.db.get_value("PO Dispatch", name, "dispatch_status") != "Closed":
             continue
-        frappe.db.set_value("PO Dispatch", name, "dispatch_status", "Completed", update_modified=True)
+        set_dispatch_status(name, "Completed", remark="repair: Closed -> Completed",
+                            update_modified=True)
         _reset_linked_intake_line_status(name, "Completed")
         fixed.append(name)
     if fixed:
@@ -24680,6 +25349,396 @@ def _serialize_plan_for_cancel(plan_name):
     return d
 
 
+# ── POID cancellation (PM direct, IM with PM approval) ───────────────────
+#
+# Until now the only route to dispatch_status='Cancelled' was the archive
+# import or a side effect of PIC setting pic_status='PO Line Canceled'. PM and
+# IM had no way to cancel a line at all, which is why 1,452 cancelled lines all
+# arrived through one of those two paths.
+#
+# The request/approve shape is deliberately the same as Rollout Plan's
+# (request_cancel_plan / pm_decide_cancel_plan) down to the field names, so the
+# PM's existing pending-requests UI carries over unchanged.
+
+# A line still carrying live rollout work cannot be cancelled underneath it —
+# the plan has to be cancelled first, which has its own approval path.
+_LIVE_PLAN_STATUSES = ("Planned", "In Execution", "Planning with Issue")
+
+# Nothing left to cancel.
+_UNCANCELLABLE_DISPATCH_STATUSES = frozenset(("Cancelled",))
+
+
+def _dispatch_cancel_blockers(dispatch_name):
+    """Reasons this POID cannot be cancelled right now. Empty list means it can."""
+    pd = frappe.db.get_value(
+        "PO Dispatch", dispatch_name,
+        ["name", "poid", "dispatch_status", "ms1_invoiced", "ms2_invoiced",
+         "cancel_request_status"],
+        as_dict=True,
+    )
+    if not pd:
+        return ["PO Dispatch not found."]
+
+    blockers = []
+    status = (pd.get("dispatch_status") or "").strip()
+    if status in _UNCANCELLABLE_DISPATCH_STATUSES:
+        blockers.append("This line is already cancelled.")
+
+    # Money already out of the door is a credit note with the customer, not a
+    # cancel — cancelling here would leave an invoice pointing at a dead line.
+    invoiced = flt(pd.get("ms1_invoiced") or 0) + flt(pd.get("ms2_invoiced") or 0)
+    if invoiced > 0:
+        blockers.append(
+            f"SAR {invoiced:,.2f} has already been invoiced on this line. "
+            "Raise a credit note with the customer instead of cancelling."
+        )
+
+    live = frappe.db.sql(
+        """
+        SELECT name, plan_status FROM `tabRollout Plan`
+        WHERE po_dispatch = %s AND plan_status IN %s
+        LIMIT 5
+        """,
+        (dispatch_name, _LIVE_PLAN_STATUSES), as_dict=True,
+    ) or []
+    if live:
+        names = ", ".join(r["name"] for r in live)
+        blockers.append(
+            f"{len(live)} rollout plan(s) are still live ({names}). "
+            "Cancel the plan(s) first, then cancel the line."
+        )
+    return blockers
+
+
+def _cancel_dispatch_now(dispatch_name, *, reason=None, responded_by=None, remark=None):
+    """Apply the cancellation. Assumes the blockers have already been checked."""
+    now = now_datetime()
+    updates = {
+        "cancel_request_status": "Approved",
+        "cancel_responded_by": responded_by or frappe.session.user,
+        "cancel_responded_at": now,
+    }
+    if remark is not None:
+        updates["cancel_pm_remark"] = (str(remark).strip() or None)
+    if reason is not None:
+        updates["cancel_reason"] = (str(reason).strip()[:8000] or None)
+
+    # Goes through set_dispatch_status so the transition reaches the event log
+    # and stage_entered_at along with the value.
+    set_dispatch_status(dispatch_name, "Cancelled", remark=reason or remark,
+                        extra=updates, update_modified=True)
+
+    # PIC's own terminal value, so the line lands on the Cancelled page rather
+    # than sitting in an invoicing stage forever.
+    pic_updates = {}
+    for field in ("pic_status", "pic_status_ms2"):
+        if not frappe.db.has_column("PO Dispatch", field):
+            continue
+        cur = (frappe.db.get_value("PO Dispatch", dispatch_name, field) or "").strip()
+        if cur != "PO Line Canceled":
+            pic_updates[field] = "PO Line Canceled"
+            log_status_event(
+                dispatch_name, field, cur, "PO Line Canceled",
+                milestone="MS1" if field == "pic_status" else "MS2",
+                remark=reason or remark, stamp_stage=False,
+            )
+    if pic_updates:
+        frappe.db.set_value("PO Dispatch", dispatch_name, pic_updates, update_modified=False)
+
+    _reset_linked_intake_line_status(dispatch_name, "Cancelled")
+
+    # Any plan that is not already finished goes with the line. Live plans are
+    # refused up front by _dispatch_cancel_blockers, so anything left here is
+    # dormant (Pending / Not Attended and the like).
+    orphan_plans = frappe.db.sql_list(
+        """
+        SELECT name FROM `tabRollout Plan`
+        WHERE po_dispatch = %s AND IFNULL(plan_status,'') NOT IN ('Cancelled', 'Completed')
+        """,
+        (dispatch_name,),
+    ) or []
+    for plan in orphan_plans:
+        prev = frappe.db.get_value("Rollout Plan", plan, "plan_status") or ""
+        frappe.db.set_value("Rollout Plan", plan, "plan_status", "Cancelled",
+                            update_modified=True)
+        _log_plan_status(plan, prev, "Cancelled", remark="POID cancelled")
+    return orphan_plans
+
+
+@frappe.whitelist()
+def request_cancel_dispatch(po_dispatches, reason=None, po_dispatch=None):
+    """Cancel one or many POIDs.
+
+    A PM cancels outright — there is no point making them approve their own
+    request. An IM raises ONE PO Cancel Request covering every selected line,
+    the same shape PO Transfer Request uses, so the PM decides the batch in a
+    single action and sees every line before doing it.
+
+    ``po_dispatch`` is accepted as a single-name alias for older callers.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    raw = _ensure_list(po_dispatches or [])
+    if po_dispatch:
+        raw.append(po_dispatch)
+    names, seen = [], set()
+    for entry in raw:
+        resolved = _resolve_dispatch_for_remarks(entry)
+        if resolved and resolved not in seen:
+            seen.add(resolved)
+            names.append(resolved)
+    if not names:
+        frappe.throw("Select at least one POID to cancel.")
+
+    im_identifiers = None
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session()
+
+    rows, blocked = [], []
+    for name in names:
+        pd = frappe.db.get_value(
+            "PO Dispatch", name,
+            ["name", "im", "poid", "po_no", "site_code", "project_code", "item_code",
+             "item_description", "qty", "line_amount", "cancel_request_status"],
+            as_dict=True,
+        ) or {}
+        poid = pd.get("poid") or name
+        if not pd.get("name"):
+            blocked.append({"poid": poid, "error": "PO Dispatch not found."})
+            continue
+        if role == "im" and not _can_assign_backend_dispatch(role, im_identifiers, pd):
+            blocked.append({"poid": poid, "error": "Not assigned to you."})
+            continue
+        pending = (pd.get("cancel_request_status") or "").strip()
+        if pending == "Pending PM Approval":
+            blocked.append({"poid": poid, "error": "Already waiting for PM approval."})
+            continue
+        if pending == "Approved":
+            blocked.append({"poid": poid, "error": "Already cancelled."})
+            continue
+        problems = _dispatch_cancel_blockers(name)
+        if problems:
+            blocked.append({"poid": poid, "error": " ".join(problems)})
+            continue
+        rows.append(pd)
+
+    if not rows:
+        return {"created": 0, "cancelled": 0, "blocked": blocked, "direct": role == "pm"}
+
+    # PM: straight through, no request document. Each line is cancelled on its
+    # own so one refusal cannot take the rest of the batch down with it.
+    if role == "pm":
+        cancelled, plans = [], []
+        for pd in rows:
+            try:
+                plans.extend(_cancel_dispatch_now(pd["name"], reason=reason))
+                cancelled.append(pd.get("poid") or pd["name"])
+            except Exception as e:
+                blocked.append({"poid": pd.get("poid") or pd["name"],
+                                "error": frappe.utils.cstr(e)[:300]})
+        frappe.db.commit()
+        return {
+            "created": 0, "cancelled": len(cancelled), "cancelled_poids": cancelled,
+            "cancelled_plans": plans, "blocked": blocked, "direct": True,
+        }
+
+    doc = frappe.new_doc("PO Cancel Request")
+    doc.im = (im_identifiers and next(iter(im_identifiers), None)) or None
+    im_resolved, _, _ = resolve_im_for_session()
+    if im_resolved and frappe.db.exists("IM Master", im_resolved):
+        doc.im = im_resolved
+    doc.requested_by = frappe.session.user
+    doc.request_status = "Pending PM Approval"
+    doc.reason = (str(reason).strip()[:8000] if reason else None)
+    for pd in rows:
+        doc.append("poids", {
+            "po_dispatch": pd["name"],
+            "poid": pd.get("poid") or pd["name"],
+            "po_no": pd.get("po_no"),
+            "site_code": pd.get("site_code"),
+            "project_code": pd.get("project_code"),
+            "item_code": pd.get("item_code"),
+            "item_description": (pd.get("item_description") or "")[:140],
+            "qty": flt(pd.get("qty") or 0),
+            "line_amount": flt(pd.get("line_amount") or 0),
+            "line_status": "Pending",
+        })
+    doc.poid_count = len(rows)
+    doc.total_amount = sum(flt(r.get("line_amount") or 0) for r in rows)
+    doc.insert(ignore_permissions=True)
+
+    # Stamped on each line too, so the POID pages can show "cancel pending"
+    # without joining the request, and so a second request cannot be raised.
+    now = now_datetime()
+    for pd in rows:
+        frappe.db.set_value("PO Dispatch", pd["name"], {
+            "cancel_request_status": "Pending PM Approval",
+            "cancel_reason": (str(reason).strip()[:8000] if reason else None),
+            "cancel_requested_by": frappe.session.user,
+            "cancel_requested_at": now,
+            "cancel_responded_by": None,
+            "cancel_responded_at": None,
+            "cancel_pm_remark": None,
+        }, update_modified=True)
+        log_status_event(pd["name"], "cancel_request_status", "", "Pending PM Approval",
+                         remark=reason, stamp_stage=False)
+    frappe.db.commit()
+    return {
+        "created": 1, "request": doc.name, "poid_count": doc.poid_count,
+        "total_amount": flt(doc.total_amount), "blocked": blocked, "direct": False,
+    }
+
+
+@frappe.whitelist()
+def pm_decide_cancel_request(request, action, remark=None):
+    """PM approves or rejects a whole PO Cancel Request.
+
+    Approving cancels every line it still can. A line that has since been
+    invoiced, or picked up a live plan while the request sat in the queue, is
+    marked Refused with the reason rather than silently skipped — the request
+    records what actually happened, line by line.
+    """
+    if not _is_pm_role():
+        frappe.throw("Only a PM / Admin can decide POID cancel requests.",
+                     frappe.PermissionError)
+    if action not in ("approve", "reject"):
+        frappe.throw("action must be 'approve' or 'reject'")
+    if not request or not frappe.db.exists("PO Cancel Request", request):
+        frappe.throw("Cancel request not found.")
+
+    doc = frappe.get_doc("PO Cancel Request", request)
+    if doc.request_status != "Pending PM Approval":
+        frappe.throw(f"Request is '{doc.request_status}', not 'Pending PM Approval'.")
+
+    now = now_datetime()
+    clean_remark = (str(remark).strip()[:8000] if remark else None)
+
+    if action == "reject":
+        for line in doc.poids:
+            line.line_status = "Refused"
+            line.line_note = "Rejected by PM"
+            prev = frappe.db.get_value("PO Dispatch", line.po_dispatch, "cancel_request_status") or ""
+            frappe.db.set_value("PO Dispatch", line.po_dispatch, {
+                "cancel_request_status": "Rejected",
+                "cancel_responded_by": frappe.session.user,
+                "cancel_responded_at": now,
+                "cancel_pm_remark": clean_remark,
+            }, update_modified=True)
+            log_status_event(line.po_dispatch, "cancel_request_status", prev, "Rejected",
+                             remark=remark, stamp_stage=False)
+        doc.request_status = "Rejected by PM"
+        doc.approved_by = frappe.session.user
+        doc.approved_at = now
+        doc.pm_remark = clean_remark
+        doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        return {"request": doc.name, "request_status": doc.request_status,
+                "cancelled": 0, "refused": len(doc.poids)}
+
+    cancelled, refused, plans = 0, [], []
+    for line in doc.poids:
+        problems = _dispatch_cancel_blockers(line.po_dispatch)
+        if problems:
+            line.line_status = "Refused"
+            line.line_note = " ".join(problems)[:500]
+            refused.append({"poid": line.poid, "error": line.line_note})
+            frappe.db.set_value("PO Dispatch", line.po_dispatch, {
+                "cancel_request_status": "Rejected",
+                "cancel_responded_by": frappe.session.user,
+                "cancel_responded_at": now,
+                "cancel_pm_remark": line.line_note,
+            }, update_modified=True)
+            continue
+        log_status_event(line.po_dispatch, "cancel_request_status",
+                         "Pending PM Approval", "Approved", remark=remark, stamp_stage=False)
+        plans.extend(_cancel_dispatch_now(line.po_dispatch, reason=doc.reason, remark=remark))
+        line.line_status = "Cancelled"
+        cancelled += 1
+
+    doc.request_status = "Approved"
+    doc.approved_by = frappe.session.user
+    doc.approved_at = now
+    doc.pm_remark = clean_remark
+    doc.cancelled_count = cancelled
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return {
+        "request": doc.name, "request_status": doc.request_status,
+        "cancelled": cancelled, "refused": refused, "cancelled_plans": plans,
+    }
+
+
+@frappe.whitelist()
+def list_po_cancel_requests(status=None, limit=200):
+    """PO Cancel Requests with their lines, for the PM approvals inbox."""
+    if not _is_pm_role():
+        role = _user_role_class()
+        if role != "im":
+            frappe.throw("Not permitted", frappe.PermissionError)
+    filters = {}
+    if status:
+        filters["request_status"] = status
+    if not _is_pm_role():
+        im_resolved, _, _ = resolve_im_for_session()
+        filters["im"] = im_resolved or "__none__"
+    rows = frappe.get_all(
+        "PO Cancel Request", filters=filters,
+        fields=["name", "im", "requested_by", "request_status", "poid_count",
+                "total_amount", "cancelled_count", "approved_by", "approved_at",
+                "reason", "pm_remark", "creation"],
+        order_by="creation desc", limit_page_length=cint(limit) or 200,
+    ) or []
+    if not rows:
+        return []
+    line_map = {}
+    for ln in frappe.get_all(
+        "PO Cancel Request Line",
+        filters={"parent": ["in", [r["name"] for r in rows]]},
+        fields=["parent", "po_dispatch", "poid", "po_no", "site_code", "project_code",
+                "item_code", "item_description", "qty", "line_amount", "line_status",
+                "line_note"],
+        order_by="idx asc", limit_page_length=0,
+    ) or []:
+        line_map.setdefault(ln["parent"], []).append(ln)
+    for r in rows:
+        r["lines"] = line_map.get(r["name"], [])
+        r["poid_list"] = ", ".join(l["poid"] for l in r["lines"][:5])
+        if len(r["lines"]) > 5:
+            r["poid_list"] += f" +{len(r['lines']) - 5} more"
+    return rows
+
+
+@frappe.whitelist()
+def list_pending_dispatch_cancels(status=None, limit=500):
+    """POID cancel requests, for the PM queue. Mirrors list_pending_cancel_requests."""
+    if not _is_pm_role():
+        frappe.throw("Only a PM / Admin can view POID cancel requests.",
+                     frappe.PermissionError)
+    where = "IFNULL(pd.cancel_request_status,'') <> ''"
+    params = []
+    if status:
+        where = "IFNULL(pd.cancel_request_status,'') = %s"
+        params.append(status)
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.name AS po_dispatch, pd.poid, pd.po_no, pd.po_line_no,
+               pd.item_code, pd.item_description, pd.site_code, pd.site_name,
+               pd.qty, pd.line_amount, pd.dispatch_status, pd.im,
+               pd.project_code, pd.cancel_request_status, pd.cancel_reason,
+               pd.cancel_requested_by, pd.cancel_requested_at,
+               pd.cancel_responded_by, pd.cancel_responded_at, pd.cancel_pm_remark
+        FROM `tabPO Dispatch` pd
+        WHERE {where}
+        ORDER BY pd.cancel_requested_at DESC
+        LIMIT {cint(limit)}
+        """,
+        tuple(params), as_dict=True,
+    ) or []
+    return rows
+
+
 @frappe.whitelist()
 def request_cancel_plan(rollout_plan, reason=None):
     """IM requests cancellation of a Rollout Plan. Requires PM approval.
@@ -24873,6 +25932,7 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
 
     # Approve — atomic: cancel plan + revert PO Dispatch
     po_dispatch_name = plan.po_dispatch
+    _log_plan_status(rollout_plan, plan.plan_status, "Cancelled", remark=remark)
     frappe.db.set_value("Rollout Plan", rollout_plan, {
         "plan_status": "Cancelled",
         "cancel_request_status": "Approved",
@@ -24884,7 +25944,8 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
     if po_dispatch_name and frappe.db.exists("PO Dispatch", po_dispatch_name):
         cur_status = frappe.db.get_value("PO Dispatch", po_dispatch_name, "dispatch_status")
         if cur_status == "Planned":
-            frappe.db.set_value("PO Dispatch", po_dispatch_name, "dispatch_status", "Dispatched")
+            set_dispatch_status(po_dispatch_name, "Dispatched",
+                                remark="rollout plan cancelled")
 
     frappe.db.commit()
 
@@ -25638,6 +26699,7 @@ def mark_plan_not_attended(rollout_plan, reason=None):
         updates["not_attended_remark"] = str(reason or "")[:500]
 
     frappe.db.set_value("Rollout Plan", rollout_plan, updates, update_modified=True)
+    _log_plan_status(rollout_plan, cur_status, "Not Attended", remark=reason)
     frappe.db.commit()
     return {"ok": True, "plan_status": "Not Attended"}
 

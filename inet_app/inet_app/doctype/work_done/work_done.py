@@ -22,6 +22,12 @@ class WorkDone(Document):
         its visibility rule — both flags equal (0/0 normal, or 1/1 whole-line
         close) means the row stands for the entire line.
 
+        Where the IM has confirmed a REDUCED quantity, the line is worth the
+        confirmed amount, not the ordered one — a POID bought for 3 where only
+        2 were delivered is worth 2. ms1_amount / ms2_amount are already
+        re-based on it by PO Dispatch.validate(), so only the whole-line branch
+        has to choose. line_amount itself stays untouched as Huawei's figure.
+
         Returns None when there is no usable line to read, so the caller can
         keep the old rate x qty behaviour rather than zeroing a real figure.
         """
@@ -29,7 +35,8 @@ class WorkDone(Document):
             return None
         pd = frappe.db.get_value(
             "PO Dispatch", self.system_id,
-            ["line_amount", "ms1_amount", "ms2_amount"], as_dict=True,
+            ["line_amount", "confirmed_amount", "remaining_qty_action",
+             "ms1_amount", "ms2_amount"], as_dict=True,
         )
         if not pd:
             return None
@@ -38,7 +45,16 @@ class WorkDone(Document):
             return flt(pd.ms1_amount)
         if ms2 and not ms1:
             return flt(pd.ms2_amount)
-        return flt(pd.line_amount)
+        # Same rule as PO Dispatch.billable_amount(), including the
+        # "to be invoiced" remainder that restores the full ordered value.
+        confirmed = flt(pd.confirmed_amount)
+        if not confirmed:
+            return flt(pd.line_amount)
+        from inet_app.inet_app.doctype.po_dispatch.po_dispatch import PODispatch
+
+        if (pd.remaining_qty_action or "").strip() == PODispatch.BILL_FULL_ON_ACTION:
+            return flt(pd.line_amount) or confirmed
+        return confirmed
 
     def before_save(self):
         line_revenue = self._line_revenue()
@@ -63,7 +79,9 @@ class WorkDone(Document):
         if not pd:
             return
         if pd.dispatch_status != "Completed":
-            frappe.db.set_value("PO Dispatch", pd_name, "dispatch_status", "Completed")
+            from inet_app.api.status_log import set_dispatch_status
+
+            set_dispatch_status(pd_name, "Completed")
         if pd.po_intake and pd.po_line_no:
             intake_line = frappe.db.exists("PO Intake Line",
                 {"parent": pd.po_intake, "po_line_no": pd.po_line_no})

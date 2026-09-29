@@ -95,7 +95,7 @@ function DetailModal({ row, onClose }) {
           keyOrder={[
             "invoice_no", "contract", "sub_contract", "project_domain", "duid",
             "customer", "po_type", "po_no", "subcontract_no",
-            "item_code", "item_description", "qty", "rate",
+            "item_code", "item_description", "qty", "confirmed_qty", "rate",
             "invoice_tax_amount", "invoice_amount_incl_tax",
             "im_full_name", "payment_terms", "dispatch_status",
           ]}

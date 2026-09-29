@@ -49,6 +49,7 @@ class PODispatch(Document):
         self.region_type = region_type_from_center_area(self.center_area)
         self._ensure_duid_master()
         self._fill_payment_term_pcts()
+        self._compute_confirmed_amount()
         self._compute_ms_amounts()
 
     def before_save(self):
@@ -101,9 +102,66 @@ class PODispatch(Document):
             self.ms1_pct = ms1_pct
             self.ms2_pct = ms2_pct
 
+    def _compute_confirmed_amount(self):
+        """Derive confirmed_amount and remaining_qty from confirmed_qty.
+
+        ``line_amount`` is deliberately left alone — it stays the quantity and
+        value Huawei ordered. Overwriting it would erase the shortfall instead
+        of showing it: the PO Published Value vs Invoiced Value view would
+        quietly shrink, and a later PO re-upload could restore the old figure
+        over the correction.
+        """
+        if not hasattr(self, "confirmed_qty"):
+            return
+        qty = flt(getattr(self, "qty", 0))
+        confirmed = flt(getattr(self, "confirmed_qty", 0))
+        if confirmed <= 0:
+            self.confirmed_amount = 0
+            self.remaining_qty = 0
+            return
+        rate = flt(getattr(self, "rate", 0))
+        # Prefer rate x qty, but fall back to a pro-rata slice of line_amount
+        # when no rate is stored — some archive-imported lines carry only the
+        # line total.
+        if rate:
+            self.confirmed_amount = round(rate * confirmed, 4)
+        elif qty:
+            self.confirmed_amount = round(
+                flt(getattr(self, "line_amount", 0)) * confirmed / qty, 4
+            )
+        else:
+            self.confirmed_amount = flt(getattr(self, "line_amount", 0))
+        self.remaining_qty = round(qty - confirmed, 4) if qty else 0
+
+    # The one remaining-quantity decision that changes what can be billed: the
+    # customer has agreed to pay for the shortfall, so the line is worth its
+    # full ordered value again even though less was delivered.
+    BILL_FULL_ON_ACTION = "Pending \u2013 to be invoiced"
+
+    def billable_amount(self):
+        """What this line can be invoiced for.
+
+        Normally the ordered line_amount. Once the IM confirms a reduced
+        quantity it drops to the confirmed amount — that is what carries a
+        partial delivery through to invoicing, with no change anywhere in the
+        PIC flow, because the payment-term percentages simply apply to a
+        smaller base.
+
+        The exception is a remainder marked "to be invoiced": the customer is
+        paying for the undelivered part too, so the base goes back to the full
+        ordered value.
+        """
+        confirmed = flt(getattr(self, "confirmed_amount", 0))
+        if not confirmed:
+            return flt(getattr(self, "line_amount", 0))
+        action = (getattr(self, "remaining_qty_action", "") or "").strip()
+        if action == self.BILL_FULL_ON_ACTION:
+            return flt(getattr(self, "line_amount", 0)) or confirmed
+        return confirmed
+
     def _compute_ms_amounts(self):
         """Derive ms1/ms2 amount + unbilled + remaining milestone pct."""
-        line = flt(getattr(self, "line_amount", 0))
+        line = self.billable_amount()
         m1_pct = flt(getattr(self, "ms1_pct", 0))
         m2_pct = flt(getattr(self, "ms2_pct", 0))
         m1_amt = round(line * m1_pct / 100.0, 4) if line else 0.0
