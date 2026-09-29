@@ -12268,10 +12268,37 @@ _INVOICED_STATUSES_SQL = "('Commercial Invoice Submitted', 'Commercial Invoice C
 _MS1_INVOICED_SQL = f"pd.pic_status IN {_INVOICED_STATUSES_SQL}"
 _MS2_INVOICED_SQL = f"pd.pic_status_ms2 IN {_INVOICED_STATUSES_SQL}"
 
-# Invoiced value: full milestone amount for every milestone that got there.
+# Invoiced value per milestone: what actually went out when that is recorded,
+# otherwise the full milestone amount for a milestone whose status says it was
+# invoiced.
+#
+# The status alone used to decide it, which read the whole milestone as
+# invoiced the moment it reached an invoiced status. That was close enough
+# while a milestone could only be billed once and in full — but a line
+# confirmed short is billed for part of it, and a later top-up bills the rest,
+# so the two figures now genuinely differ. Seven lines on this site already
+# diverge; that number grows as partial quantities are used.
+#
+# The fallback matters as much as the rule: 786 lines carry an invoiced status
+# with no invoiced figure recorded at all (legacy imports). Reading the column
+# blindly would drop about SAR 589k of real, invoiced revenue from every sales
+# report. Those keep reporting their milestone amount, exactly as before.
+#
+# LEAST caps it at the milestone amount so backlog below cannot go negative —
+# one legacy line is invoiced above its own milestone (SAR 1,116.00 against
+# 781.20) and would otherwise push backlog past zero.
+_MS1_INVOICED_VALUE = (
+    "CASE WHEN IFNULL(pd.ms1_invoiced, 0) > 0"
+    "     THEN LEAST(pd.ms1_invoiced, IFNULL(pd.ms1_amount, 0))"
+    f"    WHEN {_MS1_INVOICED_SQL} THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END"
+)
+_MS2_INVOICED_VALUE = (
+    "CASE WHEN IFNULL(pd.ms2_invoiced, 0) > 0"
+    "     THEN LEAST(pd.ms2_invoiced, IFNULL(pd.ms2_amount, 0))"
+    f"    WHEN {_MS2_INVOICED_SQL} THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END"
+)
 _INVOICED_VALUE_SQL = f"""
-(CASE WHEN {_MS1_INVOICED_SQL} THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END
- + CASE WHEN {_MS2_INVOICED_SQL} THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END)
+({_MS1_INVOICED_VALUE} + {_MS2_INVOICED_VALUE})
 """
 
 
@@ -12285,9 +12312,13 @@ _INVOICED_VALUE_SQL = f"""
 _MS1_NOT_INVOICED_SQL = f"IFNULL(pd.pic_status, '') NOT IN {_INVOICED_STATUSES_SQL}"
 _MS2_NOT_INVOICED_SQL = f"IFNULL(pd.pic_status_ms2, '') NOT IN {_INVOICED_STATUSES_SQL}"
 
+# Backlog is now the complement BY CONSTRUCTION — milestone value minus what
+# has been invoiced — rather than a second status test that happened to
+# partition. A part-billed line contributes the part still to bill, instead of
+# leaving the books the moment its first invoice went out.
 _BACKLOG_VALUE_SQL = f"""
-(CASE WHEN {_MS1_NOT_INVOICED_SQL} THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END
- + CASE WHEN {_MS2_NOT_INVOICED_SQL} THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END)
+((IFNULL(pd.ms1_amount, 0) - ({_MS1_INVOICED_VALUE}))
+ + (IFNULL(pd.ms2_amount, 0) - ({_MS2_INVOICED_VALUE})))
 """
 
 # A cancelled line carries no money either way: nothing was invoiced and its
