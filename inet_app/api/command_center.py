@@ -25368,46 +25368,66 @@ _LIVE_PLAN_STATUSES = ("Planned", "In Execution", "Planning with Issue")
 _UNCANCELLABLE_DISPATCH_STATUSES = frozenset(("Cancelled",))
 
 
-def _dispatch_cancel_blockers(dispatch_name):
-    """Reasons this POID cannot be cancelled right now. Empty list means it can."""
+def _dispatch_cancel_issues(dispatch_name):
+    """Everything wrong with cancelling this POID, worst first.
+
+    Each entry is ``{"severity", "short", "detail"}``. Severity "hard" is
+    genuinely impossible and is refused everywhere; "warn" is a judgement the
+    PM is allowed to make — an invoiced line or one still carrying a live plan
+    CAN be cancelled if that is really the decision, so the IM may raise the
+    request and the PM sees what they are approving.
+
+    Ordered by how fundamental the problem is, because only the first one is
+    shown: a line that is both invoiced and mid-plan is an invoicing problem
+    first, and listing the plan alongside it just buries that.
+    """
     pd = frappe.db.get_value(
         "PO Dispatch", dispatch_name,
-        ["name", "poid", "dispatch_status", "ms1_invoiced", "ms2_invoiced",
-         "cancel_request_status"],
+        ["name", "poid", "dispatch_status", "ms1_invoiced", "ms2_invoiced"],
         as_dict=True,
     )
     if not pd:
-        return ["PO Dispatch not found."]
+        return [{"severity": "hard", "short": "Not found",
+                 "detail": "PO Dispatch not found."}]
 
-    blockers = []
-    status = (pd.get("dispatch_status") or "").strip()
-    if status in _UNCANCELLABLE_DISPATCH_STATUSES:
-        blockers.append("This line is already cancelled.")
+    issues = []
+    if (pd.get("dispatch_status") or "").strip() == "Cancelled":
+        issues.append({"severity": "hard", "short": "Already cancelled",
+                       "detail": "This line is already cancelled."})
 
-    # Money already out of the door is a credit note with the customer, not a
-    # cancel — cancelling here would leave an invoice pointing at a dead line.
     invoiced = flt(pd.get("ms1_invoiced") or 0) + flt(pd.get("ms2_invoiced") or 0)
     if invoiced > 0:
-        blockers.append(
-            f"SAR {invoiced:,.2f} has already been invoiced on this line. "
-            "Raise a credit note with the customer instead of cancelling."
-        )
+        issues.append({
+            "severity": "warn",
+            "short": f"Already invoiced — SAR {invoiced:,.2f}",
+            "detail": (f"SAR {invoiced:,.2f} has already been invoiced on this line. "
+                       "Cancelling leaves an invoice against a cancelled line — a credit "
+                       "note is normally the right route."),
+        })
 
     live = frappe.db.sql(
         """
-        SELECT name, plan_status FROM `tabRollout Plan`
+        SELECT name FROM `tabRollout Plan`
         WHERE po_dispatch = %s AND plan_status IN %s
         LIMIT 5
         """,
-        (dispatch_name, _LIVE_PLAN_STATUSES), as_dict=True,
+        (dispatch_name, _LIVE_PLAN_STATUSES),
     ) or []
     if live:
-        names = ", ".join(r["name"] for r in live)
-        blockers.append(
-            f"{len(live)} rollout plan(s) are still live ({names}). "
-            "Cancel the plan(s) first, then cancel the line."
-        )
-    return blockers
+        names = ", ".join(r[0] for r in live)
+        issues.append({
+            "severity": "warn",
+            "short": f"{len(live)} live plan{'s' if len(live) != 1 else ''}",
+            "detail": f"Still planned: {names}. Approving cancels the plan(s) too.",
+        })
+    return issues
+
+
+def _dispatch_cancel_blockers(dispatch_name):
+    """Only the reasons that make a cancel impossible. Kept for the callers
+    that just need a yes/no; everything else uses _dispatch_cancel_issues."""
+    return [i["detail"] for i in _dispatch_cancel_issues(dispatch_name)
+            if i["severity"] == "hard"]
 
 
 def _cancel_dispatch_now(dispatch_name, *, reason=None, responded_by=None, remark=None):
@@ -25517,12 +25537,23 @@ def preview_dispatch_cancel(po_dispatches):
         if pending == "Approved":
             out.append(dict(row, ok=False, error="Already cancelled."))
             continue
-        problems = _dispatch_cancel_blockers(name)
-        out.append(dict(row, ok=not problems, error=" ".join(problems) if problems else None))
+        issues = _dispatch_cancel_issues(name)
+        top = issues[0] if issues else None
+        hard = [i for i in issues if i["severity"] == "hard"]
+        out.append(dict(
+            row,
+            ok=not hard,
+            # Only the worst reason, and the short form of it: a line that is
+            # both invoiced and mid-plan is an invoicing problem first.
+            error=top["short"] if top else None,
+            error_detail=top["detail"] if top else None,
+            severity=top["severity"] if top else None,
+        ))
     return {
         "lines": out,
         "ok_count": sum(1 for r in out if r["ok"]),
         "blocked_count": sum(1 for r in out if not r["ok"]),
+        "warn_count": sum(1 for r in out if r["ok"] and r.get("severity") == "warn"),
         "direct": role == "pm",
     }
 
@@ -25580,10 +25611,16 @@ def request_cancel_dispatch(po_dispatches, reason=None, po_dispatch=None):
         if pending == "Approved":
             blocked.append({"poid": poid, "error": "Already cancelled."})
             continue
-        problems = _dispatch_cancel_blockers(name)
-        if problems:
-            blocked.append({"poid": poid, "error": " ".join(problems)})
+        issues = _dispatch_cancel_issues(name)
+        hard = [i for i in issues if i["severity"] == "hard"]
+        if hard:
+            blocked.append({"poid": poid, "error": hard[0]["short"]})
             continue
+        # A warning is the PM's judgement to make, not a refusal: an invoiced
+        # line or one still carrying a live plan can be cancelled if that is
+        # genuinely the decision. It travels with the line so the PM sees it.
+        warn = next((i for i in issues if i["severity"] == "warn"), None)
+        pd["_warning"] = warn["short"] if warn else None
         rows.append(pd)
 
     if not rows:
@@ -25626,6 +25663,7 @@ def request_cancel_dispatch(po_dispatches, reason=None, po_dispatch=None):
             "qty": flt(pd.get("qty") or 0),
             "line_amount": flt(pd.get("line_amount") or 0),
             "line_status": "Pending",
+            "line_note": pd.get("_warning"),
         })
     doc.poid_count = len(rows)
     doc.total_amount = sum(flt(r.get("line_amount") or 0) for r in rows)
@@ -25701,10 +25739,13 @@ def pm_decide_cancel_request(request, action, remark=None):
 
     cancelled, refused, plans = 0, [], []
     for line in doc.poids:
+        # Only what is genuinely impossible refuses here. The warnings were
+        # shown to the PM in the approval dialog, and approving IS the decision
+        # to override them.
         problems = _dispatch_cancel_blockers(line.po_dispatch)
         if problems:
             line.line_status = "Refused"
-            line.line_note = " ".join(problems)[:500]
+            line.line_note = problems[0][:500]
             refused.append({"poid": line.poid, "error": line.line_note})
             frappe.db.set_value("PO Dispatch", line.po_dispatch, {
                 "cancel_request_status": "Rejected",

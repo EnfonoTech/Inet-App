@@ -1233,14 +1233,17 @@ export default function PODispatch() {
             {cancelPreviewLoading && (
               <div style={{ marginBottom: 12, fontSize: "0.8rem", color: "#94a3b8" }}>Checking the selection…</div>
             )}
-            {cancelPreview && cancelPreview.blocked_count > 0 && (
-              <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8 }}>
-                <div style={{ fontWeight: 700, color: "#b91c1c", fontSize: "0.82rem", marginBottom: 6 }}>
-                  {cancelPreview.blocked_count} of {cancelPreview.lines.length} cannot be cancelled
+            {/* Warnings, not refusals: an invoiced line or one still carrying
+                a live plan CAN be cancelled — that is the PM's call. Only the
+                worst reason per line, in its short form. */}
+            {cancelPreview && cancelPreview.warn_count > 0 && (
+              <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8 }}>
+                <div style={{ fontWeight: 700, color: "#92400e", fontSize: "0.82rem", marginBottom: 6 }}>
+                  {cancelPreview.warn_count} need{cancelPreview.warn_count === 1 ? "s" : ""} a second look
                 </div>
                 <div style={{ maxHeight: 160, overflowY: "auto" }}>
-                  {cancelPreview.lines.filter((l) => !l.ok).map((l) => (
-                    <div key={l.po_dispatch} style={{ fontSize: "0.76rem", color: "#7f1d1d", marginBottom: 3 }}>
+                  {cancelPreview.lines.filter((l) => l.ok && l.severity === "warn").map((l) => (
+                    <div key={l.po_dispatch} style={{ fontSize: "0.76rem", color: "#78350f", marginBottom: 3 }} title={l.error_detail || ""}>
                       <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>{l.poid}</span>
                       {" — "}{l.error}
                     </div>
@@ -1248,9 +1251,19 @@ export default function PODispatch() {
                 </div>
               </div>
             )}
-            {cancelPreview && cancelPreview.ok_count > 0 && cancelPreview.blocked_count > 0 && (
-              <div style={{ marginBottom: 12, fontSize: "0.8rem", color: "#047857" }}>
-                The other {cancelPreview.ok_count} will be cancelled.
+            {cancelPreview && cancelPreview.blocked_count > 0 && (
+              <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8 }}>
+                <div style={{ fontWeight: 700, color: "#b91c1c", fontSize: "0.82rem", marginBottom: 6 }}>
+                  {cancelPreview.blocked_count} cannot be cancelled
+                </div>
+                <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                  {cancelPreview.lines.filter((l) => !l.ok).map((l) => (
+                    <div key={l.po_dispatch} style={{ fontSize: "0.76rem", color: "#7f1d1d", marginBottom: 3 }} title={l.error_detail || ""}>
+                      <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>{l.poid}</span>
+                      {" — "}{l.error}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {cancelPreview && cancelPreview.ok_count === 0 && (
