@@ -420,6 +420,16 @@ export default function IMPOIntake() {
   const [cancelTransferError, setCancelTransferError] = useState(null);
   const [viewTransferTarget, setViewTransferTarget] = useState(null);
 
+  // ── Cancels tab (pending / history) ──────────────────────────────────
+  // Same shape as Transfers: a cancel covering several POIDs is ONE request,
+  // so the IM tracks it as a request rather than as N separate lines.
+  const [cancelListRows, setCancelListRows] = useState([]);
+  const [cancelListLoading, setCancelListLoading] = useState(false);
+  const [cancelListError, setCancelListError] = useState(null);
+  const [cancelSubTab, setCancelSubTab] = useState("pending"); // "pending" | "history"
+  const [viewCancelTarget, setViewCancelTarget] = useState(null);
+  const [cancelRefreshKey, setCancelRefreshKey] = useState(0);
+
   // ── Dummy tab state ──────────────────────────────────────────────────
   const [dummyRows, setDummyRows] = useState([]);
   const [dummyLoading, setDummyLoading] = useState(false);
@@ -460,6 +470,7 @@ export default function IMPOIntake() {
 
   const [transferRefreshKey, setTransferRefreshKey] = useState(0);
   const loadTransfers = useCallback(() => setTransferRefreshKey((k) => k + 1), []);
+  const loadCancels = useCallback(() => setCancelRefreshKey((k) => k + 1), []);
 
   // Create / Edit dummy PO — same modal + form state for both; editingDummy
   // holds the row being edited (null = creating a new one).
@@ -684,6 +695,25 @@ export default function IMPOIntake() {
     return () => { cancelled = true; };
   }, [imName, tab, transferRefreshKey]);
 
+  // ── Cancels load ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!imName || tab !== "cancels") return;
+    let cancelled = false;
+    setCancelListLoading(true);
+    setCancelListError(null);
+    (async () => {
+      try {
+        const res = await pmApi.listPoCancelRequests();
+        if (!cancelled) setCancelListRows(Array.isArray(res) ? res : []);
+      } catch (err) {
+        if (!cancelled) setCancelListError(err.message || "Failed to load cancel requests");
+      } finally {
+        if (!cancelled) setCancelListLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, tab, cancelRefreshKey]);
+
   const transferOutgoingPending = useMemo(
     () => transferListRows.filter((r) => r._direction === "outgoing" && r.request_status === "Pending PM Approval"),
     [transferListRows],
@@ -700,6 +730,17 @@ export default function IMPOIntake() {
   const transferVisibleRows = transferSubTab === "outgoing" ? transferOutgoingPending
     : transferSubTab === "incoming" ? transferIncomingPending
     : transferHistoryRows;
+
+  const cancelPendingRows = useMemo(
+    () => cancelListRows.filter((r) => r.request_status === "Pending PM Approval"),
+    [cancelListRows],
+  );
+  const cancelHistoryRows = useMemo(
+    () => cancelListRows.filter((r) => r.request_status !== "Pending PM Approval")
+      .sort((a, b) => new Date(b.approved_at || b.creation || 0) - new Date(a.approved_at || a.creation || 0)),
+    [cancelListRows],
+  );
+  const cancelVisibleRows = cancelSubTab === "pending" ? cancelPendingRows : cancelHistoryRows;
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
   const tableScrollRef = useRef(null);
@@ -1078,6 +1119,7 @@ export default function IMPOIntake() {
       window.dispatchEvent(new Event("inet:approvals-changed"));
       window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
       loadOv();
+      loadCancels();
     } catch (e) {
       setCancelPoidError(e?.message || "Failed to cancel");
     } finally {
@@ -1377,6 +1419,7 @@ export default function IMPOIntake() {
           {tab === "dummy" && <ExportExcelButton filename="dummy-pos" rows={filteredDummyRows} />}
           {tab === "overview" && <ExportExcelButton filename="all-poids" rows={ovFilteredRows} />}
           {tab === "transfers" && <ExportExcelButton filename="po-transfers" rows={transferVisibleRows} />}
+          {tab === "cancels" && <ExportExcelButton filename="po-cancel-requests" rows={cancelVisibleRows} />}
           {tab === "dummy" && (
             <button
               type="button"
@@ -1388,9 +1431,9 @@ export default function IMPOIntake() {
             </button>
           )}
           <button type="button" className="btn-secondary"
-            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : tab === "transfers" ? loadTransfers : load}
-            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : ovLoading}>
-            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : ovLoading) ? "Loading…" : "Refresh"}
+            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : tab === "transfers" ? loadTransfers : tab === "cancels" ? loadCancels : load}
+            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : ovLoading}>
+            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : ovLoading) ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
@@ -1409,6 +1452,12 @@ export default function IMPOIntake() {
           Transfers
           {pendingTransferIds.size > 0 && tab !== "transfers" && (
             <span style={{ marginLeft: 6, background: "#fef3c7", color: "#92400e", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{pendingTransferIds.size}</span>
+          )}
+        </button>
+        <button type="button" style={tabStyle(tab === "cancels")} onClick={() => setTab("cancels")}>
+          Cancels
+          {cancelPendingRows.length > 0 && tab !== "cancels" && (
+            <span style={{ marginLeft: 6, background: "#fee2e2", color: "#b91c1c", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{cancelPendingRows.length}</span>
           )}
         </button>
       </div>
@@ -1579,6 +1628,37 @@ export default function IMPOIntake() {
         </div>
       )}
 
+      {tab === "cancels" && (
+        <div className="toolbar">
+          <div role="tablist" style={{ display: "inline-flex", padding: 3, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", flexShrink: 0 }}>
+            {[
+              { id: "pending", label: "Pending Approval", count: cancelPendingRows.length },
+              { id: "history", label: "History" },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setCancelSubTab(opt.id)}
+                style={{
+                  padding: "5px 14px", fontSize: "0.8rem", fontWeight: cancelSubTab === opt.id ? 700 : 500,
+                  border: "none", borderRadius: 6, cursor: "pointer",
+                  background: cancelSubTab === opt.id ? "#fff" : "transparent",
+                  color: cancelSubTab === opt.id ? "#0f172a" : "#64748b",
+                  boxShadow: cancelSubTab === opt.id ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                {opt.label}
+                {!!opt.count && (
+                  <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 16, height: 16, padding: "0 5px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#f59e0b", color: "#fff" }}>{opt.count}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "cancels" && cancelListError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {cancelListError}</div>}
       {tab === "intake" && error && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {error}</div>}
       {tab === "dummy" && dummyError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {dummyError}</div>}
       {tab === "overview" && ovError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {ovError}</div>}
@@ -1587,19 +1667,86 @@ export default function IMPOIntake() {
       {/* ── ONE page-content always rendered (fixes tab-switch CSS) ────── */}
       <div className="page-content">
         <DataTableWrapper scrollRef={tableScrollRef}
-          loadedCount={tab === "intake" ? (loading ? null : intakeDisplayedCount) : tab === "dummy" ? (dummyLoading ? null : Math.min(dummyRows.length, dummyDisplayLimit)) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : (ovLoading ? null : Math.min(ovRows.length, ovDisplayLimit))}
-          filteredCount={tab === "intake" ? intakeDisplayedCount : tab === "dummy" ? dummyDisplayedCount : tab === "transfers" ? transferVisibleRows.length : ovDisplayedCount}
-          filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : tab === "transfers" ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
+          loadedCount={tab === "intake" ? (loading ? null : intakeDisplayedCount) : tab === "dummy" ? (dummyLoading ? null : Math.min(dummyRows.length, dummyDisplayLimit)) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : tab === "cancels" ? (cancelListLoading ? null : cancelVisibleRows.length) : (ovLoading ? null : Math.min(ovRows.length, ovDisplayLimit))}
+          filteredCount={tab === "intake" ? intakeDisplayedCount : tab === "dummy" ? dummyDisplayedCount : tab === "transfers" ? transferVisibleRows.length : tab === "cancels" ? cancelVisibleRows.length : ovDisplayedCount}
+          filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : (tab === "transfers" || tab === "cancels") ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
           loading={
             tab === "intake" ? (loading && rows.length > 0) :
             tab === "dummy" ? (dummyLoading && dummyRows.length > 0) :
             tab === "transfers" ? (transferListLoading && transferVisibleRows.length > 0) :
+            tab === "cancels" ? (cancelListLoading && cancelVisibleRows.length > 0) :
             (ovLoading && ovRows.length > 0)
           }
           rowLimitValue={tab === "dummy" ? effectiveDummyRowLimit : tab === "overview" ? effectiveOvRowLimit : undefined}
           onRowLimitChange={tab === "dummy" || tab === "overview" ? confirmRowLimit : undefined}
         >
-          {tab === "transfers" ? (
+          {tab === "cancels" ? (
+              <table key="im-po-cancels" className="data-table" data-table-key="im-po-cancels">
+                <thead>
+                  <tr>
+                    <th>Request</th>
+                    <th style={{ textAlign: "right" }}>POIDs</th>
+                    <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: "right" }}>Cancelled</th>
+                    <th style={{ minWidth: 200 }}>Reason</th>
+                    <th style={{ minWidth: 200 }}>PM Remark</th>
+                    <th>Raised</th>
+                    <th>Decided</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {cancelVisibleRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} style={{ padding: 0 }}>
+                        {cancelListLoading ? (
+                          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+                        ) : (
+                          <div className="empty-state">
+                            <div className="empty-icon">🚫</div>
+                            <h3>{cancelSubTab === "pending" ? "No cancel requests waiting" : "No cancel history"}</h3>
+                            <p>{cancelSubTab === "pending"
+                              ? "Select POIDs on All POIDs and use Cancel POID to raise one."
+                              : "Decided requests show up here."}</p>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : cancelVisibleRows.map((r) => {
+                    const st = (r.request_status || "");
+                    const tone = st === "Approved" ? { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" }
+                      : st.startsWith("Rejected") ? { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" }
+                      : { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" };
+                    return (
+                      <tr key={r.name}>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{r.name}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{r.poid_count ?? (r.lines || []).length}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.total_amount || 0)}</td>
+                        <td>
+                          <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, whiteSpace: "nowrap", background: tone.bg, color: tone.fg, border: `1px solid ${tone.bd}` }}>{st}</span>
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          {st === "Approved" ? `${r.cancelled_count ?? 0} of ${r.poid_count ?? 0}` : "—"}
+                        </td>
+                        <td style={{ fontSize: "0.78rem", color: "#475569", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.reason || ""}>{r.reason || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: r.pm_remark ? "#1d4ed8" : "#cbd5e1", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.pm_remark || ""}>{r.pm_remark || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+                          {r.creation ? new Date(r.creation).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        </td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+                          {r.approved_at ? new Date(r.approved_at).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        </td>
+                        <td>
+                          <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "3px 10px" }}
+                            onClick={() => setViewCancelTarget(r)}>View</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+          ) : tab === "transfers" ? (
               <table key="im-po-transfers" className="data-table" data-excel-filter-all="1" data-table-key="im-po-transfers">
                 <thead>
                   <tr>
@@ -3013,6 +3160,83 @@ export default function IMPOIntake() {
       )}
 
       {/* ── TRANSFER REQUEST DETAIL (POIDs involved) ─────────────────────── */}
+      {viewCancelTarget && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={() => setViewCancelTarget(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(820px, 100%)", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>{viewCancelTarget.name}</h3>
+              <button type="button" onClick={() => setViewCancelTarget(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 12 }}>
+              {viewCancelTarget.poid_count} POID{viewCancelTarget.poid_count !== 1 ? "s" : ""}, SAR {money.format(viewCancelTarget.total_amount || 0)}
+              {" · "}<span style={{ fontWeight: 700 }}>{viewCancelTarget.request_status}</span>
+              {viewCancelTarget.request_status === "Approved" && (
+                <> · {viewCancelTarget.cancelled_count ?? 0} cancelled</>
+              )}
+            </div>
+            {viewCancelTarget.reason && (
+              <div style={{ marginBottom: 10, padding: "8px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.82rem", color: "#334155" }}>
+                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", marginBottom: 2 }}>REASON</div>
+                {viewCancelTarget.reason}
+              </div>
+            )}
+            {viewCancelTarget.pm_remark && (
+              <div style={{ marginBottom: 10, padding: "8px 10px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: "0.82rem", color: "#1e3a8a" }}>
+                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#3b82f6", marginBottom: 2 }}>PM REMARK</div>
+                {viewCancelTarget.pm_remark}
+              </div>
+            )}
+            <div style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8 }}>
+              <table className="data-table" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>POID</th>
+                    <th>DUID</th>
+                    <th>Project</th>
+                    <th>Item Code</th>
+                    <th>Description</th>
+                    <th style={{ textAlign: "right" }}>Qty</th>
+                    <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    <th>Outcome</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(viewCancelTarget.lines || []).map((l, i) => {
+                    // Per line, because approval re-checks the blockers: one
+                    // POID can be refused (invoiced meanwhile, live plan) while
+                    // the rest of the same request goes through.
+                    const ls = l.line_status || "Pending";
+                    const t = ls === "Cancelled" ? { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" }
+                      : ls === "Refused" ? { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" }
+                      : { bg: "#f1f5f9", fg: "#475569", bd: "#e2e8f0" };
+                    return (
+                      <tr key={l.po_dispatch || i}>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{l.poid || l.po_dispatch}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{l.site_code || "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{l.project_code || "—"}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{l.item_code || "—"}</td>
+                        <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.item_description || ""}>{l.item_description || "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{l.qty ?? "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(l.line_amount || 0)}</td>
+                        <td>
+                          <span title={l.line_note || ""} style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700, background: t.bg, color: t.fg, border: `1px solid ${t.bd}` }}>{ls}</span>
+                          {l.line_note && <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginTop: 2, maxWidth: 220 }}>{l.line_note}</div>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+              <button type="button" className="btn-secondary" onClick={() => setViewCancelTarget(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {viewTransferTarget && (
         <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
              onClick={() => setViewTransferTarget(null)}>

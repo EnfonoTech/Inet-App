@@ -365,10 +365,19 @@ export default function TeamAllocationApprovals() {
                             <th>Description</th>
                             <th style={{ textAlign: "right" }}>Qty</th>
                             <th style={{ textAlign: "right" }}>Amount</th>
+                            <th>Outcome</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {decideTarget.lines.map((l, i) => (
+                          {decideTarget.lines.map((l, i) => {
+                            // Per line, because approval re-checks each one's
+                            // blockers: a POID invoiced while the request sat
+                            // in the queue is Refused, the rest still cancel.
+                            const ls = l.line_status || "Pending";
+                            const t = ls === "Cancelled" ? { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" }
+                              : ls === "Refused" ? { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" }
+                              : { bg: "#f1f5f9", fg: "#475569", bd: "#e2e8f0" };
+                            return (
                             <tr key={l.po_dispatch || i}>
                               <td style={{ fontFamily: "ui-monospace, monospace" }}>{l.poid || l.po_dispatch}</td>
                               <td style={{ fontFamily: "ui-monospace, monospace" }}>{l.site_code || "—"}</td>
@@ -379,8 +388,12 @@ export default function TeamAllocationApprovals() {
                               </td>
                               <td style={{ textAlign: "right" }}>{l.qty ?? "—"}</td>
                               <td style={{ textAlign: "right" }}>{money.format(l.line_amount || 0)}</td>
+                              <td>
+                                <span title={l.line_note || ""} style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.68rem", fontWeight: 700, background: t.bg, color: t.fg, border: `1px solid ${t.bd}` }}>{ls}</span>
+                              </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     ) : (
