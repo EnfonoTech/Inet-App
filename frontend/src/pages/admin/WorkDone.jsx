@@ -10,6 +10,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import IMNoteCallout from "../../components/IMNoteCallout";
+import CloseRemainderModal from "../../components/CloseRemainderModal";
 import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } from "../../components/ConfirmedQtyFields";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
@@ -381,17 +382,23 @@ export default function WorkDone() {
   // leftover is decided separately, later — from the highlighted row itself.
   const [confirmQty, setConfirmQty] = useState("");
   const [decideFor, setDecideFor] = useState(null);
+  const [closeRemainderFor, setCloseRemainderFor] = useState(null);
   const [decideBusy, setDecideBusy] = useState(false);
   const [decideErr, setDecideErr] = useState(null);
 
   async function decideRemaining(action) {
     if (!decideFor) return;
+    // "Plan remaining" is not just a label — it is the start of actually
+    // closing the rest, so it records the decision and then opens the form for
+    // whichever route this line was closed by.
+    const openAfter = action === "Pending \u2013 to be worked" ? decideFor : null;
     setDecideBusy(true);
     setDecideErr(null);
     try {
       await pmApi.setRemainingQtyAction(decideFor.po_dispatch || decideFor.system_id, action);
       setDecideFor(null);
       loadData();
+      if (openAfter) setCloseRemainderFor(openAfter);
     } catch (e) {
       setDecideErr(e?.message || "Failed to save");
     } finally {
@@ -1653,6 +1660,14 @@ export default function WorkDone() {
             </div>
           </div>
         </div>
+      )}
+
+      {closeRemainderFor && (
+        <CloseRemainderModal
+          row={closeRemainderFor}
+          onClose={() => setCloseRemainderFor(null)}
+          onDone={loadData}
+        />
       )}
 
       {decideFor && (

@@ -6137,6 +6137,14 @@ def _require_no_shortcut_close(names, action):
         return
     ph = ", ".join(["%s"] * len(ids))
     src = "wd.source" if frappe.db.has_column("Work Done", "source") else "''"
+    # A line confirmed short with work still outstanding is NOT finished, so
+    # planning it again is exactly right — the guard exists to stop a SECOND
+    # route to the same revenue, and the remainder is the same route finishing
+    # the same line. Without this the outstanding quantity is unplannable.
+    remainder_clause = (
+        "AND IFNULL(pd.remaining_qty, 0) <= 0"
+        if frappe.db.has_column("PO Dispatch", "remaining_qty") else ""
+    )
     rows = frappe.db.sql(
         f"""
         SELECT IFNULL(NULLIF(pd.poid, ''), pd.name) AS label,
@@ -6145,6 +6153,7 @@ def _require_no_shortcut_close(names, action):
         INNER JOIN `tabWork Done` wd
                 ON wd.system_id = pd.name AND IFNULL(wd.execution, '') = ''
         WHERE pd.name IN ({ph})
+          {remainder_clause}
         ORDER BY label
         """,
         tuple(ids), as_dict=True,
@@ -6416,6 +6425,9 @@ def create_rollout_plans(payload):
         dispatch_fields = ["name", "poid", "line_amount", "qty", "im", "region_type", "center_area"]
         if frappe.db.has_column("PO Dispatch", "is_internal_work"):
             dispatch_fields.append("is_internal_work")
+        # Needed to target a remainder plan at the outstanding quantity.
+        if frappe.db.has_column("PO Dispatch", "remaining_qty"):
+            dispatch_fields.append("remaining_qty")
         dispatch = frappe.db.get_value(
             "PO Dispatch",
             dispatch_name,
@@ -6512,7 +6524,18 @@ def create_rollout_plans(payload):
         # completion tracking is measured against an artificially low bar.
         # visit_multiplier is still stored above for its other, reporting-only
         # uses (e.g. subcontract cost scaling) — just no longer baked into this.
-        doc.target_amount = flt(dispatch.line_amount)
+        # A plan for a line with a confirmed remainder is a plan for THAT
+        # quantity, not for the whole line: the delivered part is already
+        # closed and invoiced, and targeting the full value again would double
+        # the line's target and send the team back for work already done.
+        plan_qty = flt(dispatch.qty or 0)
+        plan_value = flt(dispatch.line_amount or 0)
+        _outstanding = flt(dispatch.get("remaining_qty") or 0) if frappe.db.has_column(
+            "PO Dispatch", "remaining_qty") else 0.0
+        if _outstanding > 0 and plan_qty > 0:
+            plan_qty = _outstanding
+            plan_value = round(plan_value * _outstanding / flt(dispatch.qty or 1), 4)
+        doc.target_amount = plan_value
         doc.plan_status = "Planned"
         # Issue & Risk fields — only attached when a re-plan carries them.
         if payload.get("issue_category"):
@@ -6565,7 +6588,7 @@ def create_rollout_plans(payload):
         try:
             _sync_plan_teams(
                 doc.name, teams_payload, target_team,
-                flt(dispatch.qty or 0),
+                plan_qty,
                 flt(doc.target_amount or 0),
             )
             team_ids = [t["team"] for t in teams_payload if t.get("team")] if teams_payload else [target_team]
@@ -10099,7 +10122,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         # Ordered vs confirmed quantity. The IM's submission modal needs the
         # ordered figure to validate against, and the row shows both so a
         # short-delivered line reads as "2 of 3" rather than just "2".
-        for opt in ("qty", "confirmed_qty", "confirmed_amount", "remaining_qty",
+        for opt in ("qty", "rate", "confirmed_qty", "confirmed_amount", "remaining_qty",
                     "remaining_qty_action", "confirmation_date", "cancel_request_status"):
             if frappe.db.has_column("PO Dispatch", opt):
                 pd_fields_wd.append(opt)
@@ -10209,6 +10232,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
                 "dispatch_status": pd.get("dispatch_status") if pd else None,
                 "line_amount": pd.get("line_amount") if pd else None,
                 "ordered_qty": pd.get("qty") if pd else None,
+                "rate": pd.get("rate") if pd else None,
                 "confirmed_qty": pd.get("confirmed_qty") if pd else None,
                 "confirmed_amount": pd.get("confirmed_amount") if pd else None,
                 "remaining_qty": pd.get("remaining_qty") if pd else None,

@@ -16,6 +16,7 @@ import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import RemarksCell from "../../components/RemarksCell";
 import IMNoteCallout from "../../components/IMNoteCallout";
+import CloseRemainderModal from "../../components/CloseRemainderModal";
 import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } from "../../components/ConfirmedQtyFields";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
@@ -424,17 +425,23 @@ export default function IMWorkDone() {
   // leftover is decided separately, later — from the row itself or the banner.
   const [confirmQty, setConfirmQty] = useState("");
   const [decideFor, setDecideFor] = useState(null);
+  const [closeRemainderFor, setCloseRemainderFor] = useState(null);
   const [decideBusy, setDecideBusy] = useState(false);
   const [decideErr, setDecideErr] = useState(null);
 
   async function decideRemaining(action) {
     if (!decideFor) return;
+    // "Plan remaining" is not just a label — it is the start of actually
+    // closing the rest, so it records the decision and then opens the form for
+    // whichever route this line was closed by.
+    const openAfter = action === "Pending \u2013 to be worked" ? decideFor : null;
     setDecideBusy(true);
     setDecideErr(null);
     try {
       await pmApi.setRemainingQtyAction(decideFor.po_dispatch || decideFor.system_id, action);
       setDecideFor(null);
       loadData();
+      if (openAfter) setCloseRemainderFor(openAfter);
     } catch (e) {
       setDecideErr(e?.message || "Failed to save");
     } finally {
@@ -1870,6 +1877,14 @@ export default function IMWorkDone() {
           <span>{submissionWarn}</span>
           <button type="button" onClick={() => setSubmissionWarn(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#92400e", fontWeight: 700, flexShrink: 0 }}>✕</button>
         </div>
+      )}
+
+      {closeRemainderFor && (
+        <CloseRemainderModal
+          row={closeRemainderFor}
+          onClose={() => setCloseRemainderFor(null)}
+          onDone={loadData}
+        />
       )}
 
       {decideFor && (
