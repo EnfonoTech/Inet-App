@@ -22025,7 +22025,15 @@ _REMARK_TYPES = {"general", "manager", "team_lead"}
 
 
 def _resolve_dispatch_for_remarks(po_dispatch):
-    """Find the PO Dispatch row for a POID or system_id and return its name."""
+    """Find the PO Dispatch row for a POID, system_id or PO Intake Line.
+
+    The PO Intake Line case is not defensive padding: the PO Intake grid lists
+    intake lines, so its rows carry the CHILD row name, and an action invoked
+    from there hands that over in good faith. It resolved to nothing and threw
+    "PO Dispatch not found: e1b72n20rv" — an id the user has no way to place,
+    for a line that does have a dispatch (SYS-2026-80628). Resolving it is both
+    correct and the difference between a working action and a cryptic refusal.
+    """
     name = (po_dispatch or "").strip()
     if not name:
         frappe.throw("po_dispatch is required")
@@ -22034,6 +22042,30 @@ def _resolve_dispatch_for_remarks(po_dispatch):
     hit = frappe.db.get_value("PO Dispatch", {"poid": name}, "name")
     if hit:
         return hit
+
+    # A PO Intake Line: same key _upsert_po_dispatch_for_line writes with, then
+    # the line's own POID for rows whose po_intake was never stamped.
+    il = frappe.db.get_value(
+        "PO Intake Line", name, ["parent", "po_line_no", "poid"], as_dict=True
+    )
+    if il:
+        if il.get("parent") and il.get("po_line_no") is not None:
+            hit = frappe.db.get_value(
+                "PO Dispatch",
+                {"po_intake": il["parent"], "po_line_no": cint(il["po_line_no"])},
+                "name",
+            )
+            if hit:
+                return hit
+        if (il.get("poid") or "").strip():
+            hit = frappe.db.get_value("PO Dispatch", {"poid": il["poid"].strip()}, "name")
+            if hit:
+                return hit
+        frappe.throw(
+            f"PO line {il.get('poid') or name} has not been dispatched yet, "
+            "so there is nothing to act on. Dispatch it first."
+        )
+
     frappe.throw(f"PO Dispatch not found: {name}")
 
 
