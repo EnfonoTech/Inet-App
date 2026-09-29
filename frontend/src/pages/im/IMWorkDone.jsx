@@ -1901,7 +1901,7 @@ export default function IMWorkDone() {
             </div>
             {decideErr && <div className="notice error" style={{ marginBottom: 10 }}>{decideErr}</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {REMAINING_ACTIONS.map((a) => (
+              {REMAINING_ACTIONS.filter((a) => !a.hidden).map((a) => (
                 <button key={a.value} type="button" disabled={decideBusy}
                         onClick={() => decideRemaining(a.value)}
                         style={{ textAlign: "left", padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", cursor: decideBusy ? "default" : "pointer", width: "100%" }}>

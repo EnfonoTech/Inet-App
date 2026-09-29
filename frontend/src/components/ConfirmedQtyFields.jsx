@@ -39,6 +39,11 @@ export const REMAINING_ACTIONS = [
     label: "Plan remaining",
     effect: "Line stays open for another visit. Confirm again when it is done.",
     billsFull: false,
+    // Hidden from the chooser while the planning side of this is unfinished.
+    // The entry stays so lines already marked this way still render their
+    // badge and so set_remaining_qty_action keeps accepting the value —
+    // only the button is withdrawn.
+    hidden: true,
   },
   {
     value: "Pending – to be invoiced",
