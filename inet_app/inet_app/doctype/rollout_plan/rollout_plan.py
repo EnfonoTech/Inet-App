@@ -13,7 +13,12 @@ class RolloutPlan(Document):
         # Block manual / unauthorised setting of plan_status to Cancelled.
         # Cancellation must go through the cancel-request → PM-approve flow
         # (command_center.request_cancel_plan / pm_decide_cancel_plan).
-        # Admin override: set flags.allow_status_override = True on the doc.
+        # Admin override: frappe.flags.allow_status_override = True — the
+        # GLOBAL flags, not doc.flags. Setting it on the document does nothing
+        # and the save fails with the message below, which is exactly what it
+        # looks like when the override was intended. Set it around the save and
+        # clear it in a finally, or the guard stays disarmed for the rest of
+        # the request; inet_app/scripts/revert_work_done_to_planning.py does.
         if (
             self.plan_status == "Cancelled"
             and self.get_doc_before_save()
@@ -26,7 +31,8 @@ class RolloutPlan(Document):
                     "Cannot set plan status to Cancelled directly. "
                     "Use the Cancel Plan request flow "
                     "(IM requests → PM approves) or set "
-                    "flags.allow_status_override = True for admin corrections."
+                    "frappe.flags.allow_status_override = True for admin "
+                    "corrections — the global flags, not doc.flags."
                 )
             )
 
