@@ -32,6 +32,10 @@ from frappe.utils import (
     nowdate,
     time_diff_in_seconds,
 )
+from inet_app.api.subcontractor_sync import (
+    LAST_VISIT_SUBCONTRACTOR_SQL,
+    resync_dispatch_contract,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -6811,6 +6815,13 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         frappe.db.set_value("Rollout Plan", rollout_plan, updates)
         if "plan_status" in updates:
             _log_plan_status(rollout_plan, prev_plan_status, updates["plan_status"])
+            # Entering or leaving Cancelled changes which visit is the last
+            # live one, and so which subcontractor the line belongs to.
+            if "Cancelled" in (prev_plan_status, updates["plan_status"]):
+                _pd = frappe.db.get_value("Rollout Plan", rollout_plan, "po_dispatch")
+                if _pd:
+                    resync_dispatch_contract(
+                        _pd, reason=f"plan {updates['plan_status'].lower()}")
 
     # When a Re-Visit plan's DE starts or completes, advance the source plan's
     # issue_status from 'Re-Planned' → 'In Execution'.
@@ -8445,12 +8456,14 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
         wd.insert(ignore_permissions=True)
     frappe.db.commit()
 
-    # Snapshot the subcontractor on PO Dispatch (only if not already set — preserve archive import value).
-    if subcontractor and dispatch_name and frappe.db.exists("PO Dispatch", dispatch_name):
-        existing_contract = frappe.db.get_value("PO Dispatch", dispatch_name, "contract")
-        if not existing_contract:
-            frappe.db.set_value("PO Dispatch", dispatch_name, "contract", subcontractor, update_modified=False)
-            frappe.db.commit()
+    # Snapshot the subcontractor on PO Dispatch from the line's last live visit.
+    # Deliberately NOT "only if not already set", which is what this used to do:
+    # a re-visit by a different team, or a first visit that was later cancelled,
+    # left the line stamped with a subcontractor that never did the work. The
+    # last live visit owns the line — see api/subcontractor_sync.
+    if dispatch_name and frappe.db.exists("PO Dispatch", dispatch_name):
+        resync_dispatch_contract(dispatch_name, reason="work done recorded", allow_clear=False)
+        frappe.db.commit()
 
     # Resolve all open issues for this dispatch — Work Done is the final signal.
     if dispatch_name and frappe.db.has_column("Rollout Plan", "issue_status"):
@@ -13200,11 +13213,7 @@ def get_commercial_dashboard(etag=None):
           COALESCE(SUM({_INVOICED_VALUE_SQL} * COALESCE(sm.inet_margin_pct, 100) / 100), 0) AS inet_margin
         FROM `tabPO Dispatch` pd
         LEFT JOIN (
-            SELECT rp.po_dispatch, MAX(it.subcontractor) AS subcontractor
-            FROM `tabRollout Plan` rp
-            LEFT JOIN `tabINET Team` it ON it.name = rp.team
-            GROUP BY rp.po_dispatch
-        ) plan_contract ON plan_contract.po_dispatch = pd.name
+{LAST_VISIT_SUBCONTRACTOR_SQL}        ) plan_contract ON plan_contract.po_dispatch = pd.name
         LEFT JOIN `tabINET Team` sc_team ON sc_team.name = pd.backend_team
         LEFT JOIN `tabSubcontract Master` sm
                ON sm.name = COALESCE(pd.contract, plan_contract.subcontractor, sc_team.subcontractor)
@@ -18598,11 +18607,7 @@ def _duid_overview_subcon(dispatch_names):
                {col("sub_po_status_ms2")} AS sub_po_status_ms2
         FROM `tabPO Dispatch` pd
         LEFT JOIN (
-            SELECT rp.po_dispatch AS po_dispatch, MAX(it.subcontractor) AS subcontractor
-            FROM `tabRollout Plan` rp
-            LEFT JOIN `tabINET Team` it ON it.name = rp.team
-            GROUP BY rp.po_dispatch
-        ) plan_sub ON plan_sub.po_dispatch = pd.name
+{LAST_VISIT_SUBCONTRACTOR_SQL}        ) plan_sub ON plan_sub.po_dispatch = pd.name
         LEFT JOIN `tabINET Team` bt ON bt.name = {col("backend_team", "NULL")}
         LEFT JOIN `tabSubcontract Master` sm
                ON sm.name = COALESCE(NULLIF(pd.contract, ''), plan_sub.subcontractor, bt.subcontractor)
@@ -26271,6 +26276,11 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
         if cur_status == "Planned":
             set_dispatch_status(po_dispatch_name, "Dispatched",
                                 remark="rollout plan cancelled")
+        # A cancelled visit owns nothing. Re-derive the subcontractor from
+        # whatever visits remain, and clear the snapshot when none do — the
+        # line is back to unassigned, and leaving the cancelled team's
+        # subcontractor on it is what put wrong names on the reports.
+        resync_dispatch_contract(po_dispatch_name, reason="rollout plan cancelled")
 
     frappe.db.commit()
 

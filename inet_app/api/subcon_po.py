@@ -25,6 +25,7 @@ Key differences from the sales side, all deliberate:
 
 import frappe
 from frappe.utils import add_days, cint, flt, getdate, nowdate
+from inet_app.api.subcontractor_sync import LAST_VISIT_SUBCONTRACTOR_SQL
 
 from inet_app.api.command_center import (
     _ensure_list,
@@ -279,16 +280,12 @@ def _norm_milestone(raw, default=None):
 # One `sm` alias, because a line resolves to exactly one Subcontract Master.
 # NULLIF on pd.contract matters: the column is '' rather than NULL on plenty
 # of imported rows, and '' would win a bare COALESCE and defeat the fallback.
-_SUBCON_FROM_JOIN = """
+_SUBCON_FROM_JOIN = f"""
 FROM `tabPO Dispatch` pd
 LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
 LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
 LEFT JOIN (
-    SELECT rp.po_dispatch AS po_dispatch, MAX(it.subcontractor) AS subcontractor
-    FROM `tabRollout Plan` rp
-    LEFT JOIN `tabINET Team` it ON it.name = rp.team
-    GROUP BY rp.po_dispatch
-) plan_sub ON plan_sub.po_dispatch = pd.name
+{LAST_VISIT_SUBCONTRACTOR_SQL}) plan_sub ON plan_sub.po_dispatch = pd.name
 LEFT JOIN `tabINET Team` bt ON bt.name = pd.backend_team
 LEFT JOIN `tabSubcontract Master` sm
        ON sm.name = COALESCE(NULLIF(pd.contract, ''), plan_sub.subcontractor, bt.subcontractor)

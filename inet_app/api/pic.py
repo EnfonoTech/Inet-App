@@ -10,6 +10,7 @@ import frappe
 from frappe.utils import cint, flt, getdate, nowdate
 from inet_app.api.notifications import _make_notification, _notify_role
 from frappe.model.meta import get_field_precision
+from inet_app.api.subcontractor_sync import LAST_VISIT_SUBCONTRACTOR_SQL
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
 from inet_app.api.command_center import (
@@ -110,20 +111,11 @@ _PIC_STAGE_SQL = {
 }
 
 
-_PIC_FROM_JOIN = """
+_PIC_FROM_JOIN = f"""
 FROM `tabPO Dispatch` pd
 LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
 LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
-LEFT JOIN (
-    SELECT rp.po_dispatch AS po_dispatch,
-           MAX(de.execution_date) AS execution_date,
-           MAX(it.team_type) AS team_type,
-           MAX(it.subcontractor) AS subcontractor
-    FROM `tabRollout Plan` rp
-    LEFT JOIN `tabDaily Execution` de ON de.rollout_plan = rp.name
-    LEFT JOIN `tabINET Team` it ON it.name = rp.team
-    GROUP BY rp.po_dispatch
-) plan ON plan.po_dispatch = pd.name
+LEFT JOIN ({LAST_VISIT_SUBCONTRACTOR_SQL}) plan ON plan.po_dispatch = pd.name
 LEFT JOIN (
     SELECT rp.po_dispatch AS po_dispatch,
            MAX(IF(wd.submission_status = 'Confirmation Done', 1, 0)) AS confirmed,
@@ -158,7 +150,7 @@ LEFT JOIN `tabSubcontract Master` sm_pd ON sm_pd.name = pd.contract
 # Tracker list calls.
 # plan_contract: lightweight subquery (no Daily Execution) to resolve the
 # subcontractor (and its contract_model) via the Rollout Plan team.
-_PIC_FROM_JOIN_LEAN = """
+_PIC_FROM_JOIN_LEAN = f"""
 FROM `tabPO Dispatch` pd
 LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
 LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
@@ -180,12 +172,7 @@ LEFT JOIN (
     INNER JOIN `tabWork Done` wd ON wd.execution = de.name
     GROUP BY rp.po_dispatch
 ) wd_sub ON wd_sub.po_dispatch = pd.name
-LEFT JOIN (
-    SELECT rp.po_dispatch, MAX(it.subcontractor) AS subcontractor
-    FROM `tabRollout Plan` rp
-    LEFT JOIN `tabINET Team` it ON it.name = rp.team
-    GROUP BY rp.po_dispatch
-) plan_contract ON plan_contract.po_dispatch = pd.name
+LEFT JOIN ({LAST_VISIT_SUBCONTRACTOR_SQL}) plan_contract ON plan_contract.po_dispatch = pd.name
 LEFT JOIN `tabINET Team` sc_team ON sc_team.name = pd.backend_team
 LEFT JOIN `tabSubcontract Master` sm_sub
        ON sm_sub.name = COALESCE(plan_contract.subcontractor, sc_team.subcontractor)
