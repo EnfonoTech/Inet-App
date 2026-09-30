@@ -10855,8 +10855,24 @@ def _sync_work_done_closures(dispatch_name, confirmed_qty, confirmed_amount,
     if abs(delta_qty) < 0.00005:
         return wd_name
 
+    # The ledger carries RECOGNISED revenue, which is not the confirmed line
+    # amount when only one milestone has been closed. A line direct-closed on
+    # MS1 alone has earned ms1_amount, not the whole line: writing the full
+    # confirmed amount here would book MS2's share as revenue before MS2 is
+    # closed. `Work Done.before_save` sums this table into revenue_sar, so the
+    # figure has to be right in the closure itself. Nothing sets ms{1,2}_closed
+    # on a full close or a rollout execution, so "neither flag" means the whole
+    # line, which is what those routes already record.
+    recognised = flt(confirmed_amount)
+    if cint(wd.get("ms1_closed")) or cint(wd.get("ms2_closed")):
+        ms = frappe.db.get_value(
+            "PO Dispatch", dispatch_name, ["ms1_amount", "ms2_amount"], as_dict=True) or {}
+        recognised = round(
+            (flt(ms.get("ms1_amount")) if cint(wd.get("ms1_closed")) else 0.0)
+            + (flt(ms.get("ms2_amount")) if cint(wd.get("ms2_closed")) else 0.0), 4)
+
     prior_amt = sum(flt(r.closed_amount) for r in (wd.get("closures") or []))
-    delta_amt = round(flt(confirmed_amount) - prior_amt, 4)
+    delta_amt = round(recognised - prior_amt, 4)
 
     wd.append("closures", {
         "closed_qty": delta_qty,
