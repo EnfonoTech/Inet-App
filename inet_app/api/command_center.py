@@ -10984,7 +10984,8 @@ def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
     pd = frappe.db.get_value(
         "PO Dispatch", dispatch_name,
         ["name", "poid", "qty", "rate", "line_amount", "pic_status", "pic_status_ms2",
-         "ms1_invoiced", "ms2_invoiced", "confirmed_qty"],
+         "ms1_invoiced", "ms2_invoiced", "confirmed_qty",
+         "ms1_amount", "ms2_amount", "ms1_pct", "ms2_pct"],
         as_dict=True,
     )
     if not pd:
@@ -11002,6 +11003,13 @@ def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
             f"of {ordered:g}. Confirm at most what the PO carries."
         )
 
+    invoiced = flt(pd.get("ms1_invoiced") or 0) + flt(pd.get("ms2_invoiced") or 0)
+    rate = flt(pd.get("rate") or 0)
+    new_amount = (
+        round(rate * confirmed, 4) if rate
+        else (round(flt(pd.get("line_amount") or 0) * confirmed / ordered, 4) if ordered else 0)
+    )
+
     # Lock once PIC has started — but only against a REDUCTION. Raising the
     # confirmed quantity is how a "still to be done" leftover is eventually
     # closed out, and that happens after the rest is delivered, by which time
@@ -11011,24 +11019,41 @@ def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
     previously_confirmed = flt(pd.get("confirmed_qty") or 0)
     is_reduction = previously_confirmed > 0 and confirmed < previously_confirmed - 0.00005
     if is_reduction or not previously_confirmed:
-        for field, label in (("pic_status", "MS1"), ("pic_status_ms2", "MS2")):
+        for field, amt_f, inv_f, pct_f, label in (
+            ("pic_status", "ms1_amount", "ms1_invoiced", "ms1_pct", "MS1"),
+            ("pic_status_ms2", "ms2_amount", "ms2_invoiced", "ms2_pct", "MS2"),
+        ):
             cur = (pd.get(field) or "").strip()
-            if cur and cur not in _QTY_EDITABLE_PIC_STATUSES:
-                frappe.throw(
-                    f"{poid}: {label} is already at '{cur}', so the confirmed "
-                    "quantity can no longer be reduced here. Ask PIC to reject "
-                    "the line back (PIC Rejected) first."
-                )
-
-    # A reduction below what has already been invoiced is a credit note with
-    # the customer, not an edit — refuse it rather than leave ms*_unbilled
-    # negative and the line disagreeing with the invoice.
-    invoiced = flt(pd.get("ms1_invoiced") or 0) + flt(pd.get("ms2_invoiced") or 0)
-    rate = flt(pd.get("rate") or 0)
-    new_amount = (
-        round(rate * confirmed, 4) if rate
-        else (round(flt(pd.get("line_amount") or 0) * confirmed / ordered, 4) if ordered else 0)
-    )
+            if not cur or cur in _QTY_EDITABLE_PIC_STATUSES:
+                continue
+            # What that milestone has actually been billed for. Python twin of
+            # _MS{1,2}_INVOICED_VALUE, fallback included: a milestone whose
+            # status says invoiced but carries no figure counts as fully
+            # billed, which is the case on 786 legacy lines.
+            billed = flt(pd.get(inv_f) or 0)
+            billed = (min(billed, flt(pd.get(amt_f) or 0)) if billed > 0
+                      else (flt(pd.get(amt_f) or 0) if cur in _INVOICED_STATUSES else 0.0))
+            would_be = round(new_amount * flt(pd.get(pct_f) or 0) / 100.0, 4)
+            # The case this exists for: PIC invoiced the quantity that was
+            # really delivered, and the line still says the ordered one. The
+            # correction brings the milestone DOWN TO that invoice, never below
+            # it, so nothing is stranded and blocking it only forces a pointless
+            # round trip through PIC to unlock and re-lock the same status.
+            if billed > 0 and would_be >= billed - 0.005:
+                continue
+            if billed > 0:
+                why = (f"and confirming {confirmed:g} would drop it to SAR "
+                       f"{would_be:,.2f}, under the SAR {billed:,.2f} already "
+                       f"billed — that is a credit note with the customer, not "
+                       f"an edit.")
+            else:
+                why = ("so the confirmed quantity can no longer be reduced "
+                       "here.")
+            frappe.throw(
+                f"{poid}: {label} is already at '{cur}', {why} Ask PIC to set "
+                f"{label} back to 'Under Process to Apply' (or 'Work Not Done') "
+                f"in PIC Tracker first."
+            )
     if invoiced and new_amount < invoiced - 0.005:
         frappe.throw(
             f"{poid}: SAR {invoiced:,.2f} has already been invoiced, which is "
@@ -12294,6 +12319,7 @@ def _team_cost_days(start_date, end_date, period_from, period_to, cap=30):
 # ``ms1_unbilled``: those two fields are PIC's own display fields and carry
 # bad values left over from earlier testing. They stay untouched on the PIC
 # dashboard; nothing that reports numbers should read them.
+_INVOICED_STATUSES = ("Commercial Invoice Submitted", "Commercial Invoice Closed")
 _INVOICED_STATUSES_SQL = "('Commercial Invoice Submitted', 'Commercial Invoice Closed')"
 
 _MS1_INVOICED_SQL = f"pd.pic_status IN {_INVOICED_STATUSES_SQL}"
