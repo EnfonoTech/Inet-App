@@ -285,7 +285,7 @@ The `StatusBadge` row above is aspirational, not real — there is **no shared
 color-map file**. `pic/picShared.jsx` and `im/IMPOIntake.jsx` each hand-roll their own
 `dispatchStatusColor()` for the *same* `PO Dispatch.dispatch_status` vocabulary, kept
 in sync only by a code comment ("same mapping as..."). Half a dozen other pages
-(`IMExpense`, `AdminExpense`, `FieldExpense`, `Projects`, `POUpload`, `IMDashboard`,
+(`IMExpense`, `FieldExpense`, `Projects`, `POUpload`, `IMDashboard`,
 `IMMaterialRequest`) each define their own differently-shaped local `StatusBadge`.
 
 **Before adding a status badge on a new page**: grep for the status field's existing

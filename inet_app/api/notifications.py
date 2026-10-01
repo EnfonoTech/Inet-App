@@ -116,13 +116,6 @@ def _notify_role(role, subject, doctype=None, docname=None, link=None):
 		_make_notification(user, subject, doctype, docname, link)
 
 
-def _im_user_from_team(team_id):
-	im_id = frappe.db.get_value("INET Team", team_id, "im")
-	if not im_id:
-		return None
-	return frappe.db.get_value("IM Master", im_id, "user")
-
-
 def _tl_user_from_team(team_id):
 	return frappe.db.get_value("INET Team", team_id, "field_user")
 

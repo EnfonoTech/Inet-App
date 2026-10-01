@@ -2424,16 +2424,6 @@ def _poid_for_upload_line(po_no, line):
     return _make_poid(po_no, line.get("po_line_no"), line.get("shipment_no"))
 
 
-def _existing_poids_on_intake_doc(doc):
-    seen = set()
-    for row in doc.po_lines:
-        pid = (row.poid or "").strip()
-        if not pid:
-            pid = _make_poid(doc.po_no, row.po_line_no, row.shipment_number)
-        seen.add(pid)
-    return seen
-
-
 @frappe.whitelist()
 def confirm_po_upload(rows):
     """
@@ -8507,25 +8497,6 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
         "adopted": bool(adopted),
         "adopted_from": (adopted or {}).get("from_source"),
     }
-
-
-def _ensure_work_done_for_execution(execution_name):
-    if not execution_name:
-        return None
-    rp = frappe.db.get_value("Daily Execution", execution_name, "rollout_plan")
-    if rp and _is_internal_dispatch(frappe.db.get_value("Rollout Plan", rp, "po_dispatch")):
-        return None
-    existing = frappe.db.get_value("Work Done", {"execution": execution_name}, "name")
-    if existing:
-        return existing
-    exec_status = frappe.db.get_value("Daily Execution", execution_name, "execution_status")
-    if exec_status != "Completed":
-        return None
-    try:
-        result = generate_work_done(execution_name)
-        return result.get("name")
-    except Exception:
-        return None
 
 
 # ---------------------------------------------------------------------------

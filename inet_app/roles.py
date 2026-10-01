@@ -52,11 +52,6 @@ def roles_of(user=None):
     return set(frappe.get_roles(user or frappe.session.user))
 
 
-def is_pm_level(user=None):
-    """True for a PM, an admin, or anyone above them."""
-    return bool(roles_of(user) & PM_LEVEL_ROLES)
-
-
 def is_admin(user=None):
     """True for a real admin. Holding INET PM as well does not take it away.
 

@@ -3031,17 +3031,6 @@ def create_sales_invoice_from_pic(po_dispatch=None, milestone=None):
     }
 
 
-def _get_poid_milestone_from_item(item):
-    """Return (pd_name, milestone) derived from item.  milestone is 'MS1'/'MS2'/None."""
-    pd_name = (item.get("poid") or "").strip()
-    if not pd_name:
-        return None, None
-    milestone = (item.get("milestone") or "").strip().upper()
-    if milestone not in ("MS1", "MS2"):
-        milestone = None
-    return pd_name, milestone
-
-
 def _calc_invoiced_from_submitted(pd_name, excluding_invoice=None):
     """Sum item.amount from all *submitted* Sales Invoices for a POID, split by milestone.
 
