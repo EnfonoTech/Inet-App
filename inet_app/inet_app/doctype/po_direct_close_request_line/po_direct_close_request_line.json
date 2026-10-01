@@ -1,0 +1,40 @@
+{
+ "actions": [],
+ "creation": "2026-10-01 00:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "po_dispatch", "poid", "po_no", "site_code", "project_code",
+  "item_code", "item_description", "column_break_pdcl1",
+  "qty", "line_amount", "line_status", "work_done", "line_note"
+ ],
+ "fields": [
+  {"fieldname": "po_dispatch", "fieldtype": "Link", "in_list_view": 1, "label": "PO Dispatch", "options": "PO Dispatch", "reqd": 1},
+  {"fieldname": "poid", "fieldtype": "Data", "in_list_view": 1, "label": "POID"},
+  {"fieldname": "po_no", "fieldtype": "Data", "label": "PO No"},
+  {"fieldname": "site_code", "fieldtype": "Data", "label": "DUID"},
+  {"fieldname": "project_code", "fieldtype": "Data", "label": "Project"},
+  {"fieldname": "item_code", "fieldtype": "Data", "label": "Item Code"},
+  {"fieldname": "item_description", "fieldtype": "Data", "label": "Item Description"},
+  {"fieldname": "column_break_pdcl1", "fieldtype": "Column Break"},
+  {"fieldname": "qty", "fieldtype": "Float", "in_list_view": 1, "label": "Qty"},
+  {"fieldname": "line_amount", "fieldtype": "Currency", "in_list_view": 1, "label": "Line Amount (SAR)"},
+  {"fieldname": "line_status", "fieldtype": "Select", "in_list_view": 1, "label": "Line Status", "options": "Pending\nClosed\nRefused"},
+  {"fieldname": "work_done", "fieldtype": "Link", "label": "Work Done", "options": "Work Done", "read_only": 1},
+  {"fieldname": "line_note", "fieldtype": "Small Text", "label": "Note"}
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-01 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PO Direct Close Request Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "track_changes": 0,
+ "states": []
+}

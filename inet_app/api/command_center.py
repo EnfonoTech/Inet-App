@@ -23,6 +23,7 @@ from frappe.utils import (
     add_days,
     add_months,
     cint,
+    cstr,
     flt,
     get_datetime,
     get_first_day,
@@ -32,6 +33,7 @@ from frappe.utils import (
     nowdate,
     time_diff_in_seconds,
 )
+from inet_app.roles import ADMIN_ROLES, PM_LEVEL_ROLES, is_admin
 from inet_app.api.subcontractor_sync import (
     LAST_VISIT_SUBCONTRACTOR_SQL,
     resync_dispatch_contract,
@@ -3889,7 +3891,7 @@ def search_internal_work_items(query=""):
 def add_internal_work_item(item_name, description=None, activity_type=None):
     """IM adds a new internal-work item (Item in the Internal Work group)."""
     roles = set(frappe.get_roles(frappe.session.user))
-    if not roles & {"INET IM", "INET Admin", "System Manager", "Administrator"}:
+    if not roles & (PM_LEVEL_ROLES | {"INET IM"}):
         frappe.throw("Not permitted", frappe.PermissionError)
     name = (item_name or "").strip()
     if not name:
@@ -6926,10 +6928,7 @@ def _user_execution_update_mode(user, doc):
         return None
     roles = set(frappe.get_roles(user))
     if (
-        "Administrator" in roles
-        or "System Manager" in roles
-        or "INET Admin" in roles
-        or "INET IM" in roles
+        roles & (PM_LEVEL_ROLES | {"INET IM"})
     ):
         return "full"
     if "INET Field Team" not in roles:
@@ -6966,10 +6965,7 @@ def get_field_execution_for_rollout(rollout_plan):
     user = frappe.session.user
     roles = set(frappe.get_roles(user))
     im_scope = (
-        "Administrator" in roles
-        or "System Manager" in roles
-        or "INET Admin" in roles
-        or "INET IM" in roles
+        roles & (PM_LEVEL_ROLES | {"INET IM"})
     )
     if im_scope:
         rows = frappe.get_all(
@@ -7951,10 +7947,7 @@ def bulk_update_execution_field(names, field, value):
 
     roles = set(frappe.get_roles(frappe.session.user))
     if not (
-        "Administrator" in roles
-        or "System Manager" in roles
-        or "INET Admin" in roles
-        or "INET IM" in roles
+        roles & (PM_LEVEL_ROLES | {"INET IM"})
     ):
         frappe.throw("Only an Implementation Manager or administrator can bulk-update executions.", frappe.PermissionError)
 
@@ -7982,7 +7975,7 @@ def mark_internal_work_done(execution_name):
     post-insert status flips.
     """
     roles = set(frappe.get_roles(frappe.session.user))
-    if not roles & {"Administrator", "System Manager", "INET Admin", "INET IM"}:
+    if not roles & (PM_LEVEL_ROLES | {"INET IM"}):
         frappe.throw(
             "Only an Implementation Manager or administrator can mark internal work done.",
             frappe.PermissionError,
@@ -8035,10 +8028,7 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     """
     roles = set(frappe.get_roles(frappe.session.user))
     if not (
-        "Administrator" in roles
-        or "System Manager" in roles
-        or "INET Admin" in roles
-        or "INET IM" in roles
+        roles & (PM_LEVEL_ROLES | {"INET IM"})
     ):
         frappe.throw(
             "Only an Implementation Manager or administrator can create Work Done.",
@@ -8628,7 +8618,7 @@ def _execution_monitor_scope():
     if not user or user == "Guest":
         return "1=0", []
     roles = set(frappe.get_roles(user))
-    if roles & {"Administrator", "System Manager", "INET Admin"}:
+    if roles & PM_LEVEL_ROLES:
         return "1=1", []
 
     if "INET IM" in roles:
@@ -11845,9 +11835,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, 
     roles = set(frappe.get_roles(user))
 
     is_admin = (
-        "Administrator" in roles
-        or "System Manager" in roles
-        or "INET Admin" in roles
+        roles & PM_LEVEL_ROLES
     )
     is_im = "INET IM" in roles
     if not (is_admin or is_im):
@@ -16318,7 +16306,7 @@ def _rollout_scope_clause(im, alias="pd"):
     here rather than in two near-identical endpoints.
     """
     roles = set(frappe.get_roles(frappe.session.user))
-    is_admin = bool(roles & {"Administrator", "System Manager", "INET Admin"})
+    is_admin = bool(roles & PM_LEVEL_ROLES)
     if is_admin and not im:
         return "1=1", [], None
     im_resolved, im_identifiers, _ = resolve_im_for_session(im)
@@ -18500,9 +18488,7 @@ def get_duid_overview(query=None, duid=None, po_no=None, poid=None):
         frappe.throw("Not permitted", frappe.PermissionError)
     roles = set(frappe.get_roles(user))
     if not (
-        "Administrator" in roles
-        or "System Manager" in roles
-        or "INET Admin" in roles
+        roles & PM_LEVEL_ROLES
     ):
         frappe.throw("Not permitted", frappe.PermissionError)
 
@@ -20516,8 +20502,7 @@ def save_rollout_plan_documents(rollout_plan, documents):
     user = frappe.session.user
     roles = set(frappe.get_roles(user))
     if not (
-        "INET IM" in roles or "INET Admin" in roles
-        or "System Manager" in roles or "Administrator" in roles
+        roles & (PM_LEVEL_ROLES | {"INET IM"})
     ):
         frappe.throw("Not permitted", frappe.PermissionError)
     if isinstance(documents, list):
@@ -20806,7 +20791,7 @@ def stop_execution_timer(log_name):
 
     user = frappe.session.user
     roles = set(frappe.get_roles(user))
-    can_stop = log.user == user or "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles
+    can_stop = log.user == user or bool(roles & PM_LEVEL_ROLES)
     if not can_stop:
         frappe.throw("You can only stop your own timers.", frappe.PermissionError)
 
@@ -20944,7 +20929,7 @@ def list_execution_time_logs(filters=None, limit=100, offset=0, _options=None, _
     user = frappe.session.user
     roles = set(frappe.get_roles(user))
     is_desk_admin = (
-        "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles
+        roles & PM_LEVEL_ROLES
     )
     is_im = "INET IM" in roles
     is_field = "INET Field Team" in roles
@@ -21402,7 +21387,7 @@ def get_duid_time_totals(filters=None):
 
     user = frappe.session.user
     roles = set(frappe.get_roles(user))
-    is_desk_admin = "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles
+    is_desk_admin = bool(roles & PM_LEVEL_ROLES)
     is_im = "INET IM" in roles
     is_field = "INET Field Team" in roles
 
@@ -21582,7 +21567,7 @@ def get_daily_time_totals(filters=None):
 
     user = frappe.session.user
     roles = set(frappe.get_roles(user))
-    is_desk_admin = "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles
+    is_desk_admin = bool(roles & PM_LEVEL_ROLES)
     is_im = "INET IM" in roles
     is_field = "INET Field Team" in roles
 
@@ -22235,7 +22220,7 @@ def _resolve_dispatch_for_remarks(po_dispatch):
 def _user_role_class():
     """Coarse role bucket for remark visibility/edit rules."""
     roles = set(frappe.get_roles(frappe.session.user))
-    if "Administrator" in roles or "System Manager" in roles or "INET Admin" in roles:
+    if roles & PM_LEVEL_ROLES:
         return "pm"
     if "INET IM" in roles:
         return "im"
@@ -22470,80 +22455,49 @@ def get_subcontractors_by_type(close_type):
 @frappe.whitelist()
 def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None, milestone=None,
                              huawei_im=None, project_domain=None, closed_on=None):
-    """Bulk direct-close PO Dispatch lines: create Work Done + move to Completed.
+    """Request a Direct Close. Kept as the entry point every caller already uses.
 
-    Only available to IMs with `can_direct_close = 1` (or PM/admin).
-    milestone: None/"MS1"/"MS2" — if set, partial milestone close (IM must have can_milestone_close).
-    huawei_im/project_domain: optional overrides, same idea as the ones on
-    create_rollout_plans — normally these come from the project, but the IM
-    may set them per line here too.
+    A Direct Close no longer writes revenue straight away. It writes a PO
+    Direct Close Request that an ADMIN decides — see request_direct_close for
+    why, and inet_app.roles for why a PM cannot be that admin. An admin raising
+    one has it approved on the spot, so for them the outcome is unchanged
+    except that a record now exists.
+
+    The return keeps ``updated`` / ``errors`` so existing callers still read
+    something sensible: ``updated`` is only populated when the close actually
+    ran (an admin's own request), and is empty while one waits for approval.
     """
-    role = _user_role_class()
-    if role not in ("pm", "im"):
-        frappe.throw("Not permitted", frappe.PermissionError)
-
-    if role == "im":
-        cap = get_my_direct_close_capability()
-        if not cap.get("can_direct_close"):
-            frappe.throw("You do not have permission to Direct Close dispatches.", frappe.PermissionError)
-        if milestone and not cap.get("can_milestone_close"):
-            frappe.throw("You do not have permission for Milestone Close.", frappe.PermissionError)
-
-    if isinstance(po_dispatches, str):
-        po_dispatches = frappe.parse_json(po_dispatches)
-    _require_dispatch_im(po_dispatches, "closing these lines")
-
-    # A Direct Close writes revenue with no execution chain behind it, so the
-    # form has to be complete before anything is recorded — there is no later
-    # step where a missing subcontractor or close date gets filled in. The
-    # note stays optional by design; everything else is blocking.
-    _blank = [lbl for lbl, val in (
-        ("Close Type", close_type),
-        ("Subcontractor", subcontractor),
-        ("Closing Date", closed_on),
-    ) if not str(val or "").strip()]
-    if _blank:
-        frappe.throw(
-            frappe._("Fill in {0} before closing.").format(", ".join(_blank))
-        )
-    try:
-        closed_dt = get_datetime(str(closed_on).strip())
-    except Exception:
-        frappe.throw(frappe._("Closing Date is not a valid date."))
-    if getdate(closed_dt) > getdate(nowdate()):
-        frappe.throw(frappe._("Closing Date cannot be in the future."))
-    _require_line_attributes(
-        po_dispatches, huawei_im, project_domain, "closing these lines"
+    result = request_direct_close(
+        po_dispatches, close_type, subcontractor, closed_on,
+        milestone=milestone, note=note, reason=note,
+        huawei_im=huawei_im, project_domain=project_domain,
     )
-    _require_no_rollout_track(po_dispatches, "direct-close these lines")
+    result.setdefault("updated", [])
+    result.setdefault("errors", result.get("blocked") or [])
+    return result
 
-    milestone = (milestone or "").strip().upper() or None
-    if milestone and milestone not in ("MS1", "MS2"):
-        frappe.throw("milestone must be MS1 or MS2")
 
-    huawei_im = (huawei_im or "").strip()
-    if huawei_im and not frappe.db.exists("Huawei IM", huawei_im):
-        frappe.throw(frappe._("Invalid Huawei IM selected"))
-    project_domain = (project_domain or "").strip()
-    if project_domain and not frappe.db.exists("Project Domain", project_domain):
-        frappe.throw(frappe._("Invalid Project Domain selected"))
+def _closer_im(im_doc, dispatch_name=None):
+    """A valid IM Master for direct_close_by, or None.
 
-    im_resolved, im_identifiers, _ = resolve_im_for_session(None)
-    im_doc = im_resolved
+    Both `Work Done.direct_close_by` and `PO Dispatch.direct_close_by` are Links
+    to IM Master, but this used to be written as `im_doc or frappe.session.user`
+    — a user id, which is only ever a valid IM Master by coincidence. It went
+    unnoticed while every direct close was performed by an IM; an admin
+    approving one on someone else's behalf hits it immediately
+    (LinkValidationError: Could not find Closed By IM: Administrator).
 
-    updated = []
-    errors = []
-    for name in (po_dispatches or []):
-        ok, info = _direct_close_one(role, im_identifiers or [], im_doc, name,
-                                     close_type, subcontractor, (note or "").strip(),
-                                     milestone=milestone, huawei_im=huawei_im, project_domain=project_domain,
-                                     closed_dt=closed_dt)
-        if ok:
-            updated.append(info)
-        else:
-            errors.append(info)
-
-    return {"updated": updated, "errors": errors}
+    Falls back to the line's own IM, which is the honest answer when the person
+    pressing the button is not an IM at all, and to None rather than a value
+    that cannot be stored.
+    """
+    for candidate in (im_doc, frappe.session.user,
+                      frappe.db.get_value("PO Dispatch", dispatch_name, "im")
+                      if dispatch_name else None):
+        c = cstr(candidate or "").strip()
+        if c and frappe.db.exists("IM Master", c):
+            return c
+    return None
 
 
 def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontractor, note, milestone=None,
@@ -22699,7 +22653,7 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
             if frappe.db.has_column("Work Done", "source"):
                 wd.source = "Direct Close"
             if frappe.db.has_column("Work Done", "direct_close_by"):
-                wd.direct_close_by = im_doc or frappe.session.user
+                wd.direct_close_by = _closer_im(im_doc, name)
             if frappe.db.has_column("Work Done", ms_closed_field):
                 setattr(wd, ms_closed_field, 1)
             if frappe.db.has_column("Work Done", ms_closed_at_field):
@@ -22713,7 +22667,7 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
         # explicitly from the Work Done page via submit_milestone_to_pic().
         pd_updates = {}
         if frappe.db.has_column("PO Dispatch", "direct_close_by"):
-            pd_updates["direct_close_by"] = im_doc or frappe.session.user
+            pd_updates["direct_close_by"] = _closer_im(im_doc, name)
         existing_contract = pd.get("contract") or ""
         if subcontractor and not existing_contract:
             pd_updates["contract"] = subcontractor
@@ -22809,7 +22763,7 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
     if frappe.db.has_column("Work Done", "source"):
         wd.source = "Direct Close"
     if frappe.db.has_column("Work Done", "direct_close_by"):
-        wd.direct_close_by = im_doc or frappe.session.user
+        wd.direct_close_by = _closer_im(im_doc, name)
 
     wd.insert(ignore_permissions=True)
     frappe.db.commit()
@@ -22817,7 +22771,7 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
     # Update PO Dispatch
     pd_updates = {}
     if frappe.db.has_column("PO Dispatch", "direct_close_by"):
-        pd_updates["direct_close_by"] = im_doc or frappe.session.user
+        pd_updates["direct_close_by"] = _closer_im(im_doc, name)
     existing_contract = pd.get("contract") or ""
     if subcontractor and not existing_contract:
         pd_updates["contract"] = subcontractor
@@ -24685,7 +24639,7 @@ def _is_pm_role():
     """PM-level approver: Administrator / System Manager / INET Admin.
     INET IM alone is not enough — IMs cannot approve their own transfers."""
     roles = set(frappe.get_roles(frappe.session.user))
-    return bool(roles & {"Administrator", "System Manager", "INET Admin"})
+    return bool(roles & PM_LEVEL_ROLES)
 
 
 # ---------------------------------------------------------------------------
@@ -25232,6 +25186,21 @@ def _assert_po_transfer_eligible(pd, im_identifiers=None, expected_from_im=None)
         )
         if existing:
             frappe.throw(f"{label}: already has a pending transfer request ({existing[0][0]})")
+        # A line cannot be mid-transfer and mid-close at once: approving the
+        # close writes Work Done against the IM who owns it now, while the
+        # transfer is still waiting to change exactly that. Whichever is
+        # decided second would be acting on an assumption the first broke.
+        closing = frappe.db.sql(
+            "SELECT h.name FROM `tabPO Direct Close Request Line` l "
+            "INNER JOIN `tabPO Direct Close Request` h ON h.name = l.parent "
+            "WHERE l.po_dispatch = %s AND h.request_status = %s LIMIT 1",
+            (pd.get("name"), _DIRECT_CLOSE_PENDING),
+        )
+        if closing:
+            frappe.throw(
+                f"{label}: a Direct Close request is waiting for an Admin "
+                f"({closing[0][0]}). Let that be decided first."
+            )
 
 
 def _po_transfer_serialize(name):
@@ -26080,6 +26049,525 @@ def list_po_cancel_requests(status=None, limit=200):
             r["warn_count"] = warn_n
             r["blocked_count"] = hard_n
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Direct Close approval
+#
+# A Direct Close writes revenue with no execution chain behind it — no plan, no
+# daily execution, no team. That is exactly why it is quick, and exactly why it
+# now needs a second pair of eyes: the only evidence a line was ever worked is
+# the Work Done the close itself creates.
+#
+# Modelled on PO Cancel Request, with one deliberate difference: the approver is
+# an ADMIN, not a PM. A PM raising the request cannot approve it. That is only
+# meaningful because INET PM and INET Admin are finally separate roles — see
+# inet_app.roles, where `is_admin` excludes a PM by design.
+# ---------------------------------------------------------------------------
+
+_DIRECT_CLOSE_PENDING = "Pending Admin Approval"
+
+
+def _direct_close_issues(dispatch_name, milestone=None):
+    """What stands in the way of direct-closing this line, worst first.
+
+    ``hard`` cannot be overridden by approving — the close would be refused
+    anyway. ``warn`` is the admin's judgement to make, and travels with the
+    line so they see it in the approval dialog.
+    """
+    out = []
+    pd = frappe.db.get_value(
+        "PO Dispatch", dispatch_name,
+        ["name", "poid", "dispatch_status", "is_internal_work", "target_week",
+         "ms1_invoiced", "ms2_invoiced", "qty", "confirmed_qty"],
+        as_dict=True,
+    ) or {}
+    if not pd.get("name"):
+        return [{"severity": "hard", "short": "PO Dispatch not found", "detail": ""}]
+
+    if cint(pd.get("is_internal_work")):
+        out.append({"severity": "hard", "short": "Internal work",
+                    "detail": "Internal lines are not closed through this route."})
+
+    wd = frappe.db.get_value("Work Done", {"system_id": dispatch_name},
+                             ["name", "ms1_closed", "ms2_closed"], as_dict=True)
+    if wd:
+        outstanding, _src = _outstanding_remainder(dispatch_name)
+        ms_field = "ms1_closed" if milestone == "MS1" else "ms2_closed"
+        if milestone and cint(wd.get(ms_field)):
+            out.append({"severity": "hard", "short": f"{milestone} already closed",
+                        "detail": f"{wd['name']} already carries a closed {milestone}."})
+        elif not milestone and outstanding <= 0:
+            out.append({"severity": "hard", "short": "Work Done already exists",
+                        "detail": f"{wd['name']} already covers this line in full."})
+        elif outstanding > 0:
+            out.append({"severity": "warn", "short": f"{outstanding:g} qty outstanding",
+                        "detail": "This closes the remainder onto the existing Work Done."})
+
+    # The mirror of the check in _assert_po_transfer_eligible. A close writes
+    # Work Done against whoever owns the line, and a pending transfer is a
+    # request to change exactly that, so the two cannot both be outstanding.
+    moving = frappe.db.sql(
+        """SELECT h.name FROM `tabPO Transfer Request Line` l
+           JOIN `tabPO Transfer Request` h ON h.name = l.parent
+           WHERE l.po_dispatch = %s AND h.request_status = 'Pending PM Approval' LIMIT 1""",
+        (dispatch_name,),
+    )
+    if moving:
+        out.append({"severity": "hard", "short": "Transfer pending",
+                    "detail": f"{moving[0][0]} is waiting for a PM to move this line "
+                              "to another IM. Let that be decided first."})
+
+    live_plan = frappe.db.sql(
+        """SELECT name FROM `tabRollout Plan`
+           WHERE po_dispatch = %s AND IFNULL(plan_status, '') <> 'Cancelled' LIMIT 1""",
+        (dispatch_name,),
+    )
+    if live_plan:
+        out.append({"severity": "hard", "short": "On the rollout track",
+                    "detail": f"{live_plan[0][0]} is live — a line is closed by the "
+                              "rollout or by a shortcut, never both."})
+    elif cstr(pd.get("target_week") or "").strip():
+        out.append({"severity": "hard", "short": "Forecast for a rollout week",
+                    "detail": f"Forecast week {pd['target_week']} commits this line "
+                              "to the rollout."})
+
+    invoiced = flt(pd.get("ms1_invoiced") or 0) + flt(pd.get("ms2_invoiced") or 0)
+    if invoiced:
+        out.append({"severity": "warn", "short": f"SAR {invoiced:,.2f} already invoiced",
+                    "detail": "The line has been billed before any Work Done exists."})
+    if (pd.get("dispatch_status") or "") in ("Completed", "Closed"):
+        out.append({"severity": "warn", "short": f"Already {pd['dispatch_status']}",
+                    "detail": "The line is already past execution."})
+
+    out.sort(key=lambda i: 0 if i["severity"] == "hard" else 1)
+    return out
+
+
+def _direct_close_blockers(dispatch_name, milestone=None):
+    """Hard issues only — the ones approving cannot override."""
+    return [i["short"] for i in _direct_close_issues(dispatch_name, milestone)
+            if i["severity"] == "hard"]
+
+
+@frappe.whitelist()
+def preview_direct_close(po_dispatches, milestone=None):
+    """What would happen to each line, before a request is raised."""
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if isinstance(po_dispatches, str):
+        po_dispatches = frappe.parse_json(po_dispatches) or []
+    milestone = (milestone or "").strip().upper() or None
+    out = []
+    for token in (po_dispatches or []):
+        try:
+            name = _resolve_dispatch_for_remarks(token)
+        except Exception:
+            name = None
+        if not name:
+            out.append({"poid": cstr(token), "issues": [
+                {"severity": "hard", "short": "PO Dispatch not found", "detail": ""}]})
+            continue
+        poid = frappe.db.get_value("PO Dispatch", name, "poid") or name
+        issues = _direct_close_issues(name, milestone)
+        out.append({"po_dispatch": name, "poid": poid, "issues": issues,
+                    "blocked": any(i["severity"] == "hard" for i in issues)})
+    return {"rows": out,
+            "blocked_count": sum(1 for r in out if r.get("blocked")),
+            "warn_count": sum(1 for r in out
+                              if not r.get("blocked")
+                              and any(i["severity"] == "warn" for i in r["issues"]))}
+
+
+def _direct_close_params_or_throw(close_type, subcontractor, closed_on, milestone):
+    """Validate the close form once, at request time.
+
+    Everything the close itself needs is checked here rather than at approval:
+    a request that cannot be executed should never reach an admin's queue, and
+    the person who filled the form is the one who can fix it.
+    """
+    blank = [lbl for lbl, val in (
+        ("Close Type", close_type), ("Subcontractor", subcontractor),
+        ("Closing Date", closed_on),
+    ) if not cstr(val or "").strip()]
+    if blank:
+        frappe.throw(frappe._("Fill in {0} before requesting a close.").format(", ".join(blank)))
+    try:
+        closed_dt = get_datetime(cstr(closed_on).strip())
+    except Exception:
+        frappe.throw(frappe._("Closing Date is not a valid date."))
+    if getdate(closed_dt) > getdate(nowdate()):
+        frappe.throw(frappe._("Closing Date cannot be in the future."))
+    milestone = (milestone or "").strip().upper() or None
+    if milestone and milestone not in ("MS1", "MS2"):
+        frappe.throw("milestone must be MS1 or MS2")
+    if not frappe.db.exists("Subcontract Master", cstr(subcontractor).strip()):
+        frappe.throw(f"Subcontract Master not found: {subcontractor}")
+    return closed_dt, milestone
+
+
+@frappe.whitelist()
+def request_direct_close(po_dispatches, close_type, subcontractor, closed_on,
+                         milestone=None, note=None, reason=None,
+                         huawei_im=None, project_domain=None):
+    """Raise a Direct Close request for one or many POIDs.
+
+    Every direct close goes through here, whoever raises it, so each one leaves
+    a record of what was asked for and who agreed to it. An admin's own request
+    is approved on the spot — they are the approval — so the record exists
+    without a pointless second click. An IM or a PM waits.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    if role == "im":
+        cap = get_my_direct_close_capability()
+        if not cap.get("can_direct_close"):
+            frappe.throw("You do not have permission to Direct Close dispatches.",
+                         frappe.PermissionError)
+        if milestone and not cap.get("can_milestone_close"):
+            frappe.throw("You do not have permission for Milestone Close.",
+                         frappe.PermissionError)
+
+    if isinstance(po_dispatches, str):
+        po_dispatches = frappe.parse_json(po_dispatches) or []
+    names, seen = [], set()
+    for token in (po_dispatches or []):
+        try:
+            resolved = _resolve_dispatch_for_remarks(token)
+        except Exception:
+            resolved = None
+        if resolved and resolved not in seen:
+            seen.add(resolved)
+            names.append(resolved)
+    if not names:
+        frappe.throw("Select at least one POID to close.")
+
+    closed_dt, milestone = _direct_close_params_or_throw(
+        close_type, subcontractor, closed_on, milestone)
+    _require_dispatch_im(names, "closing these lines")
+    _require_line_attributes(names, huawei_im, project_domain, "closing these lines")
+
+    huawei_im = cstr(huawei_im or "").strip()
+    if huawei_im and not frappe.db.exists("Huawei IM", huawei_im):
+        frappe.throw(frappe._("Invalid Huawei IM selected"))
+    project_domain = cstr(project_domain or "").strip()
+    if project_domain and not frappe.db.exists("Project Domain", project_domain):
+        frappe.throw(frappe._("Invalid Project Domain selected"))
+
+    im_identifiers = None
+    if role == "im":
+        _, im_identifiers, _ = resolve_im_for_session()
+
+    rows, blocked = [], []
+    for name in names:
+        pd = frappe.db.get_value(
+            "PO Dispatch", name,
+            ["name", "im", "poid", "po_no", "site_code", "project_code", "item_code",
+             "item_description", "qty", "line_amount"],
+            as_dict=True,
+        ) or {}
+        poid = pd.get("poid") or name
+        if not pd.get("name"):
+            blocked.append({"poid": poid, "error": "PO Dispatch not found."})
+            continue
+        if role == "im" and not _can_assign_backend_dispatch(role, im_identifiers, pd):
+            blocked.append({"poid": poid, "error": "Not assigned to you."})
+            continue
+        if _pending_direct_close_request(name):
+            blocked.append({"poid": poid, "error": "Already waiting for admin approval."})
+            continue
+        issues = _direct_close_issues(name, milestone)
+        hard = [i for i in issues if i["severity"] == "hard"]
+        if hard:
+            blocked.append({"poid": poid, "error": hard[0]["short"]})
+            continue
+        warn = next((i for i in issues if i["severity"] == "warn"), None)
+        pd["_warning"] = warn["short"] if warn else None
+        rows.append(pd)
+
+    if not rows:
+        return {"created": 0, "closed": 0, "blocked": blocked}
+
+    im_resolved, _, _ = resolve_im_for_session()
+    doc = frappe.new_doc("PO Direct Close Request")
+    doc.im = im_resolved if im_resolved and frappe.db.exists("IM Master", im_resolved) else None
+    doc.requested_by = frappe.session.user
+    doc.requested_by_role = "admin" if is_admin() else ("pm" if role == "pm" else "im")
+    doc.request_status = _DIRECT_CLOSE_PENDING
+    doc.close_type = cstr(close_type).strip()
+    doc.subcontractor = cstr(subcontractor).strip()
+    doc.milestone = milestone
+    doc.closed_on = getdate(closed_dt)
+    doc.huawei_im = huawei_im or None
+    doc.project_domain = project_domain or None
+    doc.reason = (cstr(reason or note).strip()[:8000] or None)
+    for pd in rows:
+        doc.append("poids", {
+            "po_dispatch": pd["name"],
+            "poid": pd.get("poid") or pd["name"],
+            "po_no": pd.get("po_no"),
+            "site_code": pd.get("site_code"),
+            "project_code": pd.get("project_code"),
+            "item_code": pd.get("item_code"),
+            "item_description": (pd.get("item_description") or "")[:140],
+            "qty": flt(pd.get("qty") or 0),
+            "line_amount": flt(pd.get("line_amount") or 0),
+            "line_status": "Pending",
+            "line_note": pd.get("_warning"),
+        })
+    doc.poid_count = len(rows)
+    doc.total_amount = sum(flt(r.get("line_amount") or 0) for r in rows)
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+
+    for pd in rows:
+        log_status_event(pd["name"], "direct_close_request", "", _DIRECT_CLOSE_PENDING,
+                         remark=doc.reason, entity_name=doc.name, stamp_stage=False)
+    frappe.db.commit()
+
+    if is_admin():
+        # The approver raised it. The request still exists — that is the point —
+        # but making them queue behind themselves would only add a click.
+        result = admin_decide_direct_close_request(
+            doc.name, "approve", remark="raised and approved by admin")
+        result["created"] = 1
+        result["blocked"] = blocked
+        result["auto_approved"] = True
+        return result
+
+    try:
+        from inet_app.api.notifications import notify_admin_direct_close_requested
+        notify_admin_direct_close_requested(doc.name)
+    except Exception:
+        pass
+    return {"created": 1, "request": doc.name, "poid_count": doc.poid_count,
+            "total_amount": flt(doc.total_amount), "blocked": blocked,
+            "auto_approved": False}
+
+
+def _pending_direct_close_request(dispatch_name):
+    """The pending request covering this line, if any."""
+    row = frappe.db.sql(
+        """SELECT l.parent FROM `tabPO Direct Close Request Line` l
+           JOIN `tabPO Direct Close Request` r ON r.name = l.parent
+           WHERE l.po_dispatch = %s AND r.request_status = %s LIMIT 1""",
+        (dispatch_name, _DIRECT_CLOSE_PENDING),
+    )
+    return row[0][0] if row else None
+
+
+@frappe.whitelist()
+def list_pending_direct_close_poids():
+    """PO Dispatch names tied up in a request still awaiting an admin.
+
+    Deliberately NOT scoped to the caller's IM, unlike the transfer twin: the
+    server's own block (``_pending_direct_close_request``) is global, so a line
+    someone else has already requested would be refused whoever selects it.
+    Scoping this to the caller would hide the reason for that refusal from
+    everyone but the requester.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        return []
+    return frappe.db.sql_list(
+        """SELECT DISTINCT l.po_dispatch
+           FROM `tabPO Direct Close Request Line` l
+           JOIN `tabPO Direct Close Request` r ON r.name = l.parent
+           WHERE r.request_status = %s""",
+        (_DIRECT_CLOSE_PENDING,),
+    )
+
+
+@frappe.whitelist()
+def admin_decide_direct_close_request(request, action, remark=None):
+    """An ADMIN approves or rejects a whole Direct Close request.
+
+    Approving closes every line it still can. A line that picked up a plan, a
+    Work Done or a forecast week while the request sat in the queue is marked
+    Refused with the reason rather than silently skipped — the request records
+    what actually happened, line by line, the same way a cancel request does.
+
+    Deliberately `is_admin`, not `_is_pm_role`: a PM raising this cannot
+    approve it, which is the whole reason the roles were separated.
+    """
+    if not is_admin():
+        frappe.throw("Only an Admin can decide Direct Close requests.",
+                     frappe.PermissionError)
+    if action not in ("approve", "reject"):
+        frappe.throw("action must be 'approve' or 'reject'")
+    if not request or not frappe.db.exists("PO Direct Close Request", request):
+        frappe.throw("Direct Close request not found.")
+
+    doc = frappe.get_doc("PO Direct Close Request", request)
+    if doc.request_status != _DIRECT_CLOSE_PENDING:
+        frappe.throw(f"Request is '{doc.request_status}', not '{_DIRECT_CLOSE_PENDING}'.")
+
+    now = now_datetime()
+    clean_remark = (cstr(remark).strip()[:8000] if remark else None)
+
+    if action == "reject":
+        for line in doc.poids:
+            line.line_status = "Refused"
+            line.line_note = "Rejected by Admin"
+            log_status_event(line.po_dispatch, "direct_close_request",
+                             _DIRECT_CLOSE_PENDING, "Rejected by Admin",
+                             remark=remark, entity_name=doc.name, stamp_stage=False)
+        doc.request_status = "Rejected by Admin"
+        doc.approved_by = frappe.session.user
+        doc.approved_at = now
+        doc.admin_remark = clean_remark
+        doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        _notify_requester_direct_close(doc, "reject")
+        return {"request": doc.name, "request_status": doc.request_status,
+                "closed": 0, "refused": len(doc.poids)}
+
+    # The close runs as the person who asked for it, not the approver: every
+    # downstream stamp (Work Done.direct_close_by, PO Dispatch.direct_close_by,
+    # the status events) should name who did the work, and the request document
+    # already records who agreed to it.
+    # The requester's IM, not the approver's: an admin approving on someone
+    # else's behalf must not stamp themselves as the closer.
+    im_doc = doc.im if doc.im and frappe.db.exists("IM Master", doc.im) else None
+    closed_dt = get_datetime(cstr(doc.closed_on))
+    closed, refused = 0, []
+    for line in doc.poids:
+        problems = _direct_close_blockers(line.po_dispatch, doc.milestone)
+        if problems:
+            line.line_status = "Refused"
+            line.line_note = problems[0][:500]
+            refused.append({"poid": line.poid, "error": line.line_note})
+            continue
+        ok, info = _direct_close_one(
+            "pm", [], im_doc, line.po_dispatch,
+            doc.close_type, doc.subcontractor, cstr(doc.reason or "").strip(),
+            milestone=doc.milestone or None,
+            huawei_im=cstr(doc.huawei_im or "").strip(),
+            project_domain=cstr(doc.project_domain or "").strip(),
+            closed_dt=closed_dt,
+        )
+        if ok:
+            line.line_status = "Closed"
+            line.work_done = info.get("work_done")
+            closed += 1
+            log_status_event(line.po_dispatch, "direct_close_request",
+                             _DIRECT_CLOSE_PENDING, "Approved",
+                             remark=remark, entity_name=doc.name, stamp_stage=False)
+        else:
+            line.line_status = "Refused"
+            line.line_note = cstr(info.get("error"))[:500]
+            refused.append({"poid": line.poid, "error": line.line_note})
+
+    doc.request_status = "Approved"
+    doc.approved_by = frappe.session.user
+    doc.approved_at = now
+    doc.admin_remark = clean_remark
+    doc.closed_count = closed
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    _notify_requester_direct_close(doc, "approve")
+    return {"request": doc.name, "request_status": doc.request_status,
+            "closed": closed, "refused": refused}
+
+
+def _notify_requester_direct_close(doc, action):
+    try:
+        from inet_app.api.notifications import notify_requester_direct_close_decided
+        notify_requester_direct_close_decided(doc.name, action)
+    except Exception:
+        pass
+
+
+@frappe.whitelist()
+def cancel_direct_close_request(request):
+    """The requester (or an admin) withdraws a request that has not been decided."""
+    if not request or not frappe.db.exists("PO Direct Close Request", request):
+        frappe.throw("Direct Close request not found.")
+    doc = frappe.get_doc("PO Direct Close Request", request)
+    if doc.request_status != _DIRECT_CLOSE_PENDING:
+        frappe.throw(f"Request is '{doc.request_status}' and can no longer be withdrawn.")
+    if doc.requested_by != frappe.session.user and not is_admin():
+        frappe.throw("Only the requester or an Admin can withdraw this request.",
+                     frappe.PermissionError)
+    for line in doc.poids:
+        line.line_status = "Refused"
+        line.line_note = "Withdrawn"
+        log_status_event(line.po_dispatch, "direct_close_request",
+                         _DIRECT_CLOSE_PENDING, "Cancelled",
+                         entity_name=doc.name, stamp_stage=False)
+    doc.request_status = "Cancelled"
+    doc.approved_by = frappe.session.user
+    doc.approved_at = now_datetime()
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return {"request": doc.name, "request_status": doc.request_status}
+
+
+@frappe.whitelist()
+def list_direct_close_requests(status=None, limit=200):
+    """Direct Close requests with their lines — the admin inbox and the history.
+
+    An IM sees only their own. A PM sees every request (they raise them and
+    need the history) but cannot decide one; the frontend reads `can_decide`
+    rather than inferring it from the role, so the button and the server agree.
+    """
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    filters = {}
+    if status:
+        filters["request_status"] = status
+    if role == "im":
+        im_resolved, _, _ = resolve_im_for_session()
+        filters["im"] = im_resolved or "__none__"
+    rows = frappe.get_all(
+        "PO Direct Close Request", filters=filters,
+        fields=["name", "im", "requested_by", "requested_by_role", "request_status",
+                "poid_count", "total_amount", "closed_count", "approved_by",
+                "approved_at", "close_type", "subcontractor", "milestone",
+                "closed_on", "huawei_im", "project_domain",
+                "reason", "admin_remark", "creation"],
+        order_by="creation desc", limit_page_length=cint(limit) or 200,
+    ) or []
+    if not rows:
+        return {"rows": [], "can_decide": is_admin()}
+
+    line_map = {}
+    for ln in frappe.get_all(
+        "PO Direct Close Request Line",
+        filters={"parent": ["in", [r["name"] for r in rows]]},
+        fields=["parent", "po_dispatch", "poid", "po_no", "site_code", "project_code",
+                "item_code", "item_description", "qty", "line_amount", "line_status",
+                "work_done", "line_note"],
+        order_by="idx asc", limit_page_length=0,
+    ) or []:
+        line_map.setdefault(ln["parent"], []).append(ln)
+
+    for r in rows:
+        r["lines"] = line_map.get(r["name"], [])
+        r["poid_list"] = ", ".join(l["poid"] for l in r["lines"][:5])
+        if len(r["lines"]) > 5:
+            r["poid_list"] += f" +{len(r['lines']) - 5} more"
+        # A pending request carries its issues LIVE: a line can pick up a plan
+        # or a Work Done while the request waits, and the admin has to decide
+        # against the position now. Decided requests keep what happened.
+        if r.get("request_status") == _DIRECT_CLOSE_PENDING:
+            warn_n = hard_n = 0
+            for ln in r["lines"]:
+                issues = _direct_close_issues(ln["po_dispatch"], r.get("milestone"))
+                top = issues[0] if issues else None
+                ln["issue"] = top["short"] if top else None
+                ln["issue_detail"] = top["detail"] if top else None
+                ln["issue_severity"] = top["severity"] if top else None
+                if top and top["severity"] == "hard":
+                    hard_n += 1
+                elif top:
+                    warn_n += 1
+            r["warn_count"] = warn_n
+            r["blocked_count"] = hard_n
+    return {"rows": rows, "can_decide": is_admin()}
 
 
 @frappe.whitelist()

@@ -1,4 +1,6 @@
 import frappe
+
+from inet_app.roles import PM_LEVEL_ROLES, is_pm_only
 from inet_app.api.command_center import (
     LINE_DONE_STATUSES,
     excel_orm_filter,
@@ -466,25 +468,6 @@ def create_customer(payload):
     return {"name": doc.name, "customer_name": doc.customer_name}
 
 
-def sync_inet_pm_roles(doc, method=None):
-    """Give every INET PM user the INET Admin role as well (User.validate).
-
-    INET PM deliberately carries no permissions of its own — it marks an
-    admin whose sidebar hides Switch to Desk, Masters and the Certificate
-    Tracker. The access itself still comes from INET Admin, which owns the
-    app's 35 DocType permission rows and is what all this app's
-    `"INET Admin" in roles` checks test. Pairing the two here means an
-    administrator assigns ONE role and the PM's portal simply works, instead
-    of the role silently granting nothing.
-
-    Runs on validate (not after_insert) so the row is added before the save
-    that triggered it is written — no second save, no recursion.
-    """
-    roles = {r.role for r in (doc.get("roles") or [])}
-    if "INET PM" in roles and "INET Admin" not in roles:
-        doc.append("roles", {"role": "INET Admin"})
-
-
 @frappe.whitelist(allow_guest=True)
 def get_logged_user():
     user = frappe.session.user
@@ -501,7 +484,7 @@ def get_logged_user():
     # treated as unauthenticated for the portal instead, same as Guest.
     if "Stock Manager" in user_roles and not (
         user == "Administrator"
-        or set(user_roles) & {"System Manager", "INET Admin", "INET PIC", "INET IM", "INET Field Team"}
+        or set(user_roles) & (PM_LEVEL_ROLES | {"INET PIC", "INET IM", "INET Field Team"})
     ):
         return {"user": user, "full_name": full_name, "authenticated": False, "app_role": None}
 
@@ -509,26 +492,15 @@ def get_logged_user():
     im_name = None
     team_id = None
 
-    # INET PM is the admin portal with the desk/masters/certificate entries
-    # hidden — same role set underneath (see sync_inet_pm_roles), so it
-    # resolves to "admin" here and is distinguished only by the is_pm flag
-    # the sidebar reads. A user who is genuinely a System Manager /
-    # Administrator is never treated as a PM, even if also tagged INET PM:
-    # taking options away from someone who demonstrably has desk access
-    # would be hiding a door they already hold the key to.
-    is_pm = (
-        "INET PM" in user_roles
-        and user != "Administrator"
-        and "System Manager" not in user_roles
-    )
+    # INET PM is the admin portal with the desk / masters / certificate
+    # entries hidden. It is a role in its own right now — it no longer drags
+    # INET Admin along with it — so it resolves to the admin portal here on
+    # its own merit, and `is_pm` is what the sidebar hides entries by. The
+    # same rule decides who may approve a Direct Close; inet_app.roles.is_pm_only
+    # is the server-side twin of this flag, so portal and server agree.
+    is_pm = is_pm_only(user)
 
-    if user == "Administrator" or "System Manager" in user_roles or "INET Admin" in user_roles:
-        app_role = "admin"
-    elif "INET PM" in user_roles:
-        # Role assigned but the INET Admin pairing hasn't run yet (hook
-        # skipped, or roles edited directly in the DB). Treat as admin
-        # anyway so the portal is usable; sync_inet_pm_roles repairs the
-        # pairing on the user's next save, and migrate backfills it.
+    if set(user_roles) & PM_LEVEL_ROLES:
         app_role = "admin"
     elif "INET PIC" in user_roles:
         app_role = "pic"

@@ -12,6 +12,7 @@ import { missingFields, missingFieldsMessage } from "../../utils/requiredFields"
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import DirectCloseModal from "../../components/DirectCloseModal";
+import DirectCloseApprovalModal from "../../components/DirectCloseApprovalModal";
 import BackendAssignModal from "../../components/BackendAssignModal";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -406,6 +407,7 @@ export default function IMPOIntake() {
   const [transferBusy, setTransferBusy] = useState(false);
   const [transferError, setTransferError] = useState(null);
   const [pendingTransferIds, setPendingTransferIds] = useState(new Set());
+  const [pendingDirectCloseIds, setPendingDirectCloseIds] = useState(new Set());
 
   // ── Transfers tab (outgoing / incoming / history) ────────────────────
   const [transferListRows, setTransferListRows] = useState([]);
@@ -426,6 +428,16 @@ export default function IMPOIntake() {
   const [cancelSubTab, setCancelSubTab] = useState("pending"); // "pending" | "history"
   const [viewCancelTarget, setViewCancelTarget] = useState(null);
   const [cancelRefreshKey, setCancelRefreshKey] = useState(0);
+  // Direct Close approvals. Mirrors the cancel tab above — same shape, with
+  // one difference that matters: `dcCanDecide` comes from the server, because
+  // the approver is an ADMIN and a PM raising these cannot decide them.
+  const [dcListRows, setDcListRows] = useState([]);
+  const [dcCanDecide, setDcCanDecide] = useState(false);
+  const [dcListLoading, setDcListLoading] = useState(false);
+  const [dcListError, setDcListError] = useState(null);
+  const [dcSubTab, setDcSubTab] = useState("pending"); // "pending" | "history"
+  const [viewDcTarget, setViewDcTarget] = useState(null);
+  const [dcRefreshKey, setDcRefreshKey] = useState(0);
 
   // ── Dummy tab state ──────────────────────────────────────────────────
   const [dummyRows, setDummyRows] = useState([]);
@@ -507,7 +519,13 @@ export default function IMPOIntake() {
     setError(null);
     (async () => {
       try {
-        const TERMINAL_STATUSES = ["Backend Assigned", "Closed", "Cancelled", "Cancelled (in System)", "Completed", "Partially Submitted", "Submitted", "Partially Closed"];
+        // Anything past Dispatched has left intake. "Planned" belongs here as
+        // much as the rest: a line with a live Rollout Plan is being run by a
+        // team, so it is not awaiting dispatch — and offering it here let
+        // someone fill in a whole Direct Close form for a line the server was
+        // always going to refuse ("On the rollout track"). Only Pending and
+        // Dispatched remain, which is what this tab is for.
+        const TERMINAL_STATUSES = ["Planned", "Backend Assigned", "Closed", "Cancelled", "Cancelled (in System)", "Completed", "Partially Submitted", "Submitted", "Partially Closed"];
         const filters = [["im", "=", imName], ["dispatch_status", "not in", TERMINAL_STATUSES]];
         const portal = { has_target_month: "no" };
         if (searchDebounced.trim()) portal.search = searchDebounced.trim();
@@ -553,6 +571,23 @@ export default function IMPOIntake() {
     })();
     return () => { cancelled = true; };
   }, [imName, rowLimit, searchDebounced, modeFilter, projectFilter, duidFilter, refreshKey, columnFiltersDebounced]);
+
+  // ── Lines already in a Direct Close request awaiting an admin ────────
+  // Keyed on dcRefreshKey as well as imName, so the chips appear the moment a
+  // request is raised rather than on the next page load.
+  useEffect(() => {
+    if (!imName) { setPendingDirectCloseIds(new Set()); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const ids = await pmApi.listPendingDirectClosePoids();
+        if (!cancelled) setPendingDirectCloseIds(new Set(Array.isArray(ids) ? ids : []));
+      } catch {
+        if (!cancelled) setPendingDirectCloseIds(new Set());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, dcRefreshKey]);
 
   // ── Pending transfer requests (blocks re-selecting a POID already mid-request) ──
   useEffect(() => {
@@ -713,6 +748,30 @@ export default function IMPOIntake() {
     return () => { cancelled = true; };
   }, [imName, cancelRefreshKey]);
 
+  // ── Direct Close requests load ───────────────────────────────────────
+  // Not gated on the active tab, same reason as Cancels: the badge count has
+  // to be right before anyone opens the tab.
+  useEffect(() => {
+    if (!imName) return;
+    let cancelled = false;
+    setDcListLoading(true);
+    setDcListError(null);
+    (async () => {
+      try {
+        const res = await pmApi.listDirectCloseRequests();
+        if (!cancelled) {
+          setDcListRows(Array.isArray(res?.rows) ? res.rows : []);
+          setDcCanDecide(!!res?.can_decide);
+        }
+      } catch (err) {
+        if (!cancelled) setDcListError(err.message || "Failed to load Direct Close requests");
+      } finally {
+        if (!cancelled) setDcListLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, dcRefreshKey]);
+
   const transferOutgoingPending = useMemo(
     () => transferListRows.filter((r) => r._direction === "outgoing" && r.request_status === "Pending PM Approval"),
     [transferListRows],
@@ -740,6 +799,17 @@ export default function IMPOIntake() {
     [cancelListRows],
   );
   const cancelVisibleRows = cancelSubTab === "pending" ? cancelPendingRows : cancelHistoryRows;
+
+  const dcPendingRows = useMemo(
+    () => dcListRows.filter((r) => r.request_status === "Pending Admin Approval"),
+    [dcListRows],
+  );
+  const dcHistoryRows = useMemo(
+    () => dcListRows.filter((r) => r.request_status !== "Pending Admin Approval")
+      .sort((a, b) => new Date(b.approved_at || b.creation || 0) - new Date(a.approved_at || a.creation || 0)),
+    [dcListRows],
+  );
+  const dcVisibleRows = dcSubTab === "pending" ? dcPendingRows : dcHistoryRows;
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
   const tableScrollRef = useRef(null);
@@ -1121,47 +1191,6 @@ export default function IMPOIntake() {
     setShowDcModal(true);
   }
 
-  async function submitDirectClose() {
-    const noIm = missingImRows(rows, selected);
-    if (noIm.length > 0) {
-      setDcError(imRequiredMessage(noIm, "direct close"));
-      return;
-    }
-    const missing = missingFields({
-      "Close Type": dcType,
-      "Subcontractor": dcSubcontractor,
-      "Closing Date": dcClosedOn,
-    });
-    if (missing.length > 0) {
-      setDcError(missingFieldsMessage(missing, "direct close"));
-      return;
-    }
-    setDcBusy(true);
-    setDcError(null);
-    try {
-      const ids = Array.from(selected);
-      const milestone = dcMilestone !== "full" ? dcMilestone : null;
-      const res = await pmApi.directCloseDispatches(ids, dcType, dcSubcontractor, dcNote, milestone, {
-        huawei_im: dcHuaweiIm || undefined,
-        project_domain: dcProjectDomain || undefined,
-        closed_on: dcClosedOn,
-      });
-      const upd = res?.updated?.length || 0;
-      const err = res?.errors?.length || 0;
-      setShowDcModal(false);
-      setSelected(new Set());
-      setDcNote("");
-      setDcSubcontractor("");
-      setToastMsg(`Direct Close: ${upd} POID${upd !== 1 ? "s" : ""} closed${err ? `, ${err} failed` : ""}.`);
-      setTimeout(() => setToastMsg(null), 4500);
-      await load();
-    } catch (e) {
-      setDcError(e.message || "Failed to direct-close");
-    } finally {
-      setDcBusy(false);
-    }
-  }
-
   async function submitAssign() {
     if (!assignMonth || !assignWeek || selected.size === 0) return;
     setAssigning(true);
@@ -1397,6 +1426,7 @@ export default function IMPOIntake() {
           {tab === "overview" && <ExportExcelButton filename="all-poids" rows={ovFilteredRows} />}
           {tab === "transfers" && <ExportExcelButton filename="po-transfers" rows={transferVisibleRows} />}
           {tab === "cancels" && <ExportExcelButton filename="po-cancel-requests" rows={cancelVisibleRows} />}
+          {tab === "directcloses" && <ExportExcelButton filename="po-direct-close-requests" rows={dcVisibleRows} />}
           {tab === "dummy" && (
             <button
               type="button"
@@ -1408,9 +1438,9 @@ export default function IMPOIntake() {
             </button>
           )}
           <button type="button" className="btn-secondary"
-            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : tab === "transfers" ? loadTransfers : tab === "cancels" ? loadCancels : load}
-            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : ovLoading}>
-            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : ovLoading) ? "Loading…" : "Refresh"}
+            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : tab === "transfers" ? loadTransfers : tab === "cancels" ? loadCancels : tab === "directcloses" ? (() => setDcRefreshKey((k) => k + 1)) : load}
+            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : tab === "directcloses" ? dcListLoading : ovLoading}>
+            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : tab === "directcloses" ? dcListLoading : ovLoading) ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
@@ -1435,6 +1465,12 @@ export default function IMPOIntake() {
           Cancels
           {cancelPendingRows.length > 0 && tab !== "cancels" && (
             <span style={{ marginLeft: 6, background: "#fee2e2", color: "#b91c1c", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{cancelPendingRows.length}</span>
+          )}
+        </button>
+        <button type="button" style={tabStyle(tab === "directcloses")} onClick={() => setTab("directcloses")}>
+          Direct Close
+          {dcPendingRows.length > 0 && tab !== "directcloses" && (
+            <span style={{ marginLeft: 6, background: "#fef3c7", color: "#92400e", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{dcPendingRows.length}</span>
           )}
         </button>
       </div>
@@ -1635,7 +1671,38 @@ export default function IMPOIntake() {
         </div>
       )}
 
+      {tab === "directcloses" && (
+        <div className="toolbar">
+          <div role="tablist" style={{ display: "inline-flex", padding: 3, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", flexShrink: 0 }}>
+            {[
+              { id: "pending", label: "Pending Approval", count: dcPendingRows.length },
+              { id: "history", label: "History" },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setDcSubTab(opt.id)}
+                style={{
+                  padding: "5px 14px", fontSize: "0.8rem", fontWeight: dcSubTab === opt.id ? 700 : 500,
+                  border: "none", borderRadius: 6, cursor: "pointer",
+                  background: dcSubTab === opt.id ? "#fff" : "transparent",
+                  color: dcSubTab === opt.id ? "#0f172a" : "#64748b",
+                  boxShadow: dcSubTab === opt.id ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                {opt.label}
+                {!!opt.count && (
+                  <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 16, height: 16, padding: "0 5px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#f59e0b", color: "#fff" }}>{opt.count}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {tab === "cancels" && cancelListError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {cancelListError}</div>}
+      {tab === "directcloses" && dcListError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {dcListError}</div>}
       {tab === "intake" && error && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {error}</div>}
       {tab === "dummy" && dummyError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {dummyError}</div>}
       {tab === "overview" && ovError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {ovError}</div>}
@@ -1644,8 +1711,8 @@ export default function IMPOIntake() {
       {/* ── ONE page-content always rendered (fixes tab-switch CSS) ────── */}
       <div className="page-content">
         <DataTableWrapper scrollRef={tableScrollRef}
-          loadedCount={tab === "intake" ? (loading ? null : intakeDisplayedCount) : tab === "dummy" ? (dummyLoading ? null : Math.min(dummyRows.length, dummyDisplayLimit)) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : tab === "cancels" ? (cancelListLoading ? null : cancelVisibleRows.length) : (ovLoading ? null : Math.min(ovRows.length, ovDisplayLimit))}
-          filteredCount={tab === "intake" ? intakeDisplayedCount : tab === "dummy" ? dummyDisplayedCount : tab === "transfers" ? transferVisibleRows.length : tab === "cancels" ? cancelVisibleRows.length : ovDisplayedCount}
+          loadedCount={tab === "intake" ? (loading ? null : intakeDisplayedCount) : tab === "dummy" ? (dummyLoading ? null : Math.min(dummyRows.length, dummyDisplayLimit)) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : tab === "cancels" ? (cancelListLoading ? null : cancelVisibleRows.length) : tab === "directcloses" ? (dcListLoading ? null : dcVisibleRows.length) : (ovLoading ? null : Math.min(ovRows.length, ovDisplayLimit))}
+          filteredCount={tab === "intake" ? intakeDisplayedCount : tab === "dummy" ? dummyDisplayedCount : tab === "transfers" ? transferVisibleRows.length : tab === "cancels" ? cancelVisibleRows.length : tab === "directcloses" ? dcVisibleRows.length : ovDisplayedCount}
           filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : (tab === "transfers" || tab === "cancels") ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
           loading={
             tab === "intake" ? (loading && rows.length > 0) :
@@ -1717,6 +1784,78 @@ export default function IMPOIntake() {
                         <td>
                           <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "3px 10px" }}
                             onClick={() => setViewCancelTarget(r)}>View</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+          ) : tab === "directcloses" ? (
+              <table key="im-po-directcloses" className="data-table" data-table-key="im-po-directcloses">
+                <thead>
+                  <tr>
+                    <th>Request</th>
+                    <th style={{ textAlign: "right" }}>POIDs</th>
+                    <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    <th>Close</th>
+                    <th>Subcontractor</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: "right" }}>Closed</th>
+                    <th style={{ minWidth: 180 }}>Reason</th>
+                    <th>Raised by</th>
+                    <th>Raised</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {dcVisibleRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} style={{ padding: 0 }}>
+                        {dcListLoading ? (
+                          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+                        ) : (
+                          <div className="empty-state">
+                            <div className="empty-icon">🔒</div>
+                            <h3>{dcSubTab === "pending" ? "Nothing waiting for approval" : "No Direct Close history"}</h3>
+                            <p>{dcSubTab === "pending"
+                              ? "Select POIDs on PO Intake and use Direct Close to raise one. An Admin decides it."
+                              : "Decided requests show up here."}</p>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : dcVisibleRows.map((r) => {
+                    const st = (r.request_status || "");
+                    const tone = st === "Approved" ? { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" }
+                      : st.startsWith("Rejected") ? { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" }
+                      : st === "Cancelled" ? { bg: "#f1f5f9", fg: "#475569", bd: "#cbd5e1" }
+                      : { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" };
+                    return (
+                      <tr key={r.name}>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{r.name}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{r.poid_count ?? (r.lines || []).length}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.total_amount || 0)}</td>
+                        <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>{r.close_type || "—"}{r.milestone ? ` · ${r.milestone}` : ""}</td>
+                        <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.subcontractor || ""}>{r.subcontractor || "—"}</td>
+                        <td>
+                          <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, whiteSpace: "nowrap", background: tone.bg, color: tone.fg, border: `1px solid ${tone.bd}` }}>{st}</span>
+                          {st === "Pending Admin Approval" && (r.blocked_count > 0 || r.warn_count > 0) && (
+                            <span style={{ marginLeft: 6, fontSize: "0.68rem", fontWeight: 700, color: r.blocked_count > 0 ? "#b91c1c" : "#b45309" }}>
+                              {r.blocked_count > 0 ? `${r.blocked_count} blocked` : `${r.warn_count} to check`}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: "right" }}>{st === "Approved" ? `${r.closed_count ?? 0} of ${r.poid_count ?? 0}` : "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#475569", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.reason || ""}>{r.reason || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>{r.requested_by_role || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+                          {r.creation ? new Date(r.creation).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        </td>
+                        <td>
+                          <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "3px 10px" }}
+                            onClick={() => setViewDcTarget(r)}>
+                            {st === "Pending Admin Approval" && dcCanDecide ? "Decide" : "View"}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -2011,16 +2150,40 @@ export default function IMPOIntake() {
                   </tr>
                 </thead>
                 <tbody>
-                  {mountedRows.map((row, idx) => (
-                    <tr key={row.name} data-doc-name={row.name} className={selected.has(row.name) ? "row-selected" : ""} onClick={() => toggleRow(row.name)} style={idx >= intakeDisplayedCount ? { display: "none" } : { cursor: "pointer", background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined }}>
+                  {mountedRows.map((row, idx) => {
+                    // A line waiting on a transfer or a Direct Close decision is
+                    // tinted across the WHOLE row, with a coloured stripe down
+                    // its left edge. The chip beside the POID says which, but
+                    // the POID column is narrow at default width and the chip
+                    // is the first thing to be cut off — the tint is the part
+                    // that survives. Deliberately not the amber used for dummy
+                    // POs elsewhere, which would read as the same thing.
+                    const xferPending = pendingTransferIds.has(row.name);
+                    const closePending = pendingDirectCloseIds.has(row.name);
+                    const pendingBg = closePending ? "rgba(14,165,233,0.10)"
+                      : xferPending ? "rgba(168,85,247,0.10)"
+                      : row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.04)" : undefined;
+                    const pendingTitle = closePending
+                      ? "Direct Close requested — waiting for an Admin. This line cannot be transferred until that is decided."
+                      : xferPending
+                      ? "Transfer requested — waiting for a PM. This line cannot be direct-closed until that is decided."
+                      : undefined;
+                    return (
+                    <tr key={row.name} data-doc-name={row.name} title={pendingTitle} className={selected.has(row.name) ? "row-selected" : ""} onClick={() => toggleRow(row.name)} style={idx >= intakeDisplayedCount ? { display: "none" } : { cursor: "pointer", background: pendingBg, boxShadow: (closePending || xferPending) ? `inset 3px 0 0 ${closePending ? "#0284c7" : "#9333ea"}` : undefined }}>
                       <td onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(row.name)} onChange={() => toggleRow(row.name)} />
                       </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>
                         {row.poid || row.name}
                         {pendingTransferIds.has(row.name) && (
-                          <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#fef3c7", color: "#b45309" }}>
+                          <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#f3e8ff", color: "#7e22ce" }}>
                             Transfer Pending
+                          </span>
+                        )}
+                        {pendingDirectCloseIds.has(row.name) && (
+                          <span title="A Direct Close request for this line is waiting for an Admin to decide."
+                                style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#e0f2fe", color: "#0369a1" }}>
+                            Close Pending
                           </span>
                         )}
                       </td>
@@ -2062,7 +2225,8 @@ export default function IMPOIntake() {
                         <button type="button" className="btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }} onClick={() => setIntakeViewRow(row)}>View</button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
                 {rows.length > 0 && (
                   <tfoot>
@@ -2834,7 +2998,11 @@ export default function IMPOIntake() {
         onDone={async (msg) => {
           setSelected(new Set());
           setToastMsg(msg);
-          setTimeout(() => setToastMsg(null), 4500);
+          setTimeout(() => setToastMsg(null), 8000);
+          // Both: `load` refreshes the intake rows, `dcRefreshKey` refreshes the
+          // Direct Close tab and the "Close Pending" chips. Without the second
+          // the new request only appeared after a page reload.
+          setDcRefreshKey((k) => k + 1);
           await load();
         }}
       />
@@ -2984,6 +3152,24 @@ export default function IMPOIntake() {
       )}
 
       {/* ── TRANSFER REQUEST DETAIL (POIDs involved) ─────────────────────── */}
+      {viewDcTarget && (
+        <DirectCloseApprovalModal
+          request={viewDcTarget}
+          canDecide={dcCanDecide}
+          onClose={() => setViewDcTarget(null)}
+          onDone={async (res, action) => {
+            setViewDcTarget(null);
+            setDcRefreshKey((k) => k + 1);
+            // A close writes Work Done and moves the line off Dispatched, so
+            // the intake list behind this modal is now stale.
+            if (action === "approve") setRefreshKey((k) => k + 1);
+            setToastMsg(action === "approve"
+              ? `Approved — ${res?.closed ?? 0} POID${(res?.closed ?? 0) !== 1 ? "s" : ""} closed${res?.refused?.length ? `, ${res.refused.length} refused` : ""}.`
+              : "Direct Close request rejected.");
+          }}
+        />
+      )}
+
       {viewCancelTarget && (
         <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
              onClick={() => setViewCancelTarget(null)}>

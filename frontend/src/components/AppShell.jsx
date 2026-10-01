@@ -281,17 +281,24 @@ export default function AppShell() {
     const poll = async () => {
       try {
         if (role === "admin") {
-          const [teamList, cancelList, transferList, poidCancelList] = await Promise.all([
+          const [teamList, cancelList, transferList, poidCancelList, directCloseRes] = await Promise.all([
             pmApi.listTeamAllocationRequests("pending_pm"),
             pmApi.listPendingCancelRequests("Pending PM Approval"),
             pmApi.listPoTransferRequests("pending_pm"),
             pmApi.listPoCancelRequests("Pending PM Approval").catch(() => []),
+            // "Pending Admin Approval", not PM — a Direct Close is the one
+            // request in this inbox a PM cannot decide. The endpoint answers
+            // `can_decide` for the caller, so a PM's dot does not count work
+            // they cannot do anything about.
+            pmApi.listDirectCloseRequests("Pending Admin Approval").catch(() => ({ rows: [], can_decide: false })),
           ]);
           const teamCount = (Array.isArray(teamList) ? teamList.length : 0);
           const cancelCount = (Array.isArray(cancelList) ? cancelList.length : 0);
           const transferCount = (Array.isArray(transferList) ? transferList.length : 0);
           const poidCancelCount = (Array.isArray(poidCancelList) ? poidCancelList.length : 0);
-          if (!cancelled) setApprovalDotCount(teamCount + cancelCount + transferCount + poidCancelCount);
+          const directCloseCount = directCloseRes?.can_decide
+            ? (Array.isArray(directCloseRes?.rows) ? directCloseRes.rows.length : 0) : 0;
+          if (!cancelled) setApprovalDotCount(teamCount + cancelCount + transferCount + poidCancelCount + directCloseCount);
         } else {
           const list = await pmApi.listTeamAllocationRequests("incoming");
           const pending = (Array.isArray(list) ? list : []).filter(

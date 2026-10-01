@@ -6,6 +6,7 @@ plus an optional ``pic_status_ms2`` and the milestone amounts that flow into
 the Cash Flow Summary dashboard.
 """
 
+from inet_app.roles import ADMIN_NOTIFY_ROLES, PM_LEVEL_ROLES
 import frappe
 from frappe.utils import cint, flt, getdate, nowdate
 from inet_app.api.notifications import _make_notification, _notify_role
@@ -182,7 +183,7 @@ LEFT JOIN `tabSubcontract Master` sm_pd ON sm_pd.name = pd.contract
 
 def _pic_role_or_throw():
     roles = set(frappe.get_roles(frappe.session.user))
-    required = {"Administrator", "System Manager", "INET Admin", "INET PIC"}
+    required = PM_LEVEL_ROLES | {"INET PIC"}
     if not roles & required:
         user_roles = ", ".join(sorted(roles - {"All", "Guest"})) or "none"
         frappe.throw(
@@ -1021,9 +1022,12 @@ def list_invoice_detail_rows(portal_filters=None, limit=500, _options=None, _sum
     return {"rows": rows, "total_count": total_count}
 
 
-def _admin_role_or_throw():
+def _pm_level_or_throw():
+    # PM level, not admin-only: a PM could reach this before INET PM and
+    # INET Admin were split, and the split was not meant to take anything
+    # away from a PM except approving a Direct Close.
     roles = set(frappe.get_roles(frappe.session.user))
-    required = {"Administrator", "System Manager", "INET Admin"}
+    required = PM_LEVEL_ROLES
     if not roles & required:
         frappe.throw("Not permitted.", frappe.PermissionError)
 
@@ -1040,7 +1044,7 @@ def run_legacy_invoice_import():
     for the result. Safe to click more than once; re-running just re-applies
     the same CSV.
     """
-    _admin_role_or_throw()
+    _pm_level_or_throw()
     frappe.cache().delete_value(_LEGACY_INVOICE_IMPORT_CACHE_KEY)
     frappe.enqueue(
         "inet_app.api.pic._run_legacy_invoice_import_job",
@@ -1058,7 +1062,7 @@ def _run_legacy_invoice_import_job():
 
 @frappe.whitelist()
 def get_legacy_invoice_import_status():
-    _admin_role_or_throw()
+    _pm_level_or_throw()
     result = frappe.cache().get_value(_LEGACY_INVOICE_IMPORT_CACHE_KEY)
     return {"done": result is not None, "result": result}
 
@@ -2776,7 +2780,7 @@ def get_pic_capability():
     roles = set(frappe.get_roles(frappe.session.user))
     return {
         "is_pic": bool(roles & {"INET PIC"}),
-        "is_admin": bool(roles & {"Administrator", "System Manager", "INET Admin"}),
+        "is_admin": bool(roles & PM_LEVEL_ROLES),
     }
 
 
@@ -3246,7 +3250,7 @@ def on_sales_invoice_submit(doc, method):
         for wd_name in wd_names:
             frappe.db.set_value("Work Done", wd_name, "billing_status", "Invoiced")
 
-    _notify_role("INET Admin",
+    _notify_role(ADMIN_NOTIFY_ROLES,
         f"[INFO] Sales Invoice {doc.name} submitted",
         "Sales Invoice", doc.name)
 

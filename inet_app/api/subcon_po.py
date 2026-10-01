@@ -23,6 +23,7 @@ Key differences from the sales side, all deliberate:
   masters produce a supplier PO — INET-type contracts are own-crew work.
 """
 
+from inet_app.roles import ADMIN_NOTIFY_ROLES, PM_LEVEL_ROLES
 import frappe
 from frappe.utils import add_days, cint, flt, getdate, nowdate
 from inet_app.api.subcontractor_sync import LAST_VISIT_SUBCONTRACTOR_SQL
@@ -1284,7 +1285,7 @@ def _notify_missing_supplier(missing_supplier):
         from inet_app.api.notifications import _notify_role
         contracts = ", ".join(sorted(missing_supplier))
         _notify_role(
-            "INET Admin",
+            ADMIN_NOTIFY_ROLES,
             f"[ACTION] Subcon PO blocked — no Supplier linked on: {contracts}",
             "Subcontract Master", sorted(missing_supplier)[0],
         )
@@ -2098,7 +2099,7 @@ def get_subcon_po_capability():
     )
     return {
         "is_pic": bool(roles & {"INET PIC"}),
-        "is_admin": bool(roles & {"Administrator", "System Manager", "INET Admin"}),
+        "is_admin": bool(roles & PM_LEVEL_ROLES),
         "purchase_tax_template": frappe.db.get_single_value("INET Settings", "purchase_tax_template"),
         "schedule_days": cint(frappe.db.get_single_value("INET Settings", "subcon_po_schedule_days")) or 30,
         "contracts_without_supplier": unlinked,

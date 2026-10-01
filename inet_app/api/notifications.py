@@ -1,4 +1,7 @@
 import frappe
+from frappe.utils import flt
+
+from inet_app.roles import ADMIN_NOTIFY_ROLES
 
 
 # ---------------------------------------------------------------------------
@@ -92,11 +95,20 @@ def _make_notification(for_user, subject, doctype=None, docname=None, link=None)
 
 
 def _users_by_role(role):
-	return frappe.db.get_all(
+	"""Users holding any of ``role`` — a single role name or an iterable.
+
+	De-duplicated, because a user can hold several of the roles passed (a PM
+	who is also an admin would otherwise be notified twice).
+	"""
+	roles = [role] if isinstance(role, str) else list(role or [])
+	if not roles:
+		return []
+	users = frappe.db.get_all(
 		"Has Role",
-		filters={"role": role, "parenttype": "User"},
+		filters={"role": ["in", roles], "parenttype": "User"},
 		pluck="parent",
 	)
+	return list(dict.fromkeys(users))
 
 
 def _notify_role(role, subject, doctype=None, docname=None, link=None):
@@ -284,7 +296,7 @@ def on_rollout_plan_update(doc, method=None):
 
 	if doc.cancel_request_status == "Pending PM Approval":
 		_notify_role(
-			"INET Admin",
+			ADMIN_NOTIFY_ROLES,
 			f"[ALERT] Cancel requested — {label}",
 			"Rollout Plan", doc.name,
 			link="/pms/dashboard",
@@ -371,7 +383,7 @@ def on_huawei_plan_insert(doc, method=None):
 		f"[INFO] Huawei plan imported — review warehouse",
 		"Huawei Outbound Plan", doc.name,
 		link="/pms/im-dashboard")
-	_notify_role("INET Admin",
+	_notify_role(ADMIN_NOTIFY_ROLES,
 		f"[INFO] Huawei plan imported — review warehouse",
 		"Huawei Outbound Plan", doc.name,
 		link="/pms/dashboard")
@@ -385,7 +397,7 @@ def notify_huawei_import_done(import_name, new_rows, total_rows):
 	)
 	_notify_role("INET IM", subject, "Huawei Outbound Import", import_name,
 		link="/pms/im-material-request")
-	_notify_role("INET Admin", subject, "Huawei Outbound Import", import_name,
+	_notify_role(ADMIN_NOTIFY_ROLES, subject, "Huawei Outbound Import", import_name,
 		link="/pms/im-material-request")
 
 
@@ -469,7 +481,7 @@ def notify_pm_allocation_pending(request_name):
 	from_label = _im_label(req.from_im)
 	to_label = _im_label(req.to_im)
 	subject = f"[ALERT] Team transfer awaiting approval — team {req.team} from {from_label} to {to_label}"
-	for user in _users_by_role("INET Admin"):
+	for user in _users_by_role(ADMIN_NOTIFY_ROLES):
 		_make_notification(user, subject, "Team Allocation Request", request_name, link="/pms/approvals")
 
 
@@ -539,7 +551,7 @@ def notify_pm_po_transfer_requested(request_name):
 	from_label = _im_label(req.from_im)
 	to_label = _im_label(req.to_im)
 	subject = f"[ALERT] POID transfer awaiting approval — {req.poid_count} POID(s) from {from_label} to {to_label}"
-	for user in _users_by_role("INET Admin"):
+	for user in _users_by_role(ADMIN_NOTIFY_ROLES):
 		_make_notification(user, subject, "PO Transfer Request", request_name, link="/pms/approvals")
 
 
@@ -586,7 +598,7 @@ def notify_pm_cancel_plan_requested(rollout_plan_name):
 	po = _po_from_rollout_plan(rollout_plan_name)
 	label = _po_label(po) or rollout_plan_name
 	subject = f"[ALERT] Plan cancel requested — {label}"
-	for user in _users_by_role("INET Admin"):
+	for user in _users_by_role(ADMIN_NOTIFY_ROLES):
 		_make_notification(user, subject, "Rollout Plan", rollout_plan_name, link="/pms/approvals")
 
 
@@ -672,7 +684,7 @@ def send_daily_work_done_summary():
     summary = "  ·  ".join(parts)
     subject = f"[INFO] {total} Work Done recorded today — {summary}"
 
-    for user in _users_by_role("INET Admin"):
+    for user in _users_by_role(ADMIN_NOTIFY_ROLES):
         _make_notification(user, subject, link="/pms/work-done")
 
 
@@ -765,3 +777,40 @@ def notify_pickup_reminders():
 			"Material Request", r.name,
 			link="/pms/im-material-request",
 		)
+
+
+# ── Direct Close approval ────────────────────────────────────────────────
+# The approver is an ADMIN, not a PM — a PM raising one of these cannot decide
+# it — so the alert goes to INET Admin alone, not ADMIN_NOTIFY_ROLES.
+
+def notify_admin_direct_close_requested(request_name):
+	req = frappe.db.get_value(
+		"PO Direct Close Request", request_name,
+		["name", "poid_count", "total_amount", "requested_by", "requested_by_role"],
+		as_dict=True,
+	)
+	if not req:
+		return
+	who = frappe.db.get_value("User", req.requested_by, "full_name") or req.requested_by
+	subject = (f"[ALERT] Direct Close awaiting approval — {req.poid_count} POID(s), "
+			   f"SAR {flt(req.total_amount):,.2f} from {who}")
+	for user in _users_by_role("INET Admin"):
+		_make_notification(user, subject, "PO Direct Close Request", request_name,
+						   link="/pms/im-po-intake")
+
+
+def notify_requester_direct_close_decided(request_name, action):
+	req = frappe.db.get_value(
+		"PO Direct Close Request", request_name,
+		["name", "poid_count", "closed_count", "requested_by", "request_status"],
+		as_dict=True,
+	)
+	if not req or not req.requested_by:
+		return
+	if action == "approve":
+		subject = (f"[INFO] Direct Close approved — {req.closed_count} of "
+				   f"{req.poid_count} POID(s) closed")
+	else:
+		subject = f"[ALERT] Direct Close rejected — {req.poid_count} POID(s)"
+	_make_notification(req.requested_by, subject, "PO Direct Close Request",
+					   request_name, link="/pms/im-po-intake")

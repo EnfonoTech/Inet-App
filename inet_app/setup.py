@@ -265,16 +265,20 @@ def _ensure_item_activity_type_field():
         pass
 
 
-# Roles that carry Frappe Desk access. Everything except INET PM, which is
-# the portal-only admin variant — though a PM also holds INET Admin (see
-# _pair_pm_users_with_admin), so this flag is not what keeps them out of
-# Desk; the sidebar simply doesn't offer the link.
+# Roles that carry Frappe Desk access — INET PM included, and it has to be.
+# Frappe's own login path branches on desk access: a user with none gets
+# "No App" instead of "Logged In". A PM used to clear that bar through INET
+# Admin, which was added alongside INET PM automatically; now that the two
+# roles are separate, a PM-only account would fail to log in at all without
+# this.
 #
 # Desk access and the "Switch to Desk" link are separate decisions: a field
 # user has desk access here but no link in the portal (AppShell's
 # canSwitchToDesk), because Desk is not part of their day-to-day job even
-# though the account is allowed there.
-DESK_ACCESS_ROLES = {"INET Admin", "INET IM", "INET Field Team", "INET PIC", "INET HR"}
+# though the account is allowed there. The same is true of a PM — the
+# sidebar simply doesn't offer the link.
+DESK_ACCESS_ROLES = {"INET Admin", "INET IM", "INET Field Team", "INET PIC",
+                     "INET HR", "INET PM"}
 
 
 def _ensure_inet_roles():
@@ -299,7 +303,7 @@ def _ensure_inet_roles():
             pass
     frappe.db.commit()
 
-    _pair_pm_users_with_admin()
+    _mirror_admin_permissions_to_pm()
 
     # Enforced on every migrate, not just at creation: these roles predate the
     # list above, and Frappe's own login path branches on desk access (a user
@@ -312,36 +316,52 @@ def _ensure_inet_roles():
     _ensure_pic_permissions()
 
 
-def _pair_pm_users_with_admin():
-    """Backfill: every INET PM user also holds INET Admin.
+def _mirror_admin_permissions_to_pm():
+    """Give INET PM whatever INET Admin has, on every migrate.
 
-    INET PM is the SAME portal as INET Admin with two sidebar entries hidden
-    (Switch to Desk, Masters) and no Certificate Tracker link — it is a
-    presentation variant, not a narrower permission set. Rather than mirror
-    INET Admin's 35 DocType permission rows onto a second role (which would
-    then have to be kept in sync forever, and would still leave every
-    `"INET Admin" in roles` check in this app failing for a PM), a PM user
-    simply holds both roles. INET PM then only has to answer one question:
-    "should this admin see the desk/masters/certificate options?"
+    INET PM used to carry no permissions at all: a ``User.validate`` hook
+    simply added INET Admin alongside it, so a PM *was* an admin and every
+    ``"INET Admin" in roles`` test in the app passed for them. That stopped
+    working the moment something had to be admin-only — you cannot withhold
+    from a PM a power they hold through a role they are always given — so the
+    two are now separate roles. See ``inet_app.roles``.
 
-    Kept idempotent so it can run on every migrate. See
-    inet_app.api.project_management.sync_inet_pm_roles for the on-save hook
-    that keeps new/edited users paired.
+    The objection to a second role was that its permissions would need keeping
+    in sync by hand forever. They do not: the standard rows sit beside INET
+    Admin's in each doctype's own JSON, and the Custom DocPerm rows are
+    derived here. Nothing to remember when a permission changes.
+
+    Only Custom DocPerm is mirrored. A doctype still in standard mode is
+    covered by its JSON, and adding a Custom DocPerm row to it would flip the
+    whole doctype into Custom mode and silently discard every other role's
+    standard rows — the trap ``_ensure_pic_permissions`` documents above.
     """
-    pm_users = frappe.get_all(
-        "Has Role", filters={"role": "INET PM", "parenttype": "User"},
-        fields=["parent"], ignore_permissions=True,
-    )
-    for row in pm_users:
-        user = row.parent
-        if frappe.db.exists("Has Role", {"parent": user, "role": "INET Admin", "parenttype": "User"}):
+    if not (frappe.db.exists("Role", "INET PM") and frappe.db.exists("Role", "INET Admin")):
+        return
+    fields = ["parent", "permlevel", "read", "write", "create", "delete",
+              "submit", "cancel", "amend", "report", "export", "import",
+              "share", "print", "email", "if_owner"]
+    for row in frappe.db.get_all("Custom DocPerm", filters={"role": "INET Admin"},
+                                 fields=fields):
+        perms = {k: v for k, v in row.items() if k not in ("parent", "permlevel")}
+        existing = frappe.db.get_value(
+            "Custom DocPerm",
+            {"parent": row.parent, "role": "INET PM", "permlevel": row.permlevel},
+            "name",
+        )
+        if existing:
+            frappe.db.set_value("Custom DocPerm", existing, perms)
             continue
         try:
-            doc = frappe.get_doc("User", user)
-            doc.append("roles", {"role": "INET Admin"})
-            doc.save(ignore_permissions=True)
+            frappe.get_doc({
+                "doctype": "Custom DocPerm",
+                "parent": row.parent,
+                "role": "INET PM",
+                "permlevel": row.permlevel,
+                **perms,
+            }).insert(ignore_permissions=True)
         except Exception:
-            # Best-effort — a single bad user must not fail the whole migrate.
+            # Best-effort — one bad row must not fail the whole migrate.
             pass
     frappe.db.commit()
 

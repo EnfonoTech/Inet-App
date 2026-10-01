@@ -36,6 +36,30 @@ export default function DirectCloseModal({
   // Asked for here rather than passed in, so every caller gets the same answer
   // without having to know the capability exists.
   const [canMilestoneClose, setCanMilestoneClose] = useState(false);
+  // Which of the selected lines cannot be closed, asked BEFORE the form is
+  // filled in. PO Intake lists PO Intake Lines by their own `po_line_status`,
+  // which nothing advances when a line is planned — so a line already on the
+  // rollout track still appears there, and used to let someone fill in the
+  // whole form before being told. The preflight re-runs on the milestone
+  // choice because "MS1 already closed" depends on it.
+  const [dcPreflight, setDcPreflight] = useState(null);
+  useEffect(() => {
+    if (!open || rows.length === 0) { setDcPreflight(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await pmApi.previewDirectClose(
+          rows.map((r) => r.name), dcMilestone !== "full" ? dcMilestone : null);
+        if (!cancelled) setDcPreflight(res);
+      } catch {
+        // Best-effort: the submit re-checks everything server-side anyway, so a
+        // failed preflight must not stop someone trying.
+        if (!cancelled) setDcPreflight(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, rows, dcMilestone]);
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -102,9 +126,31 @@ export default function DirectCloseModal({
           project_domain: dcProjectDomain || undefined,
           closed_on: dcClosedOn,
         });
-      const upd = res?.updated?.length || 0;
-      const err = res?.errors?.length || 0;
-      await onDone?.(`Direct Close: ${upd} POID${upd !== 1 ? "s" : ""} closed${err ? `, ${err} failed` : ""}.`, res);
+      // A Direct Close is now a REQUEST an admin decides, so "0 closed" is the
+      // normal, successful outcome for everyone but an admin — the old message
+      // read it as a failure and, worse, threw away the per-line reason. The
+      // reasons are the only thing that tells the user what to do next, so a
+      // fully-blocked batch keeps the dialog open and shows them in place
+      // rather than closing behind a toast.
+      const blocked = res?.blocked || res?.errors || [];
+      const closed = res?.closed ?? (res?.updated?.length || 0);
+      if (!res?.created) {
+        setDcError(
+          blocked.length
+            ? `Nothing could be closed:\n${blocked.map((b) => `• ${b.poid}: ${b.error}`).join("\n")}`
+            : "Nothing could be closed.",
+        );
+        return;
+      }
+      const tail = blocked.length
+        ? ` ${blocked.length} line${blocked.length !== 1 ? "s" : ""} left out: ${blocked.map((b) => `${b.poid} (${b.error})`).join("; ")}`
+        : "";
+      await onDone?.(
+        res?.auto_approved
+          ? `Direct Close: ${closed} POID${closed !== 1 ? "s" : ""} closed.${tail}`
+          : `Direct Close requested — ${res.poid_count} POID${res.poid_count !== 1 ? "s" : ""} waiting for Admin approval (${res.request}).${tail}`,
+        res,
+      );
       onClose?.();
     } catch (e) {
       setDcError(e.message || "Failed to direct-close");
@@ -112,6 +158,11 @@ export default function DirectCloseModal({
       setDcBusy(false);
     }
   }
+
+  // Named here, not inline in the JSX, so the banner and the button cannot
+  // disagree about how many lines are actually closable.
+  const dcBlocked = (dcPreflight?.rows || []).filter((r) => r.blocked);
+  const dcClosable = rows.length - dcBlocked.length;
 
   if (!open) return null;
   return (
@@ -123,7 +174,24 @@ export default function DirectCloseModal({
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Direct Close <span style={{ color: "#64748b", fontWeight: 500 }}>· {rows.length} POID{rows.length !== 1 ? "s" : ""}</span></h3>
               <button type="button" onClick={() => onClose?.()} disabled={dcBusy} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
             </div>
-            {dcError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem" }}><span>!</span> {dcError}</div>}
+            {dcError && <div className="notice error" style={{ marginBottom: 10, fontSize: "0.82rem", whiteSpace: "pre-line" }}><span>!</span> {dcError}</div>}
+            {dcBlocked.length > 0 && (
+              <div className={dcClosable === 0 ? "notice error" : "notice"} style={{ marginBottom: 10, fontSize: "0.8rem" }}>
+                <span>{dcClosable === 0 ? "!" : "⚠"}</span>
+                <div>
+                  <strong>{dcBlocked.length} of {rows.length}</strong> cannot be closed
+                  {dcClosable === 0 ? " — nothing here to close." : " and will be left out:"}
+                  <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                    {dcBlocked.slice(0, 6).map((b) => (
+                      <li key={b.po_dispatch || b.poid} title={b.issues?.[0]?.detail || ""}>
+                        <span style={{ fontFamily: "monospace" }}>{b.poid}</span> — {b.issues?.[0]?.short}
+                      </li>
+                    ))}
+                    {dcBlocked.length > 6 && <li>+{dcBlocked.length - 6} more</li>}
+                  </ul>
+                </div>
+              </div>
+            )}
             {rows.length > 0 && (
               <div style={{ fontSize: "0.76rem", color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12, maxHeight: 140, overflowY: "auto" }}>
                 {rows.map((r) => (
@@ -263,8 +331,11 @@ export default function DirectCloseModal({
               {/* Not disabled on a missing field: submitDirectClose names what
                   is missing at the top of this popup, and a dead button with no
                   explanation is what sent the IM looking in the first place. */}
-              <button type="button" className="btn-primary" onClick={submitDirectClose} disabled={dcBusy} style={{ background: "#0369a1", borderColor: "#0369a1" }}>
-                {dcBusy ? "Closing…" : dcMilestone !== "full" ? `Close ${dcMilestone} · ${rows.length} POID${rows.length !== 1 ? "s" : ""}` : `Close ${rows.length} POID${rows.length !== 1 ? "s" : ""}`}
+              <button type="button" className="btn-primary" onClick={submitDirectClose}
+                      disabled={dcBusy || dcClosable === 0}
+                      title={dcClosable === 0 ? "Every selected line is already closed, planned or otherwise off this route." : undefined}
+                      style={{ background: "#0369a1", borderColor: "#0369a1" }}>
+                {dcBusy ? "Closing…" : dcMilestone !== "full" ? `Close ${dcMilestone} · ${dcClosable} POID${dcClosable !== 1 ? "s" : ""}` : `Close ${dcClosable} POID${dcClosable !== 1 ? "s" : ""}`}
               </button>
             </div>
           </div>

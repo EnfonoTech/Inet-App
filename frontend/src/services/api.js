@@ -1045,6 +1045,18 @@ export const pmApi = {
     project_domain: overrides?.project_domain || "",
     closed_on: overrides?.closed_on || "",
   }),
+  // Direct Close approval. directCloseDispatches above now RAISES a request
+  // rather than closing — the backend endpoint it calls delegates to
+  // request_direct_close — so an admin's own close comes back auto_approved
+  // and everyone else's comes back with a request name to wait on.
+  listPendingDirectClosePoids: () => call("inet_app.api.command_center.list_pending_direct_close_poids", {}),
+  listDirectCloseRequests: (status) => call("inet_app.api.command_center.list_direct_close_requests", { status: status || "" }),
+  adminDecideDirectClose: (request, action, remark) => call("inet_app.api.command_center.admin_decide_direct_close_request", { request, action, remark: remark || "" }),
+  cancelDirectCloseRequest: (request) => call("inet_app.api.command_center.cancel_direct_close_request", { request }),
+  previewDirectClose: (po_dispatches, milestone) => call("inet_app.api.command_center.preview_direct_close", {
+    po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),
+    milestone: milestone || "",
+  }),
   listBackendTeamsForPicker: (search) => call("inet_app.api.command_center.list_backend_teams_for_picker", { search: search || "", limit: 200 }),
   assignBackend: (po_dispatches, backend_team, remark, overrides) => call("inet_app.api.command_center.assign_backend", {
     po_dispatches: JSON.stringify(Array.isArray(po_dispatches) ? po_dispatches : [po_dispatches]),

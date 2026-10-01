@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import ExportExcelButton from "../../components/ExportExcelButton";
+import DirectCloseApprovalModal from "../../components/DirectCloseApprovalModal";
 import { money } from "../../utils/numberFormat";
 
 // PM / Admin queue for Team Allocation Requests that have cleared the
@@ -10,6 +11,12 @@ import { money } from "../../utils/numberFormat";
 // four. Approving fires the relevant atomic flip on the backend (INET Team.im,
 // PO Dispatch.dispatch_status, or PO Dispatch.im).
 
+
+// Two vocabularies land in this inbox: everything else waits on a PM, a
+// Direct Close waits on an ADMIN (inet_app.roles — a PM raising one cannot
+// decide it). Both are "pending" here; who may actually press Approve is
+// decided per row below, from the server's own answer.
+const PENDING_STATUSES = new Set(["Pending PM Approval", "Pending Admin Approval"]);
 
 function statusTone(status) {
   const s = (status || "").toLowerCase();
@@ -29,17 +36,20 @@ export default function TeamAllocationApprovals() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [canDecideDirectClose, setCanDecideDirectClose] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const [teamList, cancelList, transferList, poidCancelList] = await Promise.all([
+      const [teamList, cancelList, transferList, poidCancelList, directCloseRes] = await Promise.all([
         pmApi.listTeamAllocationRequests("all"),
         pmApi.listAllCancelRequests(),
         pmApi.listPoTransferRequests("all"),
         pmApi.listPoCancelRequests().catch(() => []),
+        pmApi.listDirectCloseRequests().catch(() => ({ rows: [], can_decide: false })),
       ]);
+      setCanDecideDirectClose(!!directCloseRes?.can_decide);
       const all = [
         ...(Array.isArray(teamList) ? teamList : []).map((r) => ({ ...r, _type: "team" })),
         ...(Array.isArray(cancelList) ? cancelList : []).map((r) => ({ ...r, _type: "cancel" })),
@@ -50,6 +60,12 @@ export default function TeamAllocationApprovals() {
         ...(Array.isArray(poidCancelList) ? poidCancelList : []).map((r) => ({
           ...r, _type: "poid_cancel",
         })),
+        // Only for someone who can actually decide one. This is an approval
+        // inbox, and a PM-only account can never act on a Direct Close — it
+        // would be a row they can only look at. Their own requests are on the
+        // Direct Close tab in PO Control, which is where they track them.
+        ...(directCloseRes?.can_decide && Array.isArray(directCloseRes?.rows)
+          ? directCloseRes.rows : []).map((r) => ({ ...r, _type: "direct_close" })),
       ];
       all.sort((a, b) => new Date(b.cancel_requested_at || b.creation || 0) - new Date(a.cancel_requested_at || a.creation || 0));
       setRows(all);
@@ -129,8 +145,8 @@ export default function TeamAllocationApprovals() {
     return row._type === "cancel" ? row.cancel_request_status : row.request_status;
   }
 
-  const pending = rows.filter((r) => getStatus(r) === "Pending PM Approval");
-  const history = rows.filter((r) => getStatus(r) !== "Pending PM Approval");
+  const pending = rows.filter((r) => PENDING_STATUSES.has(getStatus(r)));
+  const history = rows.filter((r) => !PENDING_STATUSES.has(getStatus(r)));
   const visible = tab === "pending" ? pending : history;
 
   return (
@@ -236,17 +252,21 @@ export default function TeamAllocationApprovals() {
                   const isCancel = r._type === "cancel";
                   const isPoidCancel = r._type === "poid_cancel";
                   const isTransfer = r._type === "transfer";
+                  const isDirectClose = r._type === "direct_close";
                   const statusField = isCancel ? r.cancel_request_status : r.request_status;
                   const tone = statusTone(statusField);
                   const noteCellStyle = { fontSize: "0.78rem", color: "#475569", maxWidth: 280, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
-                  const isPending = statusField === "Pending PM Approval";
+                  const isPending = PENDING_STATUSES.has(statusField);
                   const typeLabel = isCancel ? "Plan Cancel"
                     : isPoidCancel ? "POID Cancel"
+                    : isDirectClose ? "Direct Close"
                     : isTransfer ? "POID Transfer" : "Team Transfer";
                   const typeTone = isCancel
                     ? { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" }
                     : isPoidCancel
                     ? { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" }
+                    : isDirectClose
+                    ? { bg: "#f0f9ff", fg: "#0369a1", bd: "#bae6fd" }
                     : isTransfer
                     ? { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" }
                     : { bg: "#eef2ff", fg: "#3730a3", bd: "#c7d2fe" };
@@ -262,7 +282,7 @@ export default function TeamAllocationApprovals() {
                       </td>
                       <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.76rem", whiteSpace: "nowrap" }}>{r.name}</td>
                       <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {(isTransfer || isPoidCancel) ? `${r.poid_count ?? r.lines?.length ?? "?"} POID(s)`
+                        {(isTransfer || isPoidCancel || isDirectClose) ? `${r.poid_count ?? r.lines?.length ?? "?"} POID(s)`
                           : (r.team_name || r.team || "—")}
                       </td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -270,6 +290,8 @@ export default function TeamAllocationApprovals() {
                           <>Plan: {r.plan_status || "—"} · {r.plan_date || "—"} · IM: {r.im_name || r.im || "—"} · PO: {r.poid || r.po_dispatch || "—"}</>
                         ) : isPoidCancel ? (
                           <>SAR {money.format(r.total_amount || 0)} · IM: {r.im || "—"} · {r.poid_list || "—"}</>
+                        ) : isDirectClose ? (
+                          <>SAR {money.format(r.total_amount || 0)} · {r.close_type || "—"}{r.milestone ? ` ${r.milestone}` : " full"} · {r.subcontractor || "—"} · {r.poid_list || "—"}</>
                         ) : isTransfer ? (
                           <>{r.from_im_name || r.from_im || "—"} → {r.to_im_name || r.to_im || "—"} · {r.poid_list || "—"}</>
                         ) : (
@@ -286,8 +308,8 @@ export default function TeamAllocationApprovals() {
                       <td style={noteCellStyle} title={r.cancel_reason || r.reason || ""}>
                         {r.cancel_reason || r.reason || <span style={{ color: "#cbd5e1" }}>—</span>}
                       </td>
-                      <td style={{ ...noteCellStyle, color: r.cancel_pm_remark || r.pm_remark ? "#1d4ed8" : "#cbd5e1" }} title={r.cancel_pm_remark || r.pm_remark || ""}>
-                        {r.cancel_pm_remark || r.pm_remark || "—"}
+                      <td style={{ ...noteCellStyle, color: r.cancel_pm_remark || r.pm_remark || r.admin_remark ? "#1d4ed8" : "#cbd5e1" }} title={r.cancel_pm_remark || r.pm_remark || r.admin_remark || ""}>
+                        {r.cancel_pm_remark || r.pm_remark || r.admin_remark || "—"}
                       </td>
                       <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
                         {r.cancel_requested_at || r.creation
@@ -327,8 +349,35 @@ export default function TeamAllocationApprovals() {
         </DataTableWrapper>
       </div>
 
+      {/* A Direct Close has its own dialog — it shows the close parameters and
+          every line's live issues, which the generic one has no shape for. It
+          was falling through this chain to the team-transfer default, so it
+          rendered "View team transfer" with nothing in it. */}
+      {decideTarget && decideTarget._type === "direct_close" && (
+        <DirectCloseApprovalModal
+          request={decideTarget}
+          canDecide={canDecideDirectClose}
+          onClose={() => setDecideTarget(null)}
+          onDone={async (res, action) => {
+            setDecideTarget(null);
+            if (action === "approve") {
+              const parts = [`${res?.closed ?? 0} POID(s) closed.`];
+              if (res?.refused?.length) {
+                parts.push(`${res.refused.length} refused: ${res.refused.map((x) => x.poid).join(", ")}.`);
+              }
+              setMsg(parts.join(" "));
+            } else {
+              setMsg("Direct Close rejected.");
+            }
+            await load();
+            window.dispatchEvent(new Event("inet:approvals-changed"));
+            window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
+          }}
+        />
+      )}
+
       {/* PM decide modal */}
-      {decideTarget && (
+      {decideTarget && decideTarget._type !== "direct_close" && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => !busy && setDecideTarget(null)}>
           <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: (decideTarget._type === "transfer" || decideTarget._type === "poid_cancel") ? "min(760px, 96vw)" : "min(520px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 12px", fontSize: "1.05rem" }}>

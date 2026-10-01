@@ -2,6 +2,7 @@
 import os
 import re
 
+from inet_app.roles import PM_LEVEL_ROLES
 import frappe
 from frappe.utils import cint, flt, now, nowdate
 
@@ -1737,7 +1738,7 @@ def list_material_requests(im=None, status=None, limit=50, column_filters=None, 
     Stock Manager / Admin see all.
     """
     roles = set(frappe.get_roles(frappe.session.user))
-    is_admin = bool(roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin"})
+    is_admin = bool(roles & (PM_LEVEL_ROLES | {"Stock Manager"}))
 
     filters = {"material_request_type": "Material Transfer"}
     try:
@@ -1894,7 +1895,7 @@ def get_material_request(name):
     roles = set(frappe.get_roles(frappe.session.user))
     doc = frappe.get_doc("Material Request", name)
 
-    is_admin = bool(roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin"})
+    is_admin = bool(roles & (PM_LEVEL_ROLES | {"Stock Manager"}))
     if not is_admin:
         im_name = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
         if doc.get("im") != im_name and doc.owner != frappe.session.user:
@@ -2379,7 +2380,7 @@ def get_im_teams(im=None):
         im = frappe.db.get_value("IM Master", {"user": frappe.session.user}, "name")
     if not im:
         roles = set(frappe.get_roles(frappe.session.user))
-        if roles & {"System Manager", "INET Admin", "Administrator", "Stock Manager"}:
+        if roles & (PM_LEVEL_ROLES | {"Stock Manager"}):
             return frappe.db.get_all(
                 "INET Team",
                 filters={"status": "Active"},
@@ -2688,7 +2689,7 @@ def create_material_request(payload):
     """Create and submit a Material Request (type: Material Transfer) from the portal."""
     import json
     roles = set(frappe.get_roles(frappe.session.user))
-    if not roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin", "INET IM"}:
+    if not roles & (PM_LEVEL_ROLES | {"Stock Manager"} | {"INET IM"}):
         frappe.throw("Not permitted to create material requests.", frappe.PermissionError)
 
     data = json.loads(payload) if isinstance(payload, str) else payload
@@ -3326,7 +3327,7 @@ def get_team_material_stock(team_id=None):
       { team_id, team_name, warehouse, items: [{ item_code, item_name, qty, uom }] }
     """
     roles = set(frappe.get_roles(frappe.session.user))
-    is_admin = bool(roles & {"System Manager", "INET Admin", "Administrator", "Stock Manager"})
+    is_admin = bool(roles & (PM_LEVEL_ROLES | {"Stock Manager"}))
     is_im = "INET IM" in roles
 
     # Determine which teams to fetch
@@ -4713,7 +4714,7 @@ def create_material_return_request(payload):
     """
     import json
     roles = set(frappe.get_roles(frappe.session.user))
-    allowed = roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin", "INET IM", "INET Field Team"}
+    allowed = roles & (PM_LEVEL_ROLES | {"Stock Manager"} | {"INET IM", "INET Field Team"})
     if not allowed:
         frappe.throw("Not permitted.", frappe.PermissionError)
 
@@ -4847,7 +4848,7 @@ def list_return_requests(team_id=None, status=None, limit=50, column_filters=Non
     Admin / Stock Manager: sees all.
     """
     roles = set(frappe.get_roles(frappe.session.user))
-    is_admin = bool(roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin"})
+    is_admin = bool(roles & (PM_LEVEL_ROLES | {"Stock Manager"}))
     is_im = "INET IM" in roles
 
     filters = {
@@ -5063,7 +5064,7 @@ def approve_material_return_request(name, preferred_batches=None):
                 )
     else:
         roles = set(frappe.get_roles(frappe.session.user))
-        if not roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin", "INET IM"}:
+        if not roles & (PM_LEVEL_ROLES | {"Stock Manager"} | {"INET IM"}):
             frappe.throw("Not permitted.", frappe.PermissionError)
 
     if mr.docstatus == 2:
@@ -5199,7 +5200,7 @@ def create_direct_return_transfer(payload):
     to confirm receipt via confirm_material_return() after that.
     """
     roles = set(frappe.get_roles(frappe.session.user))
-    if not roles & {"Administrator", "System Manager", "Stock Manager", "INET Admin", "INET IM"}:
+    if not roles & (PM_LEVEL_ROLES | {"Stock Manager"} | {"INET IM"}):
         frappe.throw("Not permitted.", frappe.PermissionError)
     import json
 

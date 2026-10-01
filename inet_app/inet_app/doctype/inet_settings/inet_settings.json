@@ -128,6 +128,10 @@
   {
    "read": 1,
    "role": "INET Admin"
+  },
+  {
+   "read": 1,
+   "role": "INET PM"
   }
  ],
  "sort_field": "modified",
