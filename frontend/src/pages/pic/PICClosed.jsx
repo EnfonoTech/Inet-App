@@ -13,6 +13,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
@@ -133,6 +134,7 @@ export default function PICClosed() {
   const displayedCount = Math.min(rows.length, displayLimit);
   const [error, setError] = useState(null);
   const [toastMsg, setToastMsg] = useState(null);
+  const [copyErr, setCopyErr] = useState(null);
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
 
@@ -291,6 +293,18 @@ export default function PICClosed() {
     };
   }, [rows]);
 
+  async function copyPoids() {
+    const { ok, message } = await copySelectedPoids(rows, selected, (r) => r.po_dispatch);
+    if (ok) {
+      setCopyErr(null);
+      setToastMsg(message);
+      setTimeout(() => setToastMsg(null), 4500);
+    } else {
+      setCopyErr(message);
+      setTimeout(() => setCopyErr(null), 6000);
+    }
+  }
+
   function toggleRow(name) {
     setSelected((p) => {
       const next = new Set(p);
@@ -364,6 +378,11 @@ export default function PICClosed() {
           <span>✓</span> {toastMsg}
         </div>
       )}
+      {copyErr && (
+        <div className="notice error" style={{ margin: "0 16px 8px" }}>
+          <span>!</span> {copyErr}
+        </div>
+      )}
 
       <div className="toolbar">
         <input
@@ -394,6 +413,9 @@ export default function PICClosed() {
               {selected.size} selected
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
           <button
             type="button"
             className="btn-secondary"

@@ -21,6 +21,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -113,6 +114,7 @@ export default function IMIssuesRisks() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selected, setSelected] = useState(new Set());
+  const [copyNotice, setCopyNotice] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [planDate, setPlanDate] = useState(todayDate());
   const [planEndDate, setPlanEndDate] = useState(todayDate());
@@ -333,6 +335,12 @@ export default function IMIssuesRisks() {
     return () => { cancelled = true; };
   }, [showModal, imName]);
 
+  async function copyPoids() {
+    const result = await copySelectedPoids(rows, selected, (r) => r.rollout_plan);
+    setCopyNotice(result);
+    setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
+  }
+
   function toggleRow(name) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -483,6 +491,11 @@ export default function IMIssuesRisks() {
           <button className="btn-secondary" onClick={loadData} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </div>
+      {copyNotice && (
+        <div className={`notice ${copyNotice.ok ? "success" : "error"}`} style={{ margin: "0 16px 8px" }}>
+          <span>{copyNotice.ok ? "✓" : "!"}</span> {copyNotice.message}
+        </div>
+      )}
       <div className="toolbar">
         <input
           type="search"
@@ -513,6 +526,9 @@ export default function IMIssuesRisks() {
         )}
         <div className="toolbar-actions">
           {selected.size > 0 && <span style={{ fontSize: "0.78rem", color: "#64748b" }}>{selected.size} selected</span>}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
           <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setPlanDocUrls([]); setPlanTeams([]); setMaterialItemsByDuid({}); setExpandedMaterialDuid(""); setMaterialPickupDate(""); setMaterialPickupTime(""); setShowModal(true); }}>
             Create Plans ({selected.size})
           </button>

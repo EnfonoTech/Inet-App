@@ -14,6 +14,7 @@ import { useAuth } from "../../context/AuthContext";
 import DateRangePicker from "../../components/DateRangePicker";
 import { RemainderBadge } from "../../components/ConfirmedQtyFields";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
@@ -174,6 +175,7 @@ export default function PICTracker() {
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [toastMsg, setToastMsg] = useState(null);
+  const [copyErr, setCopyErr] = useState(null);
 
   // Create Sales Invoice modal state (operates on current selection)
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -499,6 +501,18 @@ export default function PICTracker() {
     }
   }
 
+  async function copyPoids() {
+    const { ok, message } = await copySelectedPoids(rows, selected, (r) => r.po_dispatch);
+    if (ok) {
+      setCopyErr(null);
+      setToastMsg(message);
+      setTimeout(() => setToastMsg(null), 4500);
+    } else {
+      setCopyErr(message);
+      setTimeout(() => setCopyErr(null), 6000);
+    }
+  }
+
   function toggleRow(name) {
     setSelected((p) => {
       const next = new Set(p);
@@ -687,6 +701,11 @@ export default function PICTracker() {
           <span>✓</span> {toastMsg}
         </div>
       )}
+      {copyErr && (
+        <div className="notice error" style={{ margin: "0 16px 8px" }}>
+          <span>!</span> {copyErr}
+        </div>
+      )}
 
       {/* KPI strip — true sums across every row matching the current filters,
           from the backend (see aggTotals), NOT just the loaded rows. */}
@@ -736,6 +755,9 @@ export default function PICTracker() {
               {selected.size} selected
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
           <button
             type="button"
             disabled={selected.size === 0}

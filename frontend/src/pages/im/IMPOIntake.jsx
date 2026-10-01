@@ -20,6 +20,7 @@ import RecordDetailView from "../../components/RecordDetailView";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { money, qty } from "../../utils/numberFormat";
 import { weekOptionsForMonth, weekRangeLabel, weekBoundsOf } from "../../utils/weeks";
 
@@ -358,6 +359,7 @@ export default function IMPOIntake() {
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState(null);
   const [toastMsg, setToastMsg] = useState(null);
+  const [copyErr, setCopyErr] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const load = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -1134,6 +1136,20 @@ export default function IMPOIntake() {
     });
   }
 
+  // One handler for both tabs — PO Intake and All POIDs keep separate
+  // selections, and each copies only its own.
+  async function copyPoids(list, sel) {
+    const { ok, message } = await copySelectedPoids(list, sel, (r) => r.name);
+    if (ok) {
+      setCopyErr(null);
+      setToastMsg(message);
+      setTimeout(() => setToastMsg(null), 4500);
+    } else {
+      setCopyErr(message);
+      setTimeout(() => setCopyErr(null), 6000);
+    }
+  }
+
   function toggleAllOv() {
     setOvSelected((prev) =>
       ovSelectableRows.length > 0 && ovSelectableRows.every((r) => prev.has(r.name))
@@ -1480,6 +1496,11 @@ export default function IMPOIntake() {
           <span>✓</span> {toastMsg}
         </div>
       )}
+      {copyErr && (
+        <div className="notice error" style={{ margin: "8px 16px" }}>
+          <span>!</span> {copyErr}
+        </div>
+      )}
 
       {/* ── PO INTAKE TOOLBAR ─────────────────────────────────────────── */}
       {tab === "intake" && (
@@ -1503,6 +1524,9 @@ export default function IMPOIntake() {
                 {selected.size} selected · SAR {money.format(selectedAmount)}
               </span>
             )}
+            <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={() => copyPoids(rows, selected)}>
+              Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+            </button>
             <button type="button" className="btn-primary" disabled={selected.size === 0} onClick={openAssignModal}>
               Dispatch ({selected.size})
             </button>
@@ -1605,6 +1629,10 @@ export default function IMPOIntake() {
             style={{ marginLeft: "auto", borderColor: "#fca5a5", color: "#b91c1c", fontSize: "0.78rem", padding: "5px 12px" }}
           >
             Cancel POID ({ovSelected.size})
+          </button>
+          <button type="button" className="btn-secondary" disabled={ovSelected.size === 0} onClick={() => copyPoids(ovRows, ovSelected)}
+            style={{ fontSize: "0.78rem", padding: "5px 12px" }}>
+            Copy POIDs{ovSelected.size > 0 ? ` (${ovSelected.size})` : ""}
           </button>
         </div>
       )}

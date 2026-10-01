@@ -18,6 +18,7 @@ import RemarksCell from "../../components/RemarksCell";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge } from "../pic/picShared";
 import { money, qty as qtyFmt } from "../../utils/numberFormat";
@@ -347,6 +348,7 @@ export default function WorkDone() {
   const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
   const [detailRow, setDetailRow] = useState(null);
   const [selectedRows, setSelectedRows] = useState(new Set());
+  const [copyNotice, setCopyNotice] = useState(null);
   const [issueFlagFilter, setIssueFlagFilter] = useState([]);
   const [submissionFilter, setSubmissionFilter] = useState([]);
   // Accepts a work type from dashboard drill-through (Command dashboard's
@@ -793,6 +795,12 @@ export default function WorkDone() {
 
   const selectedRow = selectedRows.size === 1 ? (filteredRows.find((r) => selectedRows.has(r.name)) || null) : null;
 
+  async function copyPoids() {
+    const result = await copySelectedPoids(rows, selectedRows, (r) => r.name);
+    setCopyNotice(result);
+    setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
+  }
+
   const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || issueFlagFilter.length || submissionFilter.length || workTypeFilter.length || fromDate || toDate);
   // Distinct values across the full master tables — not row-limited.
   const [teams, setTeams] = useState([]);
@@ -880,6 +888,11 @@ export default function WorkDone() {
         ))}
       </div>
 
+      {copyNotice && (
+        <div className={`notice ${copyNotice.ok ? "success" : "error"}`} style={{ margin: "0 16px 8px" }}>
+          <span>{copyNotice.ok ? "✓" : "!"}</span> {copyNotice.message}
+        </div>
+      )}
       {tab === "list" && (
       <div className="toolbar">
         <input
@@ -1016,6 +1029,9 @@ export default function WorkDone() {
               {selectedRows.size} selected
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selectedRows.size === 0} onClick={copyPoids}>
+            Copy POIDs{selectedRows.size > 0 ? ` (${selectedRows.size})` : ""}
+          </button>
           <button
             type="button"
             className="btn-secondary"

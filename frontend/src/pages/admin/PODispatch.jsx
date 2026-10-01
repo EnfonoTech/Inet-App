@@ -11,6 +11,7 @@ import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/R
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PicStatusBadge } from "../pic/picShared";
 import { money, qty } from "../../utils/numberFormat";
@@ -411,6 +412,11 @@ export default function PODispatch() {
     else { setErrMsg(msg); setSuccessMsg(null); }
     setTimeout(() => { setSuccessMsg(null); setErrMsg(null); }, 5000);
   }, []);
+
+  async function copyPoids() {
+    const { ok, message } = await copySelectedPoids(rows, selected, (r) => r.name);
+    showNotice(ok ? "ok" : "err", message);
+  }
 
   function loadData(tab) {
     if (tab) setActiveTab(tab);
@@ -1196,6 +1202,9 @@ export default function PODispatch() {
               Cancel POID ({selected.size})
             </button>
           )}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
         </div>
       </div>
 

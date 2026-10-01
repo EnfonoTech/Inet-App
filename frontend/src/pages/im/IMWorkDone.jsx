@@ -19,6 +19,7 @@ import IMNoteCallout from "../../components/IMNoteCallout";
 import CloseRemainderModal from "../../components/CloseRemainderModal";
 import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } from "../../components/ConfirmedQtyFields";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { PoStatusBadge, PicStatusBadge } from "../pic/picShared";
 
@@ -382,6 +383,7 @@ export default function IMWorkDone() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selectedRows, setSelectedRows] = useState(new Set());
+  const [copyNotice, setCopyNotice] = useState(null);
 
   // A row that leaves the list takes its selection with it. The fetch is
   // tab-scoped (`filters = { im, tab }`), so a bulk submission status change
@@ -1033,6 +1035,12 @@ export default function IMWorkDone() {
   // See useProgressiveRows — mounts large row sets in chunks so the browser
   // doesn't show "Page Unresponsive" on tables with "All" rows loaded.
   const tableScrollRef = useRef(null);
+  async function copyPoids() {
+    const result = await copySelectedPoids(tab === "legacy" ? legacyRows : rows, selectedRows, (r) => r.name);
+    setCopyNotice(result);
+    setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
+  }
+
   const visibleRows = useProgressiveRows(filteredRows, { paused: tab === "legacy" ? legacyLoading : loading, scrollRef: tableScrollRef, chunk: 400 });
   // How many of `visibleRows` to actually show — anything beyond this is
   // hidden via CSS in the render below rather than removed from `rows`/
@@ -1099,6 +1107,11 @@ export default function IMWorkDone() {
         </button>
         <button type="button" style={tabStyle(tab === "legacy")} onClick={() => setTab("legacy")}>Resubmit to PIC</button>
       </div>
+      {copyNotice && (
+        <div className={`notice ${copyNotice.ok ? "success" : "error"}`} style={{ margin: "0 16px 8px" }}>
+          <span>{copyNotice.ok ? "✓" : "!"}</span> {copyNotice.message}
+        </div>
+      )}
       <div className="toolbar">
         <input
           type="search"
@@ -1194,6 +1207,9 @@ export default function IMWorkDone() {
               {selectedRows.size} selected
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selectedRows.size === 0} onClick={copyPoids}>
+            Copy POIDs{selectedRows.size > 0 ? ` (${selectedRows.size})` : ""}
+          </button>
           <button
             type="button"
             className="btn-secondary"
@@ -1241,6 +1257,9 @@ export default function IMWorkDone() {
               {selectedRows.size} selected
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selectedRows.size === 0} onClick={copyPoids}>
+            Copy POIDs{selectedRows.size > 0 ? ` (${selectedRows.size})` : ""}
+          </button>
           <button
             type="button"
             className="btn-primary"

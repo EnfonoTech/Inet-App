@@ -22,6 +22,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money } from "../../utils/numberFormat";
 
@@ -143,6 +144,8 @@ function parseAttachments(raw) {
 export default function ExecutionMonitor() {
   const { rowLimit, setRowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [copyNotice, setCopyNotice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
@@ -362,6 +365,7 @@ export default function ExecutionMonitor() {
         if (cancelled) return;
         const fetchedRows = Array.isArray(list) ? list : [];
         setRows(fetchedRows);
+        setSelected(new Set());
         lastFetchRef.current = { signature, limit: effectiveRowLimit, rows: fetchedRows, refreshKey };
         setLastRefresh(new Date());
       } catch (err) {
@@ -473,6 +477,49 @@ export default function ExecutionMonitor() {
   const displayedMainCount = Math.min(mainRows.length, displayLimit);
   const displayedInternalCount = Math.min(filteredInternalDone.length, displayLimit);
 
+  // Row selection — main table only. Internal Work Done rows have no POID.
+  // Shrinking the row limit skips the refetch (rows just hide via CSS), so
+  // drop anything the shrink hid rather than copying rows nobody can see.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const shown = new Set(mainRows.slice(0, displayedMainCount).map((r) => r.name));
+      const next = new Set([...prev].filter((n) => shown.has(n)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [mainRows, displayedMainCount]);
+
+  function toggleRow(name) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    const dtpHidden = new Set(Array.from(document.querySelectorAll("tbody tr[data-tablepro-filtered]")).map((tr) => tr.dataset.docName).filter(Boolean));
+    // Only rows within the current display limit — anything beyond it is
+    // hidden via CSS (see displayLimit above), not a real filter, but
+    // "select all" should still only ever act on what's actually shown.
+    const visible = mainRows.slice(0, displayedMainCount).filter((r) => !dtpHidden.has(r.name));
+    if (visible.length > 0 && visible.every((r) => selected.has(r.name))) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(visible.map((r) => r.name)));
+    }
+  }
+
+  const shownMainRows = mainRows.slice(0, displayedMainCount);
+  const allShownSelected = shownMainRows.length > 0 && shownMainRows.every((r) => selected.has(r.name));
+
+  async function copyPoids() {
+    const result = await copySelectedPoids(mainRows, selected, (r) => r.name);
+    setCopyNotice(result);
+    setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
+  }
+
   const totals = mainRows.slice(0, displayedMainCount).reduce(
     (acc, r) => ({
       target: acc.target + (parseFloat(r.target_amount) || 0),
@@ -526,6 +573,12 @@ export default function ExecutionMonitor() {
         })}
       </div>
 
+      {copyNotice && (
+        <div className={`notice ${copyNotice.ok ? "success" : "error"}`} style={{ margin: "0 16px 8px" }}>
+          <span>{copyNotice.ok ? "✓" : "!"}</span> {copyNotice.message}
+        </div>
+      )}
+
       {/* ── Toolbar ─────────────────────────────────────────── */}
       {tab === "all" && (
       <div className="toolbar">
@@ -575,6 +628,16 @@ export default function ExecutionMonitor() {
             Clear
           </button>
         )}
+        <div className="toolbar-actions">
+          {selected.size > 0 && (
+            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+              {selected.size} selected
+            </span>
+          )}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
+        </div>
       </div>
       )}
 
@@ -769,6 +832,15 @@ export default function ExecutionMonitor() {
             <table key="execution-monitor-main" className="data-table" data-excel-filter-all="1" data-table-key="execution-monitor-main">
               <thead>
                 <tr>
+                  <th>
+                    <input
+                      type="checkbox"
+                      checked={allShownSelected}
+                      ref={(el) => { if (el) el.indeterminate = selected.size > 0 && !allShownSelected; }}
+                      onChange={toggleAll}
+                      title={allShownSelected ? "Deselect all" : "Select all"}
+                    />
+                  </th>
                   <th>Plan</th>
                   <th>POID</th>
                   <th>Dummy POID</th>
@@ -804,7 +876,7 @@ export default function ExecutionMonitor() {
               <tbody>
                 {mainRows.length === 0 ? (
                   <tr>
-                    <td colSpan={30} style={{ padding: 0 }}>
+                    <td colSpan={31} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
                           Loading execution data…
@@ -825,7 +897,10 @@ export default function ExecutionMonitor() {
                 ) : visibleMainRows.map((row, idx) => {
                   const target = row.target_amount || 0;
                   return (
-                    <tr key={row.name} style={idx >= displayedMainCount ? { display: "none" } : { ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}>
+                    <tr key={row.name} data-doc-name={row.name} className={selected.has(row.name) ? "row-selected" : ""} style={idx >= displayedMainCount ? { display: "none" } : { ...(row.is_dummy_po ? { background: "#fffbeb" } : Number(row.is_internal_work || 0) ? { background: "#f0fdfa" } : {}) }}>
+                      <td>
+                        <input type="checkbox" checked={selected.has(row.name)} onChange={() => toggleRow(row.name)} />
+                      </td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.name}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.poid || row.po_dispatch || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.72rem", maxWidth: 140 }} title={(row.original_dummy_poid || "").trim() ? `Dummy POID: ${row.original_dummy_poid}` : ""}>
@@ -924,11 +999,12 @@ export default function ExecutionMonitor() {
               </tbody>
               {mainRows.length > 0 && (
                 <tfoot>
-                  {/* 30 columns: Plan · POID · Dummy POID · Item code · Description · Activity Type ·
+                  {/* 31 columns: checkbox · Plan · POID · Dummy POID · Item code · Description · Activity Type ·
                       Project · Domain · Huawei IM · DUID · Center area · Region · Team · IM · Plan Date ·
                       Access Time · Access · Visit Type · Visit No · Target · Plan Status · TL Status ·
                       Exec Status · QC · CIAG · Issue Category · General · Manager · Team Lead · Open */}
                   <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                    <td />{/* checkbox */}
                     <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                       {displayedMainCount} rows
                     </td>{/* Plan */}

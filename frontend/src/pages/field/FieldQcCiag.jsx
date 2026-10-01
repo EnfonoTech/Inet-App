@@ -8,6 +8,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import { isNotRequired } from "../../utils/qcCiagFlags";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 
 const TEAM_QC_OPTIONS = ["Pending", "Pass", "Fail"];
 const TEAM_CIAG_OPTIONS = ["Open", "Approved", "Not Applicable"];
@@ -217,6 +218,7 @@ export default function FieldQcCiag() {
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [selectedPlans, setSelectedPlans] = useState(new Set());
+  const [copyNotice, setCopyNotice] = useState(null);
   const [editRow, setEditRow] = useState(null);
 
   // ── Manage Table column filters ──────────────────────────────────────
@@ -320,6 +322,12 @@ export default function FieldQcCiag() {
     return () => { cancelled = true; };
   }, [teamId, rowLimit, searchDebounced, columnFiltersDebounced]);
 
+  async function copyPoids() {
+    const result = await copySelectedPoids(rows, selectedPlans, (r) => r.name);
+    setCopyNotice(result);
+    setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
+  }
+
   function toggleRow(name) {
     setSelectedPlans((prev) => {
       const next = new Set(prev);
@@ -355,6 +363,11 @@ export default function FieldQcCiag() {
         </div>
       </div>
 
+      {copyNotice && (
+        <div className={`notice ${copyNotice.ok ? "success" : "error"}`} style={{ margin: "0 16px 8px" }}>
+          <span>{copyNotice.ok ? "✓" : "!"}</span> {copyNotice.message}
+        </div>
+      )}
       {/* ── Search + action toolbar ───────────────────────── */}
       <div className="toolbar">
         <input
@@ -370,6 +383,9 @@ export default function FieldQcCiag() {
           {selectedPlans.size > 0 && (
             <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{selectedPlans.size} selected</span>
           )}
+          <button type="button" className="btn-secondary btn-sm" disabled={selectedPlans.size === 0} onClick={copyPoids}>
+            Copy POIDs{selectedPlans.size > 0 ? ` (${selectedPlans.size})` : ""}
+          </button>
           <button
             type="button"
             className="btn-primary btn-sm"

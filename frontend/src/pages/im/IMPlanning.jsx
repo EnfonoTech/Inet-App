@@ -25,6 +25,7 @@ import RescheduleModal from "../../components/RescheduleModal";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 import AttachmentsSection, { parseFileList } from "../../components/AttachmentsSection";
 import { money } from "../../utils/numberFormat";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 
 
 function statusTone(value) {
@@ -92,6 +93,7 @@ export default function IMPlanning() {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
+  const [copyNotice, setCopyNotice] = useState(null);
   const [mapForRow, setMapForRow] = useState(null);
   const [mapLines, setMapLines] = useState([]);
   const [mapLineId, setMapLineId] = useState("");
@@ -315,6 +317,12 @@ export default function IMPlanning() {
     });
   }, [visibleNames]);
 
+  async function copyPoids() {
+    const result = await copySelectedPoids(plans, selected, (p) => p.name);
+    setCopyNotice(result);
+    setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
+  }
+
   function toggleRow(name) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -468,6 +476,11 @@ export default function IMPlanning() {
         </div>
       )}
 
+      {copyNotice && (
+        <div className={`notice ${copyNotice.ok ? "success" : "error"}`} style={{ margin: "0 16px 8px" }}>
+          <span>{copyNotice.ok ? "✓" : "!"}</span> {copyNotice.message}
+        </div>
+      )}
       <div className="toolbar">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input
@@ -519,6 +532,9 @@ export default function IMPlanning() {
               {selected.size} selected · SAR {money.format(selectedAmt)}
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
           {reschedulablePlans.length > 0 && (
             <button
               type="button"

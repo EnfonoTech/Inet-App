@@ -22,6 +22,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import RescheduleModal from "../../components/RescheduleModal";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 import { money } from "../../utils/numberFormat";
@@ -235,6 +236,7 @@ export default function IMExecution() {
   // Off by default — it rewrites the line's history, so it is never implicit.
   const [wdAdoptExisting, setWdAdoptExisting] = useState(false);
   const [selectedExecs, setSelectedExecs] = useState(new Set());
+  const [copyNotice, setCopyNotice] = useState(null);
 
   // A row that leaves the list takes its selection with it. Creating Work Done
   // moves the line on to the next tab, so it vanishes from this one — but its
@@ -892,6 +894,11 @@ export default function IMExecution() {
     }
   }
 
+  async function copyPoids() {
+    const result = await copySelectedPoids(executions, selectedExecs, (r) => r.name);
+    setCopyNotice(result);
+    setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
+  }
   return (
     <div>
       <div className="page-header">
@@ -1370,12 +1377,20 @@ export default function IMExecution() {
         )}
       </div>
 
+      {copyNotice && (
+        <div className={`notice ${copyNotice.ok ? "success" : "error"}`} style={{ margin: "8px 28px 0" }}>
+          <span>{copyNotice.ok ? "✓" : "!"}</span> {copyNotice.message}
+        </div>
+      )}
       {selectedExecs.size > 0 && (
         <div style={{ padding: "8px 28px 10px", background: "#eff6ff", borderBottom: "1px solid #bfdbfe" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
             <span style={{ fontSize: "0.82rem", color: "#1d4ed8", fontWeight: 600, whiteSpace: "nowrap" }}>
               {selectedExecs.size} selected
             </span>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", padding: "4px 12px" }} onClick={copyPoids}>
+              Copy POIDs ({selectedExecs.size})
+            </button>
             <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", padding: "4px 12px" }}
               onClick={() => { setBulkQcErr(null); setBulkQcPick("Pass"); setBulkQcOpen(true); }}>
               Bulk QC

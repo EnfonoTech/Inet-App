@@ -21,6 +21,7 @@ import AttachmentsSection from "../../components/AttachmentsSection";
 import MaterialItemPicker from "../../components/MaterialItemPicker";
 import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty } from "../../utils/numberFormat";
 import { isoLocal, weekRangeLabel } from "../../utils/weeks";
@@ -238,6 +239,7 @@ export default function IMDispatch() {
   const [materialPickupTime, setMaterialPickupTime] = useState("");
   const [viewBillsDuid, setViewBillsDuid] = useState("");
   const [successMsg, setSuccessMsg] = useState(null);
+  const [copyErr, setCopyErr] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
   const [dummyFilter, setDummyFilter] = useState("all");
   const [showDummyModal, setShowDummyModal] = useState(false);
@@ -806,6 +808,20 @@ export default function IMDispatch() {
   const duidOptions = dispOpts.site_code || [];
   const hasFilters = !!(search || modeFilter !== "all" || dummyFilter !== "all" || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
 
+  async function copyPoids() {
+    const { ok, message } = await copySelectedPoids(rows, selected, (r) => r.name);
+    if (ok) {
+      setCopyErr(null);
+      setSuccessMsg(message);
+      // Clear only our own message — successMsg otherwise persists, and a
+      // later bulk-action result must not be wiped by this timer.
+      setTimeout(() => setSuccessMsg((m) => (m === message ? null : m)), 4500);
+    } else {
+      setCopyErr(message);
+      setTimeout(() => setCopyErr(null), 6000);
+    }
+  }
+
   function toggleRow(name) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -1034,6 +1050,11 @@ export default function IMDispatch() {
           <span>✓</span> {successMsg}
         </div>
       )}
+      {copyErr && (
+        <div className="notice error" style={{ margin: "0 28px 16px" }}>
+          <span>!</span> {copyErr}
+        </div>
+      )}
 
       {/* KPI row + scope toggle share the same line to save vertical
           space. Toggle uses a stronger active state so it reads as a
@@ -1181,6 +1202,9 @@ export default function IMDispatch() {
               {selected.size} selected · SAR {money.format(selectedAmt)}
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
           <button
             type="button"
             className="btn-primary"

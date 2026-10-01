@@ -19,6 +19,7 @@ import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty } from "../../utils/numberFormat";
 import { weekRangeLabel } from "../../utils/weeks";
@@ -176,6 +177,7 @@ export default function RolloutPlanning() {
   const [visitType, setVisitType] = useState("Execution");
   const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
+  const [copyErr, setCopyErr] = useState(null);
   const [createError, setCreateError] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
   const [managerRemark, setManagerRemark] = useState("");
@@ -373,6 +375,20 @@ export default function RolloutPlanning() {
     pmApi.getSourceWarehouse().then((wh) => { if (!cancelled) setMaterialSourceWh(wh || ""); }).catch(() => {});
     return () => { cancelled = true; };
   }, [showModal]);
+
+  async function copyPoids() {
+    const { ok, message } = await copySelectedPoids(rows, selected, (r) => r.name);
+    if (ok) {
+      setCopyErr(null);
+      setSuccessMsg(message);
+      // Clear only our own message — successMsg otherwise persists, and a
+      // later bulk-action result must not be wiped by this timer.
+      setTimeout(() => setSuccessMsg((m) => (m === message ? null : m)), 4500);
+    } else {
+      setCopyErr(message);
+      setTimeout(() => setCopyErr(null), 6000);
+    }
+  }
 
   function toggleRow(name) {
     setSelected((prev) => {
@@ -749,6 +765,9 @@ export default function RolloutPlanning() {
               {selected.size} selected · SAR {money.format(selectedAmt)}
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
           <button
             className="btn-primary"
             onClick={openCreateModal}
@@ -763,6 +782,11 @@ export default function RolloutPlanning() {
       {successMsg && (
         <div className="notice success" style={{ margin: "0 28px 16px" }}>
           <span>✅</span> {successMsg}
+        </div>
+      )}
+      {copyErr && (
+        <div className="notice error" style={{ margin: "0 28px 16px" }}>
+          <span>!</span> {copyErr}
         </div>
       )}
       {/* ── Table ───────────────────────────────────────────── */}

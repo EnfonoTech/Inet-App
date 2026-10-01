@@ -10,6 +10,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
+import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import { PoStatusBadge, PicStatusBadge, SubPoStatusBadge } from "./picShared";
@@ -449,6 +450,7 @@ export default function SubconPO() {
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [toastMsg, setToastMsg] = useState(null);
+  const [copyErr, setCopyErr] = useState(null);
   const [capability, setCapability] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
 
@@ -835,6 +837,18 @@ export default function SubconPO() {
                && !invoicedLegs.has(`${r.po_dispatch}|${ms}`);
       }))), [submittedPos, selectedRows, invoicedLegs]);
 
+  async function copyPoids() {
+    const { ok, message } = await copySelectedPoids(rows, selected, (r) => r.po_dispatch);
+    if (ok) {
+      setCopyErr(null);
+      setToastMsg(message);
+      setTimeout(() => setToastMsg(null), 4500);
+    } else {
+      setCopyErr(message);
+      setTimeout(() => setCopyErr(null), 6000);
+    }
+  }
+
   function toggleRow(name) {
     setSelected((p) => {
       const next = new Set(p);
@@ -1038,6 +1052,11 @@ export default function SubconPO() {
           <button type="button" className="btn-secondary" style={{ marginLeft: 12, fontSize: "0.7rem", padding: "2px 8px" }} onClick={() => setToastMsg(null)}>Dismiss</button>
         </div>
       )}
+      {copyErr && (
+        <div className="notice error" style={{ margin: "0 16px 8px" }}>
+          <span>!</span> {copyErr}
+        </div>
+      )}
 
       {capability && !capability.purchase_tax_template && (
         <div className="notice error" style={{ margin: "0 16px 8px" }}>
@@ -1074,6 +1093,9 @@ export default function SubconPO() {
               {selected.size} selected
             </span>
           )}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
+            Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
           {/* Only this tab's actions. A button that can't act is disabled with
               the reason in its tooltip — never enabled so the user can click
               through to an error message. */}
