@@ -30,12 +30,6 @@ import { weekOptionsForMonth, weekRangeLabel, weekBoundsOf } from "../../utils/w
 // YESTERDAY. It is harmless as a plan-date default, but this one is the `max`
 // on the Closing Date input and is compared against the server's own
 // nowdate() — a day behind there would stop an IM picking today.
-function todayDate() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
 
 // Full Select-field option lists — used as filter option sources instead of
 // deriving them from whatever rows are currently loaded/filtered, which
@@ -366,23 +360,11 @@ export default function IMPOIntake() {
   // ── Backend-team assignment (intake tab) ─────────────────────────────
   const [canBackend, setCanBackend] = useState(false);
   const [showBackendModal, setShowBackendModal] = useState(false);
-  const [backendTeamId, setBackendTeamId] = useState("");
-  const [backendRemark, setBackendRemark] = useState("");
-  const [backendHuaweiIm, setBackendHuaweiIm] = useState("");
-  const [backendProjectDomain, setBackendProjectDomain] = useState("");
 
   // ── Direct Close (intake tab) ────────────────────────────────────────
   const [canDirectClose, setCanDirectClose] = useState(false);
   const [canMilestoneClose, setCanMilestoneClose] = useState(false);
   const [showDcModal, setShowDcModal] = useState(false);
-  const [dcType, setDcType] = useState("INET");
-  const [dcSubcontractor, setDcSubcontractor] = useState("");
-  const [dcSubconLoading, setDcSubconLoading] = useState(false);
-  const [dcNote, setDcNote] = useState("");
-  const [dcMilestone, setDcMilestone] = useState("full"); // "full" | "MS1" | "MS2"
-  const [dcHuaweiIm, setDcHuaweiIm] = useState("");
-  const [dcProjectDomain, setDcProjectDomain] = useState("");
-  const [dcClosedOn, setDcClosedOn] = useState(todayDate());
 
   // ── Huawei IM / Project Domain option lists — override pickers on
   // Assign to Backend and Direct Close, and also (mapped below) the
@@ -1052,81 +1034,6 @@ export default function IMPOIntake() {
     setShowBackendModal(true);
   }
 
-  async function submitBackend() {
-    if (selected.size < 1 || !backendTeamId) return;
-    const ids = Array.from(selected);
-    const blocked = rows.filter((r) => selected.has(r.name) && ["Closed", "Partially Closed", "Submitted", "Partially Submitted", "Completed"].includes(r.dispatch_status));
-    if (blocked.length > 0) {
-      setBackendError(`Cannot assign: ${blocked.length} POID(s) have status ${[...new Set(blocked.map((r) => r.dispatch_status))].join(", ")}. Deselect to continue.`);
-      return;
-    }
-    const noIm = missingImRows(rows, selected);
-    if (noIm.length > 0) {
-      setBackendError(imRequiredMessage(noIm, "assign to a backend team"));
-      return;
-    }
-    setBackendBusy(true);
-    setBackendError(null);
-    try {
-      const res = await pmApi.assignBackend(ids, backendTeamId, backendRemark, {
-        huawei_im: backendHuaweiIm || undefined,
-        project_domain: backendProjectDomain || undefined,
-      });
-      const summary = res?.summary || {};
-      const okN = summary.updated_count ?? 0;
-      const errN = summary.error_count ?? 0;
-      if (errN === 0) {
-        setShowBackendModal(false);
-        setToastMsg(`Assigned ${okN} POID${okN !== 1 ? "s" : ""} to backend team ${summary.backend_team_name || backendTeamId}.`);
-        setTimeout(() => setToastMsg(null), 4500);
-        setSelected(new Set());
-        await load();
-      } else {
-        const firstErr = (res?.errors || [])[0];
-        setBackendError(`${okN} assigned, ${errN} failed (${firstErr ? `${firstErr.poid}: ${firstErr.error}` : "see errors"})`);
-        if (okN > 0) await load();
-      }
-    } catch (err) {
-      setBackendError(err.message || "Failed to assign to backend");
-    } finally {
-      setBackendBusy(false);
-    }
-  }
-
-  // ── Direct Close helpers ─────────────────────────────────────────────
-  async function loadDcSubcontractors(type) {
-    setDcSubconLoading(true);
-    setDcSubcontractor("");
-    try {
-      const opts = await pmApi.getSubcontractorsByType(type);
-      setDcSubconOptions(Array.isArray(opts) ? opts.map((o) => ({ id: o.name, label: o.label })) : []);
-    } catch {
-      setDcSubconOptions([]);
-    } finally {
-      setDcSubconLoading(false);
-    }
-  }
-
-  // Auto-fill + lock subcontractor from the existing Work Done when closing
-  // the second milestone of a POID — either direction (MS1→MS2 or MS2→MS1).
-  // The backend locks the WD's subcontractor anyway, so mirror it here.
-  useEffect(() => {
-    if (!showDcModal) return;
-    let lockedSub = null;
-    if (dcMilestone !== "full" && selected.size === 1) {
-      const singleRow = rows.find((r) => selected.has(r.name));
-      const otherClosed = dcMilestone === "MS1" ? singleRow?.ms2_closed : singleRow?.ms1_closed;
-      lockedSub = (otherClosed && singleRow?.wd_subcontractor) || null;
-    }
-    if (lockedSub) {
-      setDcSubcontractor(lockedSub);
-      setDcSubconOptions((prev) =>
-        prev.find((o) => o.id === lockedSub) ? prev : [...prev, { id: lockedSub, label: lockedSub }]
-      );
-    } else {
-      setDcSubcontractor("");
-    }
-  }, [dcMilestone, showDcModal, dcSubconLoading]);
 
   function toggleOvRow(name) {
     setOvSelected((prev) => {
