@@ -3711,10 +3711,15 @@ def create_im_dummy_po_dispatch(payload=None):
     if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
         # Store the business-visible POID (DUMMY-YYMMDD-XXXXXX-1), not the
         # doctype name (SYS-YYYY-NNNNN). The Dummy POID column everywhere
-        # shows this value verbatim.
+        # shows this value verbatim, including while the dummy is still open,
+        # so this one IS set at creation.
         stamp["original_dummy_poid"] = poid
-    if frappe.db.has_column("PO Dispatch", "was_dummy_po"):
-        stamp["was_dummy_po"] = 1
+    # was_dummy_po is deliberately NOT set here. It means "this was a dummy and
+    # has since been mapped", and map_im_dummy_po_to_intake_line is what sets
+    # it. Setting it at creation made every dummy claim to be already mapped —
+    # most readers pair it with is_dummy_po = 0 and were unaffected, but
+    # send_dummy_po_reminder's `was_dummy_po = 0 OR NULL` could then never
+    # match, so the 08:00 reminder chased nothing for as long as it has existed.
     if stamp:
         frappe.db.set_value("PO Dispatch", final_name, stamp, update_modified=False)
     frappe.db.commit()

@@ -694,11 +694,14 @@ def send_daily_work_done_summary():
 
 def send_dummy_po_reminder():
 	"""Run at 08:00 daily — notify each IM about unmapped dummy PO dispatches."""
+	# is_dummy_po = 1 IS "open and unmapped" — mapping clears it. The extra
+	# `was_dummy_po = 0 OR NULL` that used to be here could never be true at
+	# the same time, because every dummy was created with was_dummy_po = 1, so
+	# this query matched nothing and no reminder was ever sent.
 	rows = frappe.db.sql("""
 		SELECT im, COUNT(*) AS cnt
 		FROM `tabPO Dispatch`
 		WHERE is_dummy_po = 1
-		  AND (was_dummy_po = 0 OR was_dummy_po IS NULL)
 		  AND dispatch_status NOT IN ('Cancelled', 'Closed')
 		GROUP BY im
 	""", as_dict=True)
