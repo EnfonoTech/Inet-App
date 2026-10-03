@@ -1325,7 +1325,6 @@ export default function IMWorkDone() {
                   <th>Region</th>
                   <th>INET IM</th>
                   <th>Planning Timestamp</th>
-                  <th style={{ textAlign: "right" }}>Dispatch Seq</th>
                   <th>Plan Date</th>
                   <th>Assigned Team</th>
                   <th>Subcontract</th>
@@ -1407,7 +1406,6 @@ export default function IMWorkDone() {
                     <td><StatusPill value={r.region_type} /></td>
                     <td style={{ fontSize: "0.82rem" }}>{r.im_full_name || r.im || "—"}</td>
                     <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{fmtTimestamp(r.planning_timestamp)}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.dispatch_seq != null ? r.dispatch_seq : "—"}</td>
                     <td>{r.plan_date || "—"}</td>
                     <td>{r.team_name || r.team || "—"}</td>
                     <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
@@ -1486,7 +1484,7 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
                       {money.format(totals.lineAmount)}
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
                       {money.format(totals.revenue)}
                     </td>

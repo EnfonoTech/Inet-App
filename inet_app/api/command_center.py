@@ -9869,7 +9869,6 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         "line_amount": "CAST(COALESCE(pd.line_amount, pd_sys.line_amount) AS CHAR)",
         "region": "COALESCE(NULLIF(pd.region_type,''), pd_sys.region_type, '')",
         "planning_timestamp": "CAST(rp.creation AS CHAR)",
-        "dispatch_seq": "CAST(COALESCE(pd.po_line_no, pd_sys.po_line_no) AS CHAR)",
         "plan_date": "CAST(rp.plan_date AS CHAR)",
         "assigned_team": "IFNULL(it.team_name,'')",
         "dispatch_status": "COALESCE(NULLIF(pd.dispatch_status,''), pd_sys.dispatch_status, '')",
@@ -10334,7 +10333,6 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
                 "visit_type": rp.visit_type if rp else None,
                 "visit_number": rp.get("visit_number") if rp else None,
                 "planning_timestamp": rp.get("creation") if rp else None,
-                "dispatch_seq": pd.get("po_line_no") if pd else None,
                 "dispatch_status": pd.get("dispatch_status") if pd else None,
                 "line_amount": pd.get("line_amount") if pd else None,
                 "ordered_qty": pd.get("qty") if pd else None,
@@ -10735,7 +10733,6 @@ def _synthesize_subcon_workdone_rows(filters, _summary=None):
             "visit_type": "Sub-Contract",
             "visit_number": None,
             "planning_timestamp": None,
-            "dispatch_seq": r.get("po_line_no"),
             "dispatch_status": r.get("dispatch_status"),
             "line_amount": r.get("line_amount"),
             "general_remark": r.get("general_remark"),
@@ -11350,10 +11347,7 @@ def update_work_done_submission(name, submission_status, note=None,
     if status == "Confirmation Done" and frappe.db.has_column("PO Dispatch", "is_dummy_po"):
         _wd_dispatch = frappe.db.get_value("Work Done", name, "system_id")
         if _wd_dispatch and cint(frappe.db.get_value("PO Dispatch", _wd_dispatch, "is_dummy_po")):
-            frappe.throw(
-                "This line is still a dummy PO. Map it to the real PO line first — "
-                "its work done is kept and re-costed against the real line amount."
-            )
+            frappe.throw("This line is still a dummy PO. Map it to the real PO line first.")
 
     prev_submission = frappe.db.get_value("Work Done", name, "submission_status") or ""
     frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
