@@ -13,8 +13,16 @@ website_route_rules = [
 # Send the bare site root to the Frappe / ERPNext Desk so a "blank" / no
 # longer surprises users. (PMS portal users still land on /pms via
 # role_home_page below after login.)
+#
+# `^$`, not `^/$`. PathResolver does `path.strip("/ ")` before anything looks
+# at it, so "/" is already the EMPTY STRING by the time resolve_redirect runs
+# — and that builds its pattern as `source.strip("/ ") + "$"`, giving `^/$$`,
+# which demands a slash that no longer exists. The rule never matched, so "/"
+# fell through to get_home_page(), which picks whichever of the user's roles
+# get_roles() happens to return first. For Administrator that is INET HR, so
+# the site root opened the Certificate Tracker.
 website_redirects = [
-	{"source": r"^/$", "target": "/app", "redirect_http_status": 302},
+	{"source": r"^$", "target": "/app", "redirect_http_status": 302},
 ]
 
 fixtures = [
