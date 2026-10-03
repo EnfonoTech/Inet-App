@@ -18453,10 +18453,6 @@ def get_duid_overview(query=None, duid=None, po_no=None, poid=None):
     caller still using the old three-tab shape; folded into the same token
     set as `query` rather than handled separately.
 
-    Expenses / acceptance-detail linking: placeholders for Phase 2 (the
-    acceptance MILESTONE data itself is already returned — see
-    _duid_overview_acceptance below).
-
     PM / desk admin only — not for INET IM / field roles.
     """
     user = frappe.session.user
@@ -18514,17 +18510,29 @@ def get_duid_overview(query=None, duid=None, po_no=None, poid=None):
                 limit_page_length=200,
             )
 
+    # Stamp the POID onto the plan and execution rows. This is a multi-line
+    # search: one result set routinely spans several PO lines, and a plan or
+    # execution row that names only itself gives the reader no way to tell
+    # which line it belongs to. Resolved from the dispatches already in hand,
+    # so no extra query — and deliberately NOT from Rollout Plan.system_id /
+    # Daily Execution.system_id, which schema_check reports as present on
+    # some sites and absent from the doctype JSON.
+    poid_by_dispatch = {d.name: (d.get("poid") or d.name) for d in dispatches}
+    poid_by_plan = {}
+    for p in plans:
+        p["poid"] = poid_by_dispatch.get(p.get("po_dispatch")) or p.get("po_dispatch") or ""
+        poid_by_plan[p.get("name")] = p["poid"]
+    for e in executions:
+        e["poid"] = poid_by_plan.get(e.get("rollout_plan")) or ""
+
     return {
         "query_tokens": tokens,
         "matched_count": len(dispatches),
         "dispatches": dispatches,
         "rollout_plans": plans,
         "executions": executions,
-        "additional_activities": [],
-        "expenses": [],
         "acceptance": _duid_overview_acceptance(dispatch_names),
         "subcon": _duid_overview_subcon(dispatch_names),
-        "notes": "Additional activities and expenses can be linked in a later phase.",
     }
 
 

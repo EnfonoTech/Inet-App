@@ -133,6 +133,7 @@ export default function OperationsOverview() {
                     <table className="data-table">
                       <thead>
                         <tr>
+                          <th>POID</th>
                           <th>Plan</th>
                           <th>Date</th>
                           <th>Visit</th>
@@ -143,6 +144,7 @@ export default function OperationsOverview() {
                       <tbody>
                         {data.rollout_plans.map((p) => (
                           <tr key={p.name}>
+                            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.poid || "—"}</td>
                             <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{p.name}</td>
                             <td>{p.plan_date}</td>
                             <td>{p.visit_type}</td>
@@ -166,6 +168,7 @@ export default function OperationsOverview() {
                     <table className="data-table">
                       <thead>
                         <tr>
+                          <th>POID</th>
                           <th>Execution</th>
                           <th>Date</th>
                           <th>Status</th>
@@ -176,6 +179,7 @@ export default function OperationsOverview() {
                       <tbody>
                         {data.executions.map((e) => (
                           <tr key={e.name}>
+                            <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.poid || "—"}</td>
                             <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{e.name}</td>
                             <td>{e.execution_date}</td>
                             <td>{e.execution_status}</td>
@@ -269,11 +273,6 @@ export default function OperationsOverview() {
                     </table>
                   )}
                 </DataTableWrapper>
-              </section>
-            )}
-            {data.expenses && data.expenses.length === 0 && data.dispatches?.length > 0 && (
-              <section style={{ margin: "0 28px", fontSize: "0.85rem", color: "#64748b" }}>
-                <strong>Expenses (per DUID):</strong> {data.notes || "No expense rows linked yet."}
               </section>
             )}
           </div>
