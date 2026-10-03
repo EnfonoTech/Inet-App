@@ -527,7 +527,6 @@ export default function IMExecution() {
     const seenPlans = new Set();
     const out = [];
     for (const e of executions) {
-      if (e.is_dummy_po) continue;
       if (Number(e.is_internal_work || 0)) continue;
       if (e.execution_status !== "Completed") continue;
       // An execution on a cancelled plan belongs to an abandoned attempt —
@@ -627,7 +626,6 @@ export default function IMExecution() {
     if (Number(e.is_internal_work || 0)) return "Internal work — set Execution Status to Completed instead, no Work Done needed";
     if (e.work_done_external)
       return `${(e.work_done_external_source || "Direct Close")} record ${e.work_done_external} already exists for this line`;
-    if (e.is_dummy_po) return "Dummy PO — must be mapped to a real PO before Work Done can be created";
     if (e.work_done) {
       const pending = [];
       if (!isNotRequired(e.ciag_required) && !["Approved", "Not Applicable"].includes(e.ciag_status))
@@ -1006,7 +1004,7 @@ export default function IMExecution() {
             {execStatusErr && <div className="notice error" style={{ marginBottom: 10 }}>{execStatusErr}</div>}
             {execStatusFor.is_dummy_po && execStatusPick === "Completed" && (
               <div style={{ background: "#fffbeb", border: "1px solid #fbbf24", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: "0.82rem", color: "#92400e" }}>
-                <strong>Warning:</strong> This POID is a Dummy PO. Marking it as Completed counts as an invalid entry until the PO is mapped to a real PO Intake Line. Use <em>Map PO</em> to map it first.
+                <strong>Dummy PO.</strong> You can complete this and record Work Done — the work happened and the record keeps its execution date. It cannot be confirmed to PIC, invoiced or subcontracted until the PO is mapped. Map it with <em>Map PO</em> and the amounts are re-costed against the real line.
               </div>
             )}
             <div className="form-group" style={{ marginBottom: 12 }}>

@@ -5600,6 +5600,15 @@ def map_im_dummy_po_to_intake_line(payload=None):
         update_modified=True,
     )
 
+    # The dispatch is now worth real money; everything planned or executed
+    # against it while it was a dummy was stamped from line_amount = 0 and
+    # stays stale otherwise. Measured on the production copy before this
+    # call existed: 199 of 218 plans and 57 of 221 executions on
+    # already-mapped dummies still read 0 against a line that has value.
+    # Repairs zeros only — see inet_app/api/dispatch_value_sync.py.
+    from inet_app.api.dispatch_value_sync import resync_dispatch_values
+    resync_dispatch_values(dummy_name, reason="dummy PO mapped to a real line")
+
     frappe.db.commit()
     gv_fields = ["po_no", "po_line_no", "poid"]
     if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
@@ -11333,6 +11342,25 @@ def update_work_done_submission(name, submission_status, note=None,
         frappe.throw("Invalid submission_status")
     if not frappe.db.exists("Work Done", name):
         frappe.throw(f"Work Done not found: {name}")
+
+    # A dummy PO may now carry Work Done — the work really happened and the
+    # record anchors to the execution that did it. What it may NOT do is cross
+    # into the commercial half of the app: confirmation is the gate that hands
+    # a line to PIC, and a dummy has no real POID, no line_amount and no
+    # milestones, so everything past this point would be arithmetic on zero
+    # against a PO number that does not exist yet.
+    #
+    # Enforced here, not in the UI. The old "dummy" rule lived entirely in one
+    # `if` in IMExecution.jsx, which Direct Close and Backend never went
+    # through — so it was a suggestion, not a rule.
+    if status == "Confirmation Done" and frappe.db.has_column("PO Dispatch", "is_dummy_po"):
+        _wd_dispatch = frappe.db.get_value("Work Done", name, "system_id")
+        if _wd_dispatch and cint(frappe.db.get_value("PO Dispatch", _wd_dispatch, "is_dummy_po")):
+            frappe.throw(
+                "This line is still a dummy PO. Map it to the real PO line first — "
+                "its work done is kept and re-costed against the real line amount."
+            )
+
     prev_submission = frappe.db.get_value("Work Done", name, "submission_status") or ""
     frappe.db.set_value("Work Done", name, "submission_status", status, update_modified=True)
 
