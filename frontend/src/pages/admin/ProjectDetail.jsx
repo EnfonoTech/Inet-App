@@ -642,7 +642,7 @@ export default function ProjectDetail() {
     { key: "executed_qty", label: "Qty", align: "right", render: v => v != null ? fmt.format(v) : "\u2014" },
     { key: "billing_rate_sar", label: "Rate (SAR)", align: "right", render: v => v != null ? money.format(v) : "\u2014" },
     { key: "revenue_sar", label: "Revenue", align: "right", render: v => v != null ? money.format(v) : "\u2014" },
-    // Cost / Margin dropped: total_cost_sar is the team's whole daily cost
+    // Cost / Margin dropped: team_cost_sar is the team's whole daily cost
     // charged to this one POID (a team-day cost, not a line cost), so a
     // per-POID margin built on it is not a real figure. Team cost is
     // reported at team/company level instead.
@@ -747,7 +747,7 @@ export default function ProjectDetail() {
       {/* Financial Summary Cards */}
       <div className="summary-cards">
         {/* Cost and Margin used to sit here. Both were built by summing
-            Work Done.total_cost_sar / margin_sar, which charge a team's whole
+            Work Done's cost roll-up, which charged a team's whole
             daily cost to every POID line the team touched that day — so the
             project's "cost" counted one team-day many times over and the
             margin came out negative on profitable projects. Team cost is a

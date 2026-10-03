@@ -100,12 +100,14 @@ class WorkDone(Document):
                 line_revenue if line_revenue is not None
                 else flt(self.billing_rate_sar) * flt(self.executed_qty)
             )
-        self.total_cost_sar = (
-            flt(self.team_cost_sar)
-            + flt(self.subcontract_cost_sar)
-            + flt(getattr(self, "activity_cost_sar", 0))
-        )
-        self.margin_sar = flt(self.revenue_sar) - flt(self.total_cost_sar)
+        # total_cost_sar / margin_sar used to be derived here and are gone.
+        # team_cost_sar is a team's whole DAILY cost, charged in full to every
+        # POID that team touched that day — and a team routinely does five in
+        # a day, across several teams and several days per line. There is no
+        # arithmetic that turns that into a per-line cost, so the roll-up and
+        # the margin built on it were never figures anyone could use. Nothing
+        # rendered them. The inputs (team_cost_sar, subcontract_cost_sar,
+        # activity_cost_sar) are real and stay.
 
     def on_submit(self):
         """Mark the linked PO Dispatch and PO Intake Line as Completed."""

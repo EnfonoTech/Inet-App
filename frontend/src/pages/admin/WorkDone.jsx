@@ -1911,7 +1911,7 @@ export default function WorkDone() {
               }
               hiddenFields={[
                 "po_dispatch", "item_code",
-                "executed_qty", "revenue_sar", "total_cost_sar", "margin_sar",
+                "executed_qty", "revenue_sar",
                 "billing_status",
                 "im", "im_full_name",
                 "direct_close_by", "direct_close_by_full_name",

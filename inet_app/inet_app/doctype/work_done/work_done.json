@@ -19,8 +19,6 @@
   "team_cost_sar",
   "subcontract_cost_sar",
   "activity_cost_sar",
-  "total_cost_sar",
-  "margin_sar",
   "inet_margin_pct",
   "submission_status",
   "billing_status",
@@ -116,18 +114,6 @@
    "fieldname": "activity_cost_sar",
    "fieldtype": "Currency",
    "label": "Activity Cost (SAR)"
-  },
-  {
-   "fieldname": "total_cost_sar",
-   "fieldtype": "Currency",
-   "in_list_view": 1,
-   "label": "Total Cost (SAR)"
-  },
-  {
-   "fieldname": "margin_sar",
-   "fieldtype": "Currency",
-   "in_list_view": 1,
-   "label": "Margin (SAR)"
   },
   {
    "fieldname": "inet_margin_pct",

@@ -8353,12 +8353,12 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     #
     # Deliberately scoped to THIS plan, not the whole visit, even though a
     # visit's companion plans can carry other teams. team_cost_sar is a
-    # team-DAY cost charged whole to one POID, which is why the app already
-    # stopped showing anything built on it: ProjectDetail dropped its Cost and
-    # Margin columns for exactly that reason, and the Work Done detail modal
-    # hides total_cost_sar / margin_sar. Nothing in the frontend reads this
-    # field. Widening it would spread a figure that is already not a real
-    # per-line cost, so it stays as it was.
+    # team-DAY cost charged whole to one POID — and a team routinely does
+    # five POIDs in a day, over several days, with several teams on one line.
+    # The roll-up built on it (total_cost_sar / margin_sar) was removed for
+    # exactly that reason: no arithmetic turns a team-day into a per-line
+    # cost. team_cost_sar itself stays as a raw input; widening it would only
+    # spread the same unusable figure further.
     plan_de_rows = frappe.db.sql(
         "SELECT name, team, IFNULL(achieved_qty, 0) AS achieved_qty "
         "FROM `tabDaily Execution` WHERE rollout_plan = %s",
@@ -8459,8 +8459,6 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     wd.team_cost_sar = team_cost
     wd.subcontract_cost_sar = subcontract_cost
     wd.activity_cost_sar = activity_cost
-    wd.total_cost_sar = total_cost
-    wd.margin_sar = margin
     wd.inet_margin_pct = inet_margin_pct
     wd.billing_status = "Pending"
     clean_flag = (issue_flag or "").strip()
@@ -9567,8 +9565,6 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         "revenue_sar",
         "team_cost_sar",
         "subcontract_cost_sar",
-        "total_cost_sar",
-        "margin_sar",
         "billing_status",
         "modified",
     ]
@@ -10728,8 +10724,6 @@ def _synthesize_subcon_workdone_rows(filters, _summary=None):
             "revenue_sar": _billable_amount_of(r),
             "team_cost_sar": None,
             "subcontract_cost_sar": None,
-            "total_cost_sar": None,
-            "margin_sar": None,
             "billing_status": "Pending",
             "submission_status": r.get("subcon_submission_status") or "",
             "execution_date": r.get("subcon_completed_on"),
@@ -19037,8 +19031,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     # Revenue this month
     revenue_rows = frappe.db.sql(
         f"""
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
-               COALESCE(SUM(wd.total_cost_sar), 0) AS cost
+        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
         JOIN `tabRollout Plan` rp ON rp.name = exe.rollout_plan
@@ -19049,7 +19042,6 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         as_dict=True,
     )
     revenue = flt(revenue_rows[0].revenue if revenue_rows else 0)
-    cost = flt(revenue_rows[0].cost if revenue_rows else 0)
 
     # Direct Close / Backend revenue for this IM — wd.execution is blank for
     # these (no Daily Execution/Rollout Plan, no team), so the team-scoped
@@ -19060,8 +19052,7 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     _direct_ph = ", ".join(["%s"] * len(im_identifiers))
     direct_revenue_rows = frappe.db.sql(
         f"""
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
-               COALESCE(SUM(wd.total_cost_sar), 0) AS cost
+        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue
         FROM `tabWork Done` wd
         JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
         WHERE IFNULL(wd.execution, '') = ''
@@ -19072,25 +19063,13 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         as_dict=True,
     )
     revenue += flt(direct_revenue_rows[0].revenue if direct_revenue_rows else 0)
-    cost += flt(direct_revenue_rows[0].cost if direct_revenue_rows else 0)
 
-    # Add approved project expense claims filed against this IM's teams
-    im_users = [u for u in [frappe.db.get_value("IM Master", im_resolved, "user")] if u]
-    if im_users:
-        expense_rows = frappe.db.sql(
-            """
-            SELECT COALESCE(SUM(total_sanctioned_amount), 0) AS expense_cost
-            FROM `tabExpense Claim`
-            WHERE is_project_claim = 1
-              AND expense_approver IN %s
-              AND approval_status = 'Approved'
-              AND docstatus < 2
-              AND posting_date BETWEEN %s AND %s
-            """,
-            (tuple(im_users), first_day, last_day),
-            as_dict=True,
-        )
-        cost += flt(expense_rows[0].expense_cost if expense_rows else 0)
+    # "cost" and "profit" are gone from the kpi block below, and the expense
+    # claim query that also fed them went with them. Two of its three terms
+    # were SUM(wd.total_cost_sar); dropping those would have left a figure
+    # still called "cost" that silently meant "expense claims only", with
+    # profit jumping upward across the board. Nothing read it — IMDashboard.jsx
+    # is the only caller and it uses site_kpi, never kpi.
 
     # Monthly target — projects where this IM is implementation_manager
     im_ph = ", ".join(["%s"] * len(im_identifiers))
@@ -19551,8 +19530,6 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
             "monthly_target": monthly_target,
             "target_today": target_today,
             "revenue": revenue,
-            "cost": cost,
-            "profit": revenue - cost,
             "gap_today": gap_today,
             "active_teams_today": active_today,
             "total_teams": len(teams),
@@ -20442,9 +20419,7 @@ def get_project_summary(project_code):
     wd_fin = frappe.db.sql(
         """
         SELECT COUNT(*) AS work_done_count,
-               COALESCE(SUM(wd.revenue_sar), 0) AS total_revenue,
-               COALESCE(SUM(wd.total_cost_sar), 0) AS total_cost,
-               COALESCE(SUM(wd.margin_sar), 0) AS total_margin
+               COALESCE(SUM(wd.revenue_sar), 0) AS total_revenue
         FROM `tabWork Done` wd
         JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
         WHERE pd.project_code = %s AND IFNULL(pd.is_internal_work, 0) != 1
@@ -20512,8 +20487,6 @@ def get_project_summary(project_code):
         "financial_summary": {
             "total_po_value": flt(fin.total_po_value),
             "total_revenue": flt(wd_fin.total_revenue),
-            "total_cost": flt(wd_fin.total_cost),
-            "total_margin": flt(wd_fin.total_margin),
             "dispatch_count": cint(fin.dispatch_count),
             "plan_count": cint(chain.plan_count),
             "execution_count": cint(chain.execution_count),
@@ -22720,7 +22693,6 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
                 ms_closed_field: 1,
                 ms_closed_at_field: now_dt,
                 "revenue_sar": new_revenue,
-                "margin_sar": margin,
             }
             frappe.db.set_value("Work Done", existing_wd_name, wd_updates, update_modified=True)
             wd_name = existing_wd_name
@@ -22739,8 +22711,6 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
             wd.team_cost_sar = 0
             wd.subcontract_cost_sar = subcontract_cost
             wd.activity_cost_sar = 0
-            wd.total_cost_sar = subcontract_cost
-            wd.margin_sar = margin
             wd.inet_margin_pct = inet_margin_pct
             wd.billing_status = "Pending"
             if frappe.db.has_column("Work Done", "subcontractor"):
@@ -22849,8 +22819,6 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
     wd.team_cost_sar = 0
     wd.subcontract_cost_sar = subcontract_cost
     wd.activity_cost_sar = 0
-    wd.total_cost_sar = subcontract_cost
-    wd.margin_sar = margin
     wd.inet_margin_pct = inet_margin_pct
     wd.billing_status = "Pending"
     if frappe.db.has_column("Work Done", "subcontractor"):
@@ -23158,8 +23126,6 @@ def _mark_backend_done_one(role, im_identifiers, name, completed, remark):
             wd.team_cost_sar = 0
             wd.subcontract_cost_sar = subcontract_cost
             wd.activity_cost_sar = 0
-            wd.total_cost_sar = subcontract_cost
-            wd.margin_sar = revenue - subcontract_cost
             wd.inet_margin_pct = inet_margin_pct
             wd.billing_status = "Pending"
             if frappe.db.has_column("Work Done", "subcontractor"):

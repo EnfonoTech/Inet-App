@@ -148,14 +148,7 @@ def _recost_work_done(wd_name, subcontractor):
             "expected_cost_sar",
         )
         if cost is not None:
-            wd = frappe.db.get_value(
-                "Work Done", wd_name,
-                ["revenue_sar", "team_cost_sar", "activity_cost_sar"], as_dict=True) or {}
-            subcontract_cost = flt(cost or 0)
-            total = flt(wd.get("team_cost_sar")) + subcontract_cost + flt(wd.get("activity_cost_sar"))
-            updates["subcontract_cost_sar"] = subcontract_cost
-            updates["total_cost_sar"] = total
-            updates["margin_sar"] = flt(wd.get("revenue_sar")) - total
+            updates["subcontract_cost_sar"] = flt(cost or 0)
     else:
         updates["inet_margin_pct"] = 0.0
     frappe.db.set_value("Work Done", wd_name, updates, update_modified=False)
