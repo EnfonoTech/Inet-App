@@ -1085,6 +1085,12 @@ export default function SubconPO() {
         <SearchableSelect multi value={poFilter} onChange={setPoFilter}
           options={(options.purchase_order || []).map((v) => ({ id: v, label: v }))}
           placeholder="Purchase Order" minWidth={175} />
+        {/* Labelled on purpose. The range filters the SUPPLIER PO date
+            (sub_po_date_ms1/ms2), and a bare picker next to a page that also
+            shows customer milestones gave no way to tell which date it meant.
+            Lines with no PO yet have no PO date, so the To Order tab empties
+            once a range is set — that is the honest answer, not a bug. */}
+        <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>PO date</span>
         <DateRangePicker value={dateRange} onChange={setDateRange} />
         {hasFilters && <button className="btn-secondary" onClick={clearFilters}>Clear</button>}
         <div className="toolbar-actions">

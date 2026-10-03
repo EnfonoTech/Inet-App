@@ -566,6 +566,45 @@ def _batch_resolve_subcontracts(po_dispatch_names):
 
 
 # ── List endpoint ────────────────────────────────────────────────────────
+def _supplier_po_date_filter(pf):
+    """``(sql, params)`` restricting lines to a SUPPLIER PO raised in the range.
+
+    This page is about what is owed to subcontractors, so its date range is
+    the date the PO went to the supplier — ``sub_po_date_ms1`` /
+    ``sub_po_date_ms2``, which ``create_purchase_order_from_pic`` stamps from
+    the Purchase Order it just made. Audited on the production copy: all 188
+    MS1 and 63 MS2 stamps equal their Purchase Order's ``transaction_date``,
+    none differ, none missing, and no stamp exists without a PO line behind
+    it — so this reads the stamp rather than joining back to the PO.
+
+    It used to filter ``ms1_applied_date``: when PIC applied MS1 to the
+    CUSTOMER. That is a sales date on a purchase page, and it is blank on 37%
+    of lines, so any range silently dropped 8,282 of them.
+
+    Per milestone, not per line. A range must CONTAIN one milestone's PO date;
+    OR'ing the bounds separately would match a line whose MS1 satisfied
+    "from" and whose MS2 satisfied "to" while neither PO fell in the range.
+
+    A line with no supplier PO has no PO date and therefore cannot be in any
+    range — so the To Order tab comes back empty once a range is set. That is
+    the honest answer to "which lines were ordered in this period", not a bug.
+    """
+    frm, to = pf.get("from_date"), pf.get("to_date")
+    if not (frm or to):
+        return None, []
+    arms, params = [], []
+    for col in ("sub_po_date_ms1", "sub_po_date_ms2"):
+        conds = [f"pd.{col} IS NOT NULL"]
+        if frm:
+            conds.append(f"pd.{col} >= %s")
+            params.append(frm)
+        if to:
+            conds.append(f"pd.{col} <= %s")
+            params.append(to)
+        arms.append("(" + " AND ".join(conds) + ")")
+    return "(" + " OR ".join(arms) + ")", params
+
+
 @frappe.whitelist()
 def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=None, _summary=None):
     """PO Dispatch lines that resolve to a SUB subcontractor, per stage.
@@ -575,7 +614,8 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
     sales-side stages these overlap on purpose.
     ``portal_filters``: search, project_code, site_code, im, subcontract,
     contract_model, supplier, sub_po_status_ms1 (multi, "__NONE__" for blank),
-    pic_status (multi), from_date / to_date (against ms1_applied_date),
+    pic_status (multi), from_date / to_date (against the SUPPLIER PO date — see
+    ``_supplier_po_date_filter``),
     column_filters (per-column Manage Table filters).
     ``limit``: 0 = unlimited (see _portal_row_limit).
     """
@@ -653,12 +693,10 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         )
         params.extend(pic_vals * 2)
 
-    if pf.get("from_date"):
-        where.append("pd.ms1_applied_date >= %s")
-        params.append(pf["from_date"])
-    if pf.get("to_date"):
-        where.append("pd.ms1_applied_date <= %s")
-        params.append(pf["to_date"])
+    _po_date_sql, _po_date_params = _supplier_po_date_filter(pf)
+    if _po_date_sql:
+        where.append(_po_date_sql)
+        params.extend(_po_date_params)
 
     col_filter_map = {
         "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
@@ -1973,12 +2011,10 @@ def subcon_payout_summary(portal_filters=None):
         if c:
             where.append(c)
             params.extend(p)
-    if pf.get("from_date"):
-        where.append("pd.ms1_applied_date >= %s")
-        params.append(pf["from_date"])
-    if pf.get("to_date"):
-        where.append("pd.ms1_applied_date <= %s")
-        params.append(pf["to_date"])
+    _po_date_sql, _po_date_params = _supplier_po_date_filter(pf)
+    if _po_date_sql:
+        where.append(_po_date_sql)
+        params.extend(_po_date_params)
     where_sql = " AND ".join(where)
 
     # One UNION leg per milestone: the grain of this report is (line, milestone),
