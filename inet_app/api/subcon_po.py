@@ -689,7 +689,12 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         # Check the cell, not the header wording: an earlier pass mapped these
         # to ms*_amount and the dropdowns offered money on a status column.
         "cust_ms1": "IF(IFNULL(pd.pic_status,'') = '', 'Work Not Done', pd.pic_status)",
-        "cust_ms2": "IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2)",
+        # A line whose PO never had a second milestone (ms2_pct = 0 —
+        # 87.5% of them) renders "NIL", not "Work Not Done". Mirror of
+        # picMs2Label in frontend/src/pages/pic/picShared.jsx.
+        "cust_ms2": (
+            "IF(IFNULL(pd.ms2_pct,0) <= 0, 'NIL', IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2))"
+        ),
         "payout_ms1": f"CAST({_expected_payout_sql(1)} AS CHAR)",
         "payout_ms2": f"CAST({_expected_payout_sql(2)} AS CHAR)",
         "vat_ms1": f"CAST({_vat_sql(1)} AS CHAR)",
@@ -727,7 +732,12 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         ),
         "im": "IFNULL(imm.full_name,'')",
         "pic_status_ms1": "IF(IFNULL(pd.pic_status,'') = '', 'Work Not Done', pd.pic_status)",
-        "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2)",
+        # A line whose PO never had a second milestone (ms2_pct = 0 —
+        # 87.5% of them) renders "NIL", not "Work Not Done". Mirror of
+        # picMs2Label in frontend/src/pages/pic/picShared.jsx.
+        "pic_status_ms2": (
+            "IF(IFNULL(pd.ms2_pct,0) <= 0, 'NIL', IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2))"
+        ),
         "ms1": "CAST(pd.ms1_pct AS CHAR)",
         "ms2": "CAST(pd.ms2_pct AS CHAR)",
         "ms1_amt": "CAST(pd.ms1_amount AS CHAR)",

@@ -5,7 +5,7 @@ import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
 // Same badges the PIC pages use — pic_status / sub_po_status is the same
 // field and vocab here, so it must render identically.
-import { PicStatusBadge, SubPoStatusBadge } from "../pic/picShared";
+import { PicStatusBadge, PicMs2Badge, SubPoStatusBadge } from "../pic/picShared";
 import { money, qty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -665,7 +665,7 @@ export default function ProjectDetail() {
     { key: "ms1_unbilled", label: "MS1 Unbilled", align: "right", render: v => v ? money.format(v) : "—" },
     { key: "ms1_invoice_month", label: "Inv. Month (MS1)" },
     { key: "ms1_payment_received_date", label: "Paid (MS1)" },
-    { key: "pic_status_ms2", label: "PIC Status (MS2)", render: v => <PicStatusBadge value={v} /> },
+    { key: "pic_status_ms2", label: "PIC Status (MS2)", render: (v, row) => <PicMs2Badge value={v} ms2Pct={row?.ms2_pct} /> },
     { key: "ms2_amount", label: "MS2 Amt", align: "right", render: v => v ? money.format(v) : "—" },
     { key: "ms2_invoiced", label: "MS2 Invoiced", align: "right", render: v => v ? money.format(v) : "—" },
     { key: "ms2_unbilled", label: "MS2 Unbilled", align: "right", render: v => v ? money.format(v) : "—" },

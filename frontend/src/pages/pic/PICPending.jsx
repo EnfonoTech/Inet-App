@@ -15,7 +15,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge } from "./picShared";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -472,7 +472,7 @@ export default function PICPending() {
                       ? money.format(Math.max(Number(r.ms1_unbilled) || 0, 0))
                       : money.format(r.ms1_amount || 0)}
                   </td>
-                  <td><PicStatusBadge value={r.pic_status_ms2} /></td>
+                  <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
                   <td style={{ fontSize: "0.78rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#64748b" }} title={r.pic_detail_remark || r.pic_detail_remark_ms2 || ""}>
                     {r.pic_detail_remark || r.pic_detail_remark_ms2 || "—"}
                   </td>

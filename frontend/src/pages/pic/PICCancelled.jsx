@@ -15,7 +15,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge } from "./picShared";
 import { money, qty } from "../../utils/numberFormat";
 
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -435,7 +435,7 @@ export default function PICCancelled() {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.line_amount || 0)}</td>
                   <td><IMStatusBadge value={r.im_submission_status} /></td>
                   <td><PicStatusBadge value={r.pic_status_effective} /></td>
-                  <td><PicStatusBadge value={r.pic_status_ms2} /></td>
+                  <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
                   <td style={{ fontSize: "0.78rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#64748b" }} title={r.pic_detail_remark || r.pic_detail_remark_ms2 || ""}>
                     {r.pic_detail_remark || r.pic_detail_remark_ms2 || "—"}
                   </td>

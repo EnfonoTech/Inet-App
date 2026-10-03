@@ -393,7 +393,12 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         "ms1_amt": "CAST(pd.ms1_amount AS CHAR)",
         "ms1_invoiced": "CAST(pd.ms1_invoiced AS CHAR)",
         "ms1_unbilled": "CAST(pd.ms1_unbilled AS CHAR)",
-        "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2)",
+        # A line whose PO never had a second milestone (ms2_pct = 0 —
+        # 87.5% of them) renders "NIL", not "Work Not Done". Mirror of
+        # picMs2Label in frontend/src/pages/pic/picShared.jsx.
+        "pic_status_ms2": (
+            "IF(IFNULL(pd.ms2_pct,0) <= 0, 'NIL', IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2))"
+        ),
         "applied_date_ms2": "CAST(pd.ms2_applied_date AS CHAR)",
         "ms2": "CAST(pd.ms2_pct AS CHAR)",
         "ms2_amt": "CAST(pd.ms2_amount AS CHAR)",

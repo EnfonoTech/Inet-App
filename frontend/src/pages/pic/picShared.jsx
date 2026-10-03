@@ -61,6 +61,55 @@ export function PicStatusBadge({ value }) {
   return <StatusBadge value={value || "Work Not Done"} bg={c.bg} fg={c.fg} bd={c.bd} />;
 }
 
+// ---------------------------------------------------------------------------
+// MS2 on a line that has no MS2
+//
+// Most lines never had a second milestone. The PO's payment terms decide it:
+// "AC1 (100.00%)" is one milestone, "AC1 (70%) / AC2 (30%)" is two. In
+// production 19,544 of 22,340 lines (87.5%) are AC1 100%, and only three
+// splits exist at all — 100/0, 70/30, 80/20.
+//
+// On those lines pic_status_ms2 is simply empty (18,838 of them; just 3 hold
+// a stored "Work Not Done"), and PicStatusBadge prints "Work Not Done" for an
+// empty value. So the column announced pending work on 87% of the book for a
+// milestone that was never ordered. The client asked for "NIL" instead, and
+// they are right — this is a property of the purchase order, not a stage
+// anyone has to move.
+//
+// Derived, never stored: a PO revision can turn a 100/0 line into 70/30, and
+// a status written into the field would go stale silently. Same reason the
+// subcontractor is resolved rather than copied.
+//
+// ms2_pct, NOT ms2_amount: 199 genuine 70/30 and 80/20 lines are zero-value,
+// so their MS2 amount is legitimately 0. Testing the amount would label a real
+// milestone NIL.
+//
+// The ~704 no-MS2 lines that do carry a status are mirrors of MS1 (604 "PO
+// Line Canceled", 99 "Commercial Invoice Closed"), written when PIC settled
+// both milestones in one action. None holds a riyal of MS2 value, and the MS1
+// column still shows the same word, so NIL loses nothing.
+
+/** "NIL" when this line has no MS2, otherwise the status unchanged.
+ *
+ *  A missing/undefined ms2Pct means the caller's payload does not carry the
+ *  field — fall through to normal rendering rather than mislabel 2,796 real
+ *  MS2 lines as NIL on a page that simply wasn't wired up.
+ */
+export function picMs2Label(value, ms2Pct) {
+  if (ms2Pct === undefined || ms2Pct === null || ms2Pct === "") return value;
+  return Number(ms2Pct) > 0 ? value : "NIL";
+}
+
+export function PicMs2Badge({ value, ms2Pct }) {
+  const label = picMs2Label(value, ms2Pct);
+  if (label === "NIL") {
+    // Deliberately the muted grey of "Closed"/"Not Ordered" — nothing is
+    // outstanding here, so it must not compete with a live status.
+    return <StatusBadge value="NIL" bg="#f8fafc" fg="#94a3b8" bd="#e2e8f0" />;
+  }
+  return <PicStatusBadge value={label} />;
+}
+
 // Subcon PO (supplier side) — PO Dispatch.sub_po_status_ms1 / sub_po_status_ms2,
 // see SUB_PO_STATUSES in inet_app/api/subcon_po.py. Colors deliberately reuse
 // the same hues picStatusColor above already assigns to the equivalent stage

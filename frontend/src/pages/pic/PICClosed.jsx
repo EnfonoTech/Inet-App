@@ -15,7 +15,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge } from "./picShared";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -520,7 +520,7 @@ export default function PICClosed() {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmt.format(r.ms1_pct)}%` : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms1_amount || 0)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.ms1_vat || 0)}</td>
-                  <td><PicStatusBadge value={r.pic_status_ms2} /></td>
+                  <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms2_invoice_month ? fmtMonthLabel(String(r.ms2_invoice_month)) : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmt.format(r.ms2_pct)}%` : "—"}</td>

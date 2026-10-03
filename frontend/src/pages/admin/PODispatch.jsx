@@ -13,7 +13,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PicStatusBadge } from "../pic/picShared";
+import { PicStatusBadge, PicMs2Badge, picMs2Label } from "../pic/picShared";
 import { money, qty } from "../../utils/numberFormat";
 
 const HIDDEN_DETAIL_FIELDS = new Set(["owner", "creation", "modified", "modified_by", "docstatus", "idx"]);
@@ -237,7 +237,7 @@ function IntegrityTable({ rows, loading, selected, toggleRow, toggleAll, tabKey,
             <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.site_code || "—"}</td>
             <td>{r.dispatch_status || "—"}</td>
             <td style={{ color: showMs && r.ms1_stuck ? "#b91c1c" : undefined, fontWeight: showMs && r.ms1_stuck ? 700 : undefined }}>{r.pic_status || "—"}</td>
-            <td style={{ color: showMs && r.ms2_stuck ? "#b91c1c" : undefined, fontWeight: showMs && r.ms2_stuck ? 700 : undefined }}>{r.pic_status_ms2 || "—"}</td>
+            <td style={{ color: showMs && r.ms2_stuck ? "#b91c1c" : undefined, fontWeight: showMs && r.ms2_stuck ? 700 : undefined }}>{picMs2Label(r.pic_status_ms2, r.ms2_pct) || "—"}</td>
             {showMs ? (
               <>
                 <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ms1_stuck ? "#b45309" : "#94a3b8" }}>{money.format(r.ms1_unbilled || 0)}</td>
@@ -1447,7 +1447,7 @@ export default function PODispatch() {
                             {row.plan_date ? new Date(row.plan_date).toLocaleDateString("en", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
                           </td>
                           <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status} /></td>
-                          <td style={{ whiteSpace: "nowrap" }}><PicStatusBadge value={row.pic_status_ms2} /></td>
+                          <td style={{ whiteSpace: "nowrap" }}><PicMs2Badge value={row.pic_status_ms2} ms2Pct={row.ms2_pct} /></td>
                           <td style={{ whiteSpace: "nowrap" }}>
                             {row.work_type ? (() => {
                               const t = workTypeTone(row.work_type);

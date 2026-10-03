@@ -15,7 +15,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import { RemainderBadge } from "../../components/ConfirmedQtyFields";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
-import { PoStatusBadge, PicStatusBadge, IMStatusBadge } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge } from "./picShared";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
@@ -907,7 +907,7 @@ export default function PICTracker() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_invoiced || 0) > 0 ? "#047857" : "#94a3b8" }}>{money.format(r.ms1_invoiced || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_vat || 0) > 0 ? "#64748b" : "#94a3b8" }}>{money.format(r.ms1_vat || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.ms1_unbilled || 0) > 0 ? "#b45309" : "#94a3b8" }}>{money.format(r.ms1_unbilled || 0)}</td>
-                    <td><PicStatusBadge value={r.pic_status_ms2} /></td>
+                    <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.ms2_invoice_month ? fmtMonthLabel(String(r.ms2_invoice_month)) : "—"}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmt.format(r.ms2_pct)}%` : "—"}</td>

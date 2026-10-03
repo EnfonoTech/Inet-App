@@ -1,6 +1,7 @@
 import { useState } from "react";
 import DataTableWrapper from "../components/DataTableWrapper";
 import { pmApi } from "../services/api";
+import { picMs2Label } from "./pic/picShared";
 
 /**
  * DUID / POID / PO-No search — PM (admin portal) only (spec §11).
@@ -224,7 +225,7 @@ export default function OperationsOverview() {
                             <td style={{ textAlign: "right" }}>{fmtMoney(a.ms1_amount)}</td>
                             <td style={{ textAlign: "right" }}>{fmtMoney(a.ms1_invoiced)}</td>
                             <td style={{ textAlign: "right", color: a.ms1_unbilled > 0 ? "#b45309" : undefined }}>{fmtMoney(a.ms1_unbilled)}</td>
-                            <td>{a.pic_status_ms2 || "—"}</td>
+                            <td>{picMs2Label(a.pic_status_ms2, a.ms2_pct) || "—"}</td>
                             <td style={{ textAlign: "right" }}>{fmtMoney(a.ms2_amount)}</td>
                             <td style={{ textAlign: "right" }}>{fmtMoney(a.ms2_invoiced)}</td>
                             <td style={{ fontSize: "0.76rem", color: "#64748b" }}>{a.invoices || "—"}</td>

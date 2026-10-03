@@ -21,7 +21,7 @@ import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } 
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge } from "../pic/picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge } from "../pic/picShared";
 
 /* Money is never rounded to whole SAR: ms2_amount alone is fractional on
    1,550 of 1,983 dispatches, so a milestone split of an odd line amount
@@ -348,7 +348,7 @@ function LegacyResubmitTable({ rows, loading, selectedRows, onToggleRow, onToggl
             <td><PoStatusBadge value={r.dispatch_status} /></td>
             <td><PicStatusBadge value={r.pic_status} /></td>
             <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_amount != null ? money.format(r.ms1_amount) : "—"}</td>
-            <td><PicStatusBadge value={r.pic_status_ms2} /></td>
+            <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
             <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_amount != null ? money.format(r.ms2_amount) : "—"}</td>
             <td style={{ textAlign: "right" }}>{r.doc_count > 0 ? `📎 ${r.doc_count}` : "—"}</td>
             <td style={{ fontSize: "0.8rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.im_confirmation_note || ""}>{r.im_confirmation_note || "—"}</td>
@@ -1341,6 +1341,8 @@ export default function IMWorkDone() {
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
+                  <th>PIC Status (MS1)</th>
+                  <th>PIC Status (MS2)</th>
                   <th>Submission Status</th>
                   <th>PIC Rejection Reason</th>
                   <th>Source</th>
@@ -1421,6 +1423,8 @@ export default function IMWorkDone() {
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.manager_remark} tone="manager" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.manager_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.team_lead_remark} tone="team_lead" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.team_lead_remark = v; }} /></td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.revenue_sar || 0)}</td>
+                    <td><PicStatusBadge value={r.pic_status} /></td>
+                    <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
                     <td><StatusPill value={r.submission_status} /></td>
                     <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: r.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={r.pic_rejection_remark || ""}>{r.pic_rejection_remark || "—"}</td>
                     <td>
@@ -1486,7 +1490,9 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
                       {money.format(totals.revenue)}
                     </td>
-                    <td /><td /><td /><td /><td /><td />
+                    {/* PIC MS1 · PIC MS2 · Submission · Rejection · Source ·
+                        Milestone · Issue · Actions */}
+                    <td /><td /><td /><td /><td /><td /><td /><td />
                   </tr>
                 </tfoot>
               )}

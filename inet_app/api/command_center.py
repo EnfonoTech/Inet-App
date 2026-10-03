@@ -3055,8 +3055,15 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             # value rather than leaving it empty — match that here too, or
             # the dropdown's "(Blanks)" option wouldn't correspond to any
             # value actually shown on screen.
+            # MS2 adds one more case: a line whose PO never had a second
+            # milestone (ms2_pct = 0 — 87.5% of them) renders "NIL", not
+            # "Work Not Done". Mirror of picMs2Label in picShared.jsx; if the
+            # two disagree the dropdown offers words the column never shows.
             "pic_status_ms1": "IF(IFNULL(pd.pic_status,'')='', 'Work Not Done', pd.pic_status)",
-            "pic_status_ms2": "IF(IFNULL(pd.pic_status_ms2,'')='', 'Work Not Done', pd.pic_status_ms2)",
+            "pic_status_ms2": (
+                "IF(IFNULL(pd.ms2_pct,0) <= 0, 'NIL', "
+                "IF(IFNULL(pd.pic_status_ms2,'')='', 'Work Not Done', pd.pic_status_ms2))"
+            ),
             # How the line got its Work Done — Rollout Execution / Backend /
             # Direct Close (Work Done.source). Blank until work is actually
             # recorded.
@@ -3234,6 +3241,10 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             "name", "po_intake", "po_line_no", "system_id", "im", "huawei_im",
             "dispatch_mode", "target_month", "region_type", "center_area",
             "ms1_amount", "ms2_amount", "pic_status", "pic_status_ms2", "dispatch_status",
+            # ms2_pct says whether the line HAS an MS2; the amount does not,
+            # because 199 real 70/30 and 80/20 lines are zero-value. See
+            # picMs2Label in frontend/src/pages/pic/picShared.jsx.
+            "ms2_pct",
             "subcon_status", "backend_team", "subcon_completed_on",
         ]
         disp_fields_base = [
@@ -3284,6 +3295,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             line["ms2_amount"] = flt(dispatch_data.get("ms2_amount") or 0)
             line["pic_status"] = dispatch_data.get("pic_status")
             line["pic_status_ms2"] = dispatch_data.get("pic_status_ms2")
+            line["ms2_pct"] = dispatch_data.get("ms2_pct")
             line["huawei_im"] = dispatch_data.get("huawei_im")
             line["subcon_status"] = dispatch_data.get("subcon_status")
             line["backend_team"] = dispatch_data.get("backend_team")
@@ -9433,7 +9445,31 @@ def get_work_done_summary():
     # here as still-open. Closed lines would trivially all read "Commercial
     # Invoice Closed" on both milestones anyway (not informative).
     ms1_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _commercial_po_rows("pd.pic_status", _SUMMARY_ACTIVE_SQL)] if has_pic else []
-    ms2_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"]) for r in _commercial_po_rows("pd.pic_status_ms2", _SUMMARY_ACTIVE_SQL)] if has_pic_ms2 else []
+    # MS2 groups through the same rule the PIC Status (MS2) COLUMN renders
+    # with (picMs2Label in picShared.jsx), not the raw column. Two reasons,
+    # both measured: grouping raw put 18,946 lines — nearly all of them lines
+    # whose PO never had a second milestone — into a '' bucket that
+    # PIC_STATUS_ORDER does not name, so they counted towards the section
+    # total and then appeared on no card under it; and it split that '' from
+    # the 730 rows holding a literal 'Work Not Done', which the table shows
+    # as the same thing. ms2_pct, not ms2_amount: 199 real 70/30 and 80/20
+    # lines are zero-value.
+    _ms2_group_sql = "pd.pic_status_ms2"
+    if frappe.db.has_column("PO Dispatch", "ms2_pct"):
+        _ms2_group_sql = (
+            "IF(IFNULL(pd.ms2_pct,0) <= 0, 'NIL', "
+            "IF(IFNULL(pd.pic_status_ms2,'')='', 'Work Not Done', pd.pic_status_ms2))"
+        )
+    # ...and then NIL is dropped rather than carded. A chart titled "by PIC
+    # Status (MS2)" has nothing to say about a line that has no MS2, and the
+    # grouping above is still what makes that removal exact: a line only
+    # leaves here because its PO had no second milestone, never because its
+    # status happened to be blank. Dropped from the rows, not just from the
+    # card order, so the section's "N lines · SAR" header keeps matching the
+    # cards under it — the 700 counted-but-never-shown lines were the bug.
+    ms2_rows = [frappe._dict(status=r["grp"], cnt=r["cnt"], revenue=r["revenue"])
+                for r in _commercial_po_rows(_ms2_group_sql, _SUMMARY_ACTIVE_SQL)
+                if r["grp"] != "NIL"] if has_pic_ms2 else []
 
     # Commercial "done vs active" headline: reuse PIC's own Pending/Active/
     # Closed/Cancelled stage classification (same logic PIC's own pages route
@@ -9838,7 +9874,32 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         "exec_date": "CAST(de.execution_date AS CHAR)",
         "visit": "CAST(rp.visit_number AS CHAR)",
         "qty": "CAST(wd.executed_qty AS CHAR)",
-        "po_status": "COALESCE(NULLIF(pd.pic_status,''), pd_sys.pic_status, '')",
+        # admin/WorkDone.jsx's "PO Status" header. The cell renders
+        # PoStatusBadge(dispatch_status) — this used to point at pic_status, so
+        # the dropdown offered PIC's vocabulary (Commercial Invoice Closed, …)
+        # against cells showing Dispatched / Completed / Closed, and nothing
+        # the user picked could ever match. PIC's own scale now has its own two
+        # columns below.
+        "po_status": "COALESCE(NULLIF(pd.dispatch_status,''), pd_sys.dispatch_status, '')",
+        # "PIC Status (MS1)" / "PIC Status (MS2)" -> pic_status_ms1 /
+        # pic_status_ms2 (keyFromLabel strips the parentheses), not
+        # "pic_status". The 'Work Not Done' substitution is not cosmetic:
+        # PicStatusBadge prints that label for an empty value, and the column
+        # ALSO holds it as a real stored value (2,347 rows against 2,366
+        # blanks in production). Without it the dropdown would offer
+        # "(Blanks)" for cells that visibly read "Work Not Done".
+        "pic_status_ms1": (
+            "IF(COALESCE(NULLIF(pd.pic_status,''), pd_sys.pic_status, '') = '', 'Work Not Done', "
+            "COALESCE(NULLIF(pd.pic_status,''), pd_sys.pic_status, ''))"
+        ),
+        # A line whose PO never had a second milestone renders "NIL" rather
+        # than "Work Not Done" — see picMs2Label in picShared.jsx. ms2_pct,
+        # not ms2_amount: 199 real 70/30 and 80/20 lines are zero-value.
+        "pic_status_ms2": (
+            "IF(COALESCE(pd.ms2_pct, pd_sys.ms2_pct, 0) <= 0, 'NIL', "
+            "IF(COALESCE(NULLIF(pd.pic_status_ms2,''), pd_sys.pic_status_ms2, '') = '', 'Work Not Done', "
+            "COALESCE(NULLIF(pd.pic_status_ms2,''), pd_sys.pic_status_ms2, '')))"
+        ),
         "domain": (
             "COALESCE(NULLIF(pd.project_domain,''), NULLIF(pd_sys.project_domain,''), "
             "(SELECT project_domain FROM `tabProject Control Center` "
@@ -10133,6 +10194,12 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
             pd_fields_wd.append("pic_status")
         if frappe.db.has_column("PO Dispatch", "pic_status_ms2"):
             pd_fields_wd.append("pic_status_ms2")
+        # Whether the line HAS an MS2 at all. Without it the PIC Status (MS2)
+        # cell cannot tell "nobody has started MS2" from "this PO never had
+        # one" — 87.5% of lines are AC1 100% — and printed "Work Not Done"
+        # for both. See picMs2Label in frontend/src/pages/pic/picShared.jsx.
+        if frappe.db.has_column("PO Dispatch", "ms2_pct"):
+            pd_fields_wd.append("ms2_pct")
         if frappe.db.has_column("PO Dispatch", "subcon_submission_status"):
             pd_fields_wd.append("subcon_submission_status")
         if frappe.db.has_column("PO Dispatch", "pic_rejection_remark"):
@@ -10217,6 +10284,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
                 "contract_model": subcon_row[1],
                 "pic_status": pic_status_val,
                 "pic_status_ms2": pd.get("pic_status_ms2") if pd else None,
+                "ms2_pct": pd.get("ms2_pct") if pd else None,
                 "rollout_plan": ex.rollout_plan if ex else None,
                 "po_dispatch": (rp.po_dispatch if rp else None) or r.get("system_id"),
                 # Business POID from dispatch (fall back to dispatch name on legacy docs).

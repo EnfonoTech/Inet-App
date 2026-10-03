@@ -20,7 +20,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge } from "../pic/picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge } from "../pic/picShared";
 import { money, qty as qtyFmt } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -1200,6 +1200,9 @@ export default function WorkDone() {
               const comActiveRev   = stageMap["Active"]?.revenue || 0;
               const comGrandTotal = comDoneLines + comActiveLines;
               const comGrandRev   = comDoneRev + comActiveRev;
+              // MS2's rows arrive with lines that have no second milestone
+              // already removed (get_work_done_summary), so both milestones
+              // share one card order and neither grows a "NIL" card.
               const msList = [
                 { ms: "MS1", label: "PIC Status (MS1)", data: summary.commercial_ms1 || summary.commercial || [], color: "#0369a1", bd: "#bae6fd", bg: "#f0f9ff", bar: "#0369a1" },
                 { ms: "MS2", label: "PIC Status (MS2)", data: summary.commercial_ms2 || [],                       color: "#7c3aed", bd: "#ddd6fe", bg: "#f5f3ff", bar: "#7c3aed" },
@@ -1338,6 +1341,8 @@ export default function WorkDone() {
                   <th style={{ textAlign: "right" }}>Ordered</th>
                   <th style={{ textAlign: "right" }}>Confirmed</th>
                   <th style={{ textAlign: "right" }}>Revenue</th>
+                  <th>PIC Status (MS1)</th>
+                  <th>PIC Status (MS2)</th>
                   <th>Submission Status</th>
                   <th>PIC Rejection Reason</th>
                   <th>Work Type</th>
@@ -1419,6 +1424,8 @@ export default function WorkDone() {
                         ) : "—"}
                       </td>
                       <td style={{ textAlign: "right", color: "var(--green)" }}>{sar.format(revenue)}</td>
+                      <td><PicStatusBadge value={row.pic_status} /></td>
+                      <td><PicMs2Badge value={row.pic_status_ms2} ms2Pct={row.ms2_pct} /></td>
                       <td><StatusPill value={row.submission_status} /></td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: row.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={row.pic_rejection_remark || ""}>{row.pic_rejection_remark || "—"}</td>
                       <td>
@@ -1484,7 +1491,9 @@ export default function WorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                       {sar.format(totals.revenue)}
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    {/* PIC MS1 · PIC MS2 · Submission · Rejection · Work Type ·
+                        Milestone · Issue · General · Manager · Team Lead · Open */}
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                   </tr>
                 </tfoot>
               )}

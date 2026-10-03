@@ -13,7 +13,7 @@ import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
-import { PoStatusBadge, PicStatusBadge, SubPoStatusBadge } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubPoStatusBadge } from "./picShared";
 import { money, qty as fmtQty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -1238,7 +1238,7 @@ export default function SubconPO() {
                   </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.vat_ms1 || 0)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms2_amount || 0)}</td>
-                  <td><PicStatusBadge value={r.pic_status_ms2} /></td>
+                  <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
                   <td>{r.ms2_amount ? <SubPoStatusBadge value={r.sub_po_status_ms2} />
                         : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}
