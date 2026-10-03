@@ -10,21 +10,6 @@ website_route_rules = [
 	{"from_route": "/pms/<path:app_path>", "to_route": "pms"},
 ]
 
-# Send the bare site root to the Frappe / ERPNext Desk so a "blank" / no
-# longer surprises users. (PMS portal users still land on /pms via
-# role_home_page below after login.)
-#
-# `^$`, not `^/$`. PathResolver does `path.strip("/ ")` before anything looks
-# at it, so "/" is already the EMPTY STRING by the time resolve_redirect runs
-# — and that builds its pattern as `source.strip("/ ") + "$"`, giving `^/$$`,
-# which demands a slash that no longer exists. The rule never matched, so "/"
-# fell through to get_home_page(), which picks whichever of the user's roles
-# get_roles() happens to return first. For Administrator that is INET HR, so
-# the site root opened the Certificate Tracker.
-website_redirects = [
-	{"source": r"^$", "target": "/app", "redirect_http_status": 302},
-]
-
 fixtures = [
 	{
 		"dt": "Custom Field",
@@ -111,26 +96,17 @@ doctype_js = {
 # application home page (will override Website Settings)
 # home_page = "login"
 
-# Landing page per role. Frappe uses the FIRST matching role in this map for
-# the logged-in user. Without this, field/IM users get Desk's "No App" page
-# because they lack Desk / System Manager permissions.
-role_home_page = {
-	"INET Field Team": "pms/today",
-	"INET IM": "pms/im-dashboard",
-	"INET Admin": "pms/dashboard",
-	# Same portal as INET Admin, minus the desk/masters/certificate entries
-	# the sidebar hides — see inet_app.roles / get_logged_user.
-	"INET PM": "pms/dashboard",
-	"INET PIC": "pms/pic-dashboard",
-	# Warehouse Manager — lands straight on Material Requests, their actual
-	# job, rather than Desk's "No App" page or (before this) the Field
-	# portal (get_logged_user() had no branch for Stock Manager either).
-	"Stock Manager": "pms/im-material-request",
-	# Standalone page, deliberately NOT under /pms — separate from the PMS
-	# portal in login flow, UI, and UX. Any user holding INET HR lands here
-	# straight from Frappe's own /login, no PMS involved.
-	"INET HR": "hr-certificates",
-}
+# Landing page, per role, in an order we control. NOT `role_home_page` —
+# that hook walks the USER's roles in get_roles() order and takes the first
+# one present in the map, so the map's own order means nothing. Administrator
+# holds nearly every role, and that query returned INET HR first: the site
+# root and the portal login both opened the Certificate Tracker.
+#
+# `get_website_user_home_page` is consulted first and is a function, so the
+# priority is ours. It is the only landing hook this app registers; a
+# leftover `role_home_page` would quietly take over for anyone it returns
+# None for. See inet_app/home_page.py for the order.
+get_website_user_home_page = "inet_app.home_page.get_landing_page"
 
 # Generators
 # ----------
