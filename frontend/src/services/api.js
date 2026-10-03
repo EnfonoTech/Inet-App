@@ -508,7 +508,10 @@ export const pmApi = {
       to_date: to_date || "",
       statuses: JSON.stringify(Array.isArray(statuses) ? statuses : (statuses ? [statuses] : ["OPEN"])),
     };
-    if (Number(limit) > 0) args.limit = Number(limit);
+    // >= 0, not > 0. TABLE_ROW_LIMIT_ALL is 0, so the old guard dropped the
+    // limit entirely on "All" and export_po_dump fell back to its signature
+    // default — which capped the dump at 20,000 of 21,920 rows, silently.
+    if (Number.isFinite(Number(limit)) && Number(limit) >= 0) args.limit = Number(limit);
     if (search && search.trim()) args.search = search.trim();
     if (columnFilters && Object.keys(columnFilters).length > 0) args.column_filters = columnFilters;
     return call("inet_app.api.command_center.export_po_dump", args);
@@ -822,7 +825,11 @@ export const pmApi = {
     call("frappe.client.get_list", {
       doctype,
       fields: fields && fields.length ? fields : ["name"],
-      limit_page_length: Number(limit) > 0 ? Math.min(Number(limit), 10000) : 200,
+      // 0 is "All" (TABLE_ROW_LIMIT_ALL), and frappe.client.get_list reads
+      // limit_page_length: 0 as unlimited — so it must be passed through, not
+      // treated as "no limit given". The old `> 0 ? … : N` guard turned the
+      // Masters page's "All" into 200 rows (DUID Master alone has 13,662).
+      limit_page_length: Number.isFinite(Number(limit)) && Number(limit) >= 0 ? Number(limit) : 200,
       order_by: orderBy,
     }),
   genericListFiltered: (doctype, fields, filters, limit) =>
@@ -830,7 +837,11 @@ export const pmApi = {
       doctype,
       fields: fields && fields.length ? fields : ["name"],
       filters: filters || {},
-      limit_page_length: Number(limit) > 0 ? Math.min(Number(limit), 10000) : 500,
+      // 0 is "All" (TABLE_ROW_LIMIT_ALL), and frappe.client.get_list reads
+      // limit_page_length: 0 as unlimited — so it must be passed through, not
+      // treated as "no limit given". The old `> 0 ? … : N` guard turned the
+      // Masters page's "All" into 500 rows (DUID Master alone has 13,662).
+      limit_page_length: Number.isFinite(Number(limit)) && Number(limit) >= 0 ? Number(limit) : 500,
     }),
   // Same as genericList, but narrows the FULL dataset server-side before the
   // row limit is applied — used by the Masters page so its search box and
@@ -843,7 +854,11 @@ export const pmApi = {
     const args = {
       doctype,
       fields: fields && fields.length ? fields : ["name"],
-      limit_page_length: Number(limit) > 0 ? Math.min(Number(limit), 10000) : 200,
+      // 0 is "All" (TABLE_ROW_LIMIT_ALL), and frappe.client.get_list reads
+      // limit_page_length: 0 as unlimited — so it must be passed through, not
+      // treated as "no limit given". The old `> 0 ? … : N` guard turned the
+      // Masters page's "All" into 200 rows (DUID Master alone has 13,662).
+      limit_page_length: Number.isFinite(Number(limit)) && Number(limit) >= 0 ? Number(limit) : 200,
       order_by: orderBy,
     };
     const term = (search || "").trim();

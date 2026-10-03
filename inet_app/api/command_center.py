@@ -1945,7 +1945,7 @@ def backfill_po_dispatch_id_to_poid(limit=500):
 
 
 @frappe.whitelist()
-def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=20000, search=None, column_filters=None, _options=None, _summary=None):
+def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=None, limit=None, search=None, column_filters=None, _options=None, _summary=None):
     """
     Export PO Intake lines whose parent PO was created in the date range (upload date).
     Returns uploaded PO lines in source column order for audit/export.
@@ -2054,7 +2054,22 @@ def export_po_dump(from_date=None, to_date=None, unique_inet_uid=1, statuses=Non
     # Allow up to 100k rows for archive dumps. Honor any positive limit (down
     # to 1) from the FE row-limit selector — previously we floored at 100,
     # which made "20" and "100" return the same result.
-    lim = min(max(int(limit or 100000), 1), 100000)
+    #
+    # `limit` defaults to None, not 20000. It used to be 20000, which was not
+    # a page size but a silent cap: anything that omitted the argument got
+    # 20,000 of the 21,920 live rows and no indication 1,920 were missing.
+    # The portal hit it too — api.js dropped the argument on "All" (0), so
+    # the one selection that means "everything" was the one that truncated.
+    #
+    # cint, not `int(limit or ...)`. Over HTTP every argument arrives as a
+    # STRING, and "0" is truthy in Python: `int("0" or 100000)` is 0, which
+    # `max(..., 1)` then turned into LIMIT 1. The whole dump came back as a
+    # single row. It stayed hidden only because the FE never sent 0 until the
+    # guard above was fixed. cint handles "0", "", None and junk alike.
+    lim = cint(limit)
+    if lim <= 0:
+        lim = 100000  # "All", within the archive ceiling
+    lim = min(lim, 100000)
 
     where_clauses = ["1=1"]
     params = []
